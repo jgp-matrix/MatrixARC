@@ -383,6 +383,33 @@ let _bcCompanyId=null;
 let _msalInstance=null;
 let _msalReady=false;
 
+// ── TODO #64 / Phase A: Global BC concurrency semaphore ──
+// Caps simultaneous BC OData/REST requests to prevent 429 rate-limit storms.
+// All fetch() calls to BC_ODATA_BASE and BC_API_BASE route through bcGatedFetch.
+// 429 responses are retried automatically with Retry-After honoring (max 3 retries).
+const _bcSemaphore={inflight:0,max:6,queue:[]};
+async function bcGatedFetch(url,options){
+  while(_bcSemaphore.inflight>=_bcSemaphore.max){
+    await new Promise(r=>_bcSemaphore.queue.push(r));
+  }
+  _bcSemaphore.inflight++;
+  try{
+    const r=await fetch(url,options);
+    if(r.status===429){
+      // Track retry depth via options to prevent infinite loops
+      const depth=(options&&options._bcRetryDepth)||0;
+      if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
+      const retryAfter=parseInt(r.headers.get("Retry-After")||"2",10);
+      await new Promise(resolve=>setTimeout(resolve,Math.min(retryAfter,30)*1000));
+      return bcGatedFetch(url,{...options,_bcRetryDepth:depth+1});
+    }
+    return r;
+  }finally{
+    _bcSemaphore.inflight--;
+    if(_bcSemaphore.queue.length)_bcSemaphore.queue.shift()();
+  }
+}
+
 // ── BACKGROUND TASK REGISTRY ──
 let _bgTasks={};           // { [taskId]: { taskId, panelName, projectId, status, msg } }
 let _bgDeleteTimers={};    // { [taskId]: timerHandle } — cancel stale timers on bgStart
@@ -2530,7 +2557,7 @@ async function bcGetCompanyId(){
   if(_bcCompanyId)return _bcCompanyId;
   if(!_bcToken)return null;
   try{
-    const r=await fetch(`${BC_API_BASE}/companies?$filter=name eq '${BC_COMPANY_NAME}'`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies?$filter=name eq '${BC_COMPANY_NAME}'`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok)return null;
@@ -2545,7 +2572,7 @@ async function bcFetchCompanyInfo(){
   const compId=await bcGetCompanyId();
   if(!compId||!_bcToken)return null;
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok)return null;
@@ -2564,7 +2591,7 @@ async function bcFetchCompanyInfo(){
 async function bcGetJobGuid(jobNumber){
   const compId=await bcGetCompanyId();
   if(!compId||!_bcToken)throw new Error("Not connected to BC");
-  const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${encodeURIComponent(jobNumber)}'&$select=id,number`,{
+  const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects?$filter=number eq '${encodeURIComponent(jobNumber)}'&$select=id,number`,{
     headers:{"Authorization":`Bearer ${_bcToken}`}
   });
   if(!r.ok)throw new Error(`BC job lookup failed: ${r.status}`);
@@ -2581,7 +2608,7 @@ async function bcGetJobGuid(jobNumber){
 async function bcCheckAttachmentExists(jobNumber,fileName){
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok){console.log("BC_ATT_CHECK: fetch failed",r.status);return null;}
@@ -2616,14 +2643,14 @@ async function bcDeleteAttachmentByName(jobNumber,targetFileName){
   if(!targetFileName)return;
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return;
     const allAtts=(await r.json()).value||[];
     const target=(targetFileName||"").toLowerCase().replace(/\.pdf$/i,"");
     const atts=allAtts.filter(a=>{const f=(a.fileName||"").toLowerCase().replace(/\.pdf$/i,"");return f===target;});
     for(const a of atts){
       try{
-        const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
+        const dr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
           method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}
         });
         if(dr.ok||dr.status===204)console.log("Deleted BC attachment:",a.fileName);
@@ -2641,7 +2668,7 @@ async function bcCleanupDuplicateAttachments(jobNumber,keepFileNames=[]){
   if(!_bcToken||!jobNumber)return{deleted:0};
   try{
     const {compId,jobId}=await bcGetJobGuid(jobNumber);
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return{deleted:0};
     const atts=(await r.json()).value||[];
     if(!atts.length)return{deleted:0};
@@ -2674,7 +2701,7 @@ async function bcCleanupDuplicateAttachments(jobNumber,keepFileNames=[]){
     let deleted=0;
     for(const a of finalDelete){
       try{
-        const dr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
+        const dr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${a.id})`,{
           method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}
         });
         if(dr.ok||dr.status===204){deleted++;console.log("CLEANUP: deleted",a.fileName);}
@@ -2690,7 +2717,7 @@ async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileNa
   // Delete the previous rev drawing attachment by exact filename
   if(previousFileName)await bcDeleteAttachmentByName(jobNumber,previousFileName);
   // Step 1: create attachment record
-  const cr=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
+  const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
     body:JSON.stringify({fileName})
@@ -2765,7 +2792,7 @@ async function bcCopyProjectFromTemplate(fromProjectNumber, toProjectNumber){
     if(task.Totaling||task.totaling)body.Totaling=task.Totaling||task.totaling;
     if(task.New_Page!=null)body.New_Page=task.New_Page;
     if(task.Indentation!=null)body.Indentation=task.Indentation||task.indentation||0;
-    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(body)
@@ -2856,7 +2883,7 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
         }
         // 404 or other non-OK = task doesn't exist, proceed to POST
       }catch(_){/* probe failed — fall through to POST attempt */}
-      const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify(task)
@@ -2907,7 +2934,7 @@ async function bcCreatePanelTaskBlock(projectNumber, panelIndex, panel, projectN
   // server-side query plan). Falls through to Project_ default if probe fails.
   let FP="Project";
   try{
-    const pr=await fetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(pr.ok){
       const pd=await pr.json();
       const rec=(pd.value||[])[0];
@@ -2952,7 +2979,7 @@ async function bcCreatePanelTaskBlock(projectNumber, panelIndex, panel, projectN
     }catch(_){/* probe failed — proceed to POST */}
     if(exists){skipped++;console.log(`bcCreatePanelTaskBlock: task ${t.taskNo} already exists, skipping`);continue;}
     const body={[`${FP}_No`]:projectNumber,[`${FP}_Task_No`]:t.taskNo,Description:t.desc,[`${FP}_Task_Type`]:t.type,...t.extra};
-    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
     if(r.ok){created++;console.log(`bcCreatePanelTaskBlock: task ${t.taskNo} created (${FP}_No)`);continue;}
     const txt=await r.text();
     // Field-prefix mismatch fallback — retry this task with the other prefix.
@@ -2961,7 +2988,7 @@ async function bcCreatePanelTaskBlock(projectNumber, panelIndex, panel, projectN
       console.log(`bcCreatePanelTaskBlock: ${FP}_No rejected, retrying task ${t.taskNo} with ${altFP}_No`);
       FP=altFP;
       const body2={[`${FP}_No`]:projectNumber,[`${FP}_Task_No`]:t.taskNo,Description:t.desc,[`${FP}_Task_Type`]:t.type,...t.extra};
-      const r2=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(body2)});
+      const r2=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(body2)});
       if(r2.ok){created++;console.log(`bcCreatePanelTaskBlock: task ${t.taskNo} created (${FP}_No fallback)`);continue;}
       const txt2=await r2.text();
       failed++;errors.push(`task ${t.taskNo}: ${r2.status} ${txt2}`);
@@ -3048,7 +3075,7 @@ async function bcAddEcoTask(projectNumber, panelIndex, ecoNumber, panelName){
     };
   }
   async function postTask(prefix){
-    const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(buildBody(prefix))
@@ -3096,7 +3123,7 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
     FP_NO=c.FP_NO;FP_TASK_NO=c.FP_TASK_NO;
   }else{
     try{
-      const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
       if(pr.ok){
         const pd=await pr.json();const rec=(pd.value||[])[0];
         if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
@@ -3126,7 +3153,7 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
   const existingLineNos=new Set();
   try{
     const filter=encodeURIComponent(`${FP_NO} eq '${projectNumber}' and ${FP_TASK_NO} eq '${taskNo}'`);
-    const probeR=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${filter}&$select=Line_No`,{
+    const probeR=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$filter=${filter}&$select=Line_No`,{
       headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}
     });
     if(probeR.ok){
@@ -3145,7 +3172,7 @@ async function bcCreateEcoTaskPlanningSkeleton(projectNumber, panelIndex, ecoNum
   let created=0,skipped=0,failed=0;const errors=[];
   for(const line of lines){
     if(existingLineNos.has(line.Line_No)){skipped++;continue;}
-    const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(line)
@@ -3201,7 +3228,7 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
     FP_NO=c.FP_NO;FP_TASK_NO=c.FP_TASK_NO;
   }else{
     try{
-      const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
       if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];
         if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
       }
@@ -3216,7 +3243,7 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
     else if(r.status===400){
       // Try Job_ fallback for the task page
       FT_NO="Job_No";FT_TASK_NO="Job_Task_No";FT_TYPE="Job_Task_Type";
-      const r2=await fetch(`${BC_ODATA_BASE}/${taskPage}?$filter=${FT_NO} eq '${encodeURIComponent(projectNumber)}' and ${FT_TASK_NO} eq '${encodeURIComponent(taskNo)}'`,
+      const r2=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}?$filter=${FT_NO} eq '${encodeURIComponent(projectNumber)}' and ${FT_TASK_NO} eq '${encodeURIComponent(taskNo)}'`,
         {headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
       if(r2.ok){const d=await r2.json();taskExists=(d.value||[]).length>0;}
     }
@@ -3226,7 +3253,7 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
   if(!taskExists){
     async function postTask(prefix){
       const body={[`${prefix}_No`]:projectNumber,[`${prefix}_Task_No`]:taskNo,Description:taskDesc,[`${prefix}_Task_Type`]:"Posting"};
-      const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify(body)
@@ -3264,7 +3291,7 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
     const body={[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:10000,Planning_Date:today,
       Line_Type:"Billable",Type:"Item",No:"PROGRESS BILLING",
       Description:lineDescription,Quantity:1,Unit_Price:total,Location_Code:"MAIN"};
-    const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(body)
@@ -3307,7 +3334,7 @@ async function bcDeleteEcoTask(projectNumber, panelIndex, ecoNumber){
   // Probe field names — use Project_No first, fall back to Job_No
   let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
   try{
-    const pr=await fetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(pr.ok){
       const pd=await pr.json();const rec=(pd.value||[])[0];
       if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}
@@ -3362,7 +3389,7 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   // Probe field names
   let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
   {
-    const pr=await fetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${taskPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}}
   }
   for(const [taskNo,desc] of Object.entries(taskDescs)){
@@ -3529,7 +3556,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   if(bomParts.length>0&&!(opts&&opts.skipPostingGroupFix)){
     for(const pn of bomParts){
       try{
-        const chk=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Gen_Prod_Posting_Group,Inventory_Posting_Group`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const chk=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Gen_Prod_Posting_Group,Inventory_Posting_Group`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(chk.ok){
           const rec=((await chk.json()).value||[])[0];
           if(rec){
@@ -3556,7 +3583,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // per-line 429 warnings — caller logs a summary of failures at the end.
   async function postLine(payload){
     for(let attempt=0;attempt<4;attempt++){
-      const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
       if(r.status!==429)return r;
       if(attempt===3)return r; // exhausted
       await sleep(1000*Math.pow(2,attempt)); // 1s, 2s, 4s
@@ -3720,7 +3747,7 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
 
   async function postLine(payload){
     for(let attempt=0;attempt<4;attempt++){
-      const r=await fetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
       if(r.status!==429)return r;
       if(attempt===3)return r;
       await sleep(1000*Math.pow(2,attempt));
@@ -3831,7 +3858,7 @@ async function bcCreateProject(displayName, customerNumber){
   let projectId=null;
   try{
     // Step 1: Create project (name only)
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify({displayName})
@@ -3868,10 +3895,10 @@ async function bcCreateProject(displayName, customerNumber){
     // Rollback: delete the BC project if it was created
     if(projectId){
       try{
-        const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const g=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(g.ok){
           const etag=g.headers.get("ETag");
-          await fetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
+          await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})`,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
           console.log("bcCreateProject: rolled back BC project",projectId);
         }
       }catch(re){console.warn("bcCreateProject: rollback failed",re);}
@@ -3886,7 +3913,7 @@ async function bcLoadAllCustomers(){
   const compId=await bcGetCompanyId();
   if(!compId)return[];
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$top=500&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers?$top=500&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(r.status===401){_bcToken=null;return[];}
     if(!r.ok){console.warn("bcLoadAllCustomers failed:",r.status);return[];}
     const d=await r.json();
@@ -3929,7 +3956,7 @@ async function bcLoadAllProjects(){
   const compId=await bcGetCompanyId();
   if(!compId)return[];
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects?$top=1000`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects?$top=1000`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(r.status===401){_bcToken=null;return[];}
     if(!r.ok){console.warn("bcLoadAllProjects failed:",r.status);return[];}
     const d=await r.json();
@@ -3943,7 +3970,7 @@ async function bcLoadAllProjectsOData(){
     const allPages=await bcDiscoverODataPages();
     const projectPage=allPages.find(n=>/^project(card)?$/i.test(n))||null;
     if(!projectPage){console.warn("bcLoadAllProjectsOData: no project OData page found");return[];}
-    const r=await fetch(`${BC_ODATA_BASE}/${projectPage}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${projectPage}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcLoadAllProjectsOData failed:",r.status);return[];}
     const d=await r.json();
     console.log("OData project fields:",(d.value||[])[0]?Object.keys((d.value||[])[0]):[])
@@ -3965,7 +3992,7 @@ async function bcCreateCustomer(displayName,phone,email){
   const body={displayName};
   if(phone)body.phoneNumber=phone;
   if(email)body.email=email;
-  const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers`,{
+  const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
     body:JSON.stringify(body)
@@ -3993,14 +4020,14 @@ async function bcFetchCustomerContacts(customerNumber){
       const allPages=await bcDiscoverODataPages();
       const custPage=allPages.find(n=>/^Customer_Card/i.test(n));
       if(custPage){
-        const cr=await fetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Primary_Contact_No,Contact_No,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const cr=await bcGatedFetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Primary_Contact_No,Contact_No,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd){companyContactNo=cd.Primary_Contact_No||cd.Contact_No||"";custName=cd.Name||"";}}
       }
     }catch(e){}
     // Fallback: REST API customer → use displayName
     if(!companyContactNo&&!custName){
       try{
-        const cr=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd)custName=cd.displayName||"";}
       }catch(e){}
     }
@@ -4013,7 +4040,7 @@ async function bcFetchCustomerContacts(customerNumber){
       filterParam="$filter="+encodeURIComponent("companyName eq '"+custName.replace(/'/g,"''")+"'");
     }
     if(!filterParam){console.warn("bcFetchCustomerContacts: no filter for",customerNumber);return[];}
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?${filterParam}&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts?${filterParam}&$select=number,displayName,email,phoneNumber,companyName,type&$top=50&$orderby=displayName`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok){console.warn("bcFetchCustomerContacts failed:",r.status);return[];}
@@ -4038,19 +4065,19 @@ async function bcCreateContact(displayName,customerNumber,email,phone){
     const allPages=await bcDiscoverODataPages();
     const custPage=allPages.find(n=>/^Customer_Card/i.test(n));
     if(custPage){
-      const cr=await fetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Primary_Contact_No,Contact_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const cr=await bcGatedFetch(`${BC_ODATA_BASE}/${custPage}?$filter=No eq '${customerNumber}'&$select=No,Primary_Contact_No,Contact_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(cr.ok){const cd=((await cr.json()).value||[])[0];if(cd)companyContactNo=cd.Primary_Contact_No||cd.Contact_No||"";}
     }
   }catch(e){}
   // Fallback: find the company-type contact by customer name
   if(!companyContactNo){
     try{
-      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(cr.ok){
         const cust=((await cr.json()).value||[])[0];
         if(cust?.displayName){
           const filterParam="$filter="+encodeURIComponent("companyName eq '"+cust.displayName.replace(/'/g,"''")+"' and type eq 'Company'");
-          const ccr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?${filterParam}&$select=number&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          const ccr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts?${filterParam}&$select=number&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(ccr.ok){const ccd=((await ccr.json()).value||[])[0];if(ccd)companyContactNo=ccd.number||"";}
         }
       }
@@ -4064,7 +4091,7 @@ async function bcCreateContact(displayName,customerNumber,email,phone){
   if(cleanEmail&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail))body.email=cleanEmail;
   else if(cleanEmail)console.warn("bcCreateContact: invalid email skipped:",cleanEmail);
   if(phone)body.phoneNumber=phone;
-  const r=await fetch(`${BC_API_BASE}/companies(${compId})/contacts`,{
+  const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
     body:JSON.stringify(body)
@@ -4081,7 +4108,7 @@ async function bcCreateVendor(displayName,phone,email,opts={}){
   const body={displayName};
   if(phone)body.phoneNumber=phone;
   if(email)body.email=email;
-  const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors`,{
+  const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
     body:JSON.stringify(body)
@@ -4096,10 +4123,10 @@ async function bcCreateVendor(displayName,phone,email,opts={}){
       if(opts.genBusPostGroup)patch.Gen_Bus_Posting_Group=opts.genBusPostGroup;
       if(opts.vendorPostGroup)patch.Vendor_Posting_Group=opts.vendorPostGroup;
       if(opts.taxAreaCode)patch.Tax_Area_Code=opts.taxAreaCode;
-      const gr=await fetch(`${BC_ODATA_BASE}/Vendor_Card_Excel?$filter=No eq '${vendorNo}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const gr=await bcGatedFetch(`${BC_ODATA_BASE}/Vendor_Card_Excel?$filter=No eq '${vendorNo}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(gr.ok){const gd=await gr.json();const rec=(gd.value||[])[0];
         if(rec){const etag=rec["@odata.etag"]||"*";
-          await fetch(`${BC_ODATA_BASE}/Vendor_Card_Excel('${vendorNo}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify(patch)});
+          await bcGatedFetch(`${BC_ODATA_BASE}/Vendor_Card_Excel('${vendorNo}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify(patch)});
         }
       }
     }catch(e){console.warn("Vendor posting group patch failed:",e.message);}
@@ -4111,10 +4138,10 @@ async function bcDeleteProject(bcProjectId){
   if(!_bcToken||!bcProjectId)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve Business Central company");
-  const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  const g=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!g.ok)throw new Error(`BC project not found (${g.status})`);
   const etag=g.headers.get("ETag");
-  const d=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
+  const d=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
     method:"DELETE",
     headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}
   });
@@ -4129,13 +4156,13 @@ async function bcUpdateProject(bcProjectId, displayName){
   const compId=await bcGetCompanyId();
   if(!compId)return false;
   try{
-    const g=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
+    const g=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(g.status===401){_bcToken=await acquireBcToken(true)||null;if(!_bcToken)return false;}
     if(!g.ok){console.warn("bcUpdateProject GET failed:",g.status);return false;}
     const etag=g.headers.get("ETag");
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${bcProjectId})`,{
       method:"PATCH",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
       body:JSON.stringify({displayName})
@@ -4167,7 +4194,7 @@ async function bcLookupItem(partNumber){
   if(!compId)return null;
   const pn=partNumber.trim().replace(/'/g,"''");
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${pn}'`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/items?$filter=number eq '${pn}'`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok){console.warn("BC item lookup failed:",r.status);return null;}
@@ -4188,7 +4215,7 @@ async function bcLookupLeadTime(partNumber){
   if(!_bcToken||!partNumber||!partNumber.trim())return null;
   const pn=partNumber.trim().replace(/'/g,"''");
   try{
-    const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Lead_Time_Calculation`,{
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(pn)}'&$select=No,Lead_Time_Calculation`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok)return null;
@@ -4243,7 +4270,7 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
       // does NOT expose a SystemId property. Dropped SystemId from $select (previously
       // caused 400 BadRequest). PATCH uses the compound-key URL form, which BC accepts
       // once the service is actually published.
-      const existing=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation`,{
+      const existing=await bcGatedFetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation`,{
         headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}
       });
       let existingRec=null,etag=null,odataId=null;
@@ -4297,7 +4324,7 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
           }
         }
         if(!existingRec&&!auditEntry.error){
-          const cr=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog`,{
+          const cr=await bcGatedFetch(`${BC_ODATA_BASE}/ItemVendorCatalog`,{
             method:"POST",
             headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","Accept":"application/json"},
             body:JSON.stringify(body),
@@ -4324,7 +4351,7 @@ async function bcLookupItemVendorLeadTime(partNumber,vendorNo){
   const vn=String(vendorNo).trim().replace(/'/g,"''");
   if(!pn||!vn)return null;
   try{
-    const r=await fetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Lead_Time_Calculation`,{
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Lead_Time_Calculation`,{
       headers:{"Authorization":`Bearer ${_bcToken}`}
     });
     if(!r.ok)return null;
@@ -4739,7 +4766,7 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
   if(baseUnitOfMeasureCode)body.baseUnitOfMeasureCode=baseUnitOfMeasureCode;
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/items`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/items`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(body)
@@ -5213,7 +5240,7 @@ async function bcGetPlanPageMeta(){
   if(!planPage)return null;
   let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
   try{
-    const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}}
   }catch(e){}
   _planPageCache={planPage,FP_NO,FP_TASK_NO};
@@ -5394,7 +5421,7 @@ async function bcListItemCategories(){
   const compId=await bcGetCompanyId();
   if(!compId){console.warn("bcListItemCategories: no compId");return[];}
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/itemCategories?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/itemCategories?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcListItemCategories: HTTP",r.status,await r.text());return[];}
     const d=await r.json();
     return(d.value||[]).map(c=>({code:c.code||"",description:c.description||""}));
@@ -5406,7 +5433,7 @@ async function bcListUnitsOfMeasure(){
   const compId=await bcGetCompanyId();
   if(!compId){console.warn("bcListUnitsOfMeasure: no compId");return[];}
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/unitsOfMeasure?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/unitsOfMeasure?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcListUnitsOfMeasure: HTTP",r.status,await r.text());return[];}
     const d=await r.json();
     return(d.value||[]).map(u=>({code:u.code||"",displayName:u.displayName||""}));
@@ -5418,7 +5445,7 @@ async function bcListVendors(){
   const compId=await bcGetCompanyId();
   if(!compId){console.warn("bcListVendors: no compId");return[];}
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$top=500&$select=number,displayName&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$top=500&$select=number,displayName&$orderby=displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcListVendors: HTTP",r.status,await r.text());return[];}
     const d=await r.json();
     return(d.value||[]).map(v=>({number:v.number||"",displayName:v.displayName||""}));
@@ -5460,7 +5487,7 @@ async function bcListGenProdPostingGroups(){
   const compId=await bcGetCompanyId();
   if(!compId){console.warn("bcListGenProdPostingGroups: no compId");return[];}
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/generalProductPostingGroups?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/generalProductPostingGroups?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcListGenProdPostingGroups: HTTP",r.status,await r.text());return[];}
     const d=await r.json();
     return(d.value||[]).map(g=>({code:g.code||"",description:g.description||""}));
@@ -5472,7 +5499,7 @@ async function bcListInventoryPostingGroups(){
   const compId=await bcGetCompanyId();
   if(!compId){console.warn("bcListInventoryPostingGroups: no compId");return[];}
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/inventoryPostingGroups?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/inventoryPostingGroups?$top=250&$orderby=code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok){console.warn("bcListInventoryPostingGroups: HTTP",r.status,await r.text());return[];}
     const d=await r.json();
     return(d.value||[]).map(g=>({code:g.code||"",description:g.description||""}));
@@ -5496,11 +5523,11 @@ function bcResolveVendorName(vendorNo){
 async function bcGetItemVendorNo(itemNo){
   if(!_bcToken||!itemNo)return"";
   try{
-    let r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    let r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(r.status===401){
       _bcToken=await acquireBcToken(false)||null;
       if(!_bcToken)return"";
-      r=await fetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Vendor_No`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     }
     if(!r.ok)return"";
     const d=await r.json();
@@ -5519,11 +5546,11 @@ async function bcGetVendorName(vendorNo){
   const compId=await bcGetCompanyId();
   if(!compId)return"";
   try{
-    let r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    let r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(r.status===401){
       _bcToken=await acquireBcToken(false)||null;
       if(!_bcToken)return"";
-      r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     }
     if(!r.ok)return"";
     const d=await r.json();
@@ -5727,7 +5754,7 @@ async function bcGetVendorEmail(vendorNo){
   const compId=await bcGetCompanyId();
   if(!compId)return"";
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,email`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,email`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return"";
     const d=await r.json();
     const v=(d.value||[])[0];
@@ -5744,7 +5771,7 @@ async function bcGetLastPurchase(itemNo){
   if(!compId)return null;
   try{
     // Try purchaseInvoiceLines — posted invoices with actual costs
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseInvoiceLines?$filter=lineObjectNumber eq '${encodeURIComponent(itemNo)}'&$orderby=postingDate desc&$top=1&$select=lineObjectNumber,directUnitCost,postingDate,documentId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/purchaseInvoiceLines?$filter=lineObjectNumber eq '${encodeURIComponent(itemNo)}'&$orderby=postingDate desc&$top=1&$select=lineObjectNumber,directUnitCost,postingDate,documentId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(r.ok){
       const d=await r.json();
       const line=(d.value||[])[0];
@@ -5762,7 +5789,7 @@ async function bcCheckItemInUse(itemNo){
   const compId=await bcGetCompanyId();
   if(!compId)return{inUse:false,count:0};
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/itemLedgerEntries?$filter=itemNumber eq '${encodeURIComponent(itemNo)}'&$top=1&$select=itemNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/itemLedgerEntries?$filter=itemNumber eq '${encodeURIComponent(itemNo)}'&$top=1&$select=itemNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return{inUse:false,count:0};
     const d=await r.json();
     return{inUse:(d.value||[]).length>0,count:(d.value||[]).length};
@@ -5774,7 +5801,7 @@ async function bcCheckItemOnProjects(itemNo){
   const compId=await bcGetCompanyId();
   if(!compId)return{onProjects:false,projects:[]};
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/jobPlanningLines?$filter=No eq '${encodeURIComponent(itemNo)}'&$top=10&$select=No,jobNumber,description`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/jobPlanningLines?$filter=No eq '${encodeURIComponent(itemNo)}'&$top=10&$select=No,jobNumber,description`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return{onProjects:false,projects:[]};
     const d=await r.json();
     const lines=d.value||[];
@@ -5803,7 +5830,7 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
       const quoteBody={buyFromVendorName:vendorName};
       if(vendorNo)quoteBody.vendorNumber=vendorNo;
       console.log('BC PQ: Trying v2.0 API fallback, body:',JSON.stringify(quoteBody));
-      const qr=await fetch(`${BC_API_BASE}/companies(${compId})/purchaseQuotes`,{
+      const qr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/purchaseQuotes`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify(quoteBody)
@@ -5815,7 +5842,7 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
     }
     console.log('BC PQ: Using OData pages — header:',headerPage,'lines:',linePage||'(none)');
     // Probe header fields
-    const probeR=await fetch(`${BC_ODATA_BASE}/${headerPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    const probeR=await bcGatedFetch(`${BC_ODATA_BASE}/${headerPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     let headerFields=[];
     if(probeR.ok){const pd=await probeR.json();const rec=(pd.value||[])[0];if(rec)headerFields=Object.keys(rec);console.log('BC PQ: header fields:',headerFields.join(', '));}
     // Build header body — try common field names
@@ -5827,7 +5854,7 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
       if(vnameField)hBody[vnameField]=vendorName;
     }
     console.log('BC PQ: POST',headerPage,'body:',JSON.stringify(hBody));
-    const hr=await fetch(`${BC_ODATA_BASE}/${headerPage}`,{
+    const hr=await bcGatedFetch(`${BC_ODATA_BASE}/${headerPage}`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
       body:JSON.stringify(hBody)
@@ -5859,7 +5886,7 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
         }catch(me){console.log('BC PQ: $metadata fetch failed:',me.message);}
         // Fallback: probe with $top=1
         if(!lineFields.length){
-          const lineProbe=await fetch(`${BC_ODATA_BASE}/${linePage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}}).catch(()=>null);
+          const lineProbe=await bcGatedFetch(`${BC_ODATA_BASE}/${linePage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}}).catch(()=>null);
           if(lineProbe&&lineProbe.ok){const ld=await lineProbe.json();const rec=(ld.value||[])[0];if(rec){lineFields=Object.keys(rec);console.log('BC PQ: line fields from probe:',lineFields.join(', '));}}
           if(!lineFields.length)console.log('BC PQ: probe returned no records, no fields discovered');
         }
@@ -5877,7 +5904,7 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
             if(docTypeField)lBody[docTypeField]='Quote';
             if(item.partNumber)lBody[noField]=item.partNumber;
             console.log('BC PQ line POST body:',JSON.stringify(lBody));
-            const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
+            const lr=await bcGatedFetch(`${BC_ODATA_BASE}/${linePage}`,{
               method:"POST",
               headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
               body:JSON.stringify(lBody)
@@ -5891,7 +5918,7 @@ async function bcCreatePurchaseQuote(vendorNo,vendorName,items){
           for(const item of items){
             const lBody={Type:'Item',Description:item.description||item.partNumber||'',Quantity:Number(item.qty)||1};
             if(item.partNumber)lBody.No=item.partNumber;
-            const lr=await fetch(`${BC_ODATA_BASE}/${linePage}`,{
+            const lr=await bcGatedFetch(`${BC_ODATA_BASE}/${linePage}`,{
               method:"POST",
               headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
               body:JSON.stringify(lBody)
@@ -6648,7 +6675,7 @@ async function buildQuotePdfDoc(doc,project){
     }
     if(!salesName&&_bcToken){
       try{
-        const spR=await fetch(`${BC_ODATA_BASE}/Salesperson?$filter=Code eq '${project.bcSalespersonCode}'&$select=Code,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const spR=await bcGatedFetch(`${BC_ODATA_BASE}/Salesperson?$filter=Code eq '${project.bcSalespersonCode}'&$select=Code,Name&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(spR.ok){const spD=((await spR.json()).value||[])[0];if(spD?.Name)salesName=spD.Name;}
       }catch(e){}
     }
@@ -7943,7 +7970,7 @@ async function bcAddAssemblyBOMLines(parentItemNo,bomRows,onProgress,_bomPage){
     if(!pn){result.skipped++;continue;}
     if(onProgress)onProgress(i,bomRows.length,pn);
     try{
-      const r=await fetch(`${BC_ODATA_BASE}/${bomPage}`,{
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${bomPage}`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify({Parent_Item_No:parentItemNo,Type:"Item",No:pn,Quantity_per:+(row.qty||1)})
@@ -8041,7 +8068,7 @@ async function bcLookupItemForQuote(partNumber){
   const pn=partNumber.trim().replace(/'/g,"''");
   try{
     for(const filter of[`number eq '${pn}'`,`vendorItemNo eq '${pn}'`]){
-      const r=await fetch(`${BC_API_BASE}/companies(${compId})/items?$filter=${filter}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/items?$filter=${filter}`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(r.ok){const d=await r.json();const item=(d.value||[])[0];
         if(item)return{id:item.id,number:item.number,displayName:item.displayName||'',unitCost:item.unitCost??null};}
     }
@@ -8052,7 +8079,7 @@ async function bcUpdateItemCost(itemId,newCost){
   if(!_bcToken)return false;
   const compId=await bcGetCompanyId();if(!compId)return false;
   try{
-    const r=await fetch(`${BC_API_BASE}/companies(${compId})/items(${itemId})`,{
+    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/items(${itemId})`,{
       method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
       body:JSON.stringify({unitCost:newCost})});
     return r.ok;
@@ -17855,12 +17882,12 @@ async function bcFetchVendorContacts(vendorNo,vendorName){
     const compId=await bcGetCompanyId();
     // Resolve vendorNo from name if not provided
     if(!vendorNo&&vendorName){
-      const nr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=displayName eq '${(vendorName||"").replace(/'/g,"''")}'&$select=number,displayName,email,phoneNumber&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const nr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=displayName eq '${(vendorName||"").replace(/'/g,"''")}'&$select=number,displayName,email,phoneNumber&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(nr.ok){const nd=(await nr.json()).value||[];if(nd[0])vendorNo=nd[0].number;}
     }
     if(!vendorNo)return[];
     // Get vendor main email
-    const vr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName,email,phoneNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    const vr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${encodeURIComponent(vendorNo)}'&$select=number,displayName,email,phoneNumber`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
     const contacts=[];
     if(vr.ok){
       const vd=(await vr.json()).value||[];
@@ -17869,7 +17896,7 @@ async function bcFetchVendorContacts(vendorNo,vendorName){
     // Fetch contacts linked to vendor — try by companyName (BC links contacts this way)
     const vendorDisplayName=contacts[0]?.name||vendorName||"";
     try{
-      const cr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyName eq '${(vendorDisplayName).replace(/'/g,"''")}'&$select=number,displayName,email,companyName&$top=20`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=companyName eq '${(vendorDisplayName).replace(/'/g,"''")}'&$select=number,displayName,email,companyName&$top=20`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(cr.ok){
         const cd=(await cr.json()).value||[];
         cd.forEach(c=>{if(c.email&&!contacts.some(x=>x.email.toLowerCase()===c.email.toLowerCase()))contacts.push({name:c.displayName||"Contact",email:c.email,type:"contact"});});
@@ -20900,7 +20927,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       try{
         if(aborted())return;
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(iPage){const mr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(mr.ok){const md=((await mr.json()).value||[])[0];if(md){
             mBatch[it.number]=md.Manufacturer_Code||"";
             ltBatch[it.number]=_bcDateFormulaToDays(md.Lead_Time_Calculation);
@@ -21125,7 +21152,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                           const allPages=await bcDiscoverODataPages();
                           const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
                           if(!mPage)throw new Error("Manufacturer OData page not found in BC");
-                          const r=await fetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
+                          const r=await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
                           if(!r.ok){const txt=await r.text();throw new Error(`BC error (${r.status}): ${txt}`);}
                           _bcManufacturers=null;
                           const fresh=await bcFetchManufacturers();setBcManufacturers(fresh);
@@ -21292,14 +21319,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                               const allPages=await bcDiscoverODataPages();
                               const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
                               if(!mPage)throw new Error("Manufacturer page not found");
-                              const r=await fetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
+                              const r=await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
                               if(!r.ok){const txt=await r.text();throw new Error(txt.slice(0,120));}
                               _bcManufacturers=null;const fresh=await bcFetchManufacturers();setBcManufacturers(fresh);
                               // Now assign it to the item
                               const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-                              if(iPage){const gr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${item.number}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                              if(iPage){const gr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${item.number}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                                 if(gr.ok){const rec=((await gr.json()).value||[])[0];if(rec){const etag=rec["@odata.etag"]||"*";
-                                  await fetch(`${BC_ODATA_BASE}/${iPage}('${item.number}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});}}}
+                                  await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}('${item.number}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});}}}
                               setMfrCodes(prev=>({...prev,[item.number]:code}));
                               setInlineMfrCreate(null);
                             }catch(e){setInlineMfrErr(e.message||"Failed");}
@@ -24563,7 +24590,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // Item Card Lead_Time_Calculation. Single SELECT fetches both fields.
       if(newPN){(async()=>{try{
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-        if(iPage){const mr=await fetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(iPage){const mr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(mr.ok){const md=((await mr.json()).value||[])[0];if(md){
             const patches={};
             if(md.Manufacturer_Code){
@@ -31441,7 +31468,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
       try{
         const compId=await bcGetCompanyId();
         if(!compId)return;
-        const r=await fetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${project.bcCustomerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${project.bcCustomerNumber}'&$select=number,displayName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!r.ok)return;
         const cust=((await r.json()).value||[])[0];
         if(!cust||!cust.displayName)return;
@@ -31928,7 +31955,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     if(spMatch?.E_Mail)designerEmail=spMatch.E_Mail;
                     if(!designerEmail&&_bcToken){
                       try{
-                        const uR=await fetch(`${BC_ODATA_BASE}/User?$filter=User_Name eq '${designerCode}'&$select=User_Name,Contact_Email&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                        const uR=await bcGatedFetch(`${BC_ODATA_BASE}/User?$filter=User_Name eq '${designerCode}'&$select=User_Name,Contact_Email&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                         if(uR.ok){const uD=((await uR.json()).value||[])[0];if(uD?.Contact_Email)designerEmail=uD.Contact_Email;}
                       }catch(e){}
                     }
@@ -34948,7 +34975,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(projectPage){
           // DECISION(v1.19.400): Fetch all fields from BC project card — $select with specific field names
           // causes 400 errors when CCS_ prefixed fields don't match across BC configurations.
-          const pr=await fetch(`${BC_ODATA_BASE}/${projectPage}?$filter=No eq '${proj.bcProjectNumber}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+          const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${projectPage}?$filter=No eq '${proj.bcProjectNumber}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(pr.ok){
             const bc=((await pr.json()).value||[])[0];
             if(bc){
@@ -34960,7 +34987,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(!addr&&bc.Sell_to_Customer_No){
                 try{
                   const compId2=await bcGetCompanyId();
-                  const custR=await fetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${bc.Sell_to_Customer_No}'&$select=addressLine1,addressLine2,city,state,postalCode,phoneNumber,email,taxAreaDisplayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  const custR=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${bc.Sell_to_Customer_No}'&$select=addressLine1,addressLine2,city,state,postalCode,phoneNumber,email,taxAreaDisplayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                   if(custR.ok){
                     const cust=((await custR.json()).value||[])[0];
                     if(cust){
@@ -34983,7 +35010,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               if(compId&&(contactNo||custName)&&!proj.bcContactNo&&!q.contact){
                 try{
                   const cFilter=custName?`companyName eq '${custName.replace(/'/g,"''")}'`:`number eq '${contactNo}'`;
-                  const cr=await fetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${cFilter}&$select=number,displayName,email,phoneNumber,companyName&$top=10`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${cFilter}&$select=number,displayName,email,phoneNumber,companyName&$top=10`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                   if(cr.ok){
                     const contacts=(await cr.json()).value||[];
                     const people=contacts.filter(c=>c.displayName!==c.companyName);
@@ -35013,18 +35040,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 try{
                   const custNo=bc.Bill_to_Customer_No||bc.Sell_to_Customer_No;
                   const compId2=await bcGetCompanyId();
-                  const custR=await fetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${custNo}'&$select=number,paymentTermsId,shipmentMethodId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  const custR=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${custNo}'&$select=number,paymentTermsId,shipmentMethodId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                   if(custR.ok){
                     const cust=((await custR.json()).value||[])[0];
                     if(cust){
                       // Resolve payment terms from ID to code
                       if(!pmtTerms&&cust.paymentTermsId){
-                        try{const ptr=await fetch(`${BC_API_BASE}/companies(${compId2})/paymentTerms(${cust.paymentTermsId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                        try{const ptr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/paymentTerms(${cust.paymentTermsId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                           if(ptr.ok){const pt=await ptr.json();pmtTerms=pt.code||pt.displayName||"";}}catch(e){}
                       }
                       // Resolve shipment method from ID to code
                       if(!shipMethod&&cust.shipmentMethodId){
-                        try{const smr=await fetch(`${BC_API_BASE}/companies(${compId2})/shipmentMethods(${cust.shipmentMethodId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                        try{const smr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/shipmentMethods(${cust.shipmentMethodId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                           if(smr.ok){const sm=await smr.json();shipMethod=sm.code||sm.displayName||"";}}catch(e){}
                       }
                     }
@@ -35046,7 +35073,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 const spPageNames=["Salesperson_Purchaser","SalespersonPurchaser","Salesperson","Salesperson_Card","SalespersonCard"];
                 for(const spn of spPageNames){
                   try{
-                    const spR=await fetch(`${BC_ODATA_BASE}/${spn}?$filter=Code eq '${spCode}'&$select=Code,Name,E_Mail,Phone_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                    const spR=await bcGatedFetch(`${BC_ODATA_BASE}/${spn}?$filter=Code eq '${spCode}'&$select=Code,Name,E_Mail,Phone_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                     if(spR.ok){
                       const spRec=((await spR.json()).value||[])[0];
                       if(spRec){
@@ -35061,7 +35088,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 if(!spResolved){
                   // Fallback: SalesOrdersBySalesPerson (only has name, no phone/email)
                   try{
-                    const spR=await fetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                    const spR=await bcGatedFetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
                     if(spR.ok){const spName=((await spR.json()).value||[])[0]?.SalesPersonName||"";if(spName)autoFields.salesperson=spName;}
                   }catch(e){}
                 }
@@ -35217,7 +35244,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p));
       if(!planPage){setAutoPrint(true);setView("quote");return;}
       let FP_NO="Project_No";
-      const pr=await fetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec))FP_NO="Job_No";}
       const allBom=(proj.panels||[]).flatMap(p=>(p.bom||[]).filter(r=>!r.isLaborRow));
       // DECISION(v1.19.420): Check both item count AND pricing between ARC and BC planning lines.
@@ -35227,7 +35254,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const pan=proj.panels[i];
         const n=i+1,taskNo=String(20000+n*100+10);
         const taskNoField=FP_NO==="Project_No"?"Project_Task_No":"Job_Task_No";
-        const bcR=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${bcNum}' and ${taskNoField} eq '${taskNo}'&$select=Line_No,No,Quantity,Unit_Cost,Unit_Price,Description`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const bcR=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${bcNum}' and ${taskNoField} eq '${taskNo}'&$select=Line_No,No,Quantity,Unit_Cost,Unit_Price,Description`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!bcR.ok)continue;
         const bcLines=(await bcR.json()).value||[];
         // Check line 10000 sell price matches ARC
@@ -36089,7 +36116,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             try{
               // Fetch all vendors from BC to resolve names → numbers
               const compId=await bcGetCompanyId();
-              const vr=await fetch(`${BC_API_BASE}/companies(${compId})/vendors?$select=number,displayName&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+              const vr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors?$select=number,displayName&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
               const vendors=vr.ok?(await vr.json()).value||[]:[];
               for(const alt of altSources){
                 if(!alt.chosenPrice||alt.chosenPrice<=0)continue;
@@ -37376,7 +37403,7 @@ async function startVendorSync(uid,dkVendor,mouserVendor){
     _vSyncNotify();
     const allItems=[];let skip=0;
     while(!_vSync.abort){
-      const r=await fetch(`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code&$top=200&$skip=${skip}`,
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$select=No,Description,Manufacturer_Code&$top=200&$skip=${skip}`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(!r.ok)break;
       const batch=(await r.json()).value||[];
@@ -37500,7 +37527,7 @@ function VendorPricingSyncPanel({uid}){
       let partsFiltered=partsList.length>0;
       if(!partsFiltered){
         // PARTS group not set up yet — load all vendors
-        const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500`,
+        const r=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500`,
           {headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!r.ok){const txt=await r.text();setVendorLoadErr(`BC ${r.status}: ${txt.slice(0,200)}`);setLoadingVendors(false);return;}
         list=(await r.json()).value||[];
@@ -39355,7 +39382,7 @@ function NewProjectModal({uid,onCreated,onClose}){
     setCustomerSearching(false);
     // Load salespersons from BC OData
     try{
-      const spR=await fetch(`${BC_ODATA_BASE}/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const spR=await bcGatedFetch(`${BC_ODATA_BASE}/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(spR.ok){
         const spData=(await spR.json()).value||[];
         setSalespersons(spData);
@@ -39375,7 +39402,7 @@ function NewProjectModal({uid,onCreated,onClose}){
       const allPages=await bcDiscoverODataPages();
       const resPage=allPages.find(p=>/resource/i.test(p));
       if(resPage){
-        const resR=await fetch(`${BC_ODATA_BASE}/${resPage}?$select=No,Name,Type&$filter=Type eq 'Person'&$top=100`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const resR=await bcGatedFetch(`${BC_ODATA_BASE}/${resPage}?$select=No,Name,Type&$filter=Type eq 'Person'&$top=100`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(resR.ok){
           const rList=(await resR.json()).value.map(r=>({Code:r.No,Name:r.Name||r.No}));
           setResourceList(rList);window._arcResourceCache=rList;
@@ -39387,13 +39414,13 @@ function NewProjectModal({uid,onCreated,onClose}){
     // Try User page first (has Full_Name), fall back to UserSetup (has User_ID only).
     try{
       let dList=null;
-      const uR=await fetch(`${BC_ODATA_BASE}/User?$select=User_Name,Full_Name&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const uR=await bcGatedFetch(`${BC_ODATA_BASE}/User?$select=User_Name,Full_Name&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(uR.ok){
         dList=(await uR.json()).value.filter(u=>u.User_Name&&!/^USER_/i.test(u.User_Name)&&!/^BC\./i.test(u.User_Name)).map(u=>({Code:u.User_Name,Name:u.Full_Name&&!u.Full_Name.startsWith('user_')?u.Full_Name:u.User_Name}));
         console.log("User list loaded (page 774):",dList.length,"users");
       }
       if(!dList||!dList.length){
-        const usR=await fetch(`${BC_ODATA_BASE}/UserSetup?$select=User_ID&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const usR=await bcGatedFetch(`${BC_ODATA_BASE}/UserSetup?$select=User_ID&$top=200`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(usR.ok){
           dList=(await usR.json()).value.filter(u=>u.User_ID).map(u=>({Code:u.User_ID,Name:u.User_ID}));
           console.log("UserSetup fallback loaded:",dList.length,"users");
@@ -42130,7 +42157,7 @@ function VendorsPanel({uid,onVendorAdded}){
       try{
         const allPages=await bcDiscoverODataPages();
         const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-        await fetch(`${BC_ODATA_BASE}/${vPage}('${vendorNo}')`,{
+        await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}('${vendorNo}')`,{
           method:'PATCH',
           headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
           body:JSON.stringify({Search_Name:clean})
@@ -42146,7 +42173,7 @@ function VendorsPanel({uid,onVendorAdded}){
     try{
       const allPages=await bcDiscoverODataPages();
       const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-      const r=await fetch(`${BC_ODATA_BASE}/${vPage}('${vendorNo}')`,{
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}('${vendorNo}')`,{
         method:'PATCH',
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
         body:JSON.stringify({Vendor_Posting_Group:newVPG})
@@ -42220,7 +42247,7 @@ function VendorsPanel({uid,onVendorAdded}){
         const v=toRemove[i];
         setDupProgress(`Removing ${i+1}/${toRemove.length}: ${v.number||v.displayName}…`);
         try{
-          const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors(${v.id})`,{
+          const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors(${v.id})`,{
             method:"DELETE",
             headers:{"Authorization":`Bearer ${_bcToken}`}
           });
@@ -42252,7 +42279,7 @@ function VendorsPanel({uid,onVendorAdded}){
       const allPages=await bcDiscoverODataPages();
       const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor_Card_Excel';
       // Fetch all vendors
-      const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500`,
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name,Vendor_Posting_Group&$top=500`,
         {headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(!r.ok)throw new Error(`BC ${r.status}`);
       const all=(await r.json()).value||[];
@@ -42261,7 +42288,7 @@ function VendorsPanel({uid,onVendorAdded}){
       let patched=0;const errors=[];const log=[];
       for(let i=0;i<toPatch.length;i++){
         const v=toPatch[i];
-        const pr=await fetch(`${BC_ODATA_BASE}/${vPage}('${v.No}')`,{
+        const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}('${v.No}')`,{
           method:'PATCH',
           headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
           body:JSON.stringify({Vendor_Posting_Group:'PARTS'})
@@ -42404,7 +42431,7 @@ function VendorsPanel({uid,onVendorAdded}){
       if(!compId)throw new Error("Could not resolve BC company");
       // Step 1 — Create vendor via REST API v2.0 (OData POST is read-only for vendors)
       const body={displayName:newName.trim().slice(0,100)};
-      const r=await fetch(`${BC_API_BASE}/companies(${compId})/vendors`,{
+      const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/vendors`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify(body)
@@ -42427,7 +42454,7 @@ function VendorsPanel({uid,onVendorAdded}){
           if(newVendorPosting)patch.Vendor_Posting_Group=newVendorPosting;
           if(newTaxArea)patch.Tax_Area_Code=newTaxArea;
           if(newCode.trim())patch.Search_Name=newCode.trim().toUpperCase().slice(0,10);
-          const pr=await fetch(`${BC_ODATA_BASE}/${vPage}('${createdNo}')`,{
+          const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}('${createdNo}')`,{
             method:"PATCH",
             headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
             body:JSON.stringify(patch)
@@ -42660,7 +42687,7 @@ async function bcFetchVendorMap(){
   try{
     const allPages=await bcDiscoverODataPages();
     const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
-    const r=await fetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=500`,
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=500`,
       {headers:{"Authorization":`Bearer ${_bcToken}`}});
     if(!r.ok)return{};
     const list=(await r.json()).value||[];
@@ -42707,7 +42734,7 @@ async function bcFetchManufacturers(){
     const allPages=await bcDiscoverODataPages();
     const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
     if(mPage){
-      const r=await fetch(`${BC_ODATA_BASE}/${mPage}?$select=Code,Name&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}?$select=Code,Name&$top=500`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
       if(r.ok){(await r.json()).value?.forEach(m=>bcCodes.set(m.Code,m.Name));bcFetchOk=true;}
       else console.warn("bcFetchManufacturers: BC returned",r.status);
     }
@@ -42861,13 +42888,13 @@ function ItemsTab({uid}){
       const allPages=await bcDiscoverODataPages();
       const mPage=allPages.find(n=>n==='Manufacturer'||n==='Manufacturers');
       if(mPage){
-        const chk=await fetch(`${BC_ODATA_BASE}/${mPage}?$filter=Code eq '${code}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const chk=await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}?$filter=Code eq '${code}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(chk.ok){
           const existing=(await chk.json()).value||[];
           if(!existing.length){
             const mfrName=BC_MFR_MAP.find(m=>m.code===code)?.terms[0]||code;
             const name=mfrName.split(' ').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ');
-            await fetch(`${BC_ODATA_BASE}/${mPage}`,{method:'POST',headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
+            await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}`,{method:'POST',headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
           }
         }
       }
@@ -43792,7 +43819,7 @@ INSTRUCTIONS:
         if(!t){bcOnlinePrev.current=false;setBcOnline(false);return;}
       }
       try{
-        const r=await fetch(`${BC_API_BASE}/companies?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        const r=await bcGatedFetch(`${BC_API_BASE}/companies?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(r.status===401){
           // Token expired — try silent refresh before alarming user
           const t=await acquireBcToken(false);
