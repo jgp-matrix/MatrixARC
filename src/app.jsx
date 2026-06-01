@@ -871,8 +871,8 @@ function flattenEcosIntoBom(panel,ecoSummary){
         if(!base)continue; // Base removed by prior ECO — skip
         const orig=row.ecoOriginal||{};
         const merged={...base};
-        // Qty is a signed delta. qty===0 means "no qty change"
-        if((+row.qty||0)!==0){merged.qty=(+base.qty||0)+(+row.qty||0);}
+        // Qty is a signed delta. qty===0 means "no qty change". Floor at 0 to prevent negative.
+        if((+row.qty||0)!==0){merged.qty=Math.max(0,(+base.qty||0)+(+row.qty||0));}
         // Other fields: if changed from original, take the ECO value
         for(const f of["partNumber","description","manufacturer","unitPrice"]){
           if((row[f]??"")!==(orig[f]??"")){merged[f]=row[f];}
