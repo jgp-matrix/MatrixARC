@@ -22091,11 +22091,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(changed){onUpdate(synced);try{onSaveImmediate(synced);}catch(e){}}
   },[panel.id]);
   const _bcReVerifyRan=useRef(null);
+  const REVERIFY_COOLDOWN_MS=5*60*1000; // 5-minute cooldown per panel (#65c)
   useEffect(()=>{
     if(!_bcToken)return;
     const bom=panel.bom||[];
     const stale=bom.filter(r=>r.bcVerify&&r.bcVerify.status==="not-in-bc"&&!r.isLaborRow&&!r.isContingency&&(r.partNumber||"").trim());
     if(!stale.length)return;
+    // #65c: Skip re-verify if this panel was re-verified within the cooldown window
+    if(panel._lastReVerifyAt&&(Date.now()-panel._lastReVerifyAt)<REVERIFY_COOLDOWN_MS)return;
     const key=panel.id+":"+stale.map(r=>r.id).sort().join(",");
     if(_bcReVerifyRan.current===key)return;
     _bcReVerifyRan.current=key;
@@ -22104,7 +22107,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const updates=await _bcReVerifyNotInBc(bom);
       if(cancelled||!updates)return;
       const updatedBom=bom.map(r=>{const u=updates[String(r.id)];return u?{...r,...u}:r;});
-      const updated={...latestPanelRef.current,bom:updatedBom};
+      const updated={...latestPanelRef.current,bom:updatedBom,_lastReVerifyAt:Date.now()};
       latestPanelRef.current=updated;
       onUpdate(updated);
       try{onSaveImmediate(updated);}catch(e){}
@@ -34787,7 +34790,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           const p=init.panels[i];
           const curHash=computePanelBomHash(p);
           if(curHash===(p.bomSyncHash||"")){continue;} // Already synced
-          try{await bcSyncPanelPlanningLines(bcNum,i+1,p,init.name);synced++;}catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
+          try{
+            await bcSyncPanelPlanningLines(bcNum,i+1,p,init.name);
+            synced++;
+            // #65b: Persist bomSyncHash so next open skips this panel if BOM unchanged.
+            // Uses saveProjectPanel (same as manual sync path) to write just the hash.
+            const hashed={...p,bomSyncHash:curHash};
+            init.panels[i]=hashed;
+            saveProjectPanel(uid,init.id,p.id,hashed,true).catch(e=>console.warn("Open BC sync hash save failed panel",i+1,":",e));
+          }catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
         }
         if(synced>0)console.log("OPEN BC SYNC:",synced,"panels synced for",bcNum);
         else console.log("OPEN BC SYNC: all panels already in sync for",bcNum);

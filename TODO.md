@@ -1223,3 +1223,30 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
     Priority: LOWER — after the actual throttling improvements (#64) ship.
     Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
+
+69. **OPEN** — Posting-group auto-fix fails on service items (BUYOFF, Contingency).
+    `bcSyncPanelPlanningLines` attempts to patch Gen. Prod. Posting Group on every planning line
+    that mismatches, but service-type items (BUYOFF, Contingency, Crate) have a different posting
+    group structure in BC. The PATCH returns 400, logged as "posting group fix failed" in console.
+    Non-blocking (sync continues), but generates noisy errors on every sync for panels with
+    service items.
+
+    Required behavior: Skip posting-group auto-fix for rows matching `isServiceItem()` criteria
+    (same pattern as `scanBomForArchiveIssues`). Already skipped during restore via F3's
+    `opts.skipPostingGroupFix`, but the normal open-sync path still fires it.
+
+    Priority: LOW — cosmetic console noise, no data impact.
+    Discovered: Phase B investigation, 2026-06-01.
+
+70. **OPEN** — bcFetchCustomerContacts 400 on specific customer C10114. Opening projects tied to
+    customer C10114 triggers a 400 from the BC `customerContacts` endpoint. Other customers work
+    fine. Likely a data-quality issue in BC (malformed contact record or missing required field on
+    the BC side), but ARC doesn't handle the 400 gracefully — it logs a console error and
+    silently skips contact population.
+
+    Required behavior: Wrap bcFetchCustomerContacts in a try/catch that degrades gracefully
+    (empty contacts array, no error noise). Optionally log the specific customer number to debug
+    logs for BC admin follow-up.
+
+    Priority: LOW — only affects one customer, non-blocking.
+    Discovered: Phase B investigation, 2026-06-01.
