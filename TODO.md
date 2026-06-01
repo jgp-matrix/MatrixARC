@@ -1132,3 +1132,21 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: Medium-high. Not blocking Milestone C (read-only preview, Restore button disabled).
     Should be resolved before Milestone D ships so restore execution writes BC-truth descriptions,
     not scanned text.
+
+63. **OPEN** — Archive availability incorrectly gated by project status. Archive option is
+    locked/disabled for projects in "Quote Sent" status (and possibly other statuses — needs
+    investigation). Archive is a non-destructive snapshot operation that does NOT modify the
+    source project. There is no business reason to restrict it by status — it should be
+    available in ALL project statuses with no restrictions.
+
+    Investigation needed:
+    - Identify all status-based gates on archive availability (button visibility, menu items,
+      keyboard shortcuts, action bar conditions)
+    - Verify whether the bulk archive admin action has the same status gates
+    - Map the full set of statuses that currently block archive
+
+    Fix scope: Remove status checks from archive availability logic. Straightforward once the
+    gates are identified.
+
+    Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
+    Priority: Defer to Milestone D wind-down or Milestone E.
