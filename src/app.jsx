@@ -2827,27 +2827,51 @@ async function bcCreatePanelTaskStructure(projectNumber, projectName, panels){
     return t;
   }
 
-  // Probe: try first task with Project_ fields; auto-fall back to Job_ if BC rejects Project_No
+  // Probe: try first task with Project_ fields; auto-fall back to Job_ if BC rejects Project_No.
+  // TODO #66 (v1.20.56): Probe-before-create for every task — prevents "EntityWithSameKeyExists"
+  // 400 errors when resuming a partial restore that already created some tasks.
   async function postTasks(prefix){
     const tasks=buildTasks(prefix);
+    const noField=`${prefix}_No`;
     const taskNoField=`${prefix}_Task_No`;
-    let created=0;
+    let created=0,skipped=0;
     for(const task of tasks){
+      const taskNo=task[taskNoField];
+      // Probe: check if this task already exists by compound key
+      try{
+        const probeUrl=`${BC_ODATA_BASE}/${taskPage}(${noField}='${encodeURIComponent(projectNumber)}',${taskNoField}='${encodeURIComponent(taskNo)}')`;
+        const probe=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+        if(probe.ok){
+          skipped++;
+          console.log(`bcCreatePanelTaskStructure: task ${taskNo} already exists, skipping`);
+          continue;
+        }
+        // If probe returns 400 on the first task with Project_ fields, fall back to Job_
+        if(created===0&&skipped===0&&prefix==="Project"&&probe.status===400){
+          const probeTxt=await probe.text();
+          if(probeTxt.includes("'Project_No' does not exist")){
+            console.log("bcCreatePanelTaskStructure: Project_No rejected on probe, retrying with Job_No");
+            return postTasks("Job");
+          }
+        }
+        // 404 or other non-OK = task doesn't exist, proceed to POST
+      }catch(_){/* probe failed — fall through to POST attempt */}
       const r=await fetch(`${BC_ODATA_BASE}/${taskPage}`,{
         method:"POST",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
         body:JSON.stringify(task)
       });
-      if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${task[taskNoField]} created (${prefix}_No)`);}
+      if(r.ok){created++;console.log(`bcCreatePanelTaskStructure: task ${taskNo} created (${noField})`);}
       else{
         const txt=await r.text();
-        if(created===0&&prefix==="Project"&&txt.includes("'Project_No' does not exist")){
+        if(created===0&&skipped===0&&prefix==="Project"&&txt.includes("'Project_No' does not exist")){
           console.log("bcCreatePanelTaskStructure: Project_No rejected, retrying with Job_No");
           return postTasks("Job");
         }
-        console.warn(`bcCreatePanelTaskStructure: task ${task[taskNoField]} failed (${r.status}):`,txt);
+        console.warn(`bcCreatePanelTaskStructure: task ${taskNo} failed (${r.status}):`,txt);
       }
     }
+    if(skipped>0)console.log(`bcCreatePanelTaskStructure: ${created} created, ${skipped} already existed (idempotent)`);
     return created;
   }
 
