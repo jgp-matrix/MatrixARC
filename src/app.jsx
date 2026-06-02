@@ -10153,7 +10153,7 @@ function _ensurePdfLib(){
   _pdfLibPromise=import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm").catch(e=>{_pdfLibPromise=null;throw e;});
   return _pdfLibPromise;
 }
-async function loadOriginalPdfAsBase64(storagePath,pageNumber){
+async function loadOriginalPdfAsBase64(storagePath,pageNumber,bomRegion=null){
   if(!fbStorage||!storagePath)throw new Error("No PDF path provided");
   const ref=fbStorage.ref(storagePath);
   const url=await ref.getDownloadURL();
@@ -10169,8 +10169,24 @@ async function loadOriginalPdfAsBase64(storagePath,pageNumber){
   const singlePdf=await pdfLib.PDFDocument.create();
   const [copied]=await singlePdf.copyPages(fullPdf,[pageNumber-1]);
   singlePdf.addPage(copied);
+  // FIX(#82): Apply PDF CropBox when bomRegion is present — matches server logic at
+  // functions/index.js:2383-2398. Preserves native PDF quality instead of JPEG crop.
+  let pdfCropped=false;
+  if(bomRegion&&bomRegion.x!=null&&bomRegion.y!=null&&bomRegion.w>0&&bomRegion.h>0){
+    try{
+      const pg=singlePdf.getPage(0);
+      const{width:pgW,height:pgH}=pg.getSize();
+      const cropX=Math.round(bomRegion.x*pgW);
+      const cropY=Math.round((1-bomRegion.y-bomRegion.h)*pgH);
+      const cropW=Math.round(bomRegion.w*pgW);
+      const cropH=Math.round(bomRegion.h*pgH);
+      pg.setCropBox(cropX,cropY,cropW,cropH);
+      pdfCropped=true;
+      console.log(`[PDF SLICE] CropBox applied: ${cropX},${cropY} ${cropW}×${cropH} (page ${pgW}×${pgH})`);
+    }catch(e){console.warn("[PDF SLICE] CropBox failed, using full page:",e.message);}
+  }
   const singleBytes=await singlePdf.save();
-  console.log(`[PDF SLICE] page ${pageNumber}/${totalPages}: ${Math.round(fullBuf.byteLength/1024)}KB → ${Math.round(singleBytes.length/1024)}KB`);
+  console.log(`[PDF SLICE] page ${pageNumber}/${totalPages}: ${Math.round(fullBuf.byteLength/1024)}KB → ${Math.round(singleBytes.length/1024)}KB${pdfCropped?" (cropped)":""}`);
   const blob=new Blob([singleBytes],{type:"application/pdf"});
   return await new Promise((resolve,reject)=>{
     const fr=new FileReader();
@@ -11741,10 +11757,19 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // Server-side path FIRST. On error, falls through to direct API.
   try{
     const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion);
-    if((serverResult.items||[]).length===0&&originalPdfPath&&pageNumber&&croppedBomDataUrl){
-      console.warn("[BOM EXTRACT] server PDF-native returned 0 items — retrying via crop fallback");
-      try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null);}
-      catch(retryErr){console.warn("[BOM EXTRACT] crop fallback retry also failed:",retryErr?.message||retryErr);}
+    if((serverResult.items||[]).length===0&&originalPdfPath&&pageNumber){
+      // FIX(#82): When PDF-native returns 0 items on a BOM-classified page, retry
+      // with full-res PDF CropBox (bomRegion) — NOT the lossy JPEG crop.
+      // Priority: bomRegion (user/AI) → JPEG crop (last resort, lossy).
+      if(bomRegion){
+        console.warn(`[BOM EXTRACT] server PDF-native returned 0 items — retrying with full-res PDF CropBox (${bomRegion.source||"region"})`);
+        try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion);}
+        catch(retryErr){console.warn("[BOM EXTRACT] PDF CropBox retry also failed:",retryErr?.message||retryErr);}
+      } else if(croppedBomDataUrl){
+        console.warn("[BOM EXTRACT] server PDF-native returned 0 items, no bomRegion for CropBox — JPEG crop fallback (lossy)");
+        try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null);}
+        catch(retryErr){console.warn("[BOM EXTRACT] JPEG crop fallback also failed:",retryErr?.message||retryErr);}
+      }
     }
     // Degenerate-crop retry: if bomRegion was applied and ALL results are placeholder,
     // retry without crop — the crop likely cut off essential content (e.g. PN column)
@@ -11786,11 +11811,13 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // Native PDF extraction — preferred when available (vector text, no JPEG artifacts).
   if(originalPdfPath&&pageNumber){
     try{
-      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath,pageNumber);
+      // FIX(#82): Apply CropBox to client-side PDF when bomRegion present — matches server path
+      const pdfBase64=await loadOriginalPdfAsBase64(originalPdfPath,pageNumber,bomRegion);
       const feedbackSection=feedback?`\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.`:"";
       const notesSection=userNotes?`\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.`:"";
-      const pageHint=`Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
-      console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}`);
+      const cropHint=bomRegion?'This PDF has been cropped to show ONLY the BOM table region. ':'';
+      const pageHint=`${cropHint}Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+      console.log(`[BOM EXTRACT] using native PDF input — page ${pageNumber}, pdf=${originalPdfPath}${bomRegion?" (CropBox applied)":""}`);
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
