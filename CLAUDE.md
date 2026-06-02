@@ -7,7 +7,8 @@
 - [Commit destination](#commit-destination)
 - [Parallel Claude session workflow](#parallel-claude-session-workflow)
 - [Multi-instance workflow](#multi-instance-workflow) — CCD/Coach/Jon roles, file ownership, H-item discipline
-- [Pushover notification behavior](#pushover-notification-behavior) — when to fire phone notifications, source prefixes (ARC DEV / COACH / DEPLOY)
+- [Three-role naming](#three-role-workflow-naming) — Freddy Lyst, Marc Masdev, Sam Wize
+- [Pushover notification behavior](#pushover-notification-behavior) — when to fire phone notifications, source prefixes (MARC / COACH / DEPLOY)
 - [Superpowers skills](#superpowers-skills-available-manual-load-local)
 - [Project Overview](#project-overview) — architecture, deploy, versioning
 - [Troubleshooting](#troubleshooting--first-line-of-defence) — always check ARC Debug Logs first
@@ -182,12 +183,12 @@ Three Claude instances plus Jon operate against this codebase with distinct role
 
 ### Roles
 
-| Instance | Role | Owns |
-|----------|------|------|
-| **CCD** (Claude Code IDE) | Implementation, empirical investigation, regression testing, deploys | Source code, test artifacts, H{N}-PLAN.md files |
-| **Coach** (separate CC terminal) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
-| **Jon** | Priority decisions, plan approval, final sign-off | All approval gates |
-| **Claude.ai** (browser conversation) | Outside-the-repo strategic perspective | No file ownership |
+| Instance | Character | Role | Owns |
+|----------|-----------|------|------|
+| **CCD** (Claude Code IDE) | **Marc Masdev** (Marc) | Implementation, empirical investigation, regression testing, deploys | Source code, test artifacts, H{N}-PLAN.md files |
+| **Coach** (Claude Code Terminal) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
+| **Jon** | — | Priority decisions, plan approval, final sign-off | All approval gates |
+| **Claude.ai** (browser chat) | **Freddy Lyst** (Freddy) | Analyst — drafts Briefs, architectural reviews | No file ownership |
 
 ### File ownership boundaries
 
@@ -218,6 +219,18 @@ Trivial fixes (typos, single-line config changes, report-field corrections) skip
 - **C{N}**: Coach findings logged in `COACH.md` (C1-C13, etc.)
 - **H{N}-PLAN.md**: Implementation plan for work item H{N}
 
+## Three-Role Workflow Naming
+
+Jon's project uses a three-role workflow with named roles:
+
+1. **Freddy Lyst** (called "Freddy") — Analyst role, drafts Briefs and provides architectural review. Lives in Claude.ai chat. No repo access.
+2. **Marc Masdev** (called "Marc") — Developer role, implements code changes. Lives in CCD with repo access. Was previously called "ARC Dev."
+3. **Sam Wize** (called "Coach") — Senior Development Engineer, Architecture. Performs codebase investigation, writes Supplements and Detailed Plans. Lives in Claude Code Terminal with repo access.
+
+In conversation and notifications, use "Freddy", "Marc", and "Coach". In formal document author/attribution fields, use full names "Freddy Lyst", "Marc Masdev", "Sam Wize".
+
+Pushover notification prefixes: `FREDDY:`, `MARC:`, `COACH:`.
+
 ## Pushover notification behavior
 
 Fire a Pushover notification at the completion of major tasks so the user knows to return to the desk. All Claude sessions (CCD, Coach) follow these rules.
@@ -234,8 +247,8 @@ Call `notify.ps1` directly through the Bash tool. This fires to Pushover uncondi
 
 ### Source prefix (REQUIRED)
 Every notification message MUST begin with a source prefix so Jon knows which session sent it and can route to the right interface:
-- **`ARC DEV:`** — Claude Code Desktop sessions (implementation, planning documents, code writing, deploys)
-- **`COACH:`** — Claude Code Terminal sessions (verification, architecture review, code audit)
+- **`MARC:`** — Marc Masdev / Claude Code Desktop sessions (implementation, planning documents, code writing, deploys)
+- **`COACH:`** — Sam Wize / Claude Code Terminal sessions (verification, architecture review, code audit)
 - **`DEPLOY:`** — used by `deploy.sh` directly for deploy completions (Priority 1)
 
 ### Fire notification for (major tasks):
@@ -259,8 +272,8 @@ Every notification message MUST begin with a source prefix so Jon knows which se
 ### Message format:
 `[SOURCE]: [brief description]`. Examples:
 - `"COACH: Milestone D verification report complete"`
-- `"ARC DEV: Plan v3 with R1-R8 refinements ready"`
-- `"ARC DEV: Phase 4 implementation deployed, smoke test pending"`
+- `"MARC: Plan v3 with R1-R8 refinements ready"`
+- `"MARC: Phase 4 implementation deployed, smoke test pending"`
 - `"COACH: Hotfix spec finalized"`
 - `"DEPLOY: v1.20.42 deployed (commit a3e4d25e)"`
 
