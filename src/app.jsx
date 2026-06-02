@@ -41465,13 +41465,13 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
   }
 
   // ── Phase 3: Confirm handler + restore execution runner ──
-  async function runRestore(){
+  async function runRestore(resolvedVendors,resolvedCustomer){
     setModalView("progress");
     setProgressSteps([]);
     setRestoreResult(null);
     window.onbeforeunload=(e)=>{e.preventDefault();return"Restore in progress — closing may leave incomplete data.";};
     try{
-      const remaps={customer:remapCustomer,vendors:remapVendors,items:remapItems};
+      const remaps={customer:resolvedCustomer||remapCustomer,vendors:resolvedVendors||remapVendors,items:remapItems};
       const result=await executeRestore(archive,remaps,{laborOverrides},(p)=>{
         setProgressSteps(prev=>[...prev,{...p,ts:Date.now()}]);
       });
@@ -41496,6 +41496,18 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
       if(v.action==="remap"&&!v.remapTo){setValidationError(`Item "${pn}" remap target is empty.`);return;}
     }
     setValidationError(null);
+    // F-1c.1: Resolve display names for remap targets from BC before restore runs.
+    // Preflight already proved BC is reachable; failure falls back to null (no regression).
+    const resolvedVendors=new Map(remapVendors);
+    for(const[vendorNo,v]of resolvedVendors){
+      if(v.action==="remap"&&v.remapTo&&!v.remapName){
+        try{const lv=await bcLookupVendor(v.remapTo);if(lv?.displayName)resolvedVendors.set(vendorNo,{...v,remapName:lv.displayName});}catch(e){}
+      }
+    }
+    let resolvedCustomer=remapCustomer;
+    if(remapCustomer?.remapTo&&!remapCustomer.remapName){
+      try{const lc=await bcLookupCustomer(remapCustomer.remapTo);if(lc?.displayName)resolvedCustomer={...remapCustomer,remapName:lc.displayName};}catch(e){}
+    }
     // Phase 2.3 B4: Warn user about missing items that will be skipped on restore.
     // Defense-in-depth for B1+B2 — user should explicitly acknowledge skipped items.
     const missingItems=(sectionResults.items||[]).filter(x=>x.costStatus==="missing");
@@ -41509,7 +41521,7 @@ function RestorePreviewModal({archive,mode,uid,onClose,onRestoreComplete}){
       );
       if(!proceed)return;
     }
-    runRestore();
+    runRestore(resolvedVendors,resolvedCustomer);
   }
 
   // ── Phase 3: Progress / failure / completion renderers (§4.3, Appendix A) ──
