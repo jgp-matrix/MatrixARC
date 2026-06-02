@@ -1179,8 +1179,9 @@ You MUST return one entry per requested item. Also include extra supplier items 
       });
     } catch (fetchErr) {
       clearTimeout(spTimer);
-      functions.logger.error('extractSupplierQuotePricing API timeout', { model: tryModel, error: fetchErr.message });
-      throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API timeout: ${fetchErr.message}`);
+      const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
+      functions.logger.error('extractSupplierQuotePricing API error', { model: tryModel, error: fetchErr.message, isTimeout });
+      throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out (480s)' : 'network error'}: ${fetchErr.message}`);
     }
     clearTimeout(spTimer);
     if (response.ok) {
