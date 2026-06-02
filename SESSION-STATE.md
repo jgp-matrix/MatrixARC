@@ -16,7 +16,7 @@ v1.20.80 (deployed 2026-06-02)
 - cafbd49e docs: add FREDDY.md for new Claude.ai session continuity
 
 ## Active Work
-- [IN VERIFICATION] #77/#78 — Pre-extraction page mgmt (shipped v1.20.80, 91f180d9). Awaiting Jon + Noah field-verify of 5-test plan. Do NOT mark closed until tests pass. Docs: PRE-EXTRACTION-PAGE-MGMT-DESIGN.md, PRE-EXTRACTION-PAGE-MGMT-ANALYST-REVIEW.md
+- [DONE] #77/#78 — Pre-extraction page mgmt — shipped v1.20.80, field-verified by Jon + Noah (all 5 tests pass, incl. navigate-away-return #77 symptom check). Delete-based page management per Jon's 5-step flow. Docs: PRE-EXTRACTION-PAGE-MGMT-DESIGN.md, PRE-EXTRACTION-PAGE-MGMT-ANALYST-REVIEW.md
 - [CRITICAL] F-2d.1 — 46 BC fetch calls bypass bcGatedFetch semaphore (not started in working tree; prior partial work was committed in v1.20.76-79 releases)
 - [CRITICAL] F-1g.1 — "AI missed" message misleading for dedup gaps (not started)
 - [DONE] Cross-session Freddy continuity — FREDDY.md startup directive (conversation_search first), CLAUDE.md step 6c (durable-record check), COACH.md close-out discipline (shipped 91f180d9, docs only)
