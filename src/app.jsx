@@ -13889,8 +13889,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
         const raw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
         const positional=positionalMergeBomItems(raw);
-        const map={};
-        positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
+        const map={};const exactMerges=[];
+        positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);exactMerges.push({keptItemNo:String(map[key].itemNo||map[key].item||"").replace(/\D/g,""),droppedItemNo:itemNo,keptPn:map[key].partNumber,droppedPn:item.partNumber});console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
         const exact=Object.values(map);
         const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
         const fuzzy=fuzzyReport.items;
@@ -13931,7 +13931,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // DECISION(v1.19.1057): Count L3-recovered items for extraction report
         const l3MergeRecovered=withCompanions.filter(it=>it._extractionRetried).length;
         const l3GapFillRecovered=withCompanions.filter(it=>it._extractionGapFill).length;
-        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,exactMerges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
       }).catch(ex=>{
         console.error("BOM extraction failed:",ex);
         // v1.19.983: surface the catch-all failure to remote debug logs so
@@ -14046,6 +14046,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       exactCount:mergeStats.exact,
       finalCount:mergeStats.fuzzy,
       fuzzyMerges:mergeStats.fuzzyMerges||[],
+      exactMerges:mergeStats.exactMerges||[],
       bomPageCount:bomPages.length,
       learnedCorrections:learnedLog.length, // DECISION(v1.19.626): surfaced in banner
       learnedCorrectionsLog:learnedLog.slice(-50),
@@ -21809,6 +21810,11 @@ function ScanResultsBanner({panel}){
   const r=panel.extractionReport;
   if(!r)return null;
   const fuzzyMerges=r.fuzzyMerges||[];
+  const exactMerges=r.exactMerges||[];
+  // Build consumed→survivor map: for each gap, can we explain it via a merge?
+  const consumedToSurvivor={};
+  for(const m of exactMerges){if(m.droppedItemNo)consumedToSurvivor[m.droppedItemNo]={survivorItemNo:m.keptItemNo,survivorPn:m.keptPn,source:"exact"};}
+  for(const m of fuzzyMerges){const dNo=String(m.droppedItemNo||"").replace(/\D/g,"");const kNo=String(m.keptItemNo||"").replace(/\D/g,"");if(dNo)consumedToSurvivor[dNo]={survivorItemNo:kNo,survivorPn:m.kept,source:"fuzzy"};}
   const duplicatesFound=Math.max(0,(r.rawCount||0)-(r.finalCount||0));
   const missingTitle=[];
   if(!panel.drawingNo)missingTitle.push("DWG #");
@@ -21868,10 +21874,13 @@ function ScanResultsBanner({panel}){
   const l3Recovered=(r.l3MergeRecovered||0)+(r.l3GapFillRecovered||0);
   if(l3Recovered>0)concerns.push(`✓ auto-retry recovered ${l3Recovered} item${l3Recovered>1?"s":""} the first pass missed`);
   // DECISION(v1.19.1056): Warn user about missing BOM line items (sequence gaps).
+  // FIX(F-1g.1): Split gaps into dedup-caused (green, non-alarming) vs genuine AI misses (red).
   const seqGaps=r.finalSequenceGaps||[];
   if(seqGaps.length>0){
-    const sample=seqGaps.slice(0,10).join(", ");
-    concerns.push(`⚠ ${seqGaps.length} missing item${seqGaps.length>1?"s":""} — line${seqGaps.length>1?"s":""} ${sample}${seqGaps.length>10?` (+${seqGaps.length-10} more)`:""} not found in extraction`);
+    const dedupGaps=seqGaps.filter(g=>consumedToSurvivor[String(g)]);
+    const aiGaps=seqGaps.filter(g=>!consumedToSurvivor[String(g)]);
+    if(dedupGaps.length>0)concerns.push(`${dedupGaps.length} duplicate${dedupGaps.length>1?"s":""} consolidated — ${dedupGaps.slice(0,8).map(g=>{const s=consumedToSurvivor[String(g)];return s?.survivorItemNo?`item ${g} → merged with ${s.survivorItemNo}`:`item ${g} consolidated`;}).join(", ")}${dedupGaps.length>8?` (+${dedupGaps.length-8} more)`:""}`);
+    if(aiGaps.length>0){const sample=aiGaps.slice(0,10).join(", ");concerns.push(`⚠ ${aiGaps.length} missing item${aiGaps.length>1?"s":""} — line${aiGaps.length>1?"s":""} ${sample}${aiGaps.length>10?` (+${aiGaps.length-10} more)`:""} not found in extraction`);}
   }
   if(concerns.length===0)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
@@ -21942,19 +21951,33 @@ function ScanResultsBanner({panel}){
           )}
           {/* DECISION(v1.19.646): Non-BOM rows filtered out — sheet identifiers, title-block
              artifacts, drawing-index references. Shown so user can see what was dropped. */}
-          {seqGaps.length>0&&(
+          {(()=>{const dedupGaps=seqGaps.filter(g=>consumedToSurvivor[String(g)]);const aiGaps=seqGaps.filter(g=>!consumedToSurvivor[String(g)]);return(<>
+          {dedupGaps.length>0&&(
+            <div style={{marginTop:10,padding:"8px 12px",background:"#1a2300",border:"1px solid #a3e63588",borderRadius:6}}>
+              <div style={{color:"#a3e635",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>🔀 Duplicates Consolidated ({dedupGaps.length})</div>
+              <div style={{color:"#d9f99d",fontSize:11,marginBottom:8,lineHeight:1.5}}>
+                These item numbers were merged with other rows during duplicate detection. No items were lost — the quantities were combined into the surviving row.
+              </div>
+              <div style={{color:"#d9f99d",fontSize:11,fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>
+                {dedupGaps.slice(0,30).map(g=>{const s=consumedToSurvivor[String(g)];return s?.survivorItemNo?`Item ${g} → merged with item ${s.survivorItemNo}`:`Item ${g} → duplicate consolidated`;}).join(" · ")}
+              </div>
+            </div>
+          )}
+          {aiGaps.length>0&&(
             <div style={{marginTop:10,padding:"8px 12px",background:"#3a0a0a",border:"1px solid #ef444488",borderRadius:6}}>
-              <div style={{color:"#fca5a5",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>⚠ Missing BOM Line Items ({seqGaps.length})</div>
+              <div style={{color:"#fca5a5",fontWeight:700,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:0.5}}>⚠ Missing BOM Line Items ({aiGaps.length})</div>
               <div style={{color:"#fecaca",fontSize:11,marginBottom:8,lineHeight:1.5}}>
                 The following drawing item numbers were not found in the extracted BOM. These items may have been missed by the AI scan. <strong>Spot-check the drawing to verify whether these items exist and add them manually if needed.</strong>
               </div>
               <div style={{color:"#fca5a5",fontSize:12,fontWeight:600,fontFamily:"ui-monospace,Menlo,Consolas,monospace"}}>
-                Missing items: {seqGaps.slice(0,30).join(", ")}{seqGaps.length>30?` (+${seqGaps.length-30} more)`:""}
+                Missing items: {aiGaps.slice(0,30).join(", ")}{aiGaps.length>30?` (+${aiGaps.length-30} more)`:""}
               </div>
               <div style={{color:"#fecaca",fontSize:10,marginTop:6}}>
-                Extracted {r.finalItemCount||0} items · highest item # is {r.finalMaxItemNo||"?"} · {seqGaps.length} gap{seqGaps.length>1?"s":""}
+                Extracted {r.finalItemCount||0} items · highest item # is {r.finalMaxItemNo||"?"} · {aiGaps.length} gap{aiGaps.length>1?"s":""}
               </div>
             </div>
+          )}
+          </>);})()}
           )}
           {nonBomRowsFiltered.length>0&&(
             <div style={{marginTop:10,padding:"8px 12px",background:"#1f0e2a",border:`1px solid #a78bfa55`,borderRadius:6}}>
@@ -23886,13 +23909,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
     const reRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
     const positionalDedup=positionalMergeBomItems(reRaw);
-    const map={};
+    const map={};const exactMerges=[];
     positionalDedup.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
       const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");
       const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);
       const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;
-      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged (now qty ${map[key].qty})`);}
+      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);exactMerges.push({keptItemNo:String(map[key].itemNo||map[key].item||"").replace(/\D/g,""),droppedItemNo:itemNo,keptPn:map[key].partNumber,droppedPn:item.partNumber});console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged (now qty ${map[key].qty})`);}
       else{map[key]={...item};}
     });
     const exactDedup=Object.values(map);
@@ -23943,7 +23966,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(_reSeqGaps.length>0)console.warn(`[RE-EXTRACT] sequence gaps in final BOM: items ${_reSeqGaps.join(", ")} missing`);
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
-      fuzzyMerges:fuzzyReport.merges,bomPageCount:bomPages.length,
+      fuzzyMerges:fuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
       learnedCorrections:reLearnedLog.length,
       learnedCorrectionsLog:reLearnedLog.slice(-50),
       snippetCorrectionCount:reSnippetCorrections.length,
@@ -24097,11 +24120,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
     const fbRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
     const fbPositional=positionalMergeBomItems(fbRaw);
-    const map={};
+    const map={};const exactMerges=[];
     fbPositional.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
       const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
-      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);}
+      const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");
+      if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);exactMerges.push({keptItemNo:String(map[key].itemNo||map[key].item||"").replace(/\D/g,""),droppedItemNo:itemNo,keptPn:map[key].partNumber,droppedPn:item.partNumber});}
       else{map[key]={...item};}
     });
     const fbExact=Object.values(map);
@@ -24146,7 +24170,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(_fbSeqGaps.length>0)console.warn(`[FEEDBACK EXTRACT] sequence gaps in final BOM: items ${_fbSeqGaps.join(", ")} missing`);
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
-      fuzzyMerges:fbFuzzyReport.merges,bomPageCount:bomPages.length,
+      fuzzyMerges:fbFuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
       learnedCorrections:fbLearnedLog.length,
       learnedCorrectionsLog:fbLearnedLog.slice(-50),
       snippetCorrectionCount:fbSnippetCorrections.length,
