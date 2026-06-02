@@ -146,7 +146,7 @@ This memo + the Brief + the Supplement is the complete input set for the Detaile
 - Coach's action items (verify getNextQuoteNumber atomicity, inventory copyProject callers, surface any quote-number-absence assumptions)
 - Implementation specifics: file/line references, function signatures, data shapes, pseudocode where helpful
 
-After the Detailed Plan is written, ARC Dev implements phase-by-phase per the Detailed Plan.
+After the Detailed Plan is written, Marc implements phase-by-phase per the Detailed Plan.
 
 ## REVISION HISTORY
 

@@ -1,8 +1,9 @@
 # ARCHIVE-COPY-BRIEF.md (Milestone E)
 
-**Version:** 1.0
+**Version:** 1.2
 **Date:** 2026-06-01
 **Author:** Freddy the Analyst (via Jon facilitation)
+**v1.1/1.2 editor:** Coach (Senior Development Engineer, Architecture)
 
 ## PURPOSE
 
@@ -20,6 +21,7 @@ The ECO flattening is particularly important. A project that's gone through mult
 
 - "Copy to New Quote" button in the active project view (placement to be decided)
 - New project creation with fresh quote number
+- Customer picker as first step of copy flow (v1.2 — user selects customer before copy proceeds; same picker UI as New Project)
 - Copy panels (structure, names, positions)
 - Copy BOM rows per panel, with ECO flatten:
   - For each base panel BOM row, retain as-is
@@ -29,16 +31,17 @@ The ECO flattening is particularly important. A project that's gone through mult
 - Pre-confirm preview modal showing what will be copied
 - Pre-confirm warning if BOM has incomplete sync (mirrors Phase 2.2/2.3 logic)
 - Post-completion: auto-open the new project
+- BC project creation during copy with planning line sync (v1.1)
 - Use existing lock/resume architecture (acquireRestoreLock pattern)
 - Use existing progress/completion/failure view pattern
 
 ### NOT IN SCOPE
 
 - ECO mode selection (always flatten; the existing ecoMode radio buttons in RestorePreviewModal are not needed for this milestone and can be removed or left stubbed)
-- Customer/contact/address inheritance (always blank — user fills in after copy)
+- Customer/contact/address/salesperson inheritance from source (customer is SELECTED via picker, not inherited; contact, address, salesperson are always blank)
 - Quote header metadata (revision numbers, print history, etc.)
 - Archive-related features
-- BC project creation during copy (the new project starts with no BC linkage; the user creates the BC project later via normal sync flow)
+- ~~BC project creation during copy~~ — **MOVED TO IN SCOPE in v1.1.** BC project + task structure + planning lines created during copy.
 - Selective copy (the user copies the entire project, not subsets of panels or BOMs)
 - Multi-source copy (copy from one source at a time)
 
@@ -50,9 +53,14 @@ From the source project:
 - Labor estimates per panel
 - Project name (with " (Copy)" appended for clarity)
 
+From the copy flow:
+- Customer number and name (v1.2 — selected via picker, NOT inherited from source)
+- BC project number (v1.1 — NEW BC project created during copy using chosen customer)
+- Fresh quote number (assigned at copy time)
+
 What it does NOT inherit:
-- BC project number (none assigned)
-- Customer, contact, address, salesperson
+- Customer from source project (v1.2 — user picks customer; BC customers cannot be changed after project creation)
+- Contact, address, salesperson
 - Quote revision history, print history
 - bomSyncHash, bcVerify states (will be re-established on first BC sync)
 - Archive references
@@ -93,10 +101,20 @@ If any issues, show a warning modal with explicit acknowledgment. User can:
 - Cancel and fix the BOM in the source project
 - Proceed anyway with acknowledgment logged to the new project's metadata
 
+## COPY FLOW
+
+v1.2 modal navigation:
+1. **Customer** — User selects customer via picker (same UI as New Project). Name field editable. BC connection required. Cancel closes modal with no side effects.
+2. **Preview** — Source summary, ECO flatten preview, panel/BOM/labor counts. Confirm button.
+3. **Warning** (conditional) — BOM integrity issues, if any. Acknowledge or cancel.
+4. **Progress** — Step-by-step with animated indicators (quote number → flatten → panels → save → images → BC project → tasks → planning lines → done).
+5. **Done** — Auto-navigate to new project after brief pause.
+6. **Error** (if failure) — Error detail with retry options. If BC project was created but planning lines failed, "Open Project Anyway" option available.
+
 ## PROGRESS UI
 
 Reuse the executeRestore progress view pattern:
-- Step list showing each phase (lock, project doc, panels, labor, ECOs flattened, etc.)
+- Step list showing each phase (quote number, ECOs flattened, panels, save, images, BC project, tasks, planning lines)
 - Icons: ⏳ (active, animated), ✅ (complete), ○ (pending), ❌ (failed)
 - Pulse animation on active step (existing arcPulse keyframe from F5)
 - Failure summary view if any step fails
@@ -104,9 +122,9 @@ Reuse the executeRestore progress view pattern:
 
 ## POST-COPY BEHAVIOR
 
-Auto-navigate to the new project as soon as the copy completes successfully. The user lands on the project view of the new quote, with all panels, BOMs (flattened), and labor in place. They can then:
-- Add a customer
+Auto-navigate to the new project as soon as the copy completes successfully. The user lands on the project view of the new quote, with all panels, BOMs (flattened), labor, BC project linkage, and chosen customer already in place. They can then:
 - Adjust BOMs as needed for the new quote
+- Add contact, address, salesperson details
 - Submit the quote when ready
 
 The source project is unchanged.
@@ -117,7 +135,7 @@ This milestone depends on:
 - Milestone D Phase 1 (executeRestore architecture) — reused for the copy execution
 - Milestone D Phase 2.2 (archive integrity warning) — reused logic for pre-copy warning
 - Milestone D Phase 2.3 (B4 pre-confirm warning, F5 spinner) — reused UX patterns
-- TODO #64 Phase A (BC semaphore) — Copy may trigger BC writes if the user immediately syncs
+- TODO #64 Phase A (BC semaphore) — BC calls during copy use the global rate limiter
 - TODO #65 Phase B (sync hygiene) — Copy creates a project that benefits from bomSyncHash gating
 
 ## OPEN QUESTIONS FOR COACH
@@ -129,7 +147,7 @@ This milestone depends on:
 5. What's the right place to insert the Pre-Confirm modal — reuse RestorePreviewModal or create a new CopyPreviewModal?
 6. Are there any project-level fields that should NOT carry over that I haven't listed in "What it does NOT inherit"?
 
-## OPEN QUESTIONS FOR ARC DEV (deferred until Plan stage)
+## OPEN QUESTIONS FOR MARC (deferred until Plan stage)
 
 1. Implementation order of phases (parallel with Coach's recommendation)
 2. Risk areas in ECO flatten logic given existing code patterns
@@ -137,3 +155,5 @@ This milestone depends on:
 ## REVISION HISTORY
 
 - v1.0 (2026-06-01) — Initial brief, six design decisions logged with Jon
+- v1.1 (2026-06-01) — BC project creation moved from NOT IN SCOPE to IN SCOPE. Customer number inheritance added. Per Jon's decision after smoke testing showed copy-without-BC created immediate workflow friction.
+- v1.2 (2026-06-01) — Customer picker added as first step instead of inheritance, per Jon's clarification that BC customers cannot be changed after project creation. Customer/contact/address remain NOT inherited from source. Added COPY FLOW section describing the full modal navigation. Reverted v1.1 customer-inheritance additions.
