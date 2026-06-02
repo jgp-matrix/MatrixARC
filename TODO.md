@@ -1431,3 +1431,19 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     → kept separate; unrelated part → untouched). All pass. Verification gap closed.
     Changed at `src/app.jsx:11286` and `functions/bomPrompt.js:215`.
     Discovered: overnight audit F-1a.3 (2026-06-01), diagnosed across v1.20.67-69 dedup fixes.
+
+## Feedback Re-Extract Dedup Key Mismatch (2026-06-02)
+
+80. **OPEN** (HIGH) — Feedback re-extract path uses PN-only dedup key — merges more aggressively
+    than first-extract/re-extract paths.
+    Feedback re-extract (`app.jsx:24101-24103`) dedups on PN alone, while first-extract (line
+    13893) and re-extract (line 23889) key on `PN + itemNo + descNorm`. Consequence: two distinct
+    line items sharing a PN but with different descriptions survive the normal paths but get
+    silently merged on a feedback re-extract — same data-loss class as the prompt over-merge just
+    fixed (F-1d.8/#79). Same BOM dedups differently depending on which extraction path is taken.
+    Needs investigation to confirm real-world impact (how often do users trigger feedback
+    re-extract on panels with same-PN/different-desc items?).
+    Not fixed by F-1g.1 (v1.20.82), which instruments the merge for reporting but does not change
+    merge behavior. F-1g.1's exactMerges instrumentation will surface this over-merge when it
+    happens, making it visible rather than silent.
+    Discovered: Coach trace during F-1g.1 plan (2026-06-02).
