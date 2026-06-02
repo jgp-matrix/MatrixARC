@@ -3696,10 +3696,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       await sleep(1000*Math.pow(2,attempt)); // 1s, 2s, 4s
     }
   }
+  // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop PATCH calls were
+  // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
   async function patchLine(lineNo,fields,etag){
     const url=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
     for(let attempt=0;attempt<4;attempt++){
-      const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
+      const r=await bcGatedFetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
       if(r.status!==429)return r;
       if(attempt===3)return r;
       await sleep(1000*Math.pow(2,attempt));
@@ -3750,11 +3752,13 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   }
 
   // Delete BC lines that are no longer in ARC (e.g. BOM rows removed)
+  // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop DELETE calls were
+  // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
   for(const ex of existingLines){
     if(!desiredLineNos.has(ex.Line_No)){
       await sleep(100);
       const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
-      const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
+      const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
       if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncPlanningLines: DELETED orphan line ${ex.Line_No}`);}
     }
   }
@@ -3860,10 +3864,12 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
       await sleep(1000*Math.pow(2,attempt));
     }
   }
+  // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop PATCH calls were
+  // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
   async function patchLine(lineNo,fields,etag){
     const url=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
     for(let attempt=0;attempt<4;attempt++){
-      const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
+      const r=await bcGatedFetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(fields)});
       if(r.status!==429)return r;
       if(attempt===3)return r;
       await sleep(1000*Math.pow(2,attempt));
@@ -3900,11 +3906,13 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
   }
 
   // Delete BC lines that are no longer referenced by ARC (e.g. row reverted)
+  // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop DELETE calls were
+  // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
   for(const ex of existingLines){
     if(!desiredLineNos.has(ex.Line_No)){
       await sleep(100);
       const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
-      const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
+      const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
       if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncEcoPlanningLines: DELETED orphan line ${ex.Line_No}`);}
     }
   }
