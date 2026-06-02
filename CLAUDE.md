@@ -2,6 +2,7 @@
 
 ## Table of Contents
 - [Session startup procedure](#session-startup-procedure)
+  - [Multi-role startup](#multi-role-startup) — team role selection, Freddy paste generation, SESSION-STATE.md
 - [Diagnostic session startup (diagstartup)](#diagnostic-session-startup-diagstartup) — read-only investigation mode
 - [Session shutdown procedure](#session-shutdown-procedure) — Close Out + Closed two-step
 - [Commit destination](#commit-destination)
@@ -33,6 +34,38 @@
 - Report the active site version (the `APP_VERSION` constant in `public/index.html`, e.g. `v1.19.1107`) alongside the verification output so the user knows which deployed build the session is starting from.
 
 If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
+
+### Multi-role startup
+
+After verify-state.sh, check if this is a multi-role session:
+
+1. Read `SESSION-STATE.md`. If missing or older than the latest commit, regenerate it (see generation procedure below).
+2. Ask Jon which roles are active (Full team / Code team / Quick fix / Custom).
+3. Generate role-appropriate output:
+   - **Freddy active:** Combine FREDDY.md + SESSION-STATE.md into a pasteable code block.
+   - **Coach active:** Note that Coach will self-orient from repo files.
+   - **Marc solo:** Display state summary and begin work.
+4. Display the state summary and any generated pastes.
+5. Wait for Jon's first work instruction.
+
+**Role configurations:**
+- **Full team** (F + C + M) — Major features, milestones, Briefs/Plans pipeline
+- **Code team** (C + M) — Codebase audit remediation, investigation + fix
+- **Quick fix** (M only) — Single bug fix, deploy, version bump
+- **Custom** — Jon specifies which roles
+
+**SESSION-STATE.md generation procedure:**
+1. Read `APP_VERSION` from `public/index.html`
+2. Run `git log --oneline -10`
+3. Read ARC-AUDIT-FINDINGS.md executive summary (first 40 lines) + cross-reference against recent commits for fixed findings
+4. Run `git status` for working tree state
+5. Count OPEN items in TODO.md
+6. Check OVERNIGHT-LOG.md for any unresolved items
+7. Write SESSION-STATE.md
+
+**Staleness check:** If SESSION-STATE.md's date header is older than the latest commit, regenerate before using it for pastes.
+
+**Default behavior:** Marc assumes solo mode (Quick fix) unless Jon explicitly invokes "startup" or "team session." The multi-role question is only asked when Jon signals a team session.
 
 ## Diagnostic session startup (diagstartup)
 
@@ -116,6 +149,8 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
    - Deployed version number
    - Confirmation that origin/master matches local
    - Any branches that remain (feature branch retained due to active worktree, etc.)
+
+6b. **Update SESSION-STATE.md**: Regenerate from current repo state (version, recent commits, active findings, working tree status, open TODOs). This captures the session's output for the next session's startup.
 
 7. **Stop.** Wait for the user to either:
    - Direct additional actions (update TODO.md, etc.) — execute as instructed

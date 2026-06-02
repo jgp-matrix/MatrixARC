@@ -3,6 +3,7 @@
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
 **Last updated:** 2026-06-02
+**Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
 
@@ -50,7 +51,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.74 (defined in `public/index.html`)
+- **Current version:** v1.20.75 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -93,15 +94,14 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **v1.20.65** — Critical hotfix for #65b stale-state data loss (init.panels closure overwriting Firestore on project open)
 - **v1.20.67-69** — BOM dedup discriminator fixes (itemNo guard, description guard)
 - **v1.20.71** — BC open-sync stale data fix (replaced init.panels with projectRef.current)
+- **v1.20.74** — F-1c.1 fix: vendor/customer display names resolved from BC on archive restore remap
+- **v1.20.75** — F-2d.2 fix: PDF attachment reordered for atomicity, converted to bcGatedFetch
 
 ### In Progress
-- **Codebase audit remediation** — 5 confirmed CRITICAL findings being worked through:
+- **Codebase audit remediation** — 3 confirmed CRITICAL findings remaining:
   1. F-2d.1 — 46 BC fetch calls bypass bcGatedFetch semaphore (MEDIUM effort)
-  2. F-1c.1 — Vendor name nulled on restore remap (SMALL effort, design complete)
-  3. F-1g.1 — "AI missed" message misleading for dedup-caused gaps (MEDIUM effort)
-  4. F-2d.2 — PDF attachment upload not atomic (MEDIUM effort)
-  5. F-2d.3 — Firestore write after BC sync creates crash recovery gap (MEDIUM effort)
-- **Marc's Independent Finding #1** — Open-sync stale init.panels to BC (upgraded to CRITICAL, fix shipped in v1.20.71)
+  2. F-1g.1 — "AI missed" message misleading for dedup-caused gaps (MEDIUM effort)
+  3. F-2d.3 — Firestore write after BC sync creates crash recovery gap (MEDIUM effort)
 
 ### Open TODOs of Note
 - #76 — Multi-Claude coordination layer (HIGH)
