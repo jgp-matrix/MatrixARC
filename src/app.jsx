@@ -34984,7 +34984,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?cleared:cp);
               const upd={...projectRef.current,panels:updPanels};
               setProject(upd);projectRef.current=upd;onChange(upd);
-            }catch(e){}
+            }catch(e){console.warn(`[OPEN BC SYNC] panel ${i+1}: failed to clear stale marker`,e);}
             continue;
           }
           if(stale){
