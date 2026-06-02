@@ -1158,20 +1158,31 @@ You MUST return one entry per requested item. Also include extra supplier items 
   let modelUsed = SUPPLIER_PORTAL_FALLBACK_CHAIN[0];
   for (let fi = 0; fi < SUPPLIER_PORTAL_FALLBACK_CHAIN.length; fi++) {
     const tryModel = SUPPLIER_PORTAL_FALLBACK_CHAIN[fi];
-    response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: tryModel,
-        max_tokens: 64000,
-        system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
-        messages: [{ role: 'user', content: messageContent }],
-      }),
-    });
+    // FIX(PRJ402119): 480s timeout — prevent undici headers timeout crash
+    const spAc = new AbortController();
+    const spTimer = setTimeout(() => spAc.abort(), 480000);
+    try {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        signal: spAc.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: tryModel,
+          max_tokens: 64000,
+          system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
+          messages: [{ role: 'user', content: messageContent }],
+        }),
+      });
+    } catch (fetchErr) {
+      clearTimeout(spTimer);
+      functions.logger.error('extractSupplierQuotePricing API timeout', { model: tryModel, error: fetchErr.message });
+      throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API timeout: ${fetchErr.message}`);
+    }
+    clearTimeout(spTimer);
     if (response.ok) {
       modelUsed = tryModel;
       if (fi > 0) {
@@ -2433,22 +2444,36 @@ exports.extractBomPage = functions
 
   functions.logger.info('extractBomPage starting', { uid, extractionPath, hasPdf, pageNumber: pageNumber || null });
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'interleaved-thinking-2025-05-14',
-    },
-    body: JSON.stringify({
-      model: ANTHROPIC_MODELS.OPUS,
-      max_tokens: 64000,
-      thinking: { type: 'enabled', budget_tokens: 8000 },
-      system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
-      messages: [{ role: 'user', content: userContent }],
-    }),
-  });
+  // FIX(PRJ402119): Add 480s timeout to prevent undici's default 300s headers timeout
+  // from crashing the function. Gives the API up to 480s within the 540s function budget.
+  const ac = new AbortController();
+  const acTimer = setTimeout(() => ac.abort(), 480000);
+  let response;
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: ac.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'interleaved-thinking-2025-05-14',
+      },
+      body: JSON.stringify({
+        model: ANTHROPIC_MODELS.OPUS,
+        max_tokens: 64000,
+        thinking: { type: 'enabled', budget_tokens: 8000 },
+        system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: userContent }],
+      }),
+    });
+  } catch (fetchErr) {
+    clearTimeout(acTimer);
+    const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
+    functions.logger.error('extractBomPage API timeout/network error', { uid, extractionPath, pageNumber: pageNumber || null, error: fetchErr.message, isTimeout });
+    throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out (480s)' : 'network error'}: ${fetchErr.message}`);
+  }
+  clearTimeout(acTimer);
 
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
@@ -2621,22 +2646,36 @@ exports.extractBomBatch = functions
           ];
         }
 
-        const response = await fetch('https://api.anthropic.com/v1/messages', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
-            'anthropic-beta': 'interleaved-thinking-2025-05-14',
-          },
-          body: JSON.stringify({
-            model: ANTHROPIC_MODELS.OPUS,
-            max_tokens: 64000,
-            thinking: { type: 'enabled', budget_tokens: 8000 },
-            system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
-            messages: [{ role: 'user', content: userContent }],
-          }),
-        });
+        // FIX(PRJ402119): 480s timeout — same as extractBomPage
+        const batchAc = new AbortController();
+        const batchAcTimer = setTimeout(() => batchAc.abort(), 480000);
+        let response;
+        try {
+          response = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            signal: batchAc.signal,
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'anthropic-beta': 'interleaved-thinking-2025-05-14',
+            },
+            body: JSON.stringify({
+              model: ANTHROPIC_MODELS.OPUS,
+              max_tokens: 64000,
+              thinking: { type: 'enabled', budget_tokens: 8000 },
+              system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
+              messages: [{ role: 'user', content: userContent }],
+            }),
+          });
+        } catch (fetchErr) {
+          clearTimeout(batchAcTimer);
+          const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
+          functions.logger.error('extractBomBatch page API timeout', { uid, pageNumber: pg.pageNumber, error: fetchErr.message, isTimeout });
+          pageResults.push({ pageNumber: pg.pageNumber, success: false, error: `API ${isTimeout ? 'timeout (480s)' : 'network error'}` });
+          continue;
+        }
+        clearTimeout(batchAcTimer);
 
         if (!response.ok) {
           const errBody = await response.json().catch(() => ({}));
