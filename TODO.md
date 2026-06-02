@@ -1292,3 +1292,30 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: LOWER — no immediate user-facing issue, but represents a UI gap that could become a
     problem if a customer assignment mistake happens.
     Discovered: Milestone E Phase 3 planning (v1.20.63), 2026-06-01.
+
+73. **OPEN** — BOM extraction warning visibility (Scan Results banner).
+    Symptom: When extraction produces issues (missing rows, sequence gaps, dedup-caused gaps),
+    warnings appear in the ScanResultsBanner component above the BOM table. But the banner is
+    collapsed by default. The collapsed summary shows all concerns on one line separated by
+    middots, easy to gloss over.
+
+    Impact: Real extraction problems can be silently ignored by users. Item 18 missing from
+    RSD0203-126's extraction was caught by the system (`finalSequenceGaps` included `[18]`) but
+    Jon didn't notice the warning during spot-check.
+
+    Additionally: The warning message text says "missed by the AI scan" which is misleading for
+    dedup-caused gaps (the AI returned the row, ARC's exact dedup consumed it). Different cause,
+    same symptom, different message needed.
+
+    Proposed improvements (Coach to design later):
+    - Make the banner expanded by default when concerns exist
+    - Promote the most critical issues out of the middot list
+    - Distinguish "AI missed" gaps from "dedup-caused" gaps via mergeStats (if rawCount > exactCount,
+      at least some gaps came from dedup)
+    - Maybe add an inline indicator near affected BOM rows
+
+    Priority: MEDIUM — no immediate data loss now that the dedup fix is shipped (v1.20.67), but
+    represents a real product gap. A user could miss other warnings about extractions that the
+    system correctly flagged.
+    Discovered: RSD0203-126 extraction spot-check after v1.20.66, 2026-06-01.
+    Owner for design: Coach.
