@@ -23619,7 +23619,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bgDone(syncTaskId,"✓ Synced to BC");
   }
   function saveLineQty(){
-    const q=Math.max(1,Math.min(20,parseInt(draftLineQty)||1));
+    const q=Math.max(1,Math.min(1000,parseInt(draftLineQty)||1));
     setDraftLineQty(q);
     const updated={...panel,lineQty:q};
     onUpdate(updated);
@@ -25835,7 +25835,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             onFocus={e=>{e.target.select();e.target.style.borderColor=C.accent;e.target.style.background=C.card;}}
             onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";saveLineQty();}}
             onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){setDraftLineQty(panel.lineQty??1);e.target.blur();}}}
-            style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:"4ch",fontFamily:"inherit",textAlign:"center"}}/>
+            style={{background:"transparent",border:"1px solid transparent",borderRadius:4,padding:"2px 5px",color:C.text,fontSize:15,fontWeight:700,outline:"none",width:"5ch",fontFamily:"inherit",textAlign:"center"}}/>
         </div>
         {/* Panel name + title block identity */}
         <div style={{flex:1,display:"flex",alignItems:"flex-start",gap:20,minWidth:0,flexWrap:"wrap"}}>
