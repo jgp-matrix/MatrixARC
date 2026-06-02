@@ -1447,3 +1447,44 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     merge behavior. F-1g.1's exactMerges instrumentation will surface this over-merge when it
     happens, making it visible rather than silent.
     Discovered: Coach trace during F-1g.1 plan (2026-06-02).
+
+## PRJ402119 Extraction Failure (2026-06-02)
+
+81. **OPEN** (HIGH) — Empty BOM region yields silent zero-item acceptance.
+    When a user draws a BOM region over the wrong section of a drawing (or wrong page entirely),
+    extraction returns 0 items and ARC accepts it silently — no warning, no flag. A user-asserted
+    BOM region that yields ZERO items is a strong wrong-drawing/wrong-region signal. ARC should
+    flag it visibly: "BOM region returned 0 items — verify the region covers the correct area."
+    Observed on PRJ402119 Lines 1-2: user had BOM region over a section with no items (wrong
+    drawing chosen by mistake). ARC extracted empty and said nothing.
+    Discovered: PRJ402119 diagnostic (2026-06-02).
+
+82. **OPEN** (CRITICAL) — PDF-native extraction bails on BOM pages with no BOM region, forcing
+    lossy JPEG crop fallback that garbles part numbers.
+    When a page is classified as BOM-type but has no user-drawn BOM region, the pdf-native path
+    sends the FULL uncropped page to Opus. On busy pages (enclosure + small BOM table at bottom),
+    Opus returns `noBomReason:"wrong-page-type"` (81 chars) because enclosure content dominates.
+    Client falls back to `bom-region-crop` (JPEG image) which has: (a) no quality alert in the
+    prompt, and (b) JPEG compression artifacts on monochrome scanned text at 166 DPI. Result:
+    11/13 part numbers wrong on PRJ402119.
+    Root cause chain: no BOM region → no CropBox on PDF slice → AI sees full busy page → bails →
+    JPEG fallback with bare prompt → systematic OCR errors.
+    Two sub-fixes identified:
+    P1 (high-leverage): Make pdf-native work on BOM pages without a drawn region — either use
+    AI-classified `aiBomRegion` coordinates for CropBox, or add a stronger prompt hint that
+    the BOM table IS on this page (possibly small, at bottom).
+    P2 (secondary): Add quality alert to the crop fallback prompt — cheap, makes fallback less
+    bad, but doesn't fix the fundamental JPEG fidelity loss.
+    Discovered: PRJ402119 diagnostic (2026-06-02).
+
+83. **OPEN** (HIGH) — Image/crop fallback path architecture — replace lossy JPEG with full-res
+    PDF region crop or fail visibly.
+    The current bom-region-crop fallback sends a canvas-cropped JPEG of the page image. On
+    scanned monochrome drawings (166 DPI), JPEG compression destroys edge detail on text
+    characters, causing systematic misreads (3→0, G→6/8, 12→L, etc.). Target architecture
+    per Jon: PDF-native primary (fixed per #82 P1) → full-res PDF region crop as fallback
+    (CropBox on the native PDF, NOT JPEG) → if that fails, FAIL VISIBLY ("couldn't extract
+    reliably, verify manually"). Never silently hand the user a low-confidence BOM that looks
+    confident. Before removing the JPEG path, need data: how often does image-crop fallback
+    produce a GOOD BOM vs garbled? Investigation pending.
+    Discovered: PRJ402119 diagnostic (2026-06-02).
