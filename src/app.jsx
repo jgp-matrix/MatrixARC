@@ -11460,7 +11460,7 @@ function cropRegionFromImage(dataUrl,region,minWidth=2000){
       const canvas=document.createElement('canvas');
       canvas.width=cw;canvas.height=ch;
       canvas.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,cw,ch);
-      resolve(canvas.toDataURL('image/jpeg',0.92));
+      resolve(canvas.toDataURL('image/png'));
     };
     img.onerror=()=>resolve(null);
     img.src=dataUrl;
@@ -11681,7 +11681,7 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
   if(croppedBomDataUrl&&!originalPdfPath){
     const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
     payload.croppedBomImage=base64;
-    payload.croppedBomMediaType="image/jpeg";
+    payload.croppedBomMediaType="image/png";
   }
   const intendedPath=originalPdfPath?"pdf-native":"bom-region-crop";
   const t0=Date.now();
@@ -11865,7 +11865,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
           thinking:{type:"enabled",budget_tokens:8000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
-            {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},
+            {type:"image",source:{type:"base64",media_type:"image/png",data:base64}},
             {type:"text",text:pageHint+feedbackSection+notesSection}
           ]}]
         })
@@ -13639,7 +13639,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               let croppedBomImage=null,croppedBomMediaType=null;
               if(unit.croppedBomDataUrl){
                 croppedBomImage=unit.croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
-                croppedBomMediaType="image/jpeg";
+                croppedBomMediaType="image/png";
               }
               const notes=unit.regionNote?(userNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
               return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
@@ -23875,7 +23875,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             let croppedBomImage=null,croppedBomMediaType=null;
             if(unit.croppedBomDataUrl){
               croppedBomImage=unit.croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
-              croppedBomMediaType="image/jpeg";
+              croppedBomMediaType="image/png";
             }
             const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
             return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
