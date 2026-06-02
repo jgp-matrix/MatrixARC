@@ -1425,6 +1425,9 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     identical — field-verified by Jon on 592273 (different-description case). v2 (v1.20.81,
     4cfaeb81 + 67dd897c, Jun 2): removed all AI-side merging, defers to code dedup. v1.20.81
     is strictly more permissive and inherits the 592273 result for different-description rows,
-    but the same-PN/SAME-description case under pure code-dedup is NOT yet field-verified.
+    Same-PN/same-description case runtime-verified by Marc on v1.20.81 via browser console dedup
+    pipeline test: 5 scenarios (same-PN/same-desc/same-itemNo → collapsed qty summed; cross-page
+    duplicate → collapsed; same-PN/different-desc → kept separate; same-PN/same-desc/different-itemNo
+    → kept separate; unrelated part → untouched). All pass. Verification gap closed.
     Changed at `src/app.jsx:11286` and `functions/bomPrompt.js:215`.
     Discovered: overnight audit F-1a.3 (2026-06-01), diagnosed across v1.20.67-69 dedup fixes.
