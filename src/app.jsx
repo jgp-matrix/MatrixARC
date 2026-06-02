@@ -11725,6 +11725,23 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null);}
       catch(retryErr){console.warn("[BOM EXTRACT] crop fallback retry also failed:",retryErr?.message||retryErr);}
     }
+    // Degenerate-crop retry: if bomRegion was applied and ALL results are placeholder,
+    // retry without crop — the crop likely cut off essential content (e.g. PN column)
+    if(bomRegion&&originalPdfPath&&pageNumber&&(serverResult.items||[]).length>0){
+      const allPlaceholder=(serverResult.items).every(it=>it.partNumber==="?"||(it.notes||"").includes("EXTRACTION_FAILED"));
+      if(allPlaceholder){
+        console.warn(`[BOM EXTRACT] all ${serverResult.items.length} items are placeholder with crop — retrying WITHOUT crop`);
+        try{
+          const uncropped=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,null);
+          if((uncropped.items||[]).length>=(serverResult.items).length){
+            uncropped._regionCropRetried=true;
+            console.log(`[BOM EXTRACT] uncropped retry succeeded: ${uncropped.items.length} items (was ${serverResult.items.length} placeholder)`);
+            return uncropped;
+          }
+          console.warn("[BOM EXTRACT] uncropped retry returned fewer items, keeping cropped result");
+        }catch(retryErr){console.warn("[BOM EXTRACT] uncropped retry failed:",retryErr?.message||retryErr);}
+      }
+    }
     return serverResult;
   }catch(serverErr){
     const msg=serverErr?.message||String(serverErr);
@@ -14400,6 +14417,8 @@ function resolveBomRegion(pg){
     const r=userRegions[0];
     return{x:r.x,y:r.y,w:r.w,h:r.h,source:"user"};
   }
+  // Tombstone: user explicitly deleted their BOM region — don't fall back to aiBomRegion
+  if(pg.bomRegionCleared)return null;
   if(pg.aiBomRegion){
     return{...pg.aiBomRegion,source:"ai"};
   }
@@ -20323,9 +20342,9 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,onNotesChange,cu
   },[idx,pages]);
 
   // Save regions to parent
-  function saveRegions(newRegions){
+  function saveRegions(newRegions,flags){
     setRegions(newRegions);
-    if(onRegionsChange&&pg)onRegionsChange(pg.id,newRegions);
+    if(onRegionsChange&&pg)onRegionsChange(pg.id,newRegions,flags);
   }
 
   // DECISION(v1.19.896, Region Learning): Fire-and-forget capture of user-drawn
@@ -20446,7 +20465,12 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,onNotesChange,cu
   }
 
   function deleteRegion(rid){
-    saveRegions(regions.filter(r=>r.id!==rid));
+    const deleted=regions.find(r=>r.id===rid);
+    const remaining=regions.filter(r=>r.id!==rid);
+    // Tombstone: if user deleted the last BOM region, flag so resolveBomRegion won't fall back to aiBomRegion
+    const wasBom=deleted&&deleted.type==="bom";
+    const noBomLeft=wasBom&&!remaining.some(r=>r.type==="bom");
+    saveRegions(remaining,noBomLeft?{bomRegionCleared:true}:undefined);
     if(selectedRegion===rid)setSelectedRegion(null);
     if(editingRegion===rid){setEditingRegion(null);setEditNote("");}
   }
@@ -27420,13 +27444,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           startId={lightboxId}
           customerName={(project&&project.bcCustomerName)||""}
           onClose={()=>setLightboxId(null)}
-          onRegionsChange={(pgId,newRegions)=>{
+          onRegionsChange={(pgId,newRegions,flags)=>{
             const fresh=latestPanelRef.current;
-            const updated={...fresh,pages:(fresh.pages||[]).map(p=>p.id===pgId?{...p,regions:newRegions}:p)};
+            const hasBomRegion=newRegions.some(r=>r.type==="bom");
+            // Tombstone: bomRegionCleared=true when last BOM region deleted; cleared when BOM region re-added
+            const pgPatch={regions:newRegions};
+            if(flags?.bomRegionCleared&&!hasBomRegion)pgPatch.bomRegionCleared=true;
+            else if(hasBomRegion)pgPatch.bomRegionCleared=false;
+            const updated={...fresh,pages:(fresh.pages||[]).map(p=>p.id===pgId?{...p,...pgPatch}:p)};
             onUpdate(updated);
             try{onSaveImmediate(updated);}catch(e){}
             // Also update pendingPages so regions persist during review phase
-            setPendingPages(pp=>pp.length>0?pp.map(p=>p.id===pgId?{...p,regions:newRegions}:p):pp);
+            setPendingPages(pp=>pp.length>0?pp.map(p=>p.id===pgId?{...p,...pgPatch}:p):pp);
           }}
           onNotesChange={undefined}
         />
