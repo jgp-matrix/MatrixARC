@@ -34975,10 +34975,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             console.log(`[OPEN BC SYNC] panel ${i+1}: sync pending (started ${Math.round((Date.now()-p.bomSyncStartedAt)/1000)}s ago), skipping`);
             continue;
           }
+          // F-2d.3: Stale marker but hash matches — sync already completed, just clear marker
+          if(hashMatch&&stale){
+            console.log(`[OPEN BC SYNC] panel ${i+1}: stale marker but hash matches — clearing marker only`);
+            try{
+              const cleared={...p,bomSyncPending:false,bomSyncStartedAt:null};
+              await saveProjectPanel(uid,projectId,p.id,cleared,true);
+              const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?cleared:cp);
+              const upd={...projectRef.current,panels:updPanels};
+              setProject(upd);projectRef.current=upd;onChange(upd);
+            }catch(e){}
+            continue;
+          }
           if(stale){
             console.log(`[OPEN BC SYNC] panel ${i+1}: stale pending marker (${Math.round((Date.now()-p.bomSyncStartedAt)/1000)}s), clearing and re-syncing`);
           }
-          // Either hash mismatch or stale pending — sync to BC
+          // Either hash mismatch or stale pending with hash mismatch — sync to BC
           try{
             // Write pending marker before sync
             await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:true,bomSyncStartedAt:Date.now()},true);
@@ -36566,8 +36578,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                           const curHash=computePanelBomHash(proj.panels[i]);
                           if(curHash!==(proj.panels[i].bomSyncHash||"")){
                             try{
-                              // F-2d.3: Write pending marker before sync
-                              saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncPending:true,bomSyncStartedAt:Date.now()},true).catch(()=>{});
+                              // F-2d.3: Write pending marker before sync (awaited per review)
+                              await saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncPending:true,bomSyncStartedAt:Date.now()},true);
                               await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
                               // F-2d.3: Set bomSyncHash + clear pending marker after successful sync
                               const hashed={...proj.panels[i],bomSyncHash:curHash,bomSyncPending:false,bomSyncStartedAt:null};
