@@ -1354,3 +1354,47 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: PRJ402109 Line 4 RSD0203-126 re-extractions, 2026-06-01. Jon observed limited
     progress visibility during long extraction runs.
     Owner for design: Coach.
+
+## Development Direction (2026-06-01)
+
+76. **OPEN** — Multi-Claude coordination layer (Freddy ↔ Coach ↔ Marc).
+    Symptom: Three-role workflow currently requires Jon to manually copy/paste messages between
+    Claude.ai (Freddy Lyst / Analyst), CC Terminal (Sam Wize / Coach), and CCD (Marc Masdev / Dev).
+    Each exchange is a forwarded paste. Friction is real: latency, lossy summarization,
+    version-tracking mistakes (e.g., one role drafting guidance about a fix that was never actually
+    deployed, or referencing a version that another role hasn't seen yet).
+
+    Impact: Slows multi-role work. Increases chance of coordination errors. Limits how complex
+    problems can be solved before context drift. Jon spends substantial cognitive load just routing
+    messages between sessions.
+
+    Concept: Direct Claude-to-Claude messaging between the three roles, with Jon as facilitator
+    rather than message bus.
+
+    Possible directions to explore:
+    - Shared SESSION-LOG.md in repo root — all roles read/append, single source of truth
+    - MCP-based coordination — dedicated MCP server with a message bus, each Claude instance
+      posts updates and reads from a shared queue
+    - Repurpose TRAQS infrastructure — CCD hooks already feed into
+      ccd-monitor.cloudfunctions.net/ccdHook, could extend to route between sessions
+    - Nested sub-agents — Claude Code supports nested agent invocation, Marc could be a
+      sub-agent invoked from Coach's terminal instead of a separate session
+
+    Considerations:
+    - Each Claude instance has its own context window; persistent shared state needs to live
+      somewhere durable (file, Firestore, or external service)
+    - Notifications already exist (Pushover via notify.ps1) — could be extended for inter-role
+      messages beyond simple alerts
+    - Version drift is a real risk — any solution needs to handle "Claude A thought v1.20.X was
+      deployed when it was actually v1.20.Y"
+    - Conversation log compaction means each session loses context over long conversations;
+      coordination layer needs to survive compactions
+    - Related: CCD hooks at ccd-monitor.cloudfunctions.net are existing infrastructure that
+      could be extended; may overlap with TRAQS direction
+
+    Priority: HIGH — Jon explicitly elevated this. The paste-forwarding workflow has surfaced
+    multiple coordination errors during today's multi-role work and is a real bottleneck for
+    productive three-session collaboration.
+    Discovered: Multiple instances throughout 2026-06-01 work where paste-forwarding caused
+    version-tracking confusion and added latency between sessions.
+    Owner for design: Coach (with Jon coordination on broader Matrix ARC tooling stack).
