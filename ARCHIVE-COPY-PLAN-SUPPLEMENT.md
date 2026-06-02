@@ -2,7 +2,7 @@
 
 **Version:** 1.0  
 **Date:** 2026-06-01  
-**Author:** Coach (Senior Development Engineer, Architecture)  
+**Author:** Sam Wize (Senior Development Engineer, Architecture)  
 **Companion to:** ARCHIVE-COPY-BRIEF.md v1.0
 
 ---

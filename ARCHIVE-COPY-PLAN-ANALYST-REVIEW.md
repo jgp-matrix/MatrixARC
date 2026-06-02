@@ -4,7 +4,7 @@
 **Date:** 2026-06-01
 **Author:** Freddy Lyst (via Jon facilitation)
 **Companion to:** ARCHIVE-COPY-BRIEF.md v1.0 + ARCHIVE-COPY-PLAN-SUPPLEMENT.md v1.0
-**For:** Coach (input to ARCHIVE-COPY-PLAN-DETAILED.md)
+**For:** Sam (input to ARCHIVE-COPY-PLAN-DETAILED.md)
 
 ## PURPOSE
 
@@ -66,7 +66,7 @@ The Brief listed about 8 individual fields to exclude. Your 8-category framing (
 
 **Implication for Detailed Plan:** Use getNextQuoteNumber(uid) during the copy operation. Note this is a deliberate divergence from the existing greenfield project pattern. If any code paths assume the absence of a quote number implies "unprinted," they need to be reviewed for compatibility.
 
-**Coach action item:** Verify whether any existing code assumes absence of quote number implies a specific state. If so, surface it before Detailed Plan finalizes.
+**Sam action item:** Verify whether any existing code assumes absence of quote number implies a specific state. If so, surface it before Detailed Plan finalizes.
 
 ### Decision 3 — Approve scan/exclusion reuse from Phase 2.2
 
@@ -78,18 +78,18 @@ The Brief specified that Copy should reuse the Phase 2.2 archive warning logic (
 
 ### Recommendation 1 — Phasing strategy
 
-The Brief implied this might be a multi-phase milestone. Given the Supplement findings (existing copy infrastructure, no BC calls, narrow scope), the work might fit into fewer phases than initially anticipated. Coach's judgment on the right number.
+The Brief implied this might be a multi-phase milestone. Given the Supplement findings (existing copy infrastructure, no BC calls, narrow scope), the work might fit into fewer phases than initially anticipated. Sam's judgment on the right number.
 
 **Considerations:**
 - Phase 1 (ECO flatten utility) is independent and verifiable in isolation. Recommend it ships as its own phase even though it's small.
-- The enhanced CopyProjectModal, the BOM scan warning, and the auto-open behavior could ship together (UX phase) or separately. Coach's call on cohesion.
+- The enhanced CopyProjectModal, the BOM scan warning, and the auto-open behavior could ship together (UX phase) or separately. Sam's call on cohesion.
 - A "polish" phase for edge cases discovered during smoke testing is good practice.
 
 ### Recommendation 2 — Backward compatibility
 
 The existing copyProject function is presumably called from other places (other than the Copy button in the project action bar). Enhancing it with ECO flatten changes behavior for those callers too.
 
-**Coach action item:** Inventory existing callers of copyProject. If any other caller exists, decide whether to:
+**Sam action item:** Inventory existing callers of copyProject. If any other caller exists, decide whether to:
 - Enhance in place (all callers get the new behavior) — only safe if all callers want ECO flatten
 - Add a new function (copyProjectAsNewQuote) wrapping the original — preserves backward compat for any caller that wants the old behavior
 - Add a parameter (copyProject(uid, sourceId, { flattenEcos: true })) — most flexible
@@ -117,7 +117,7 @@ The Brief mentioned reusing acquireRestoreLock. For copy, the lock concern is mu
 
 If two users initiate a copy at the same moment, getNextQuoteNumber must guarantee uniqueness. If it's not transactional, two copies could collide on the same number.
 
-**Coach action item:** Verify getNextQuoteNumber's atomicity. If non-transactional, wrap in a Firestore transaction. Document in the Detailed Plan.
+**Sam action item:** Verify getNextQuoteNumber's atomicity. If non-transactional, wrap in a Firestore transaction. Document in the Detailed Plan.
 
 ### Risk 2 — Orphaned ECO references
 
@@ -139,11 +139,11 @@ The 8-category exclusion list is a starting point. Real-world copy testing may s
 
 ## HAND-OFF TO COACH
 
-This memo + the Brief + the Supplement is the complete input set for the Detailed Plan. Coach should now write ARCHIVE-COPY-PLAN-DETAILED.md, addressing:
+This memo + the Brief + the Supplement is the complete input set for the Detailed Plan. Sam should now write ARCHIVE-COPY-PLAN-DETAILED.md, addressing:
 
 - The architectural recommendations above
 - The four risk areas
-- Coach's action items (verify getNextQuoteNumber atomicity, inventory copyProject callers, surface any quote-number-absence assumptions)
+- Sam's action items (verify getNextQuoteNumber atomicity, inventory copyProject callers, surface any quote-number-absence assumptions)
 - Implementation specifics: file/line references, function signatures, data shapes, pseudocode where helpful
 
 After the Detailed Plan is written, Marc implements phase-by-phase per the Detailed Plan.

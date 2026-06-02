@@ -3,7 +3,7 @@
 **Version:** 1.2
 **Date:** 2026-06-01
 **Author:** Freddy Lyst (via Jon facilitation)
-**v1.1/1.2 editor:** Coach (Senior Development Engineer, Architecture)
+**v1.1/1.2 editor:** Sam Wize (Senior Development Engineer, Architecture)
 
 ## PURPOSE
 
@@ -143,13 +143,13 @@ This milestone depends on:
 1. Where in the code does ECO flatten logic need to live? Is there an existing utility that approximates this, or does it need to be net-new?
 2. What's the precise data shape of an ECO row in the project doc? How does it reference the base BOM row it modifies?
 3. What's the entry point for the new quote number? Is there an existing nextQuoteNumber() helper or do we generate manually?
-4. Where in the active project view should the Copy button go? (Coach: identify suitable UX location; defer final decision to Jon if multiple options exist.)
+4. Where in the active project view should the Copy button go? (Sam: identify suitable UX location; defer final decision to Jon if multiple options exist.)
 5. What's the right place to insert the Pre-Confirm modal — reuse RestorePreviewModal or create a new CopyPreviewModal?
 6. Are there any project-level fields that should NOT carry over that I haven't listed in "What it does NOT inherit"?
 
 ## OPEN QUESTIONS FOR MARC (deferred until Plan stage)
 
-1. Implementation order of phases (parallel with Coach's recommendation)
+1. Implementation order of phases (parallel with Sam's recommendation)
 2. Risk areas in ECO flatten logic given existing code patterns
 
 ## REVISION HISTORY
