@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Date:** 2026-06-01
-**Author:** Freddy the Analyst (via Jon facilitation)
+**Author:** Freddy Lyst (via Jon facilitation)
 **Companion to:** ARCHIVE-COPY-BRIEF.md v1.0 + ARCHIVE-COPY-PLAN-SUPPLEMENT.md v1.0
 **For:** Coach (input to ARCHIVE-COPY-PLAN-DETAILED.md)
 

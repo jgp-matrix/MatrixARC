@@ -2,7 +2,7 @@
 
 **Version:** 1.2
 **Date:** 2026-06-01
-**Author:** Freddy the Analyst (via Jon facilitation)
+**Author:** Freddy Lyst (via Jon facilitation)
 **v1.1/1.2 editor:** Coach (Senior Development Engineer, Architecture)
 
 ## PURPOSE
