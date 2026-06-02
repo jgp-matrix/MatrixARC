@@ -8341,6 +8341,9 @@ function computeBomHash(panels){
   return String(h);
 }
 // DECISION(v1.19.487): Per-panel BOM hash — tracks whether BC sync is needed.
+// F-2d.3: Staleness threshold for bomSyncPending markers — if a sync has been pending
+// longer than this, the original sync is considered dead and recovery proceeds.
+const SYNC_PENDING_STALE_MS=5*60*1000; // 5 minutes
 function computePanelBomHash(panel){
   const data=(panel.bom||[]).filter(r=>!r.isLaborRow).map(r=>({pn:(r.partNumber||'').trim(),q:r.qty||0,up:r.unitPrice||0}));
   const str=JSON.stringify(data);
@@ -23560,6 +23563,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual");
     if(unpriced.length){setUnpricedAlert(unpriced);return;}
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
+    // F-2d.3: Write pending marker before BC sync starts
+    try{onSaveImmediate({...panel,bomSyncPending:true,bomSyncStartedAt:Date.now()});}catch(e){}
     // DECISION(v1.19.599): Mirror BC sync status to team-wide bus so teammates see "X is syncing to BC".
     const syncTaskId=panel.id+"_bcsync";
     bgStart(syncTaskId,panel.name||("Panel "+(idx+1)),projectId,"Syncing to Business Central…");
@@ -23613,14 +23618,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         setBcSyncStatus("ok");
         setBcSyncErrors({});
         // DECISION(v1.19.487): Set bomSyncHash after successful sync
+        // F-2d.3: Clear pending marker atomically with hash write
         const syncHash=computePanelBomHash(panel);
-        const updated={...panel,bomSyncHash:syncHash};
+        const updated={...panel,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
         onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
         setTimeout(()=>setBcSyncStatus(null),4000);
       }
     }catch(e){
       console.error("bcSyncPlanningLines failed:",e);
       setBcSyncStatus("error");
+      // F-2d.3: Clear pending marker on failure — don't leave it stuck
+      try{onSaveImmediate({...panel,bomSyncPending:false,bomSyncStartedAt:null});}catch(e2){}
       setTimeout(()=>setBcSyncStatus(null),6000);
       bgError(syncTaskId,"BC sync failed: "+(e.message||"").slice(0,60));
       setBcSyncing(false);return;
@@ -34951,21 +34959,46 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // sending it to BC after the 3s delay overwrites BC planning lines with
         // stale quantities/prices and can DELETE legitimate lines via incremental diff.
         const livePanels=projectRef.current?.panels||[];
+        const projectName=projectRef.current?.name||init.name;
+        const projectId=init.id;
         for(let i=0;i<livePanels.length;i++){
           const p=livePanels[i];
           if(!p||!p.id)continue;
           const curHash=computePanelBomHash(p);
-          if(curHash===(p.bomSyncHash||"")){continue;} // Already synced
+          const hashMatch=curHash===(p.bomSyncHash||"");
+          const pending=p.bomSyncPending&&p.bomSyncStartedAt;
+          const stale=pending&&(Date.now()-p.bomSyncStartedAt>SYNC_PENDING_STALE_MS);
+          // F-2d.3: Skip if fully synced with no pending marker
+          if(hashMatch&&!pending){continue;}
+          // F-2d.3: Fresh pending (<5min) — another tab may still be syncing, skip
+          if(pending&&!stale){
+            console.log(`[OPEN BC SYNC] panel ${i+1}: sync pending (started ${Math.round((Date.now()-p.bomSyncStartedAt)/1000)}s ago), skipping`);
+            continue;
+          }
+          if(stale){
+            console.log(`[OPEN BC SYNC] panel ${i+1}: stale pending marker (${Math.round((Date.now()-p.bomSyncStartedAt)/1000)}s), clearing and re-syncing`);
+          }
+          // Either hash mismatch or stale pending — sync to BC
           try{
-            await bcSyncPanelPlanningLines(bcNum,i+1,p,projectRef.current?.name||init.name);
+            // Write pending marker before sync
+            await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:true,bomSyncStartedAt:Date.now()},true);
+            await bcSyncPanelPlanningLines(bcNum,i+1,p,projectName);
             synced++;
-            // #65b: DISABLED — stale init.panels snapshot overwrites user edits (PRJ402109 data loss).
-            // Coach diagnostic: DIAGNOSTIC-PRJ402109-DATA-LOSS.md. Will be re-enabled with
-            // projectRef.current.panels.find() pattern after careful review.
-            // const hashed={...p,bomSyncHash:curHash};
-            // init.panels[i]=hashed;
-            // saveProjectPanel(uid,init.id,p.id,hashed,true).catch(e=>console.warn("Open BC sync hash save failed panel",i+1,":",e));
-          }catch(e){console.warn("Open BC sync panel",i+1,"failed:",e);}
+            // FIX(F-2d.3): Re-enable hash save-back (disabled in v1.20.65 #65b).
+            // Safe now: v1.20.71 replaced stale init.panels with projectRef.current.
+            // Write hash + clear marker atomically in one Firestore write.
+            const syncHash=computePanelBomHash(p);
+            const hashed={...p,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
+            await saveProjectPanel(uid,projectId,p.id,hashed,true);
+            // Update React state so manual sync sees the new hash
+            const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?hashed:cp);
+            const upd={...projectRef.current,panels:updPanels};
+            setProject(upd);projectRef.current=upd;onChange(upd);
+          }catch(e){
+            console.warn("Open BC sync panel",i+1,"failed:",e);
+            // Clear marker on failure — don't leave it stuck
+            try{await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:false,bomSyncStartedAt:null},true);}catch(e2){}
+          }
         }
         if(synced>0)console.log("OPEN BC SYNC:",synced,"panels synced for",bcNum);
         else console.log("OPEN BC SYNC: all panels already in sync for",bcNum);
@@ -36532,13 +36565,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         for(let i=0;i<(proj.panels||[]).length;i++){
                           const curHash=computePanelBomHash(proj.panels[i]);
                           if(curHash!==(proj.panels[i].bomSyncHash||"")){
-                            try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
-                              // Set bomSyncHash after successful sync
-                              const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?{...p,bomSyncHash:curHash}:p);
+                            try{
+                              // F-2d.3: Write pending marker before sync
+                              saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncPending:true,bomSyncStartedAt:Date.now()},true).catch(()=>{});
+                              await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
+                              // F-2d.3: Set bomSyncHash + clear pending marker after successful sync
+                              const hashed={...proj.panels[i],bomSyncHash:curHash,bomSyncPending:false,bomSyncStartedAt:null};
+                              const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?hashed:p);
                               const upd={...projectRef.current,panels:updPanels};
                               setProject(upd);projectRef.current=upd;onChange(upd);
-                              saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncHash:curHash},true).catch(()=>{});
-                            }catch(e){console.warn("Pre-print sync panel",i+1,"failed:",e);}
+                              saveProjectPanel(uid,proj.id,proj.panels[i].id,hashed,true).catch(()=>{});
+                            }catch(e){
+                              console.warn("Pre-print sync panel",i+1,"failed:",e);
+                              // F-2d.3: Clear marker on failure
+                              try{saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncPending:false,bomSyncStartedAt:null},true).catch(()=>{});}catch(e2){}
+                            }
                           }
                         }
                       }
