@@ -1413,3 +1413,15 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     survive in-app navigation (module-scope cache) but not browser refresh (intentional).
     Design: PRE-EXTRACTION-PAGE-MGMT-DESIGN.md (Coach v3), PRE-EXTRACTION-PAGE-MGMT-ANALYST-REVIEW.md (Freddy).
     Discovered: Noah's feedback during pre-extraction page management (2026-06-02).
+
+## BOM Prompt Fix (2026-06-02)
+
+79. **RESOLVED** (v1.20.81, 4cfaeb81 + 67dd897c, field-verified by Jon on 592273) — F-1a.3: BOM prompt duplicate-merge instruction caused silent data loss.
+    The `DUPLICATE PART NUMBERS` prompt instruction told the AI to combine same-PN rows with
+    summed qty before returning results. This destroyed data inside the model's response before
+    ARC's code dedup (positional → exact → fuzzy merge at line 13884+) could handle it correctly.
+    Root cause of the 592273 failure (items 17/18 on RSD0203-126 silently merged during extraction).
+    Fix: replaced merge instruction with "return every row as-is, defer dedup to code" at both
+    `src/app.jsx:11286` and `functions/bomPrompt.js:215`. Field verification confirmed items 17/18
+    now split correctly and genuine duplicates still collapse via code dedup.
+    Discovered: overnight audit F-1a.3 (2026-06-01), diagnosed across v1.20.67-69 dedup fixes.
