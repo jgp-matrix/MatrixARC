@@ -11759,29 +11759,30 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion);
     if((serverResult.items||[]).length===0&&originalPdfPath&&pageNumber){
       // FIX(#82): When PDF-native returns 0 items on a BOM-classified page, retry
-      // with full-res PDF CropBox (bomRegion) — NOT the lossy JPEG crop.
-      // Priority: bomRegion (user/AI) → JPEG crop (last resort, lossy).
-      if(bomRegion){
-        console.warn(`[BOM EXTRACT] server PDF-native returned 0 items — retrying with full-res PDF CropBox (${bomRegion.source||"region"})`);
-        try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion);}
-        catch(retryErr){console.warn("[BOM EXTRACT] PDF CropBox retry also failed:",retryErr?.message||retryErr);}
-      } else if(croppedBomDataUrl){
-        console.warn("[BOM EXTRACT] server PDF-native returned 0 items, no bomRegion for CropBox — JPEG crop fallback (lossy)");
+      // with full-res PDF CropBox — NOT the lossy JPEG crop.
+      // If first call already had bomRegion (CropBox applied, still 0 items), retry
+      // WITHOUT crop (full page) — the degenerate-crop handler below covers this.
+      // If first call had NO bomRegion and we have one available, retry WITH CropBox.
+      if(!bomRegion&&croppedBomDataUrl){
+        console.warn("[BOM EXTRACT] server PDF-native (full page) returned 0 items, no bomRegion — JPEG crop fallback (lossy)");
         try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null);}
         catch(retryErr){console.warn("[BOM EXTRACT] JPEG crop fallback also failed:",retryErr?.message||retryErr);}
       }
+      // bomRegion present + 0 items → falls through to degenerate-crop retry below (line 11776+)
+      // which retries WITHOUT crop. No redundant same-args retry.
     }
-    // Degenerate-crop retry: if bomRegion was applied and ALL results are placeholder,
+    // Degenerate-crop retry: if bomRegion was applied and result is empty OR all placeholder,
     // retry without crop — the crop likely cut off essential content (e.g. PN column)
-    if(bomRegion&&originalPdfPath&&pageNumber&&(serverResult.items||[]).length>0){
-      const allPlaceholder=(serverResult.items).every(it=>it.partNumber==="?"||(it.notes||"").includes("EXTRACTION_FAILED"));
-      if(allPlaceholder){
-        console.warn(`[BOM EXTRACT] all ${serverResult.items.length} items are placeholder with crop — retrying WITHOUT crop`);
+    if(bomRegion&&originalPdfPath&&pageNumber){
+      const items=serverResult.items||[];
+      const allPlaceholder=items.length>0&&items.every(it=>it.partNumber==="?"||(it.notes||"").includes("EXTRACTION_FAILED"));
+      if(items.length===0||allPlaceholder){
+        console.warn(`[BOM EXTRACT] CropBox result ${items.length===0?"empty":"all placeholder"} — retrying full page WITHOUT crop`);
         try{
           const uncropped=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,null);
-          if((uncropped.items||[]).length>=(serverResult.items).length){
+          if((uncropped.items||[]).length>=items.length){
             uncropped._regionCropRetried=true;
-            console.log(`[BOM EXTRACT] uncropped retry succeeded: ${uncropped.items.length} items (was ${serverResult.items.length} placeholder)`);
+            console.log(`[BOM EXTRACT] uncropped retry succeeded: ${uncropped.items.length} items (was ${items.length} ${allPlaceholder?"placeholder":"empty"})`);
             return uncropped;
           }
           console.warn("[BOM EXTRACT] uncropped retry returned fewer items, keeping cropped result");
