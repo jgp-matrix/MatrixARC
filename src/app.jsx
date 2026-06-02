@@ -23695,7 +23695,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
   }
+  // FIX(#77/#78): Pre-extraction-aware page delete. When pendingPages is populated
+  // (pre-extraction state), update pendingPages/cache directly — no Firestore write.
+  // Post-extraction: unchanged behavior via panel.pages + onSaveImmediate.
   function removePage(id){
+    if(pendingPages.length>0){
+      const updatedPending=pendingPages.filter(p=>p.id!==id);
+      if(reasonPickerFor===id)setReasonPickerFor(null);
+      if(updatedPending.length>0){
+        setPendingPages(updatedPending);
+        const updatedNewItems=(pendingNewItemsRef.current||[]).filter(it=>it.id!==id);
+        pendingNewItemsRef.current=updatedNewItems;
+        pendingPagesSet(panel.id,{pages:updatedPending,newItems:updatedNewItems,awaiting:awaitingConfirm});
+      }else{
+        setPendingPages([]);
+        pendingNewItemsRef.current=[];
+        pendingPagesClear(panel.id);
+        setAwaitingConfirm(false);
+        setExtractionNotes("");
+        bgDone(panel.id,"All pages removed");
+      }
+      return;
+    }
     const remaining=pages.filter(p=>p.id!==id);
     let updated={...panel,pages:remaining};
     if(remaining.length===0){
@@ -26347,9 +26368,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <div style={{fontSize:12,color:"#818cf8",fontWeight:600,marginTop:4}}>{rCount} BOM region{rCount>1?"s":""} defined — extraction will use cropped regions for better accuracy</div>
               ):null;})()}
             </div>
-            <button data-tip="Confirm drawing types are correct and begin BOM extraction, validation, and pricing" onClick={confirmAndExtract} style={{flexShrink:0,background:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
-              Proceed with Extraction
-            </button>
+            {(()=>{const _n=pages.length;const _origN=(pendingNewItemsRef.current||[]).length+(panel.pages||[]).filter(p=>!p.ecoId).length;const _showCount=_n>0&&_n<_origN;return(
+            <button data-tip={_n===0?"Drop drawing pages to begin":"Confirm drawing types are correct and begin BOM extraction, validation, and pricing"} onClick={confirmAndExtract} disabled={_n===0} style={{flexShrink:0,background:_n===0?C.muted:C.accent,color:"#fff",border:"none",borderRadius:7,padding:"9px 22px",fontSize:13,fontWeight:700,cursor:_n===0?"not-allowed":"pointer",whiteSpace:"nowrap",opacity:_n===0?0.5:1}}>
+              Proceed with Extraction{_showCount?` (${_n} page${_n!==1?"s":""})`:""}
+            </button>);})()}
           </div>
           <div style={{marginTop:10}}>
             <div style={{fontSize:11,fontWeight:600,color:C.muted,marginBottom:4,letterSpacing:0.3}}>EXTRACTION NOTES <span style={{fontWeight:400,fontStyle:"italic"}}>(optional — hints for AI about these drawings)</span></div>
