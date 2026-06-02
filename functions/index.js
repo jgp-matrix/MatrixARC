@@ -2422,7 +2422,9 @@ exports.extractBomPage = functions
       ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
     const notesSection = userNotes
       ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting.` : '';
-    const pageHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.\n\n`;
+    // FIX(#82 P2): Add scan quality alert to crop fallback — was missing, causing garbled PNs
+    const cropQualityAlert = `\n\n⚠️ SCANNED IMAGE ALERT: This is a cropped image from a scanned drawing. Characters WILL be ambiguous. APPLY MAXIMUM SCRUTINY:\n- Perform the character-count check on EVERY part number\n- Default ALL rows to confidence "medium" unless every glyph is crystal clear\n- For any character that could be B/8, O/0, S/5, I/1, 3/8, G/6 — examine the surrounding pattern\n- Count total BOM rows TWICE before starting extraction\n`;
+    const pageHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.${cropQualityAlert}\n\n`;
     userContent = [
       { type: 'image', source: { type: 'base64', media_type: croppedBomMediaType, data: croppedBomImage } },
       { type: 'text', text: pageHint + feedbackSection + notesSection },
