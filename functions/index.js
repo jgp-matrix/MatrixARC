@@ -2410,7 +2410,12 @@ exports.extractBomPage = functions
     const qualityAlert = pdfQuality.warningLevel !== 'none'
       ? `\n\n⚠️ SCANNED DOCUMENT ALERT: This page is a ${pdfQuality.isMonochrome ? 'monochrome (black-and-white) fax-quality' : 'scanned'} image at ~${pdfQuality.estimatedDpi || 'unknown'} DPI embedded in a PDF. The BOM table is a bitmap, NOT vector text. Characters WILL be ambiguous.\n\nAPPLY MAXIMUM SCRUTINY:\n- Perform the character-count check on EVERY part number, not just long ones\n- Default ALL rows to confidence "medium" unless the glyph is crystal clear\n- For any character that could be B/8, O/0, S/5, I/1 — examine the surrounding pattern for clues\n- Count total BOM rows TWICE before starting extraction — scanned tables are easy to under-count\n- If the BOM spans multiple image regions on this page, explicitly note how many sections you found\n` : '';
     const cropHintText = pdfCropped ? 'This PDF has been cropped to show ONLY the BOM table region. ' : '';
-    const pageHint = `${cropHintText}Extract ALL Bill of Materials (BOM) items from this page.${qualityAlert} If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+    // FIX(#82 P1): When CropBox is applied, we KNOW there's a BOM region — don't offer the
+    // noBomReason escape. On scanned monochrome PDFs, the model takes the easy out ("no BOM
+    // here") instead of trying to parse the bitmap. Removing the escape forces extraction.
+    // Keep the escape for uncropped pages where the model genuinely needs to classify.
+    const noBomEscape = pdfCropped ? '' : ' If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.';
+    const pageHint = `${cropHintText}Extract ALL Bill of Materials (BOM) items from this page.${qualityAlert}${noBomEscape}\n\n`;
 
     userContent = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
@@ -2583,7 +2588,9 @@ exports.extractBomBatch = functions
     ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
   const notesSection = userNotes
     ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
-  const pageHint = `Extract ALL Bill of Materials (BOM) items from this page. If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.\n\n`;
+  // FIX(#82 P1): noBomReason escape built per-page below — only offered when uncropped
+  const pageHintBase = `Extract ALL Bill of Materials (BOM) items from this page.`;
+  const noBomEscapeText = ` If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.`;
 
   // Process pages with controlled concurrency
   const CONCURRENCY = 4;
@@ -2643,9 +2650,10 @@ exports.extractBomBatch = functions
           const batchQualityAlert = pgQuality.warningLevel !== 'none'
             ? `\n\n⚠️ SCANNED DOCUMENT ALERT: This page is a ${pgQuality.isMonochrome ? 'monochrome (black-and-white) fax-quality' : 'scanned'} image at ~${pgQuality.estimatedDpi || 'unknown'} DPI. Characters WILL be ambiguous. Default ALL rows to confidence "medium" unless every glyph is crystal clear. Perform character-count checks on EVERY part number.\n` : '';
           const batchCropHint = batchPdfCropped ? 'This PDF has been cropped to show ONLY the BOM table region. ' : '';
+          const batchPageHint = `${pageHintBase}${batchPdfCropped ? '' : noBomEscapeText}\n\n`;
           userContent = [
             { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-            { type: 'text', text: batchCropHint + pageHint + batchQualityAlert + (pg.notes ? `\n\n${pg.notes}` : '') + feedbackSection + notesSection },
+            { type: 'text', text: batchCropHint + batchPageHint + batchQualityAlert + (pg.notes ? `\n\n${pg.notes}` : '') + feedbackSection + notesSection },
           ];
         }
 
