@@ -13869,7 +13869,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const raw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
         const positional=positionalMergeBomItems(raw);
         const map={};
-        positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");const key=(pn&&itemNo)?pn+":item:"+itemNo:pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
+        positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
         const exact=Object.values(map);
         const fuzzyReport=fuzzyMergeBomItemsWithReport(exact);
         const fuzzy=fuzzyReport.items;
@@ -23843,7 +23843,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     positionalDedup.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
       const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");
-      const key=(pn&&itemNo)?pn+":item:"+itemNo:pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
+      const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);
+      const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged (now qty ${map[key].qty})`);}
       else{map[key]={...item};}
     });
