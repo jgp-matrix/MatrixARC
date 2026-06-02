@@ -1399,26 +1399,17 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     version-tracking confusion and added latency between sessions.
     Owner for design: Coach (with Jon coordination on broader Matrix ARC tooling stack).
 
-77. **OPEN** — UI bug: page delete renders broken state during pre-extraction phase.
-    Symptom: When the "Proceed with Extraction" button is active (PDF dropped but not yet
-    extracted), clicking to delete a page causes all pages to disappear/go black, with only a
-    red X delete control remaining visible.
-    Impact: Broken UI state; user can't tell what happened to their pages, may force them to
-    start over.
-    Investigation needed: What state transition is happening? Is the page list still in memory
-    but not rendering? Or is the page array actually being mutated incorrectly?
-    Priority: HIGH — broken UI behavior, not just missing feature.
+77. **RESOLVED** (v1.20.80, dfbb2293, field-verified by Jon + Noah — all 5 tests pass incl. navigate-away-return symptom check) — UI bug: page delete renders broken state during pre-extraction phase.
+    Root cause: removePage wrote to panel.pages and Firestore instead of pendingPages; Firestore
+    save stripped dataUrl, causing black images on fallback. Fix: pre-extraction-aware removePage
+    updates pendingPages/cache directly, no Firestore write.
+    Design: PRE-EXTRACTION-PAGE-MGMT-DESIGN.md (Coach v3), PRE-EXTRACTION-PAGE-MGMT-ANALYST-REVIEW.md (Freddy).
     Discovered: Noah's workflow feedback during pre-extraction page management (2026-06-02).
 
-78. **OPEN** — Feature: pre-extraction page selection/deletion.
-    Symptom: Users sometimes drop a multi-page PDF where only certain pages are relevant for
-    BOM extraction. Currently no way to exclude pages from extraction before clicking "Proceed."
-    Use case: User drops a 20-page drawing set, only 5 pages have BOMs. Today they have to
-    either extract all 20 (wasted AI calls, longer wait), or use a separate tool to trim the
-    PDF first (workflow friction).
-    Proposed solution: Allow users to delete or deselect specific pages in the pre-extraction
-    view. The "Proceed with Extraction" button only operates on remaining/selected pages.
-    Dependencies: #77 should be fixed first (or together), since the delete action itself is
-    broken in this phase.
-    Priority: MEDIUM — workflow improvement, not blocking.
+78. **RESOLVED** (v1.20.80, dfbb2293, field-verified by Jon + Noah — all 5 tests pass) — Feature: pre-extraction page selection/deletion.
+    Shipped alongside #77. Delete-based page management per Jon's 5-step flow (drop → scan →
+    delete unwanted → confirm types → extract remaining). "Proceed with Extraction" button shows
+    live page count after deletions and disables when list is empty. Pre-extraction deletes
+    survive in-app navigation (module-scope cache) but not browser refresh (intentional).
+    Design: PRE-EXTRACTION-PAGE-MGMT-DESIGN.md (Coach v3), PRE-EXTRACTION-PAGE-MGMT-ANALYST-REVIEW.md (Freddy).
     Discovered: Noah's feedback during pre-extraction page management (2026-06-02).
