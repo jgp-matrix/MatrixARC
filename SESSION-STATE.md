@@ -45,7 +45,7 @@ Key findings that DO stand:
 - [DONE] AbortController on extraction fetches — 480s timeout on all Anthropic API calls (4f8796f4)
 - [DONE] #82 P2 — Scan quality alert added to bom-region-crop fallback prompt (4e31f918)
 - [DONE] #82 P1 — Removed noBomReason escape from pdf-native when CropBox applied (10fdced5)
-- [DONE] #83 — Reliable routing for scanned documents to JPEG+P2 path
+- [DONE] #83 — Reliable routing for scanned documents to JPEG+P2 path. Earlier routing nondeterminism WAS real (different paths across runs producing different results). Now deterministic — always reaches JPEG+P2 — but wastes ~16s on two doomed pdf-native calls first. Optimization pending, reliability achieved.
 - [DONE] PNG revert — JPEG+P2 outperforms PNG on scanned drawings (v1.20.87)
 
 ## Open Items
@@ -57,7 +57,7 @@ Key findings that DO stand:
   - Coach trace points: `_parseAndVerifyBomRaw` (silent item drop), `filterNonBomRows` (4-field structural reject), L3 merge pick-winner on duplicate itemNo keys.
 
 ### MEDIUM — Confirm/close
-- **#83 — Reliable routing:** Confirm deployed and working (scanned docs → JPEG+P2). May already be done.
+- **#83 — Reliable routing:** Working — scanned docs deterministically reach JPEG+P2. Optimization opportunity: skip the two doomed pdf-native calls (~16s waste) for pages with `warningLevel: "high"` scan quality.
 - **#82 — PDF-native empty on scanned-bitmap-in-PDF.** Likely WON'T-FIX / route around. JPEG+P2 works for scans; PDF-native not needed. Decision item, not a code fix.
 
 ### FEATURE — Multi-day, gated
