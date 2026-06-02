@@ -1319,3 +1319,31 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     system correctly flagged.
     Discovered: RSD0203-126 extraction spot-check after v1.20.66, 2026-06-01.
     Owner for design: Coach.
+
+75. **OPEN** — Extraction progress bar accuracy.
+    Symptom: During extraction, the progress bar does not move smoothly or accurately. User has
+    limited visibility into how far along the extraction is.
+
+    Impact: User uncertainty during long extractions (100s+). User doesn't know if extraction is
+    still running, stuck, or how much longer to wait.
+
+    Possible causes (to analyze when prioritized):
+    - Progress events not fired by Cloud Function during extraction
+    - Progress states use static labels instead of percentage updates
+    - Client-side timer not synchronized with actual extraction state
+    - No granular per-step progress (only "extracting" → "complete")
+
+    Investigation areas:
+    - Where is the progress bar driven from? What events update it?
+    - Can per-page progress be reported by the Cloud Function?
+
+    Possible improvements:
+    - Per-page progress events fired from Cloud Functions
+    - Estimated time remaining based on average extraction duration
+    - Step-level progress (parsing → AI call → validation → dedup → save)
+    - Animated indeterminate progress during long-running steps
+
+    Priority: LOWER — cosmetic / UX improvement, not data-affecting.
+    Discovered: PRJ402109 Line 4 RSD0203-126 re-extractions, 2026-06-01. Jon observed limited
+    progress visibility during long extraction runs.
+    Owner for design: Coach.
