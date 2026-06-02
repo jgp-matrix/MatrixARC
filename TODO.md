@@ -1496,3 +1496,25 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     confident. Before removing the JPEG path, need data: how often does image-crop fallback
     produce a GOOD BOM vs garbled? Investigation pending.
     Discovered: PRJ402119 diagnostic (2026-06-02).
+
+84. **OPEN** (MEDIUM) — Extraction drops last row(s) on scanned BOMs + misses companion parts.
+    On PRJ402119 Sht 3/6 (13-row BOM), the JPEG+P2 path consistently extracts 13/14 items
+    (missing LNM40BPK100, the last row) and the companion TYD2CW6 (written as "WITH COVER
+    TYD2CW6" on the same line as TYD15X3WPW6, row 8). The splitCompanionParts post-processor
+    exists but depends on the AI emitting the companion — on this scan the model only returns
+    the primary part. Two sub-issues:
+    (a) Last-row drop: BOM table bottom may be clipped by the crop region or the model stops
+        reading before the final row. Check if the crop region coordinates include row 13.
+    (b) Companion-part miss: the prompt asks for companion splitting but the model doesn't
+        always comply on scanned drawings with small text. May need stronger prompt or a
+        post-processing pattern match ("WITH COVER", "WITH BASE", "WITH SOCKET").
+    Discovered: PRJ402119 variance measurement (2026-06-02).
+
+85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
+    On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
+    that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source
+    drawing (or the customer's Excel/spreadsheet BOM) can disambiguate. This is the strongest
+    case for the Excel cross-check workflow on Ovivo: the spreadsheet contains unambiguous
+    typed part numbers, no glyph-reading required. For customers who provide Excel BOMs
+    alongside drawings, cross-check extracted PNs against the spreadsheet and flag mismatches.
+    Discovered: PRJ402119 diagnostic — Jon confirmed both candidate PNs resolve in BC (2026-06-02).
