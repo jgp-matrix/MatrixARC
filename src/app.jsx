@@ -2811,9 +2811,11 @@ async function bcCleanupDuplicateAttachments(jobNumber,keepFileNames=[]){
 
 async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileName){
   const {compId,jobId}=await bcGetJobGuid(jobNumber);
-  // Delete the previous rev drawing attachment by exact filename
-  if(previousFileName)await bcDeleteAttachmentByName(jobNumber,previousFileName);
-  // Step 1: create attachment record
+  // FIX(F-2d.2): Reordered for atomicity — create+upload BEFORE deleting old file.
+  // Old sequence: DELETE old → POST metadata → PATCH binary. If PATCH failed, old file
+  // was already gone and new file was a metadata-only stub. Drawing permanently lost.
+  // New sequence: POST metadata → PATCH binary → DELETE old (only on success).
+  // Step 1: create attachment record (new file)
   const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
@@ -2824,13 +2826,21 @@ async function bcAttachPdfToJob(jobNumber,fileName,pdfArrayBuffer,previousFileNa
   const editLink=att["attachmentContent@odata.mediaEditLink"];
   if(!editLink)throw new Error("BC did not return mediaEditLink for attachment");
   const etag=att["@odata.etag"]||"*";
-  // Step 2: upload binary content
-  const ur=await fetch(editLink,{
+  // Step 2: upload binary content (converted from direct fetch to bcGatedFetch — F-2d.1 fix)
+  const ur=await bcGatedFetch(editLink,{
     method:"PATCH",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/pdf","If-Match":etag},
     body:pdfArrayBuffer
   });
-  if(!ur.ok){const t=await ur.text();throw new Error(`BC attachment upload failed (${ur.status}): ${t}`);}
+  if(!ur.ok){
+    // Binary upload failed — clean up the orphaned metadata stub from step 1
+    try{await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${jobId})/documentAttachments(${att.id})`,{
+      method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}
+    });}catch(e){/* best-effort — bcCleanupDuplicateAttachments handles leftovers */}
+    const t=await ur.text();throw new Error(`BC attachment upload failed (${ur.status}): ${t}`);
+  }
+  // Step 3: delete previous revision ONLY after new file is fully uploaded
+  if(previousFileName)await bcDeleteAttachmentByName(jobNumber,previousFileName);
   return att;
 }
 
