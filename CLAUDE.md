@@ -42,7 +42,7 @@ After verify-state.sh, check if this is a multi-role session:
 1. Read `SESSION-STATE.md`. If missing or older than the latest commit, regenerate it (see generation procedure below).
 2. Ask Jon which roles are active (Full team / Code team / Quick fix / Custom).
 3. Generate role-appropriate output:
-   - **Freddy active:** Combine FREDDY.md + SESSION-STATE.md into a pasteable code block.
+   - **Freddy active:** Read FREDDY.md and SESSION-STATE.md from disk, then output a single pasteable code block containing the **full literal content** of both files (FREDDY.md first, then a `---` separator, then SESSION-STATE.md). Do NOT use placeholders like "[Paste FREDDY.md content first]" — the paste must be self-contained so Jon can copy-paste it into a fresh Claude.ai session with zero editing.
    - **Coach active:** Note that Coach will self-orient from repo files.
    - **Marc solo:** Display state summary and begin work.
 4. Display the state summary and any generated pastes.
@@ -151,6 +151,8 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
    - Any branches that remain (feature branch retained due to active worktree, etc.)
 
 6b. **Update SESSION-STATE.md**: Regenerate from current repo state (version, recent commits, active findings, working tree status, open TODOs). This captures the session's output for the next session's startup.
+
+6c. **Durable-record check**: Before stopping, verify that every design decision, analyst review result, or scope change made during this session exists in a repo file — not just in conversation. Freddy's analysis lives only in browser chat; Coach's investigation notes live only in terminal context. If any session-critical decision hasn't been written to a design doc, CLAUDE.md, TODO.md, or SESSION-STATE.md, write it now. This is what enables cross-session continuity — the next session (any role) can only recover what's in the repo.
 
 7. **Stop.** Wait for the user to either:
    - Direct additional actions (update TODO.md, etc.) — execute as instructed
