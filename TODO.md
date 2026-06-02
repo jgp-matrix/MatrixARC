@@ -1337,11 +1337,18 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     - Where is the progress bar driven from? What events update it?
     - Can per-page progress be reported by the Cloud Function?
 
-    Possible improvements:
-    - Per-page progress events fired from Cloud Functions
-    - Estimated time remaining based on average extraction duration
-    - Step-level progress (parsing → AI call → validation → dedup → save)
-    - Animated indeterminate progress during long-running steps
+    Recommended approach (Jon, 2026-06-01):
+    - Cloud Function writes progress milestones to Firestore (e.g. `panel.extractionProgress` field)
+    - Client subscribes via existing project Firestore listener (no polling)
+    - Progress bar maps milestones to percentage and label
+
+    Granularity per page:
+    - `queued` → `parsing-pdf` → `ai-extraction` → `parsing-response` → `validation` → `merging` → `saving` → `complete`
+    - For multi-page: `pagesTotal`, `pagesComplete`, `currentPage`
+
+    The data already exists in Cloud Functions logs — surface it via Firestore writes for the client
+    to consume. This matches ARC's existing subscription pattern and avoids polling overhead.
+    Marc + Coach to refine the exact field schema during implementation.
 
     Priority: LOWER — cosmetic / UX improvement, not data-affecting.
     Discovered: PRJ402109 Line 4 RSD0203-126 re-extractions, 2026-06-01. Jon observed limited
