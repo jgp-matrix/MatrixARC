@@ -1450,13 +1450,21 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## PRJ402119 Extraction Failure (2026-06-02)
 
-81. **OPEN** (HIGH) — Empty BOM region yields silent zero-item acceptance.
-    When a user draws a BOM region over the wrong section of a drawing (or wrong page entirely),
-    extraction returns 0 items and ARC accepts it silently — no warning, no flag. A user-asserted
-    BOM region that yields ZERO items is a strong wrong-drawing/wrong-region signal. ARC should
-    flag it visibly: "BOM region returned 0 items — verify the region covers the correct area."
-    Observed on PRJ402119 Lines 1-2: user had BOM region over a section with no items (wrong
-    drawing chosen by mistake). ARC extracted empty and said nothing.
+81. **OPEN** (HIGH) — Extraction anomaly detection: warn user when results look suspicious.
+    When extraction produces anomalous results, ARC should surface a modal warning instead of
+    silently accepting bad data. Anomaly signals (any should trigger):
+    - Zero items from a user-asserted BOM region (wrong region/drawing)
+    - All/most items have placeholder PNs ("TO BE CONFIRMED", "?", "TBD")
+    - Very low confidence scores across the board
+    - Descriptions that don't match BOM patterns (no manufacturer, no part-like strings)
+    - Column header detection failure flagged by the AI
+    Target UX: modal warning after extraction completes, explaining what anomalies were found
+    and suggesting the user verify the BOM region / page selection. Not a blocker — user can
+    dismiss and keep the results — but makes the problem visible instead of silent.
+    Observed on PRJ402119: Line 2 bad region produced items with "TO BE CONFIRMED" as PNs —
+    visible enough to signal a problem, but only because the user checked. Lines 1-2 earlier
+    had wrong regions with 0 items and ARC said nothing.
+    Design: Freddy scope (modal triggers, wording, actions). Not part of F-1g.1.
     Discovered: PRJ402119 diagnostic (2026-06-02).
 
 82. **OPEN** (CRITICAL) — PDF-native extraction bails on BOM pages with no BOM region, forcing
