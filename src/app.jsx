@@ -39739,8 +39739,8 @@ function NewProjectModal({uid,onCreated,onClose}){
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Number of Panels</div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
             <button type="button" onClick={()=>setPanelCount(c=>Math.max(1,c-1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>−</button>
-            <span style={{fontSize:20,fontWeight:700,minWidth:32,textAlign:"center"}}>{panelCount}</span>
-            <button type="button" onClick={()=>setPanelCount(c=>Math.min(20,c+1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>+</button>
+            <input type="number" min={1} max={1000} value={panelCount} onChange={e=>{const v=parseInt(e.target.value,10);if(!isNaN(v))setPanelCount(Math.max(1,Math.min(1000,v)));}} onBlur={()=>{if(panelCount<1)setPanelCount(1);if(panelCount>1000)setPanelCount(1000);}} style={{width:64,fontSize:20,fontWeight:700,textAlign:"center",background:C.bg,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 4px",MozAppearance:"textfield",WebkitAppearance:"none"}}/>
+            <button type="button" onClick={()=>setPanelCount(c=>Math.min(1000,c+1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>+</button>
             <span style={{fontSize:12,color:C.muted}}>{panelCount===1?"1 panel will be created":`${panelCount} panels will be created`}</span>
           </div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
