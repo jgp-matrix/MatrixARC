@@ -34935,12 +34935,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       bcOpenSyncRan.current=true;
       (async()=>{
         let synced=0;
-        for(let i=0;i<(init.panels||[]).length;i++){
-          const p=init.panels[i];
+        // FIX(v1.20.71): Read LIVE panels from projectRef.current instead of stale
+        // init.panels closure. Mirrors pre-print sync pattern at line 36510-36526.
+        // The init.panels snapshot is captured at mount time and never updates —
+        // sending it to BC after the 3s delay overwrites BC planning lines with
+        // stale quantities/prices and can DELETE legitimate lines via incremental diff.
+        const livePanels=projectRef.current?.panels||[];
+        for(let i=0;i<livePanels.length;i++){
+          const p=livePanels[i];
+          if(!p||!p.id)continue;
           const curHash=computePanelBomHash(p);
           if(curHash===(p.bomSyncHash||"")){continue;} // Already synced
           try{
-            await bcSyncPanelPlanningLines(bcNum,i+1,p,init.name);
+            await bcSyncPanelPlanningLines(bcNum,i+1,p,projectRef.current?.name||init.name);
             synced++;
             // #65b: DISABLED — stale init.panels snapshot overwrites user edits (PRJ402109 data loss).
             // Coach diagnostic: DIAGNOSTIC-PRJ402109-DATA-LOSS.md. Will be re-enabled with
