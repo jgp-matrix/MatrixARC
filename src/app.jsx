@@ -11262,7 +11262,7 @@ treat its part number as if a customer reviewer is going to compare every charac
 the row's confidence to "medium" unless every glyph is unambiguous AND you've performed the
 character-count check above.
 
-DUPLICATE PART NUMBERS: If the same part number appears on multiple rows in the BOM table, combine them into ONE item with the total quantity summed. For example, if "QD100X300HW" appears 3 times each with qty 1, return ONE item with qty 3. Do NOT return separate rows for the same part number.
+DUPLICATE PART NUMBERS: If the same part number appears on multiple rows with IDENTICAL descriptions, combine them into ONE item with the total quantity summed. For example, if "QD100X300HW" appears 3 times each with qty 1 and the same description, return ONE item with qty 3. But if the same part number appears on rows with DIFFERENT descriptions (different use locations, different installation positions, etc.), keep them as SEPARATE items — they represent distinct line items that happen to use the same part.
 
 QUANTITY "A/R" or "AR": If a BOM row shows quantity as "A/R", "AR", "As Required", or "As Req'd", this means the panel shop uses whatever length/amount is needed. Set qty to 1 for these items.
 
