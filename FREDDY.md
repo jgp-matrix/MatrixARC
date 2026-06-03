@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.92 (defined in `public/index.html`)
+- **Current version:** v1.20.94 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -227,17 +227,21 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 - **TODO #86** — CRITICAL cross-project BOM contamination fix (PRJ402119→PRJ402111). Stale extraction callback + React component reuse wrote wrong BOM to wrong project. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
 - **v1.20.88-90** — #86 fix + background pricing on all extraction paths
 - **v1.20.91-92** — Startup/closeout procedure rewrite + shareable Dev Team skill pack (`/team-setup`, `/team-startup`, `/team-closeout`) with config-driven roles, guided mode, quick start doc
+- **v1.20.93** — #92-P1: Cache re-key — `_pendingPagesCache` and `_bgTasks` re-keyed from bare `panelId` to `projectId:panelId`, preventing cross-project cache collisions
+- **v1.20.94** — Noah BOM revert fix — `saveProjectPanel` now sets `updatedBy: uid`, closing the onSnapshot echo guard bypass that caused edits to revert
 
 ### Open Items
 - **#84** — Missing items (13/14) on PRJ402119 — last-row truncation, companion-part miss
 - **#85** — Excel BOM cross-check — Brief + Supplement + Analyst Review done, Detailed Plan pending
-- **#87** — Panel ID uniqueness hardening (follow-up from #86)
+- **#87** — Panel ID uniqueness hardening (downgraded to LOW — cache re-key breaks collision independent of unique IDs)
 - **#88** — Async ownership audit across all long-running operations
+- **#92** — Background Task UI Ownership Audit — Phase 1 (H1+H2 cache re-key) DONE. Phases 2+ (H3-H5 foreground-seizing suppression) still open.
 - **F-1g.1** — Dedup message fix — Analyst Review + Detailed Plan approved, queued for Marc
+- **#82 URGENT** — Cloud Function fixes (P1/P2) committed but possibly not deployed. Scanned-bitmap PDFs may silently return empty BOMs. See `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`.
 
-### Noah Production Bugs (NOT diagnosed)
-- **BOM edits revert** — suspected stale-state-overwrite race
-- **Quotes randomly drop fields** including Budgetary header — needs human verification of sent PDF first
+### Noah Production Bugs (FIX DEPLOYED — WATCH)
+- **BOM edits revert** — ROOT CAUSE FOUND: `saveProjectPanel` didn't set `updatedBy`, defeating onSnapshot echo guard. Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped. See `NOAH-BOM-REVERT-EVIDENCE.md`.
+- **Quotes randomly drop fields** — same root cause as BOM revert. Fix should resolve both. WATCH alongside.
 
 ---
 

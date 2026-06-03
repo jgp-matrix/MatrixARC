@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.92 (defined in `public/index.html`)
+- **Current version:** v1.20.94 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -227,17 +227,21 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 - **TODO #86** — CRITICAL cross-project BOM contamination fix (PRJ402119→PRJ402111). Stale extraction callback + React component reuse wrote wrong BOM to wrong project. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
 - **v1.20.88-90** — #86 fix + background pricing on all extraction paths
 - **v1.20.91-92** — Startup/closeout procedure rewrite + shareable Dev Team skill pack (`/team-setup`, `/team-startup`, `/team-closeout`) with config-driven roles, guided mode, quick start doc
+- **v1.20.93** — #92-P1: Cache re-key — `_pendingPagesCache` and `_bgTasks` re-keyed from bare `panelId` to `projectId:panelId`, preventing cross-project cache collisions
+- **v1.20.94** — Noah BOM revert fix — `saveProjectPanel` now sets `updatedBy: uid`, closing the onSnapshot echo guard bypass that caused edits to revert
 
 ### Open Items
 - **#84** — Missing items (13/14) on PRJ402119 — last-row truncation, companion-part miss
 - **#85** — Excel BOM cross-check — Brief + Supplement + Analyst Review done, Detailed Plan pending
-- **#87** — Panel ID uniqueness hardening (follow-up from #86)
+- **#87** — Panel ID uniqueness hardening (downgraded to LOW — cache re-key breaks collision independent of unique IDs)
 - **#88** — Async ownership audit across all long-running operations
+- **#92** — Background Task UI Ownership Audit — Phase 1 (H1+H2 cache re-key) DONE. Phases 2+ (H3-H5 foreground-seizing suppression) still open.
 - **F-1g.1** — Dedup message fix — Analyst Review + Detailed Plan approved, queued for Marc
+- **#82 URGENT** — Cloud Function fixes (P1/P2) committed but possibly not deployed. Scanned-bitmap PDFs may silently return empty BOMs. See `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`.
 
-### Noah Production Bugs (NOT diagnosed)
-- **BOM edits revert** — suspected stale-state-overwrite race
-- **Quotes randomly drop fields** including Budgetary header — needs human verification of sent PDF first
+### Noah Production Bugs (FIX DEPLOYED — WATCH)
+- **BOM edits revert** — ROOT CAUSE FOUND: `saveProjectPanel` didn't set `updatedBy`, defeating onSnapshot echo guard. Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped. See `NOAH-BOM-REVERT-EVIDENCE.md`.
+- **Quotes randomly drop fields** — same root cause as BOM revert. Fix should resolve both. WATCH alongside.
 
 ---
 
@@ -369,18 +373,17 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# Session State — 2026-06-03 18:00 MDT
-
-## Startup/Shutdown Procedure Change (2026-06-03)
-
-Startup and close out are now formal skills: `/team-setup`, `/team-startup`, `/team-closeout`. Config-driven via `.claude/team-config.json`. Guided mode available for new users. Shell scripts `tools/startup-auto.sh` and `tools/closeout-auto.sh` handle automated state gathering.
-
-Read the skill files in `.claude/commands/` for full details.
+# Session State — 2026-06-03 22:30 MDT
 
 ## Version
-v1.20.92 (deployed 2026-06-03). Process/tooling release — team skills + quick start doc.
+v1.20.94 (deployed 2026-06-03). Two fixes: #92-P1 cache re-key + Noah BOM revert fix.
 
 ## Recent Commits (last 15)
+- 525d8586 Add #92-P1 + BOM revert investigation artifacts + startup workflow improvements
+- ad5a7653 Release v1.20.94
+- a6906355 Release v1.20.93
+- 0af48ef2 Team skills: require AskUserQuestion for all decision points
+- ddb2eea2 Update handoff files for next session
 - 0e474d81 Release v1.20.92
 - 2ba0843f Add Claude Dev Team quick start guide (Word doc + generator)
 - e18c0c5e Analyst environment: recommend browser for unbiased third-party separation
@@ -391,39 +394,32 @@ v1.20.92 (deployed 2026-06-03). Process/tooling release — team skills + quick 
 - f0000fed Update handoff files for next session
 - ecaf886b Release v1.20.91
 - 65b42fe5 Rewrite startup/closeout procedures — sequential team boot + handoff file checks
-- 853913fb Add Session Closeout Verification Procedure to FREDDY.md
-- a5c8f1f1 Add TODO #93 extraction pipeline consolidation + regenerate SESSION-STATE
-- 7c7041e3 Add workflow lessons from contamination investigation
-- 19435b11 Close contamination incident — v1.20.90 validation passed all checks
-- 1d4112f4 Release v1.20.90
-
-## CROSS-PROJECT CONTAMINATION INCIDENT — CLOSED
-
-**Status: VALIDATED AND CLOSED (v1.20.90, 2026-06-03)**
-
-**Do NOT re-investigate the contamination.** It is resolved. Remaining work is architectural hardening tracked as separate TODOs below.
 
 ## Shipped This Session
-- [DONE] Startup procedure rewrite — sequential 5-step team boot (CLAUDE.md)
-- [DONE] Close out procedure rewrite — handoff file freshness checks + checklists (CLAUDE.md)
-- [DONE] /team-setup skill — one-time config wizard with guided mode
-- [DONE] /team-startup skill — config-driven boot with pastes and sync check
-- [DONE] /team-closeout skill — config-driven shutdown with approval gates
-- [DONE] startup-auto.sh + closeout-auto.sh — read-only state gathering scripts
-- [DONE] team-config.json — Matrix ARC Team defaults (Marc/Coach/Freddy)
-- [DONE] Claude-Dev-Team-Quick-Start.docx — shareable quick start guide
-- [DONE] FREDDY.md version update (v1.20.75 → v1.20.92)
+- [DONE] **#92-P1** — Cache re-key: `_pendingPagesCache` and `_bgTasks` re-keyed from bare `panelId` to `projectId:panelId`. Pre-fix repro confirmed cross-project pending pages contamination. Post-fix validation passed. See `92-P1-CLOSURE-REPORT.md`.
+- [DONE] **Noah BOM revert fix** — Root cause: `saveProjectPanel` did not set `updatedBy`, defeating the onSnapshot echo guard. Fix: one-liner adding `updatedBy: uid`. Pre/post validation confirmed 0 echo soft-applies vs 5. See `NOAH-BOM-REVERT-EVIDENCE.md`.
+- [DONE] **Startup workflow improvements** — `FREDDY-PASTE.md` drag-and-drop file replaces inline paste generation. Explorer auto-opens with file highlighted. App URL opens in linked browser session at startup. Large-content-to-Freddy protocol added to CLAUDE.md.
+
+## URGENT — Undeployed Cloud Function Fix (#82)
+
+Coach investigation found: #82 P1/P2 fixes (removing `noBomReason` escape on CropBox pages, scan quality alerts) are **committed to `functions/index.js` but may not be deployed to production**. `deploy.sh` only deploys hosting — Cloud Functions require separate `firebase deploy --only functions`. No repo-record evidence of a functions deploy after commits `10fdced5` / `4e31f918`. If undeployed, scanned-bitmap PDFs on projects like PRJ402119 silently return empty BOMs because the model bails with `noBomReason:"wrong-page-type"`. See `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`.
+
+**Next session action:** Run `firebase functions:log --only extractBomPage` to confirm deploy status. If undeployed, run `firebase deploy --only functions`.
+
+## WATCH Items
+- **Noah BOM revert** — fix deployed (v1.20.94) but investigation stays WATCH until Noah confirms reverts have stopped. Secondary mechanism (W9/W10 pricing stale-snapshot) identified as separate risk — not yet fixed. If reverts recur WITHOUT `[CONCURRENT] Soft-applied remote update` in console, it's the pricing mechanism.
+- **Quotes randomly drop fields** — same root cause as BOM revert (saveProjectPanel echo). Fix should resolve both. WATCH alongside.
 
 ## Open Items — Architectural Hardening
 
 ### HIGH — Next active investigation
-- **#92 — Background Task UI Ownership Audit.** Background operations must never seize foreground UI. Audit all completion handlers for modal opens, route changes, required-input interruptions. Coach-owned.
+- **#92 — Background Task UI Ownership Audit.** Phase 1 (H1+H2 cache re-key) DONE (v1.20.93). Phases 2+ (H3-H5 foreground-seizing suppression) still open. Coach-owned.
 
 ### MEDIUM — Queued
-- **#91 — Background Workflow Audit.** Classify all 12 extraction-completion functions as safe/UI-only/unsafe in background mode. Coach-owned.
-- **#93 — Extraction Pipeline Consolidation.** Shared `onExtractionComplete` for all three extraction paths. Coach to design, Marc to implement.
-- **#87 — Panel ID Hardening.** Generate unique panel IDs instead of sequential `panel-1`. Follow-up for #86.
-- **#88 — Async Ownership Audit.** Broader audit: all long-running operations, not just extraction. Coach-owned.
+- **#91 — Background Workflow Audit.** Classify all 12 extraction-completion functions. Coach-owned.
+- **#93 — Extraction Pipeline Consolidation.** Shared `onExtractionComplete`. Coach to design, Marc to implement.
+- **#87 — Panel ID Hardening.** Downgraded from MEDIUM to LOW per #92-P1 — cache re-key breaks collision independent of unique IDs. Defense-in-depth only.
+- **#88 — Async Ownership Audit.** Broader audit: all long-running operations. Coach-owned.
 
 ### HIGH — Pre-existing (from prior sessions)
 - **#84 — Missing items (13/14)** on PRJ402119. Last-row truncation + companion-part miss.
@@ -435,24 +431,30 @@ v1.20.92 (deployed 2026-06-03). Process/tooling release — team skills + quick 
 - **F-1g.1 — Dedup message fix.** Detailed Plan approved (F-1g1-DETAILED-PLAN.md). 5 code sites, ~35 LOC.
 - **#90 — ARC Cross UX.** Supersession not visually distinct from extraction error.
 
-## Noah Production Bugs (from prior session, NOT diagnosed)
-- **BOM edits revert** — suspected stale-state-overwrite race (#65 class).
-- **Quotes randomly drop fields** including Budgetary header — needs human verification of sent PDF first.
-
 ## Work Queue
-1. #92 — Background Task UI Ownership Audit (active investigation)
-2. Noah production bugs — triage/diagnose when prioritized
-3. #84 — Missing items investigation
-4. F-1g.1 — Implementation (plan approved)
-5. #66 — bcCreatePanelTaskStructure idempotency
-6. #64 — BC concurrency sweep
+1. Noah revert WATCH — confirm fix under real usage
+2. #92 — Phases 2+ (H3-H5 foreground-seizing suppression)
+3. Noah production bugs — triage/diagnose when prioritized
+4. #84 — Missing items investigation
+5. F-1g.1 — Implementation (plan approved)
+6. #66 — bcCreatePanelTaskStructure idempotency
+7. #64 — BC concurrency sweep
 
 ## Working Tree
-- Branch: master (up to date with origin/master at 0e474d81)
-- Clean: no uncommitted changes
+- Branch: master (up to date with origin/master at 525d8586)
+- Clean: no uncommitted changes (pending close out handoff commit)
 
 ## Open TODOs
-56 OPEN findings in TODO.md
+57 OPEN findings in TODO.md (Coach updating)
 
 ## Codebase Audit
 76 total findings in ARC-AUDIT-FINDINGS.md. Top unresolved CRITICALs: F-1g.1 (misleading dedup message — plan approved), F-2b.1 (save guard asymmetry), F-3c.4 (partial sync green checkmark), F-3a.1 (restore lock leak).
+
+## New Investigation Artifacts (this session)
+- `92-P1-CLOSURE-REPORT.md` — #92 Phase 1 closure with pre/post validation evidence
+- `92-PHASE1-DETAILED-PLAN.md` — Coach's cache re-key detailed plan
+- `92-UI-OWNERSHIP-AUDIT.md` — Coach's full UI ownership audit
+- `BOM-REVERT-FIX-PLAN.md` — Coach's plan for the saveProjectPanel updatedBy fix
+- `BOM-WRITE-PATHS-MAP.md` — Coach's write paths map for the BOM revert investigation
+- `NOAH-BOM-REVERT-EVIDENCE.md` — Marc's evidence report with root cause analysis
+- `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md` — Coach's investigation: #82 Cloud Function fixes possibly undeployed
