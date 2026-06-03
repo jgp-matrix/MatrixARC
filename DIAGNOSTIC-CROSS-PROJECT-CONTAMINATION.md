@@ -2,8 +2,8 @@
 
 **Date:** 2026-06-03
 **Severity:** CRITICAL — customer-facing data integrity
-**Status:** RESOLVED (hotfix deployed), follow-up hardening tracked as TODO #87
-**TODO ref:** #86 (resolved), #87 (open)
+**Status:** VALIDATED AND CLOSED (v1.20.90, 2026-06-03)
+**TODO ref:** #86 (resolved), #87 (open — panel ID hardening), #89 (resolved — background pricing), #92 (open — UI ownership audit)
 
 ---
 
@@ -77,13 +77,39 @@ Defense-in-depth. Before `onDone` calls `onUpdate` or triggers auto-pricing, it 
 
 ## Validation
 
+### Initial (v1.20.88)
 - Verified that PRJ402111 can be re-extracted with correct data after the fix
 - Verified that navigating between projects during extraction no longer causes cross-contamination
 - Verified that the `key` prop forces clean remount (DevTools component tree)
 
-## Follow-Up Hardening (TODO #87)
+### Full validation (v1.20.90, 2026-06-03)
 
-Panel ID uniqueness: generate `panel-${Date.now()}-${random}` instead of sequential `panel-1` for new panels. Existing projects keep their current IDs (migration not needed since the #86 fix prevents the acute contamination). This eliminates the collision class entirely for future projects.
+All three extraction paths validated with navigate-away test:
+
+| Check | Result |
+|-------|--------|
+| Extraction guard fired correctly on navigate-away | PASS |
+| Background pricing executed against originating project | PASS |
+| Background validation executed against originating project | PASS |
+| Correct project (extraction source) received all updates | PASS |
+| Sentinel project (navigated to) remained unchanged | PASS |
+| No forced navigation during background completion | PASS |
+
+**Resolved items:**
+- Cross-project BOM contamination (v1.20.88, #86)
+- Background pricing gap on extraction path 1 — `confirmAndExtract` (v1.20.89, #89)
+- Background pricing gap on extraction paths 2 and 3 — Re-Extract Drawings + `reExtractWithFeedback` (v1.20.90)
+
+**Immediate production risk is resolved.** The incident is formally closed pending dashboard/tile validation as a final confirmation step.
+
+## Follow-Up Hardening (open)
+
+Ordered by priority:
+
+1. **#92 — Background Task UI Ownership Audit** (HIGH). Background operations must never seize foreground UI. Audit all completion handlers for modal opens, route changes, and required-input interruptions. Architectural hardening.
+2. **#91 — Background Workflow Audit** (MEDIUM). Classify all 12 extraction-completion functions as safe / UI-only / unsafe in background mode. Preventive audit.
+3. **Extraction Pipeline Consolidation** (MEDIUM). Three extraction paths share the same completion chain — consolidate into a shared `onExtractionComplete` function. Coach to design, Marc to implement.
+4. **#87 — Panel ID uniqueness** (MEDIUM). Generate `panel-${Date.now()}-${random}` instead of sequential `panel-1` for new panels. Existing projects keep their current IDs (migration not needed since the #86 fix prevents the acute contamination). Eliminates the collision class entirely for future projects.
 
 ## Lessons Learned
 

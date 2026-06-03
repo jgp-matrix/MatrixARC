@@ -1564,22 +1564,21 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     When extraction completes for a project that is no longer the active view, pricing does not
     run. The #86 contamination guard correctly blocks `onDone` → `runPricingOnPanel` to prevent
     cross-project state writes, but the result is that the originating project's BOM is saved
-    unpricied — 40 of 42 rows red on PRJ402119 after a navigate-away extraction.
+    unpriced — 40 of 42 rows red on PRJ402119 after a navigate-away extraction.
     Product requirement: users must be able to start extraction on one project, navigate away,
     and have that project complete correctly in the background (including pricing).
-    Two possible approaches:
-    (a) Run pricing safely against the originating project using the captured projectId/panelId
-        closure, writing directly to Firestore without touching active ProjectView state. This
-        means pricing would call `saveProjectPanel(uid, capturedProjectId, capturedPanelId, ...)`
-        and skip `onUpdate` entirely. The user sees the priced result when they reopen the project.
-    (b) Mark the originating project/panel as "pricing pending" (a Firestore flag) and surface a
-        clear prompt when the user returns — e.g. "Extraction completed while you were away.
-        Run pricing now?" with a one-click action.
-    Either approach must NOT route through current ProjectView state — that's the contamination
-    vector #86 fixed.
-    Discovered: 2026-06-03 (PRJ402119 contamination test — extraction saved correctly but all
-    rows red because pricing was blocked by the guard).
-    Related: #86 (guard that causes this), #88 (async ownership audit).
+    Fix: approach (a) — run pricing safely against the originating project using captured
+    projectId/panelId closure. When the guard detects a project switch, pricing runs with
+    `{background:true}` — suppresses React state setters and UI modals, writes directly to
+    Firestore via `onSaveImmediate` (which is correctly project-scoped). Applied to all three
+    extraction paths: `confirmAndExtract` (v1.20.89), Re-Extract Drawings + `reExtractWithFeedback`
+    (v1.20.90).
+    **Validated 2026-06-03 (v1.20.90):** Guard fired correctly, background pricing executed,
+    background validation executed, correct project received updates, sentinel project unchanged,
+    no forced navigation during test. All three extraction paths pass navigate-away test.
+    Discovered: 2026-06-03 (PRJ402119 contamination test).
+    Related: #86 (guard that causes this), #88 (async ownership audit), #91 (background workflow
+    audit), #92 (UI ownership audit).
 
 90. **OPEN** (MEDIUM) — ARC Cross UX: supersession not visually distinct from extraction error.
     Lead case on PRJ402119: model correctly read `855F-VMS20B24Y3L3Y8Y4Y6` (discontinued
