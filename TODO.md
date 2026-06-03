@@ -1560,6 +1560,90 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (lesson learned from #86 investigation).
     Owner for investigation: Coach.
 
+89. **RESOLVED** (HIGH) — Background extraction pricing completion.
+    When extraction completes for a project that is no longer the active view, pricing does not
+    run. The #86 contamination guard correctly blocks `onDone` → `runPricingOnPanel` to prevent
+    cross-project state writes, but the result is that the originating project's BOM is saved
+    unpricied — 40 of 42 rows red on PRJ402119 after a navigate-away extraction.
+    Product requirement: users must be able to start extraction on one project, navigate away,
+    and have that project complete correctly in the background (including pricing).
+    Two possible approaches:
+    (a) Run pricing safely against the originating project using the captured projectId/panelId
+        closure, writing directly to Firestore without touching active ProjectView state. This
+        means pricing would call `saveProjectPanel(uid, capturedProjectId, capturedPanelId, ...)`
+        and skip `onUpdate` entirely. The user sees the priced result when they reopen the project.
+    (b) Mark the originating project/panel as "pricing pending" (a Firestore flag) and surface a
+        clear prompt when the user returns — e.g. "Extraction completed while you were away.
+        Run pricing now?" with a one-click action.
+    Either approach must NOT route through current ProjectView state — that's the contamination
+    vector #86 fixed.
+    Discovered: 2026-06-03 (PRJ402119 contamination test — extraction saved correctly but all
+    rows red because pricing was blocked by the guard).
+    Related: #86 (guard that causes this), #88 (async ownership audit).
+
+90. **OPEN** (MEDIUM) — ARC Cross UX: supersession not visually distinct from extraction error.
+    Lead case on PRJ402119: model correctly read `855F-VMS20B24Y3L3Y8Y4Y6` (discontinued
+    Allen-Bradley 855F stack light), ARC Cross correctly auto-replaced with `856TC-VMB24Y3Y5Y4`
+    (current successor). Both extraction and ARC Cross worked as designed — the original part IS
+    discontinued and the replacement IS intentional.
+    Problem: an experienced user interpreted the valid supersession as an extraction error because
+    the current "from: 855F... / ARC Cross / auto-replace" indicator doesn't clearly communicate
+    that this was a deliberate discontinuation replacement vs. an OCR correction vs. a user
+    preference. This triggered a false investigation.
+    Proposed fix: change the ARC Cross pill/label to communicate intent more clearly. Options:
+    - "Superseded — ARC Cross" (communicates discontinuation)
+    - "Replaced (discontinued) — ARC Cross" (explicit reason)
+    - Add a tooltip showing: "Original part 855F-VMS20B24Y3L3Y8Y4Y6 was recognized correctly.
+      Replaced with 856TC-VMB24Y3Y5Y4 because the original is discontinued (per your ARC Cross
+      database)."
+    Goal: reduce false extraction investigations caused by users interpreting valid ARC Cross
+    replacements as extraction errors. The indicator must clearly convey: (1) the original part
+    was recognized, (2) the replacement was intentional, (3) the reason was supersession.
+    Note: the alternates DB currently stores no reason field (discontinuation vs. preference vs.
+    cost). Adding an optional `reason` field to alternate entries would enable context-specific
+    labels. Low effort, high UX value.
+    Discovered: 2026-06-03 (PRJ402119 BOM diagnostic — Jon initially suspected extraction defect).
+
+91. **OPEN** (MEDIUM) — Background workflow audit: verify all extraction-completion functions are
+    background-safe and do not depend on active UI state.
+    The #86 contamination fix and #89 pricing fix exposed that pricing was part of the extraction
+    completion chain and broke when the user navigated away. We fixed the immediate issue, but
+    should verify all background-completion functions are correctly project-scoped.
+    When extraction completes after the user navigates away, verify each of these is background-safe:
+    1.  Extraction result save (`saveProjectPanel` in `runExtractionTask`)
+    2.  Pricing (`runPricingOnPanel` — BC match, AI fallback, lead times)
+    3.  BC item lookup (`bcLookupItem`, `bcFuzzyLookup`)
+    4.  BC purchase price lookup (`bcFetchPurchasePrices`)
+    5.  BC vendor resolution (`bcGetItemVendorNo`, `bcGetVendorName`, vendor backfill)
+    6.  BC planning line sync (`bcSyncPanelPlanningLines` — fire-and-forget at end of pricing)
+    7.  ARC Cross application (`applyLearnedCorrections` in extraction pipeline)
+    8.  Fuzzy match suggestion generation (`setBcFuzzySuggestions` — React state setter)
+    9.  Auto-assign behavior (`_autoAssignTriggerSetter` — module-scope, can fire on wrong project)
+    10. Firestore listener recovery (does data appear correctly when user returns?)
+    11. Task completion/status reporting (`bgDone`, `bgUpdate` — module-scope `_bgTasks`)
+    12. Modal/toast/UI side effects (`setPricingReport`, `arcAlert`, progress bar)
+    For each function, classify as:
+    - Safe as-is (uses captured projectId or explicit args)
+    - Requires captured projectId/panelId (currently uses closure but correctly scoped)
+    - UI-only, should be suppressed in background mode (React state setters, modals)
+    - Unsafe in background mode (references active project or module-scope mutable state)
+    - Requires future hardening
+    Core rule: no background-completion function should use the currently active project to
+    determine where data is saved, synced, or applied.
+    Preliminary assessment from C17 analysis (2026-06-03):
+    - Items 1-6: safe as-is (explicit projectId args or closure-captured, module-scope BC functions)
+    - Item 7: safe (runs inside `runExtractionTask` before `onDone`)
+    - Item 8: UI-only, no-op on unmounted component (harmless)
+    - Item 9: UNSAFE — `_autoAssignTriggerSetter` is module-scope, can fire on wrong project after
+      600ms timeout. Needs `background` flag guard.
+    - Item 10: safe — Firestore listener subscribes on mount, gets latest data including pricing
+    - Item 11: safe — `_bgTasks` is module-scope but keyed by panelId, used for UI badge only
+    - Item 12: UI-only, no-ops on unmounted component (cosmetic React warnings)
+    Related: #86 (contamination root cause), #88 (broader async ownership audit), #89 (pricing fix).
+    See C17 in COACH.md for detailed analysis.
+    Discovered: 2026-06-03 (follow-up from #89 investigation).
+    Owner for investigation: Coach.
+
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source

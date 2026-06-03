@@ -14294,6 +14294,179 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   }
 }
 
+// ── BACKGROUND PRICING (runs when extraction completes after user navigated away) ──
+// Uses only module-scoped functions + captured projectId/panelId. No React state dependency.
+async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNumber,panelIndex,projectName){
+  const bom=panelData.bom||[];
+  if(!bom.length||!_apiKey)return;
+  bgUpdate(panelId,"Background pricing…");
+  let updatedBom=[...bom];
+  let bcCount=0;
+  const bcFuzzySugg={};
+  // Phase 1: BC lookup
+  if(!_bcToken){try{await Promise.race([acquireBcToken(false),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000))]);}catch(e){}}
+  if(_bcToken){
+    try{
+      const compId=await bcGetCompanyId();
+      if(compId){
+        bgUpdate(panelId,"Background: BC pricing…");
+        const _bcStaleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
+        const eligible=bom.filter(r=>{
+          if(r.isLaborRow)return false;
+          if(r.priceSource==="manual")return false;
+          const noPo=r.priceSource==="bc"&&r.unitPrice>0&&!r.bcPoDate;
+          if(noPo)return true;
+          if(r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_bcStaleMs&&r.priceSource==="bc")return false;
+          return true;
+        });
+        await bcGetVendorMap();
+        const bcMap={};
+        for(let i=0;i<eligible.length;i++){
+          const row=eligible[i];
+          const pn=(row.partNumber||"").trim();
+          if(!pn)continue;
+          if(i%5===0)bgUpdate(panelId,`Background: BC ${i+1}/${eligible.length}…`);
+          if(row.priceSource==="bc"){
+            const exact=await bcLookupItem(pn);
+            if(exact&&exact.unitCost!=null){
+              const vNo=exact.vendorNo||await bcGetItemVendorNo(pn);
+              bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+            }
+            continue;
+          }
+          const result=await bcFuzzyLookup(pn);
+          if(result.match&&result.match.unitCost!=null){
+            const matchNo=result.match.number||pn;
+            const vNo=result.match.vendorNo||await bcGetItemVendorNo(matchNo);
+            bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+          }else if(result.suggestions.length>0){
+            bcFuzzySugg[String(row.id)]=result.suggestions;
+          }
+        }
+        bcCount=Object.keys(bcMap).length;
+        // PurchasePrices fetch for priceDate
+        const allBcMatchedIds=Object.keys(bcMap);
+        if(allBcMatchedIds.length>0){
+          const partNums=[...new Set(allBcMatchedIds.map(k=>bcMap[k].bcNumber).filter(Boolean))];
+          try{
+            const ppMap=await bcFetchPurchasePrices(partNums);
+            for(const k of allBcMatchedIds){
+              const pn=bcMap[k].bcNumber;
+              const pp=pn?ppMap.get(pn):null;
+              if(pp&&pp.startingDate&&pp.directUnitCost>0){
+                bcMap[k]={...bcMap[k],unitPrice:pp.directUnitCost,bcPoDate:pp.startingDate,_ppHasDate:true};
+              }
+            }
+          }catch(e){console.warn("[BG PRICING] PurchasePrices fetch failed:",e.message);}
+        }
+        updatedBom=updatedBom.map(r=>{
+          const key=String(r.id);
+          if(key in bcMap){
+            const hasPrice=bcMap[key].unitPrice>0;
+            const hasPpDate=!!bcMap[key]._ppHasDate;
+            return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,
+              ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
+              priceSource:"bc",
+              ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
+              bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
+              bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||""};
+          }
+          return r;
+        });
+        console.log(`[BG PRICING] BC: ${bcCount} matched of ${eligible.length} eligible`);
+      }
+    }catch(ex){console.warn("[BG PRICING] BC phase failed:",ex);}
+  }
+  // Phase 2: Lead times from BC
+  if(_bcToken){
+    const ltRows=updatedBom.filter(r=>{
+      if(r.isLaborRow||_isExcludedFromPriceCheck(r)||!(r.partNumber||"").trim())return false;
+      if(r.leadTimeSource==="supplier"||r.leadTimeSource==="manual")return false;
+      return r.leadTimeDays==null;
+    });
+    if(ltRows.length>0){
+      bgUpdate(panelId,`Background: lead times (${ltRows.length})…`);
+      const ltUpdates={};
+      for(const row of ltRows){
+        const pn=(row.partNumber||"").trim();
+        if(!pn)continue;
+        const latestRow=updatedBom.find(r=>String(r.id)===String(row.id))||row;
+        const vendorNo=latestRow.bcVendorNo||null;
+        let ldDays=null,ldSource=null;
+        if(vendorNo){ldDays=await bcLookupItemVendorLeadTime(pn,vendorNo);if(ldDays!=null)ldSource="bc_vendor";}
+        if(ldDays==null){ldDays=await bcLookupLeadTime(pn);if(ldDays!=null)ldSource="bc_item";}
+        if(ldDays!=null)ltUpdates[String(row.id)]={leadTimeDays:ldDays,leadTimeSource:ldSource,leadTimeUpdatedAt:Date.now(),leadTimeEstimated:false};
+      }
+      updatedBom=updatedBom.map(r=>{const k=String(r.id);return k in ltUpdates?{...r,...ltUpdates[k]}:r;});
+      console.log(`[BG PRICING] Lead times: ${Object.keys(ltUpdates).length}/${ltRows.length} from BC`);
+    }
+  }
+  // Phase 3: AI price fallback for unpriced non-labor rows
+  const unpricedBom=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&!(r.unitPrice>0));
+  if(unpricedBom.length>0){
+    bgUpdate(panelId,`Background: AI pricing ${unpricedBom.length} items…`);
+    try{
+      const aiPrices=await estimatePrices(unpricedBom);
+      updatedBom=updatedBom.map(r=>{
+        const ap=aiPrices[String(r.id)];
+        if(ap&&ap.unitPrice>0)return{...r,unitPrice:ap.unitPrice,priceSource:"ai",priceDate:Date.now(),aiBasis:ap.basis||"",aiSources:ap.sources||[]};
+        return r;
+      });
+      console.log(`[BG PRICING] AI: ${Object.values(aiPrices).filter(p=>p&&p.unitPrice>0).length}/${unpricedBom.length} priced`);
+    }catch(e){console.warn("[BG PRICING] AI pricing failed:",e);}
+  }
+  // Phase 4: AI lead time fallback
+  const rowsNeedingAiLead=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&r.leadTimeDays==null);
+  if(rowsNeedingAiLead.length>0){
+    try{
+      const estimates=await aiEstimateLeadTimes(rowsNeedingAiLead);
+      const estMap={};
+      estimates.forEach(est=>{if(est&&est.id&&est.leadTimeDays)estMap[String(est.id)]=+est.leadTimeDays;});
+      updatedBom=updatedBom.map(r=>{const k=String(r.id);return k in estMap?{...r,leadTimeDays:estMap[k],leadTimeSource:"ai",leadTimeUpdatedAt:Date.now(),leadTimeEstimated:true}:r;});
+    }catch(e){console.warn("[BG PRICING] AI lead time failed:",e);}
+  }
+  // Phase 5: Vendor backfill
+  if(_bcToken){
+    const needVendor=updatedBom.filter(r=>r.priceSource==="bc"&&!r.bcVendorName&&!r.isLaborRow&&(r.partNumber||"").trim());
+    if(needVendor.length>0){
+      const vendorPatches={};
+      for(const row of needVendor){
+        const pn=(row.partNumber||"").trim();
+        try{const vNo=await bcGetItemVendorNo(pn);if(vNo){const vName=await bcGetVendorName(vNo);if(vName)vendorPatches[String(row.id)]={bcVendorNo:vNo,bcVendorName:vName};}}catch(e){}
+      }
+      if(Object.keys(vendorPatches).length>0)updatedBom=updatedBom.map(r=>{const k=String(r.id);return k in vendorPatches?{...r,...vendorPatches[k]}:r;});
+    }
+  }
+  // Phase 6: bcVerify stamps
+  try{
+    const _fuzzyMap={...(panelData.bcFuzzySuggestions||{}),...bcFuzzySugg};
+    updatedBom=updatedBom.map(r=>{
+      if(r.isLaborRow||r.isContingency)return r;
+      const pn=(r.partNumber||"").trim();
+      if(!pn)return r;
+      let bcVerify;
+      if(r.priceSource==="bc")bcVerify={status:"in-bc",at:Date.now()};
+      else if(_fuzzyMap[r.id]&&_fuzzyMap[r.id].length>0)bcVerify={status:"fuzzy",candidateCount:_fuzzyMap[r.id].length,at:Date.now()};
+      else if(r.priceSource==="manual")bcVerify={status:"manual",at:Date.now()};
+      else bcVerify={status:"not-in-bc",at:Date.now()};
+      return{...r,bcVerify};
+    });
+  }catch(e){}
+  // Save directly to Firestore — no React state
+  const mergedFuzzy={...(panelData.bcFuzzySuggestions||{}),...bcFuzzySugg};
+  const updated={...panelData,bom:updatedBom,status:"costed",updatedAt:Date.now(),...(Object.keys(mergedFuzzy).length?{bcFuzzySuggestions:mergedFuzzy}:{})};
+  try{await saveProjectPanel(uid,projectId,panelId,updated);}catch(e){console.error("[BG PRICING] save failed:",e);}
+  const totalPriced=updatedBom.filter(r=>r.unitPrice>0).length;
+  console.log(`[BG PRICING] Complete: ${totalPriced}/${bom.length} priced (${bcCount} BC). Saved to ${projectId}/${panelId}`);
+  // BC sync
+  if(bcProjectNumber&&_bcToken&&updatedBom.length>0){
+    bcSyncPanelPlanningLines(bcProjectNumber,panelIndex+1,updated,projectName).then(()=>{
+      bcSyncPanelTaskDescriptions(bcProjectNumber,panelIndex+1,updated,projectName).catch(e=>console.warn("[BG PRICING] task desc sync failed:",e));
+    }).catch(e=>console.warn("[BG PRICING] planning lines sync failed:",e));
+  }
+  bgDone(panelId,`✓ ${totalPriced} priced (background)`);
+}
+
 // ── PRICING PROMPT ──
 const PRICING_PROMPT=`You are a pricing assistant for industrial electrical control panel components.
 Estimate US distributor market prices (Grainger, AutomationDirect, Allied, DigiKey, etc.)
@@ -23207,9 +23380,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       projectName,bcProjectNumber,
       onDone:(finalPanel)=>{
         if(_currentProjectId!==_extractionProjectId){
-          console.warn(`[EXTRACTION GUARD] Stale extraction completion — extraction was for project ${_extractionProjectId} but active project is now ${_currentProjectId}. Firestore save targeted the correct project; React state update skipped to prevent cross-project contamination.`);
+          console.warn(`[EXTRACTION GUARD] Background completion — extraction for ${_extractionProjectId}, active project is ${_currentProjectId}. Running pricing in background mode (no React state).`);
           try{setExtracting(false);setValidatingPanel(false);}catch(e){}
-          bgDone(panel.id,`✓ ${(finalPanel.bom||[]).length} items (saved to original project)`);
+          if((finalPanel.bom||[]).length>0&&_apiKey){
+            runPricingBackground(uid,_extractionProjectId,panel.id,finalPanel,bcProjectNumber,idx,projectName).catch(e=>{
+              console.error("[EXTRACTION GUARD] Background pricing failed:",e);
+              bgDone(panel.id,`✓ ${(finalPanel.bom||[]).length} items (pricing failed)`);
+            });
+          }else{
+            bgDone(panel.id,(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
+          }
           return;
         }
         try{onUpdate(finalPanel);}catch(e){}
