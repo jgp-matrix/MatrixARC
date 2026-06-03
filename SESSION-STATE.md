@@ -1,4 +1,4 @@
-# Session State — 2026-06-03 17:01 MDT
+# Session State — 2026-06-03 17:30 MDT
 
 ## Startup/Shutdown Procedure Change (2026-06-03)
 
@@ -10,9 +10,11 @@ The startup and close out procedures in CLAUDE.md were rewritten this session. K
 Read the updated CLAUDE.md sections "Team startup (default)" and "Session shutdown procedure" for full details.
 
 ## Version
-v1.20.90 (deployed 2026-06-03). Cross-project contamination fix + background pricing.
+v1.20.91 (deployed 2026-06-03). Procedure-only release — startup/closeout rewrite.
 
 ## Recent Commits (last 15)
+- ecaf886b Release v1.20.91
+- 65b42fe5 Rewrite startup/closeout procedures — sequential team boot + handoff file checks
 - 853913fb Add Session Closeout Verification Procedure to FREDDY.md
 - a5c8f1f1 Add TODO #93 extraction pipeline consolidation + regenerate SESSION-STATE
 - 7c7041e3 Add workflow lessons from contamination investigation
@@ -26,8 +28,6 @@ v1.20.90 (deployed 2026-06-03). Cross-project contamination fix + background pri
 - bd3cb890 Add evidence-first debugging mode to FREDDY.md
 - 3351b7b2 Add #86 incident report + lessons learned across team docs
 - a3c10b8c Release v1.20.88
-- 8949e170 Fix SESSION-STATE.md: routing nondeterminism was real, now resolved with ~16s waste
-- 6d9e3be6 Session close-out: extraction investigation resolved, SESSION-STATE regenerated
 
 ## CROSS-PROJECT CONTAMINATION INCIDENT — CLOSED
 
@@ -35,29 +35,16 @@ v1.20.90 (deployed 2026-06-03). Cross-project contamination fix + background pri
 
 Full incident report: `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
 
-Root cause: stale extraction callback + React component reuse (`<ProjectView>` had no `key` prop) + panel ID collision (`panel-1` shared across all single-panel projects). When extraction completed after user navigated away, `onDone` wrote wrong BOM into the active project's React state.
-
-Fixes shipped:
-- v1.20.88 (#86): `key={openProject.id}` on `<ProjectView>` + `_extractionProjectId` guard in `onDone`
-- v1.20.89 (#89): Background pricing on `confirmAndExtract` path
-- v1.20.90 (#89): Background pricing on Re-Extract + `reExtractWithFeedback` paths
-
-Validation (v1.20.90): guard fired, background pricing executed, correct project updated, sentinel unchanged, no forced navigation.
-
 **Do NOT re-investigate the contamination.** It is resolved. Remaining work is architectural hardening tracked as separate TODOs below.
 
 ## EXTRACTION INVESTIGATION — RESOLVED (prior session)
 
-The "persistent 3036338→3038338 misread" was a ground-truth error, not a model bug. Do NOT re-chase PNG encode, upscale, native-res crop, or temperature fixes. See previous SESSION-STATE for full details.
+The "persistent 3036338→3038338 misread" was a ground-truth error, not a model bug. Do NOT re-chase PNG encode, upscale, native-res crop, or temperature fixes.
 
-## Shipped Prior Session
-- [DONE] #86 — Cross-project BOM contamination fix (v1.20.88)
-- [DONE] #89 — Background pricing on all three extraction paths (v1.20.89 + v1.20.90)
-- [DONE] Incident report: DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md
-- [DONE] CLAUDE.md: Async Project Ownership Rule, Multi-Project Workflow Assumption, Dashboard Command Center Principle, Live Testing Environment Confirmation
-- [DONE] FREDDY.md: Evidence-First Debugging Mode, Analyst Communication Model, Pending Response Rule, Incident Closure Criteria, Cross-Project Contamination Investigation Protocol, Post-Investigation Documentation Checklist, Durable-Record Assignment Practice, Session Closeout Verification Procedure
-- [DONE] COACH.md: C16 (contamination finding), C17 (#89 analysis), C18 (extraction architecture priority plan)
-- [DONE] TODO #88 (async ownership audit), #90 (ARC Cross UX), #91 (background workflow audit), #92 (UI ownership audit), #93 (extraction pipeline consolidation)
+## Shipped This Session
+- [DONE] Startup procedure rewrite — sequential 5-step team boot (CLAUDE.md)
+- [DONE] Close out procedure rewrite — handoff file freshness checks + checklists (CLAUDE.md)
+- [DONE] FREDDY.md version update (v1.20.75 → v1.20.91)
 
 ## Open Items — Architectural Hardening
 
@@ -93,7 +80,7 @@ The "persistent 3036338→3038338 misread" was a ground-truth error, not a model
 6. #64 — BC concurrency sweep
 
 ## Working Tree
-- Branch: master (up to date with origin/master at 853913fb)
+- Branch: master (up to date with origin/master at ecaf886b)
 - Clean: no uncommitted changes
 
 ## Open TODOs
