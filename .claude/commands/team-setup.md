@@ -108,14 +108,22 @@ ARCHITECT:
   b) Claude Code Terminal
 
 ANALYST:
-  a) Claude.ai (browser) — no file access, receives full inline paste
-  b) Claude Code Terminal — has file access, receives file paths instead
-  c) Claude Code Desktop — has file access, receives file paths instead
+  a) Claude.ai browser (recommended) — no file access, full inline paste
+  b) Claude Code Terminal — has file access, receives file paths
+  c) Claude Code Desktop — has file access, receives file paths
+
+⚠ RECOMMENDATION: Use Claude.ai (browser) for the Analyst.
+  The Analyst deliberately has NO direct file access. This
+  separation provides an unbiased third-party perspective —
+  the Analyst questions assumptions and analyzes strategy
+  without anchoring on implementation details. If the Analyst
+  can read the code, they tend to confirm what the code says
+  rather than challenge whether it's the right approach.
 ```
 
 The analyst environment determines how the startup paste is generated:
-- **Browser**: full inline content (onboarding file + session state pasted verbatim)
-- **Terminal/CCD**: file paths to read (same format as Architect paste)
+- **Browser (recommended)**: full inline content (onboarding file + session state pasted verbatim). Analyst sees only what the Implementer explicitly shares.
+- **Terminal/CCD**: file paths to read (same format as Architect paste). Analyst can explore the codebase independently — useful but sacrifices the third-party separation benefit.
 
 ### Step 4 — Session Files
 
