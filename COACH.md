@@ -19,6 +19,7 @@ Any design decision, analyst review, or scope change produced or relayed during 
 - **2026-05-22 (Session 1, cont.)** — C13: H9-PLAN.md coach review. APPROVED — no blocking issues. itemNo reliable at merge stage, v1.19.642 interaction clean, no legitimate cross-itemNo merges exist, risk asymmetry holds. One minor doc nit (edge case 6).
 - **2026-05-22 (Session 1, cont.)** — C14: H9 post-deploy verification. SIGNED OFF on H9 fix (items 27/28/30 present, zero fuzzy merges, zero gaps). keepA fix clean. Separate finding: 50→21 raw count drop — AI missed items 1-26 contiguously. Root cause undetermined; three hypotheses with investigation steps. New code deficiency: re-extraction batch path omits bomRegion (line 22481 vs 12305).
 - **2026-05-22 (Session 1, cont.)** — C15: Re-extraction verification gap. CRITICAL architectural finding. Re-extraction path computes per-page verification but silently discards the result. PRJ402104's 21-item extraction passed without flags. H10 reshaped to include verification + L3 + report fields. H7 absorbed into H10 — same architectural gap, one coherent fix.
+- **2026-06-03 (Session 2)** — C16: Cross-project BOM contamination (CRITICAL, TODO #86). PRJ402119 BOM written into PRJ402111 via stale extraction callback + React component reuse + panel ID collision. Initial extraction pipeline investigation found no leak (correctly scoped). Root cause was at React state management layer — `<ProjectView>` reuse across projects allowed completion handlers to write to wrong project. Fixes: `key` prop + extraction guard. Documented in `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`. Architectural rule added to CLAUDE.md. Follow-up: #87 (panel ID uniqueness), #88 (async ownership audit).
 
 ## Findings
 
@@ -1078,6 +1079,34 @@ This means:
 **CRITICAL.** This is actively losing customer BOM items in production with no user-visible signal. The items simply vanish from the quote. Unlike H6 (which duplicated items — visible oddity), H9 deletes items — invisible until someone manually compares the quote to the drawing. Analogous to H6 in fix complexity (single guard, well-defined insertion point) but higher business impact.
 
 **Recommendation:** H9 should be the next implementation item, ahead of H7. Single function, single predicate, clear test case. Implement, verify on PRJ402104, deploy.
+
+### C16 — 2026-06-03 — Cross-Project BOM Contamination (CRITICAL, TODO #86)
+
+**Symptom:** Noah reported PRJ402111's BOM populated with PRJ402119's data. Different project, wrong BOM — customer-facing data integrity failure.
+
+**Investigation timeline:**
+
+1. **Initial hypothesis (Marc): extraction pipeline leak.** Marc investigated all extraction code paths — PDF storage paths (`originalPdfs/{uid}/{projectId}/...`), Cloud Function validation, prompt caching, Firestore saves. All correctly project-scoped. No cross-project leak in the extraction pipeline itself.
+
+2. **Second hypothesis (Marc): `_pendingPagesCache` panel ID collision.** Marc identified that `_pendingPagesCache` (app.jsx:433) is keyed by `panelId` alone. All single-panel projects share `panel-1`. If a user drops files on PRJ402119's panel, navigates away without extracting, then opens PRJ402111, the cache would serve PRJ402119's pages to PRJ402111's panel. This was a valid secondary vector but not the primary cause.
+
+3. **Confirmed root cause: stale extraction callback + reused `<ProjectView>`.** `<ProjectView>` had no `key` prop — React reused the same component instance when the user navigated between projects. When PRJ402119's extraction completed after the user switched to PRJ402111, the `onDone` callback wrote PRJ402119's BOM into PRJ402111's React state via the `onUpdate` → `setProject(prev => ...)` chain. `prev` was PRJ402111's data; the panel-map matched on the colliding `panel-1` ID. Auto-pricing then persisted the contaminated data via `onSaveImmediate`.
+
+**Why the two analyses differed:** Marc's initial extraction pipeline investigation was correct — extraction IS project-scoped. The contamination happened at a different layer: React state management after async completion. This is a class of bug where the async operation is correct but the completion handler writes to the wrong target because the UI context changed during execution.
+
+**Key insight:** Firestore saves inside `runExtractionTask` were always clean (captured `projectId` in closure). The contamination path was: `onDone` → `onUpdate(panel)` → `setProject(prev => prev.panels.map(p => p.id === panel.id ? panel : p))` → panel ID collision → wrong project's state updated → auto-pricing → `onSaveImmediate` → Firestore.
+
+**Fixes applied:**
+- (A) `key={openProject.id}` on `<ProjectView>` — forces unmount/remount on project switch, killing all stale closures
+- (B) `_extractionProjectId` guard in `onDone` — defense-in-depth that blocks `onUpdate` if active project changed
+
+**Follow-up:**
+- TODO #87 — Panel ID uniqueness (generate `panel-${Date.now()}-${random}` instead of sequential `panel-1`)
+- TODO #88 — Async ownership audit across all long-running operations
+- CLAUDE.md — Added "Async Project Ownership Rule" as an architectural constraint
+- `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md` — Full incident report
+
+**Verification status:** Hotfix deployed. PRJ402111 re-extracted with correct data. Cross-project navigation during extraction no longer causes contamination.
 
 ## Open Questions for Jon
 

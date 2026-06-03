@@ -1510,6 +1510,56 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
         post-processing pattern match ("WITH COVER", "WITH BASE", "WITH SOCKET").
     Discovered: PRJ402119 variance measurement (2026-06-02).
 
+86. **RESOLVED** (CRITICAL) — Cross-project BOM contamination via stale extraction callback + reused ProjectView.
+    Root cause: two issues combined. (1) Panel IDs are sequential (`panel-1`, `panel-2`) and
+    collide across every project. (2) `<ProjectView>` had no `key` prop, so React reused the
+    same component instance when the user navigated directly between projects (e.g., notification
+    click). When a long-running extraction completed after the user switched to a different project,
+    `onDone` callback wrote PRJ402119's BOM into PRJ402111's React state via panel ID collision.
+    The Firestore save inside `runExtractionTask` was always clean (captured projectId in closure);
+    contamination was through the React state `onUpdate` → `setProject(prev => ...)` chain where
+    `prev` was the new project's data. Auto-pricing then persisted contaminated data via
+    `onSaveImmediate`.
+    Fix: (a) Added `key={openProject.id}` to `<ProjectView>` — forces unmount/remount on project
+    switch, killing all stale closures. (b) Added `_extractionProjectId` guard in `onDone` that
+    compares against `_currentProjectId` at completion time — defense-in-depth that blocks
+    `onUpdate` and auto-pricing if the active project changed during extraction.
+    Follow-up: Panel ID uniqueness (use `panel-${Date.now()}-${random}` instead of sequential
+    `panel-1`) would eliminate the collision class entirely. Tracked separately — not part of
+    this hotfix due to migration risk on existing projects. Also: `_pendingPagesCache` uses the
+    same panel-ID key and could cross-contaminate cached pages between projects (lower severity,
+    same class).
+    Discovered: 2026-06-03 (PRJ402119 → PRJ402111 contamination reported by Noah).
+    Contamination paths: `app.jsx:23208` (onDone→onUpdate), `app.jsx:32955` (panel map by ID),
+    `app.jsx:35110` (setProject function updater), `app.jsx:25783` (pricing onSaveImmediate).
+    Fix sites: `app.jsx:45160` (key prop), `app.jsx:23209` (extraction guard).
+
+87. **OPEN** (MEDIUM) — Panel IDs are non-unique across projects (follow-up hardening for #86).
+    All projects generate panel IDs as `panel-1`, `panel-2`, etc. (`app.jsx:10043`, `app.jsx:39799`).
+    Any module-scoped cache or callback keyed by panel.id can cross-contaminate between projects.
+    Known affected: `_pendingPagesCache` (app.jsx:433), `_bgTasks` (app.jsx:421).
+    Fix: generate unique IDs (`panel-${Date.now()}-${random}`) for new panels. Existing projects
+    keep their current IDs (migration not needed — the #86 fix prevents the acute contamination).
+
+88. **OPEN** (MEDIUM) — Async ownership audit: verify all long-running operations have project-scoped
+    completion behavior. TODO #86 proved that async completion handlers can write to the wrong
+    project if the user navigates away during execution. The extraction path is now fixed, but
+    the same class of bug could exist in other async operations.
+    Candidate areas to audit:
+    - Extraction (`runExtractionTask`, `reExtractWithFeedback`) — FIXED in #86
+    - Pricing (`runPricingOnPanel`, auto-pricing after extraction) — check `onSaveImmediate` closure
+    - BC sync (`bcSyncPanelPlanningLines`, `bcSyncPanelTaskDescriptions`) — fire-and-forget pattern
+    - Archive/Restore — long-running with multiple Firestore writes
+    - Copy project — async with storage uploads
+    - Attachment processing (`addFiles` → PDF upload → page rendering)
+    - Import operations
+    Goal: ensure async completion cannot mutate whichever project happens to be active. Each
+    operation must capture `projectId` at invocation and validate before writing.
+    Related: #86 (root cause), #87 (panel ID uniqueness). See CLAUDE.md "Async Project Ownership
+    Rule" and `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`.
+    Discovered: 2026-06-03 (lesson learned from #86 investigation).
+    Owner for investigation: Coach.
+
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source

@@ -94,34 +94,31 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 | `ARCHIVE-COPY-PLAN-ANALYST-REVIEW.md` | Milestone E Analyst Review (Freddy) |
 | `ARCHIVE-COPY-PLAN-DETAILED.md` | Milestone E Detailed Plan (Coach) |
 | `DIAGNOSTIC-PRJ402109-DATA-LOSS.md` | Bug diagnostic for the #65b stale-state data loss |
+| `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md` | TODO #86 incident report — PRJ402119→PRJ402111 BOM contamination |
 | `docs/superpowers/plans/*.md` | Feature plans (lead times, change orders, extraction accuracy, etc.) |
 
 ---
 
-## Recently Active Work (as of 2026-06-02)
+## Recently Active Work (as of 2026-06-03)
 
 ### Shipped
 - **Milestone D** (Archive & Restore) — Full ECO-aware restore with vendor/item/customer preflight, remap UI, phased restore with lock and rollback
 - **Milestone E Phases 1-2** (Copy to New Quote) — Archive copy with BC integration
-- **v1.20.65** — Critical hotfix for #65b stale-state data loss (init.panels closure overwriting Firestore on project open)
-- **v1.20.67-69** — BOM dedup discriminator fixes (itemNo guard, description guard)
-- **v1.20.71** — BC open-sync stale data fix (replaced init.panels with projectRef.current)
-- **v1.20.74** — F-1c.1 fix: vendor/customer display names resolved from BC on archive restore remap
-- **v1.20.75** — F-2d.2 fix: PDF attachment reordered for atomicity, converted to bcGatedFetch
+- **v1.20.80** — #77/#78 Pre-extraction page management
+- **v1.20.81** — F-1a.3 / TODO #79 BOM prompt duplicate-merge fix
+- **v1.20.82-87** — Extraction investigation arc (AbortController timeouts, scan quality alerts, PDF-native CropBox fix, reliable JPEG+P2 routing, PNG revert)
+- **TODO #86** — CRITICAL cross-project BOM contamination fix (PRJ402119→PRJ402111). Stale extraction callback + React component reuse wrote wrong BOM to wrong project. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
 
-### In Progress
-- **Codebase audit remediation** — 3 confirmed CRITICAL findings remaining:
-  1. F-2d.1 — 46 BC fetch calls bypass bcGatedFetch semaphore (MEDIUM effort)
-  2. F-1g.1 — "AI missed" message misleading for dedup-caused gaps (MEDIUM effort)
-  3. F-2d.3 — Firestore write after BC sync creates crash recovery gap (MEDIUM effort)
+### Open Items
+- **#84** — Missing items (13/14) on PRJ402119 — last-row truncation, companion-part miss
+- **#85** — Excel BOM cross-check — Brief + Supplement + Analyst Review done, Detailed Plan pending
+- **#87** — Panel ID uniqueness hardening (follow-up from #86)
+- **#88** — Async ownership audit across all long-running operations
+- **F-1g.1** — Dedup message fix — Analyst Review + Detailed Plan approved, queued for Marc
 
-### Open TODOs of Note
-- #76 — Multi-Claude coordination layer (HIGH)
-- #77 — Page delete renders broken state during pre-extraction (OPEN)
-- #78 — Pre-extraction page selection/deletion feature (OPEN)
-
-### Known Root Cause (Unresolved)
-- **BOM prompt duplicate-merge instruction** — `app.jsx:11265` and `bomPrompt.js:215` tell the AI to merge duplicate part numbers before ARC ever sees them. This caused the 592273 dedup failure across v1.20.67-69. No ARC-side dedup fix can help because the merge happens inside the model's response. Fix requires prompt amendment.
+### Noah Production Bugs (NOT diagnosed)
+- **BOM edits revert** — suspected stale-state-overwrite race
+- **Quotes randomly drop fields** including Budgetary header — needs human verification of sent PDF first
 
 ---
 
@@ -132,6 +129,57 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - When you make mistakes (version drift, wrong-layer analysis, etc.), **own them and correct** rather than hedging
 - **Cross-checking Coach with Marc's runtime data catches blind spots in both** — the overnight audit proved this (Marc refuted Coach's #1 CRITICAL finding, confirmed the rest, and found 3 new issues)
 - When Jon asks "what do you think?", give a recommendation with one main tradeoff, not a list of options
+
+---
+
+## Cross-Project Contamination Investigation Protocol
+
+When a user reports Project A data appearing in Project B:
+
+1. **Preserve evidence before repair actions.** Do NOT re-extract, re-price, or overwrite the contaminated project until the investigation is complete. The contaminated state is the primary evidence.
+2. **Determine contamination layer** — each requires different investigation tools:
+   - **UI-only** — React state shows wrong data, Firestore is clean. Caused by stale closures, component reuse, or module-scoped cache collisions.
+   - **React state** — Component state is contaminated but hasn't been persisted yet. Check `onUpdate` / `setProject` chains.
+   - **Firestore persisted** — Wrong data is in the database. Check `onSaveImmediate`, auto-pricing, BC sync paths.
+   - **Storage-path contamination** — Pages or PDFs reference the wrong project's files. Check `originalPdfPath`, `storageUrl` values.
+3. **Require dual investigation:**
+   - Coach: code-path analysis (trace async callbacks, identify where project identity is captured vs. assumed)
+   - Marc: runtime/data verification (check actual Firestore data, React state, browser console)
+4. **Do not declare root cause confirmed until code-path AND runtime evidence align.** The 2026-06-03 incident (#86) demonstrated that the extraction pipeline was correctly project-scoped — the contamination occurred at a different layer (React state management after async completion).
+5. **Document findings in a durable repo artifact** if the issue affected project integrity or customer-facing data. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md` for the template.
+
+**Key architectural lesson (from TODO #86):** The currently open project must never determine where async results are written. Async completion handlers must carry sufficient identity (projectId, panelId) to guarantee they update only the originating entity.
+
+---
+
+## Post-Investigation Documentation Checklist
+
+After resolving a significant bug, Freddy should identify which of these artifacts need updating:
+
+1. **Hotfix recommendations** — immediate code changes needed
+2. **Follow-up TODO candidates** — hardening or audit work that doesn't block the hotfix
+3. **Startup-context candidates** — information future sessions need (SESSION-STATE.md, FREDDY.md)
+4. **Historical-record candidates** — incident reports, diagnostic documents for institutional knowledge
+5. **Architectural rule candidates** — patterns that should be enforced going forward (CLAUDE.md)
+
+Assign an owner (Freddy / Coach / Marc) for each before closing the investigation. Important lessons should live in the repo, not only in AI session history.
+
+---
+
+## Durable-Record Assignment Practice
+
+When a significant bug is resolved, explicitly determine whether findings belong in:
+
+| Artifact | Owner | When to use |
+|----------|-------|-------------|
+| `TODO.md` | Marc | Specific code-level findings, open/resolved tracking |
+| `COACH.md` | Coach | Investigation timeline, competing hypotheses, verification logic |
+| `FREDDY.md` | Coach | Process changes, investigation protocols, behavioral notes |
+| `CLAUDE.md` | Coach | Architectural rules that all sessions must follow |
+| Incident report / diagnostic doc | Marc or Coach | When the issue affected project integrity or customer-facing data |
+| Analyst Review | Freddy | Design decisions for features or significant refactors |
+
+Assign owners before closing the investigation. If no owner is assigned, the knowledge defaults to chat history — which dies with the session.
 
 ---
 

@@ -502,6 +502,23 @@ A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`)
 - Quote-print lock: `quotePrintLock = {lockedBy, lockedByName, lockedAt, expiresAt}` on the project doc; prevents two users from printing the same quote within a 30-second window.
 - ECO transactional create: `+ New ECO` runs inside `runTransaction`; aborts if another draft already exists.
 
+### Async Project Ownership Rule (CRITICAL)
+
+Long-running async operations must be project-scoped. The currently open project must **never** determine where async results are written. Completion handlers must carry sufficient identity (`projectId`, `panelId`) captured at invocation time to guarantee they update only the originating entity.
+
+**Applies to:** extraction, pricing, BC sync, archive/restore, copy operations, imports, attachment processing — any operation that outlasts a single synchronous call.
+
+**Required pattern:**
+1. Capture `projectId` and `panelId` in the closure at operation start
+2. On completion, verify the captured identity matches the current target before writing
+3. If the user navigated away, drop the result silently (or queue it) — never write to whatever project happens to be open
+
+**React-specific:** Any component that owns long-running async operations MUST have a `key` prop that forces unmount/remount when the underlying entity changes. Without this, React reuses the component instance and stale closures from the previous entity survive into the new one.
+
+**Module-scoped caches** (`_pendingPagesCache`, `_bgTasks`, or any future cache) must be keyed by `projectId:panelId`, not `panelId` alone. Panel IDs are not globally unique — all single-panel projects share `panel-1`.
+
+**Origin:** TODO #86 (2026-06-03). PRJ402119's BOM was written into PRJ402111 via stale extraction callback + React component reuse. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md` for full incident report.
+
 ### JSX Fragment Rule (CRITICAL)
 When rendering a modal alongside a component's root `<div>`, the return MUST use a fragment:
 ```jsx
