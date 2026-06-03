@@ -2,6 +2,8 @@
 
 One-time setup wizard that creates `.claude/team-config.json`. Run this before using `/team-startup` or `/team-closeout`.
 
+**Interaction rule:** Whenever this skill requires a user decision (approval, choice, confirmation), use the AskUserQuestion tool with selectable options — never ask as plain text expecting a typed answer.
+
 If `.claude/team-config.json` already exists, read it and ask: "Team config exists. Reconfigure from scratch, or edit specific fields?"
 
 ## Guided Mode

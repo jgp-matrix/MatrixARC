@@ -2,6 +2,8 @@
 
 This skill boots the full dev team. The Implementer (you) runs first and orchestrates.
 
+**Interaction rule:** Whenever this skill requires a user decision (approval, choice, confirmation), use the AskUserQuestion tool with selectable options — never ask as plain text expecting a typed answer.
+
 ## Prerequisites
 
 Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/team-setup` first and stop.
