@@ -8,12 +8,15 @@ Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/tea
 
 Extract config values:
 - `TEAM` = teamName
+- `GUIDED` = guidedMode (if true, show tips; if false or missing, skip tips)
 - `IMPL_SHORT` = roles.implementer.shortName
 - `ARCH_SHORT` = roles.architect.shortName
 - `ANALYST_SHORT` = roles.analyst.shortName
 - `SESSION_STATE` = files.sessionState
 - `ANALYST_ONBOARDING` = files.analystOnboarding
 - `ARCH_LOG` = files.architectLog
+
+**Guided mode:** If `GUIDED` is true, show the `💡 TIP` blocks below at each step. If the user says "stop handholding", "I got it", "skip tips", or similar at ANY point, set `guidedMode: false` in `.claude/team-config.json` and stop showing tips for the rest of this session and all future sessions.
 
 ## Display the checklist
 
@@ -40,6 +43,13 @@ Extract config values:
 Then run `bash ./tools/closeout-auto.sh` to gather current state.
 
 ## Step 1 — Commit uncommitted work
+
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: Close out starts by saving all your work. If there are unsaved file
+changes, they get committed now. If anything looks unfamiliar (files you
+didn't create), I'll ask before committing.
+```
 
 Run `git status`. If modified or staged files:
 - Stage relevant files and commit.
@@ -74,6 +84,13 @@ List all commits this session: `git log --oneline {start-SHA}..HEAD` (or last 10
 Mark complete: `✓ Step 4 — {N} session commits listed`
 
 ## Step 5 — Surface TODO.md updates
+
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: This is where we update the project's to-do list based on what
+happened this session. I'll propose changes — you approve, modify, or skip.
+Nothing gets edited without your say-so.
+```
 
 Based on session work, list:
 - Findings to mark RESOLVED (with commit SHAs)
@@ -115,6 +132,17 @@ Verify every design decision, review result, or scope change from this session e
 Mark complete: `✓ Step 6c — All session knowledge persisted to repo`
 
 ## Step 6d — Handoff file freshness check
+
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: This is the most important step for cross-session continuity.
+The handoff files are what the NEXT session reads to pick up where you
+left off. If they're stale, the next team boots with wrong context —
+wrong version numbers, missing shipped items, outdated work queue.
+
+I'll check each file and show you exactly what needs updating. You
+approve the changes before I touch anything.
+```
 
 **This is a STOP point.** Check each file, present findings, and wait for approval.
 
@@ -175,6 +203,14 @@ Waiting for:
 ```
 
 ## "Closed" verification
+
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: "Closed" is the final handshake. I run a quick verification that
+everything is committed, pushed, and the handoff files are current. If
+anything fails, I'll tell you exactly what to fix. Once all checks pass,
+the session is safe to end — the next /team-startup will pick up cleanly.
+```
 
 When user types "Closed" after close out:
 

@@ -8,6 +8,7 @@ Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/tea
 
 Extract these values from the config (use throughout this skill):
 - `TEAM` = teamName
+- `GUIDED` = guidedMode (if true, show tips; if false or missing, skip tips)
 - `IMPL_NAME` / `IMPL_SHORT` = roles.implementer.name / shortName
 - `ARCH_NAME` / `ARCH_SHORT` = roles.architect.name / shortName
 - `ANALYST_NAME` / `ANALYST_SHORT` = roles.analyst.name / shortName
@@ -19,6 +20,8 @@ Extract these values from the config (use throughout this skill):
 - `ARCH_LOG` = files.architectLog
 
 You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
+
+**Guided mode:** If `GUIDED` is true, show the `💡 TIP` blocks below at each step. If the user says "stop handholding", "I got it", "skip tips", or similar at ANY point, set `guidedMode: false` in `.claude/team-config.json` and stop showing tips for the rest of this session and all future sessions.
 
 ## Display the checklist
 
@@ -39,6 +42,14 @@ You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
 
 ## Step 1 — Verify state
 
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: This step makes sure the repo is in a known-good state before the
+team boots. It checks: correct directory, expected branch, clean working tree,
+and whether the session state file needs regenerating. If anything is off,
+we stop here so you can fix it before the other roles get stale context.
+```
+
 Run `bash ./tools/startup-auto.sh` to gather state.
 
 Also read the project's version constant (e.g., `APP_VERSION` from `public/index.html` or equivalent) and display:
@@ -53,6 +64,17 @@ If anything looks unexpected (wrong directory, unfamiliar branch, untracked file
 Mark complete: `✓ Step 1 — Repo state verified. v{VERSION} on {BRANCH}`
 
 ## Step 2 — Generate pastes
+
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: You'll see two code blocks below. Each one is an instruction set for
+one of your other team roles. Copy-paste each into its respective Claude session.
+
+The Architect gets FILE PATHS to read (they have repo access).
+The Analyst gets FULL CONTENT pasted inline (if in browser, no file access).
+
+Don't edit the pastes — they're ready to go as-is.
+```
 
 ### Architect paste (for {ARCH_ENV})
 
@@ -102,6 +124,13 @@ Mark complete: `✓ Step 2 — {ARCH_SHORT} paste + {ANALYST_SHORT} paste genera
 
 ## Step 3 — Wait for initialization
 
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: Open two new Claude sessions now — one for the Architect, one for
+the Analyst. Paste the blocks from Step 2 into each. They'll read the
+context and report back. Come back here and tell me when both are ready.
+```
+
 Tell the user:
 > Pastes are ready above. Copy each into the appropriate session. Let me know when both are up.
 
@@ -110,6 +139,17 @@ Tell the user:
 Mark complete: `✓ Step 3 — {ARCH_SHORT} and {ANALYST_SHORT} initialized`
 
 ## Step 4 — Cross-reference sync check
+
+**Guided tip (only if GUIDED):**
+```
+💡 TIP: This is a quick sanity check — all three roles confirm they see the
+same version number and the same next work item. If someone reports a mismatch,
+it usually means a handoff file is stale. We fix it before starting work so
+nobody operates on wrong assumptions.
+
+Copy each role's confirmation back to me. It should look like:
+  "{name}, version v1.X.Y, top of queue: {item}, ready"
+```
 
 State the Implementer's sync report:
 - **Version:** current version
