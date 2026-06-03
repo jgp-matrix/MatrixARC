@@ -3,6 +3,7 @@
 ## Table of Contents
 - [Session startup procedure](#session-startup-procedure)
   - [Multi-role startup](#multi-role-startup) — team role selection, Freddy paste generation, SESSION-STATE.md
+  - [Live testing environment confirmation](#live-testing-environment-confirmation) — browser session alignment before live testing
 - [Diagnostic session startup (diagstartup)](#diagnostic-session-startup-diagstartup) — read-only investigation mode
 - [Session shutdown procedure](#session-shutdown-procedure) — Close Out + Closed two-step
 - [Commit destination](#commit-destination)
@@ -66,6 +67,18 @@ After verify-state.sh, check if this is a multi-role session:
 **Staleness check:** If SESSION-STATE.md's date header is older than the latest commit, regenerate before using it for pastes.
 
 **Default behavior:** Marc assumes solo mode (Quick fix) unless Jon explicitly invokes "startup" or "team session." The multi-role question is only asked when Jon signals a team session.
+
+### Live testing environment confirmation
+
+Before any live testing, runtime validation, extraction testing, UI investigation, Firestore investigation, or production bug triage, confirm:
+
+1. Marc has a linked browser session available.
+2. Jon is performing testing from the same linked browser session being monitored.
+3. If multiple browser sessions exist, identify which browser/session is authoritative for testing.
+
+Runtime findings are only reliable when Jon's actions, Marc's observations, browser console output, Firestore sync activity, and UI state all originate from the same browser session. If browser sessions differ, investigation results may be invalid or incomplete.
+
+This confirmation should occur during session startup before live testing begins.
 
 ## Diagnostic session startup (diagstartup)
 
