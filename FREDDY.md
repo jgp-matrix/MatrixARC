@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.91 (defined in `public/index.html`)
+- **Current version:** v1.20.92 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -225,7 +225,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 - **v1.20.82-87** — Extraction investigation arc (AbortController timeouts, scan quality alerts, PDF-native CropBox fix, reliable JPEG+P2 routing, PNG revert)
 - **TODO #86** — CRITICAL cross-project BOM contamination fix (PRJ402119→PRJ402111). Stale extraction callback + React component reuse wrote wrong BOM to wrong project. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
 - **v1.20.88-90** — #86 fix + background pricing on all extraction paths
-- **v1.20.91** — Startup/closeout procedure rewrite — sequential team boot, handoff file checks, visible checklists
+- **v1.20.91-92** — Startup/closeout procedure rewrite + shareable Dev Team skill pack (`/team-setup`, `/team-startup`, `/team-closeout`) with config-driven roles, guided mode, quick start doc
 
 ### Open Items
 - **#84** — Missing items (13/14) on PRJ402119 — last-row truncation, companion-part miss
