@@ -433,9 +433,10 @@ let _bgListeners=new Set();
 let _pendingPagesCache={};
 let _pendingPagesListeners=new Set();
 function _pendingPagesNotify(){_pendingPagesListeners.forEach(fn=>fn({..._pendingPagesCache}));}
-function pendingPagesSet(panelId,data){_pendingPagesCache[panelId]=data;_pendingPagesNotify();}
-function pendingPagesClear(panelId){if(panelId in _pendingPagesCache){delete _pendingPagesCache[panelId];_pendingPagesNotify();}}
-function pendingPagesGet(panelId){return _pendingPagesCache[panelId]||null;}
+function pendingPagesSet(projectId,panelId,data){const key=projectId+':'+panelId;_pendingPagesCache[key]=data;_pendingPagesNotify();}
+function pendingPagesClear(projectId,panelId){const key=projectId+':'+panelId;if(key in _pendingPagesCache){delete _pendingPagesCache[key];_pendingPagesNotify();}}
+function pendingPagesGet(projectId,panelId){return _pendingPagesCache[projectId+':'+panelId]||null;}
+function _bgKey(projectId,panelId){return projectId+':'+panelId;}
 function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
 function bgStart(taskId,panelName,projectId,msg){
   // Cancel any pending delete timer so a re-upload within the cleanup window doesn't wipe the new task
@@ -13545,9 +13546,9 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     let cumWeight=0;
     const phaseRange={};
     for(const p of phases){const start=Math.round((cumWeight/totalWeight)*100);cumWeight+=p.weight;phaseRange[p.name]={start,end:Math.round((cumWeight/totalWeight)*100)};};
-    function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(panel.id,Math.min(pct,99));}
+    function phasePct(name,frac){const r=phaseRange[name];if(!r)return;const pct=r.start+Math.round(frac*(r.end-r.start));bgSetPct(_bgKey(projectId,panel.id),Math.min(pct,99));}
 
-    bgSetPct(panel.id,0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
+    bgSetPct(_bgKey(projectId,panel.id),0,hasBom?"Extracting BOM…":hasVal?"Validating…":"Processing…");
 
     // DECISION(v1.19.619): Upload pages to Firebase Storage EARLY (before any Firestore saves)
     // so they have storageUrls before being persisted. Without this, intermediate saves during
@@ -13602,7 +13603,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       const _existingScanQuality=panel.extractionReport?.scanQuality;
       if(_existingScanQuality&&_existingScanQuality!=="none"){
         const isHigh=_existingScanQuality==="high";
-        bgUpdate(panel.id,isHigh?"⚠ Low-quality scanned drawing — extraction may take longer and require review":"⚠ Scanned drawing detected — extraction may need review");
+        bgUpdate(_bgKey(projectId,panel.id),isHigh?"⚠ Low-quality scanned drawing — extraction may take longer and require review":"⚠ Scanned drawing detected — extraction may need review");
       } else {
         const _pdfPages=bomPages.filter(pg=>pg.originalPdfPath&&pg.pageNumber);
         if(_pdfPages.length>0){
@@ -13615,7 +13616,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             if(_worstLevel!=="none"){
               const isHigh=_worstLevel==="high";
               const monoCount=_qResults.filter(q=>q.isMonochrome).length;
-              bgUpdate(panel.id,isHigh?`⚠ Low-quality scanned drawing detected${monoCount?` (${monoCount} fax-scan page${monoCount>1?"s":""})`:""} — extraction will take longer and part numbers may need review`:`⚠ Scanned drawing detected — some part numbers may need verification`);
+              bgUpdate(_bgKey(projectId,panel.id),isHigh?`⚠ Low-quality scanned drawing detected${monoCount?` (${monoCount} fax-scan page${monoCount>1?"s":""})`:""} — extraction will take longer and part numbers may need review`:`⚠ Scanned drawing detected — some part numbers may need verification`);
               console.log("[BOM EXTRACT] Pre-flight quality check:",_worstLevel,_qResults);
             }
           }catch(qErr){console.warn("[BOM EXTRACT] Pre-flight quality check failed (non-blocking):",qErr.message);}
@@ -13632,7 +13633,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         const allSamePdf=_batchEligible.every(pg=>pg.originalPdfPath===commonPdf);
         if(allSamePdf){
           try{
-            bgUpdate(panel.id,`Batch extracting ${_batchEligible.length} BOM pages…`);
+            bgUpdate(_bgKey(projectId,panel.id),`Batch extracting ${_batchEligible.length} BOM pages…`);
             const batchPages=await Promise.all(_batchEligible.map(async pg=>{
               const units=await getExtractionUnits(pg);
               const unit=units[0]||{};
@@ -13645,7 +13646,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
               return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
             }));
             const _bomRange=phaseRange["bom"]||{start:0,end:40};
-            const _hb=bgHeartbeat(panel.id,_bomRange.start+1,_bomRange.end-2,`Batch extracting ${_batchEligible.length} BOM pages…`);
+            const _hb=bgHeartbeat(_bgKey(projectId,panel.id),_bomRange.start+1,_bomRange.end-2,`Batch extracting ${_batchEligible.length} BOM pages…`);
             try{
               _batchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",userNotes);
             }finally{_hb.stop();}
@@ -13666,7 +13667,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       bomMergePromise=parallelMap(bomPages,async (pg,pgIdx)=>{
         bomDone++;
         phasePct("bom",bomDone/bomPages.length);
-        bgUpdate(panel.id,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
+        bgUpdate(_bgKey(projectId,panel.id),`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
         // Get extraction units — cropped BOM regions or full page
         const units=await getExtractionUnits(pg);
         let pageItems=[],pageQs=[];
@@ -13695,7 +13696,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             console.log(`[BOM EXTRACT] page="${pg.name||pgIdx+1}" using BATCH result (${(result.items||[]).length} items)`);
           } else {
             const _pgBomRange=phaseRange["bom"]||{start:0,end:40};
-            const _pgHb=bgHeartbeat(panel.id,_pgBomRange.start+1,_pgBomRange.end-2,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
+            const _pgHb=bgHeartbeat(_bgKey(projectId,panel.id),_pgBomRange.start+1,_pgBomRange.end-2,`Extracting BOM — page ${bomDone}/${bomPages.length}…`);
             try{result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);}finally{_pgHb.stop();}
           }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
@@ -13993,7 +13994,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // Validation (parallel with BOM)
     let valPromise=Promise.resolve(null);
     if(hasVal){
-      valPromise=runPanelValidation(latestPanel,pct=>{phasePct("val",pct/100);bgUpdate(panel.id,"Validating…");},bomMergePromise);
+      valPromise=runPanelValidation(latestPanel,pct=>{phasePct("val",pct/100);bgUpdate(_bgKey(projectId,panel.id),"Validating…");},bomMergePromise);
     }
     // Await BOM and save
     const bomResult=await bomMergePromise;
@@ -14021,11 +14022,11 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     let snippetCorrections=[];
     if(mergedBom.length>0){
       try{
-        bgUpdate(panel.id,"Re-verifying each row…");
+        bgUpdate(_bgKey(projectId,panel.id),"Re-verifying each row…");
         const livePages=_basePages(latestPanel.pages?latestPanel:panel);
         const res=await selfCorrectBomRowsWithSnippets(mergedBom,livePages,(pct,msg)=>{
           phasePct("bom",0.9+pct/1000); // small boost at tail end of BOM phase
-          if(msg)bgUpdate(panel.id,msg);
+          if(msg)bgUpdate(_bgKey(projectId,panel.id),msg);
         });
         mergedBom=res.bom;
         snippetCorrections=res.corrections||[];
@@ -14124,7 +14125,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // Part number verification (in-memory accumulation)
     const bomToVerify=(latestPanel.bom||[]).slice();
     if(bomToVerify.length>0&&hasVerify){
-      phasePct("verify",0);bgUpdate(panel.id,"Verifying part numbers…");
+      phasePct("verify",0);bgUpdate(_bgKey(projectId,panel.id),"Verifying part numbers…");
       try{
         const vr=await verifyPartNumbers(bomToVerify);
         phasePct("verify",1);
@@ -14155,7 +14156,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       let cleanOnRound=null;
       for(let round=1;round<=MAX_AUDIT_ROUNDS;round++){
         roundsUsed=round;
-        bgUpdate(panel.id,`BOM audit — pass ${round}/${MAX_AUDIT_ROUNDS}…`);
+        bgUpdate(_bgKey(projectId,panel.id),`BOM audit — pass ${round}/${MAX_AUDIT_ROUNDS}…`);
         let audit=null;
         try{audit=await auditBomAgainstDrawings(currentBom,auditPages);}
         catch(e){console.warn(`BOM audit round ${round} threw:`,e.message);break;}
@@ -14180,7 +14181,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         totalCorrections+=changes;
         allAppliedLog.push(...appliedLog.map(l=>({...l,round})));
         currentBom=corrected;
-        bgUpdate(panel.id,`BOM audit — applied ${changes} correction${changes>1?"s":""}, re-verifying…`);
+        bgUpdate(_bgKey(projectId,panel.id),`BOM audit — applied ${changes} correction${changes>1?"s":""}, re-verifying…`);
       }
       // Save final state with corrected BOM + audit result
       if(finalAudit){
@@ -14225,7 +14226,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     }
     // Compliance review — UL508A/C22.2 analysis against ARC Neural IQ
     if(hasCompliance&&(latestPanel.bom?.length>0||latestPanel.validation)){
-      phasePct("compliance",0);bgUpdate(panel.id,"Compliance review…");
+      phasePct("compliance",0);bgUpdate(_bgKey(projectId,panel.id),"Compliance review…");
       try{
         const cr=await runComplianceReview(latestPanel);
         phasePct("compliance",1);
@@ -14248,7 +14249,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       ? latestPanel.pages.filter(pg=>pg.dataUrl)
       : [];
     if(pagesNeedingUpload.length>0&&projectId){
-      bgUpdate(panel.id,"Re-stamping with UL698/1203 flag…");bgSetPct(panel.id,92);
+      bgUpdate(_bgKey(projectId,panel.id),"Re-stamping with UL698/1203 flag…");bgSetPct(_bgKey(projectId,panel.id),92);
       try{
         const urlMap={};
         const totalPages=latestPanel.pages.length;
@@ -14280,12 +14281,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // + audit + compliance + stamp upload atomically. No more intra-extraction races.
     await save(latestPanel);
     const itemCount=(latestPanel.bom||[]).length;
-    bgUpdate(panel.id,itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(panel.id,95);
+    bgUpdate(_bgKey(projectId,panel.id),itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(_bgKey(projectId,panel.id),95);
     // Save learning record to ARC Neural IQ
     saveExtractionLearning(uid,projectId,latestPanel,projectName||'',bcProjectNumber||'');
   }catch(ex){
     console.error("runExtractionTask error:",ex);
-    bgError(panel.id,ex.message.slice(0,60));
+    bgError(_bgKey(projectId,panel.id),ex.message.slice(0,60));
     // DECISION(v1.19.644): If extraction fails partway, persist whatever we've accumulated
     // so the user doesn't lose intermediate progress. Otherwise in-memory state is gone.
     try{await saveProjectPanel(uid,projectId,panel.id,latestPanel).catch(()=>{});}catch(e){}
@@ -14299,7 +14300,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
 async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNumber,panelIndex,projectName){
   const bom=panelData.bom||[];
   if(!bom.length||!_apiKey)return;
-  bgUpdate(panelId,"Background pricing…");
+  bgUpdate(_bgKey(projectId,panelId),"Background pricing…");
   let updatedBom=[...bom];
   let bcCount=0;
   const bcFuzzySugg={};
@@ -14309,7 +14310,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
     try{
       const compId=await bcGetCompanyId();
       if(compId){
-        bgUpdate(panelId,"Background: BC pricing…");
+        bgUpdate(_bgKey(projectId,panelId),"Background: BC pricing…");
         const _bcStaleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
         const eligible=bom.filter(r=>{
           if(r.isLaborRow)return false;
@@ -14325,7 +14326,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
           const row=eligible[i];
           const pn=(row.partNumber||"").trim();
           if(!pn)continue;
-          if(i%5===0)bgUpdate(panelId,`Background: BC ${i+1}/${eligible.length}…`);
+          if(i%5===0)bgUpdate(_bgKey(projectId,panelId),`Background: BC ${i+1}/${eligible.length}…`);
           if(row.priceSource==="bc"){
             const exact=await bcLookupItem(pn);
             if(exact&&exact.unitCost!=null){
@@ -14385,7 +14386,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
       return r.leadTimeDays==null;
     });
     if(ltRows.length>0){
-      bgUpdate(panelId,`Background: lead times (${ltRows.length})…`);
+      bgUpdate(_bgKey(projectId,panelId),`Background: lead times (${ltRows.length})…`);
       const ltUpdates={};
       for(const row of ltRows){
         const pn=(row.partNumber||"").trim();
@@ -14404,7 +14405,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
   // Phase 3: AI price fallback for unpriced non-labor rows
   const unpricedBom=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&!(r.unitPrice>0));
   if(unpricedBom.length>0){
-    bgUpdate(panelId,`Background: AI pricing ${unpricedBom.length} items…`);
+    bgUpdate(_bgKey(projectId,panelId),`Background: AI pricing ${unpricedBom.length} items…`);
     try{
       const aiPrices=await estimatePrices(unpricedBom);
       updatedBom=updatedBom.map(r=>{
@@ -14464,7 +14465,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
       bcSyncPanelTaskDescriptions(bcProjectNumber,panelIndex+1,updated,projectName).catch(e=>console.warn("[BG PRICING] task desc sync failed:",e));
     }).catch(e=>console.warn("[BG PRICING] planning lines sync failed:",e));
   }
-  bgDone(panelId,`✓ ${totalPriced} priced (background)`);
+  bgDone(_bgKey(projectId,panelId),`✓ ${totalPriced} priced (background)`);
 }
 
 // ── PRICING PROMPT ──
@@ -22418,7 +22419,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.615): Guard bgTask lookup by projectId too. Without this, COPIED projects
   // (which reuse IDs like "panel-1","panel-2") cross-contaminate: a re-extract on Project A's
   // panel-1 lights up "extracting" on Project B's panel-1 because the taskId key is identical.
-  const bgTask=bgTasks[panel.id];
+  const bgTask=bgTasks[_bgKey(projectId,panel.id)];
   const bgTaskIsForThisProject=bgTask&&bgTask.projectId===projectId;
   // Restore extracting spinner if a bg task is still running when this panel mounts — only if
   // that task actually belongs to THIS project, not a different project with a colliding ID.
@@ -22456,7 +22457,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // the bg task remained stuck on "Awaiting confirmation…". This useEffect reads the cache
   // and rehydrates local state so the review banner returns.
   useEffect(()=>{
-    const cached=pendingPagesGet(panel.id);
+    const cached=pendingPagesGet(projectId,panel.id);
     if(cached){
       if(Array.isArray(cached.pages)&&cached.pages.length>0)setPendingPages(cached.pages);
       if(cached.newItems)pendingNewItemsRef.current=cached.newItems;
@@ -23095,7 +23096,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     _dbg("ADDFILES: start, files="+_files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
-    bgStart(panel.id, panel.name||("Panel "+(idx+1)), projectId);
+    bgStart(_bgKey(projectId,panel.id), panel.name||("Panel "+(idx+1)), projectId);
     let updated;
     try{
     const newItems=[];
@@ -23212,7 +23213,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(info.bomRegion)newItems[i].aiBomRegion=info.bomRegion;
         done++;
         const msg=`🤖 Detecting page types — ${done}/${newItems.length}…`;
-        setDetectProgress(msg);bgUpdate(panel.id,msg);
+        setDetectProgress(msg);bgUpdate(_bgKey(projectId,panel.id),msg);
         // DECISION(v1.19.895): Per-page diagnostic log so we can see exactly
         // what the AI returned. Helps trace BOM-bias vs empty-types issues.
         console.log(`[PAGE TYPE] ${item.name}: types=${JSON.stringify(info.types)}${info.bomRegion?" bomRegion="+JSON.stringify(info.bomRegion):""}`);
@@ -23236,7 +23237,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // reconciliation needed. See display site in PanelCard thumbnail strip.
       // Zoomed-page cross-check for types with 2+ pages
       const zoomMsg="🤖 Checking for zoomed/duplicate pages…";
-      setDetectProgress(zoomMsg);bgUpdate(panel.id,zoomMsg);
+      setDetectProgress(zoomMsg);bgUpdate(_bgKey(projectId,panel.id),zoomMsg);
       for(const t of["backpanel","enclosure","bom"]){
         const ofType=livePages.filter(p=>getPageTypes(p).includes(t)&&p.dataUrl);
         if(ofType.length<2)continue;
@@ -23255,13 +23256,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Pause for user to review detected page types before extraction begins
     pendingNewItemsRef.current=newItems;
     if(newItems.length>0){
-      bgUpdate(panel.id,"Awaiting confirmation…");
+      bgUpdate(_bgKey(projectId,panel.id),"Awaiting confirmation…");
       setAwaitingConfirm(true);
       _logRemote("info",`addFiles awaiting confirmation — ${newItems.length} page(s)`,{detectedTypes:newItems.map(it=>({name:it.name,types:it.types||[]}))});
       // DECISION(v1.19.589): Persist pendingPages + awaitingConfirm to module-scope cache so
       // navigating out of the project and back doesn't silently lose the user's dropped drawings.
       // PanelCard's mount useEffect restores from this cache.
-      pendingPagesSet(panel.id,{pages:livePages,newItems,awaiting:true});
+      pendingPagesSet(projectId,panel.id,{pages:livePages,newItems,awaiting:true});
     }else{
       // DECISION(v1.19.897): No drawings landed. Build a per-file breakdown
       // from fileOutcomes and surface a blocking modal so the user knows
@@ -23289,17 +23290,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         else if(o.result==="image-error")lines.push(`  ✗ ${o.name} — couldn't read image: ${o.error||"unknown"}`);
       }
       if(counts.unsupported>0)lines.push("","If a file came from an email/chat app, save it to your Desktop first then drag from File Explorer (some apps strip the MIME type).");
-      bgDone(panel.id,counts.ok>0?"Complete":"⚠ Nothing imported — see alert");
+      bgDone(_bgKey(projectId,panel.id),counts.ok>0?"Complete":"⚠ Nothing imported — see alert");
       _logRemote(counts.ok>0?"warn":"error","addFiles imported nothing usable",{counts,outcomes:fileOutcomes});
       try{await arcAlert(lines.join("\n"),{kind:counts.ok>0?"warning":"error"});}catch(_){}
     }
     }catch(ex){
       console.error("addFiles error:",ex);
       setErr(`Error processing files: ${ex.message}`);
-      bgError(panel.id,ex.message.slice(0,60));
+      bgError(_bgKey(projectId,panel.id),ex.message.slice(0,60));
       setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");setExtracting(false);setValidatingPanel(false);setPendingPages([]);setAwaitingConfirm(false);
-      pendingPagesClear(panel.id); // DECISION(v1.19.589): error path — remove cache so user isn't shown stale state on remount
-      bgDone(panel.id,"Error");return;
+      pendingPagesClear(projectId,panel.id); // DECISION(v1.19.589): error path — remove cache so user isn't shown stale state on remount
+      bgDone(_bgKey(projectId,panel.id),"Error");return;
     }
     setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");
   }
@@ -23307,7 +23308,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
     eqModalShownRef.current=false;
-    bgUpdate(panel.id,"Starting extraction…");bgSetPct(panel.id,0,"Starting extraction…");
+    bgUpdate(_bgKey(projectId,panel.id),"Starting extraction…");bgSetPct(_bgKey(projectId,panel.id),0,"Starting extraction…");
     // Save learning DB corrections for any page where user changed AI-detected types
     const changes=pageTypeChangesRef.current;
     const uid2=fbAuth.currentUser?.uid;
@@ -23338,7 +23339,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // showing the pending content until the parent's panel prop arrives with identical data.
     // Once both sources have the same rows, switching display source is invisible. Module-cache
     // is still cleared (that's cross-remount persistence, not in-tab display).
-    pendingPagesClear(panel.id);
+    pendingPagesClear(projectId,panel.id);
     onSaveImmediate(updated).catch(()=>{});
     // DECISION(v1.19.474): Title block extraction — try multiple pages for accuracy.
     // DECISION(v1.19.632): Pass customer + project context + uid so the extractor can load
@@ -23353,7 +23354,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
     const willValidate=_apiKey&&hasSchOrLayout;
     if(!bomPages.length&&!willValidate){
-      bgDone(panel.id,"⚠ No BOM pages");
+      bgDone(_bgKey(projectId,panel.id),"⚠ No BOM pages");
       const pageCount=(updated.pages||[]).length;
       const typesList=(updated.pages||[]).map(p=>(getPageTypes(p)||[]).join(",")).filter(Boolean);
       const uniqueTypes=[...new Set(typesList)].join(", ")||"none detected";
@@ -23385,10 +23386,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if((finalPanel.bom||[]).length>0&&_apiKey){
             runPricingBackground(uid,_extractionProjectId,panel.id,finalPanel,bcProjectNumber,idx,projectName).catch(e=>{
               console.error("[EXTRACTION GUARD] Background pricing failed:",e);
-              bgDone(panel.id,`✓ ${(finalPanel.bom||[]).length} items (pricing failed)`);
+              bgDone(_bgKey(projectId,panel.id),`✓ ${(finalPanel.bom||[]).length} items (pricing failed)`);
             });
           }else{
-            bgDone(panel.id,(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
+            bgDone(_bgKey(projectId,panel.id),(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
           }
           return;
         }
@@ -23399,16 +23400,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         }
         // Auto-run pricing after extraction — keep bg bar alive through pricing
         if((finalPanel.bom||[]).length>0&&_apiKey){
-          bgUpdate(panel.id,"Getting prices…");
+          bgUpdate(_bgKey(projectId,panel.id),"Getting prices…");
           runPricingOnPanel(finalPanel.bom,finalPanel,pct=>{
-            bgSetPct(panel.id,95+Math.round(pct*0.04));
+            bgSetPct(_bgKey(projectId,panel.id),95+Math.round(pct*0.04));
           }).then(()=>{
-            bgDone(panel.id,"✓ Complete");
+            bgDone(_bgKey(projectId,panel.id),"✓ Complete");
           }).catch(()=>{
-            bgDone(panel.id,"✓ Extraction done");
+            bgDone(_bgKey(projectId,panel.id),"✓ Extraction done");
           });
         }else{
-          bgDone(panel.id,(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
+          bgDone(_bgKey(projectId,panel.id),(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
         }
       },
       // DECISION(v1.19.662): stampFn accepts an optional ctx arg so runExtractionTask
@@ -23806,7 +23807,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // F-2d.3: Write pending marker before BC sync starts
     try{onSaveImmediate({...panel,bomSyncPending:true,bomSyncStartedAt:Date.now()});}catch(e){}
     // DECISION(v1.19.599): Mirror BC sync status to team-wide bus so teammates see "X is syncing to BC".
-    const syncTaskId=panel.id+"_bcsync";
+    const syncTaskId=_bgKey(projectId,panel.id)+'_bcsync';
     bgStart(syncTaskId,panel.name||("Panel "+(idx+1)),projectId,"Syncing to Business Central…");
     try{
       if(!_bcToken){await acquireBcToken(true);}
@@ -23938,14 +23939,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         setPendingPages(updatedPending);
         const updatedNewItems=(pendingNewItemsRef.current||[]).filter(it=>it.id!==id);
         pendingNewItemsRef.current=updatedNewItems;
-        pendingPagesSet(panel.id,{pages:updatedPending,newItems:updatedNewItems,awaiting:awaitingConfirm});
+        pendingPagesSet(projectId,panel.id,{pages:updatedPending,newItems:updatedNewItems,awaiting:awaitingConfirm});
       }else{
         setPendingPages([]);
         pendingNewItemsRef.current=[];
-        pendingPagesClear(panel.id);
+        pendingPagesClear(projectId,panel.id);
         setAwaitingConfirm(false);
         setExtractionNotes("");
-        bgDone(panel.id,"All pages removed");
+        bgDone(_bgKey(projectId,panel.id),"All pages removed");
       }
       return;
     }
@@ -24025,10 +24026,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.599): Mirror re-extract status to team-wide bus so teammates see it.
     // DECISION(v1.19.606): Also emit bgSetPct/bgUpdate alongside ep.set so the team-wide
     // progress bar actually advances (was stuck at 0% because only local ep was being updated).
-    bgStart(panel.id,panel.name||("Panel "+(idx+1)),projectId,"Re-extracting BOM…");
-    bgSetPct(panel.id,1,"Re-extracting BOM…");
+    bgStart(_bgKey(projectId,panel.id),panel.name||("Panel "+(idx+1)),projectId,"Re-extracting BOM…");
+    bgSetPct(_bgKey(projectId,panel.id),1,"Re-extracting BOM…");
     const noData=bomPages.find(pg=>!pg.dataUrl&&!pg.storageUrl);
-    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();bgError(panel.id,"Missing image");_reBgFinished=true;return;}
+    if(noData){setErr(`"${noData.name}" has no image — re-upload.`);setExtracting(false);ep.stop();bgError(_bgKey(projectId,panel.id),"Missing image");_reBgFinished=true;return;}
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const rgnCtx=buildRegionContext(pages);
     const rgnNotes=(panel.extractionNotes||"")+rgnCtx;
@@ -24049,7 +24050,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const allSamePdf=_reBatchEligible.every(pg=>pg.originalPdfPath===commonPdf);
       if(allSamePdf){
         try{
-          bgSetPct(panel.id,2,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
+          bgSetPct(_bgKey(projectId,panel.id),2,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
           ep.set(2,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
           const batchPages=await Promise.all(_reBatchEligible.map(async pg=>{
             const units=await getExtractionUnits(pg);
@@ -24062,7 +24063,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
             return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
           }));
-          const _reHb=bgHeartbeat(panel.id,3,55,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
+          const _reHb=bgHeartbeat(_bgKey(projectId,panel.id),3,55,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
           try{
             _reBatchResults=await extractBomBatchViaServer(commonPdf,batchPages,"",rgnNotes);
           }finally{_reHb.stop();}
@@ -24099,7 +24100,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pct=Math.min(60,Math.round((completedUnits/totalUnitsEst)*60));
           const msg=`Extracting BOM — region ${completedUnits}/${totalUnitsEst}…`;
           ep.set(pct,msg);
-          bgSetPct(panel.id,pct,msg);
+          bgSetPct(_bgKey(projectId,panel.id),pct,msg);
         }
         if(pageQs.length)reQs.push(...pageQs);
         // DECISION(v1.19.645): Attach sourcePageIdx so positional dedup can distinguish
@@ -24112,9 +24113,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       all=bomResults.flat();
       reQs=reQs.slice(0,10);
       console.log(`[RE-EXTRACT] Total: ${all.length} items, ${reQs.length} questions across all pages`);
-    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(panel.id,"Re-extract failed: "+(ex.message||"").slice(0,60));_reBgFinished=true;return;}
+    }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(_bgKey(projectId,panel.id),"Re-extract failed: "+(ex.message||"").slice(0,60));_reBgFinished=true;return;}
     ep.set(65,"Merging results…");
-    bgSetPct(panel.id,65,"Merging results…");
+    bgSetPct(_bgKey(projectId,panel.id),65,"Merging results…");
     // DECISION(v1.19.620): Positional FIRST (max qty), then exact PN (sum qty for legit repeats), then fuzzy.
     // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
     const reRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
@@ -24155,7 +24156,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let reSnippetCorrections=[];
     try{
       ep.set(72,"Re-verifying each row…");
-      bgSetPct(panel.id,78,"Re-verifying each row…");
+      bgSetPct(_bgKey(projectId,panel.id),78,"Re-verifying each row…");
       const res=await selfCorrectBomRowsWithSnippets(bomSorted,pages||[],(pct,msg)=>{
         const p=72+Math.round(pct*0.08);ep.set(p,msg||"Re-verifying…");
       });
@@ -24187,7 +24188,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       timestamp:Date.now(),version:APP_VERSION,
     };
     ep.set(80,"Saving BOM…");
-    bgSetPct(panel.id,80,"Saving BOM…");
+    bgSetPct(_bgKey(projectId,panel.id),80,"Saving BOM…");
     const reEqs=mergeEngineeringQuestions([],reQs,null); // fresh questions on re-extract
     let updated={...latestPanelRef.current,bom,aiQuestions:reQs||[],engineeringQuestions:reEqs,extractionReport:reExtractionReport,status:"extracted",updatedAt:Date.now()};
     const _reIsBackground=_currentProjectId!==_reExtractProjectId;
@@ -24206,10 +24207,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     if(valPages.length>0&&_apiKey){
       ep.set(65,"Validating drawings…");
-      bgSetPct(panel.id,82,"Validating drawings…");
+      bgSetPct(_bgKey(projectId,panel.id),82,"Validating drawings…");
       try{setValidatingPanel(true);}catch(e){}
       try{
-        const result=await runPanelValidation(latestPanelRef.current,pct=>{const p=65+Math.round(pct*0.15);ep.set(p,"Validating…");bgSetPct(panel.id,82+Math.round(pct*0.04),"Validating…");});
+        const result=await runPanelValidation(latestPanelRef.current,pct=>{const p=65+Math.round(pct*0.15);ep.set(p,"Validating…");bgSetPct(_bgKey(projectId,panel.id),82+Math.round(pct*0.04),"Validating…");});
         if(result?.validation||result?.laborData){
           updated={...latestPanelRef.current,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
           if(_reIsBackground){
@@ -24228,13 +24229,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         try{await runPricingBackground(uid,_reExtractProjectId,panel.id,updated,bcProjectNumber,idx,projectName);}catch(e){console.warn("[EXTRACTION GUARD] background pricing failed:",e);}
       }else{
         ep.set(82,"Getting prices…");
-        bgSetPct(panel.id,88,"Getting prices…");
-        try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);bgSetPct(panel.id,88+Math.round(pct*0.10),"Getting prices…");});}catch(e){console.warn("Post-extract pricing failed:",e);}
+        bgSetPct(_bgKey(projectId,panel.id),88,"Getting prices…");
+        try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);bgSetPct(_bgKey(projectId,panel.id),88+Math.round(pct*0.10),"Getting prices…");});}catch(e){console.warn("Post-extract pricing failed:",e);}
       }
     }
     if(!_reIsBackground)ep.finish(`✓ ${bom.length} items extracted`);
     try{setExtracting(false);}catch(e){}
-    bgDone(panel.id,`✓ ${bom.length} items re-extracted${_reIsBackground?" (background)":""}`);
+    bgDone(_bgKey(projectId,panel.id),`✓ ${bom.length} items re-extracted${_reIsBackground?" (background)":""}`);
     _reBgFinished=true;
     // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
@@ -24248,10 +24249,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       console.error('[RE-EXTRACT] top-level failure:',topErr);
       setExtracting(false);
       try{ep.stop();}catch(e){}
-      if(!_reBgFinished){try{bgError(panel.id,'Re-extract failed: '+(topErr.message||'').slice(0,60));}catch(e){}}
+      if(!_reBgFinished){try{bgError(_bgKey(projectId,panel.id),'Re-extract failed: '+(topErr.message||'').slice(0,60));}catch(e){}}
     }finally{
       // Defensive: if we exited without bgDone or bgError, clean up the Firestore orphan.
-      if(!_reBgFinished){try{bgError(panel.id,'Re-extract interrupted');}catch(e){}}
+      if(!_reBgFinished){try{bgError(_bgKey(projectId,panel.id),'Re-extract interrupted');}catch(e){}}
     }
   }
 
@@ -26640,7 +26641,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const pct=unifiedProgress.pct;
         const isErr=unifiedProgress.isError;
         const barBg=isErr?`linear-gradient(90deg,${C.red},#b91c1c)`:`linear-gradient(90deg,${C.accent},#818cf8)`;
-        const dismiss=()=>{if(pricingProgress?.isError)setPricingProgress(null);else bgDismiss(panel.id);};
+        const dismiss=()=>{if(pricingProgress?.isError)setPricingProgress(null);else bgDismiss(_bgKey(projectId,panel.id));};
         return(
         <div style={{marginBottom:12}}>
           <div style={{width:"100%",height:38,background:isErr?C.redDim:C.border,borderRadius:10,overflow:"hidden",position:"relative"}}>
@@ -32059,7 +32060,8 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
     const panelToDelete=(project.panels||[]).find(p=>p.id===id);
     if(panelToDelete)saveSnapshot(uid,project.id,panelToDelete,"Before panel deletion").catch(()=>{});
     // Cancel any background task for this panel
-    if(_bgTasks[id]){bgDone(id,"Cancelled — panel deleted");delete _bgTasks[id];_bgNotify();}
+    const _delKey=_bgKey(project.id,id);
+    if(_bgTasks[_delKey]){bgDone(_delKey,"Cancelled — panel deleted");delete _bgTasks[_delKey];_bgNotify();}
     // Mark panel as deleted so saveProjectPanel won't re-add it
     if(!window._deletedPanelIds)window._deletedPanelIds=new Set();
     window._deletedPanelIds.add(id);
