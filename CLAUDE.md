@@ -649,6 +649,19 @@ The supplier portal Cloud Function `extractSupplierQuotePricing` is hardened aga
 - Thumbnails use `pg.dataUrl || pg.storageUrl`
 - Upload happens at end of `addFiles` after extraction/validation
 
+### dataUrl Ephemerality Rule (CRITICAL)
+`page.dataUrl` is ephemeral — present in memory immediately after `addFiles` renders pages from PDF, but stripped by every Firestore save (1 MB limit). After a save-reload cycle, only `storageUrl` survives. Any filter that gates on `p.dataUrl` alone silently excludes pages that have been persisted.
+
+**Required pattern for page filters that feed into AI calls:**
+```js
+let pages = allPages.filter(p => someTypeCheck(p) && (p.dataUrl || p.storageUrl));
+pages = await Promise.all(pages.map(ensureDataUrl));
+```
+
+Filter on `(p.dataUrl || p.storageUrl)`, then hydrate with `ensureDataUrl` before use. Never filter on `p.dataUrl` alone unless you are certain the pages have not been through a save-reload cycle (e.g., inside `addFiles` before any Firestore write).
+
+**Origin:** TODO #94 (2026-06-03). PRJ402119 Line 1 produced 0 BOM items because `runExtractionTask` filtered on `&& p.dataUrl`, excluding BOM-typed pages whose `dataUrl` had been stripped. The extraction task completed "normally" (title block, layout, validation all succeeded) but silently skipped the BOM phase. Diagnosed via Coach C23.
+
 ### BOM Row Highlighting
 A row gets a red background if ANY of these are true (see `_isBomRowFlaggedRed`):
 1. `qty === 0` (excludes labor / customer-supplied)

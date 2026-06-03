@@ -13509,7 +13509,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   latestPanel={...panel};
   // ECO Phase 2.J: filter ECO-tagged pages out of base extraction.
   const _bp=_basePages(panel);
-  const bomPages=_bp.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+  let bomPages=_bp.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
+  bomPages=await Promise.all(bomPages.map(ensureDataUrl));
   const hasSchOrLayout=_bp.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
   const willValidate=!!_apiKey&&hasSchOrLayout;
   const regionContext=buildRegionContext(_bp);
@@ -23350,7 +23351,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // part of the consolidated save. The previous fire-and-forget was racing with the
     // extraction task's final save and getting clobbered on every new extraction.
     // Start background extraction
-    const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&p.dataUrl);
+    const bomPages=updated.pages.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
     const hasSchOrLayout=updated.pages.some(p=>(getPageTypes(p).includes("schematic")||getPageTypes(p).includes("layout")||getPageTypes(p).includes("backpanel")||getPageTypes(p).includes("enclosure"))&&(p.dataUrl||p.storageUrl));
     const willValidate=_apiKey&&hasSchOrLayout;
     if(!bomPages.length&&!willValidate){

@@ -1701,6 +1701,26 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (C18 extraction architecture priority plan).
     Owner: Coach (design) → Marc (implement).
 
+94. **OPEN** (HIGH) — dataUrl-gating bug: BOM extraction silently skipped when pages lack dataUrl.
+    `confirmAndExtract` (line 23353) and `runExtractionTask` (line 13512) filtered BOM pages on
+    `p.dataUrl` — an ephemeral field stripped by every Firestore save. After a save-reload cycle
+    (or component remount during the awaitingConfirm pause), BOM-typed pages with only `storageUrl`
+    were silently excluded. The extraction task still completed (title block, layout, validation
+    all succeed because they use `p.dataUrl||p.storageUrl`), so the user saw "clean completion"
+    with zero BOM items and no error.
+    Fix: Sites A (confirmAndExtract 23353) + B (runExtractionTask 13512) changed to
+    `(p.dataUrl||p.storageUrl)`; Site B adds `ensureDataUrl` after filter. Site C (zoom
+    detection 23242) CARVED OUT — needs `ensureDataUrl` or a `detectZoomedPages` guard;
+    tracked as #94a, Coach to design. Root cause PRJ402119 Line 1 (Noah 2026-06-03),
+    confirmed Coach C23, Site C correction Freddy.
+    94a. **OPEN** (LOW) — Site C follow-up: `detectZoomedPages` reads `pg.dataUrl` directly
+         (line 12874) without `ensureDataUrl`. If storageUrl-only pages reach it, zoom detection
+         fails silently. Needs either `ensureDataUrl` hydration before the call, or an internal
+         guard in `detectZoomedPages`. Low-risk: Site C runs during `addFiles` when pages normally
+         have `dataUrl`, but the inconsistency should be fixed for robustness.
+    Discovered: 2026-06-03 (PRJ402119 Line 1 empty-BOM trace, Coach C23).
+    Owner: Coach (C23) → Marc (implemented A+B).
+
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source
