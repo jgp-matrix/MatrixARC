@@ -72,11 +72,17 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     replaced `APP_VERSION="$NEW_VERSION"` actually exists in `public/index.html`. If not,
     aborts with a clear error message naming the expected pattern and the file to inspect,
     rather than letting the failure cascade into a confusing downstream "nothing to commit".
-15. **OPEN** — No functions deploy + no preflight invocation. `deploy.sh` runs
+15. **OPEN** (ELEVATED) — No functions deploy + no preflight invocation. `deploy.sh` runs
     `firebase deploy --only hosting`. Cloud Functions changes need a separate manual
     `firebase deploy --only functions` (per CLAUDE.md). The toolkit's `tools/preflight-functions.sh`
     isn't wired in anywhere. Fix: either auto-detect functions changes and run the preflight,
     or add a `--with-functions` flag.
+    **Elevation (Coach C22, 2026-06-03):** #82 demonstrated the cost — a full verification
+    cycle (Cloud Functions REST API → `generateDownloadUrl` → download deployed source archive
+    → byte-for-byte diff) was required to answer "are functions live?" because no deploy audit
+    trail exists in the repo. Recommend minimum viable fix: a deployed-vs-committed
+    function-hash check runnable from the repo, before any larger "fold functions into
+    deploy.sh" work.
 16. **RESOLVED** — `29bec5d` (2026-05-08, caught during pre-merge review, resolved in same commit).
     Added `grep -q` verification on the bundle `?v=` sed in `deploy.sh`, mirroring #14's APP_VERSION
     verifier. sed exits 0 even with no match, so without this the deploy could silently ship
@@ -1467,22 +1473,13 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Design: Freddy scope (modal triggers, wording, actions). Not part of F-1g.1.
     Discovered: PRJ402119 diagnostic (2026-06-02).
 
-82. **OPEN** (CRITICAL) — PDF-native extraction bails on BOM pages with no BOM region, forcing
-    lossy JPEG crop fallback that garbles part numbers.
-    When a page is classified as BOM-type but has no user-drawn BOM region, the pdf-native path
-    sends the FULL uncropped page to Opus. On busy pages (enclosure + small BOM table at bottom),
-    Opus returns `noBomReason:"wrong-page-type"` (81 chars) because enclosure content dominates.
-    Client falls back to `bom-region-crop` (JPEG image) which has: (a) no quality alert in the
-    prompt, and (b) JPEG compression artifacts on monochrome scanned text at 166 DPI. Result:
-    11/13 part numbers wrong on PRJ402119.
-    Root cause chain: no BOM region → no CropBox on PDF slice → AI sees full busy page → bails →
-    JPEG fallback with bare prompt → systematic OCR errors.
-    Two sub-fixes identified:
-    P1 (high-leverage): Make pdf-native work on BOM pages without a drawn region — either use
-    AI-classified `aiBomRegion` coordinates for CropBox, or add a stronger prompt hint that
-    the BOM table IS on this page (possibly small, at bottom).
-    P2 (secondary): Add quality alert to the crop fallback prompt — cheap, makes fallback less
-    bad, but doesn't fix the fundamental JPEG fidelity loss.
+82. **RESOLVED** — `10fdced5` + `4e31f918` (2026-06-02, functions deployed 2026-06-02T21:49:04Z).
+    PDF-native extraction bailing on CropBox pages with `noBomReason:"wrong-page-type"`.
+    P1: removed noBomReason escape when `pdfCropped===true` (both `extractBomPage` and
+    `extractBomBatch`). P2: added scan quality alert to bom-region-crop fallback prompt.
+    Deploy status verified definitively by Coach C22 (2026-06-03): byte-for-byte diff of
+    deployed source archive vs committed `functions/index.js` = zero diff. Runtime log
+    confirmed scanned PDF extracting to completion post-fix.
     Discovered: PRJ402119 diagnostic (2026-06-02).
 
 83. **OPEN** (HIGH) — Image/crop fallback path architecture — replace lossy JPEG with full-res

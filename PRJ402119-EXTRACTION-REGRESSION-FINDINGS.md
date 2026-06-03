@@ -1,8 +1,19 @@
 # PRJ402119 Extraction Regression — Code-Path Findings
 
 **Author:** Sam Wize (Coach) · 2026-06-03  
-**Status:** Investigation complete — one runtime confirmation needed  
+**Status:** CLOSED — #82 deploy gap DISPROVEN (C22, 2026-06-03)  
 **Scope:** Read-only code + repo-record investigation. No diagnosis, no fix.
+
+> **C22 Correction (2026-06-03):** Deploy gap DISPROVEN. P1/P2 verified live via
+> byte-for-byte deployed-source diff (Cloud Functions REST API `generateDownloadUrl`
+> → extracted archive → `diff` against committed `functions/index.js` = zero diff)
+> + behavioral log showing scanned PDF (`isScanned:true`, `warningLevel:"high"`)
+> extracting to completion (`rawChars:17232`) on 2026-06-03. The C21 conclusion
+> "fixes likely not live" was wrong — there is no repo-record deploy evidence at
+> all (no CI, no deploy log, `deploy.sh` is hosting-only), so absence of evidence
+> was misread as evidence of absence. Functions were deployed at 2026-06-02T21:49:04Z
+> (between the P2 commit at 21:31Z and the P1 commit at 21:51Z — deployed from the
+> working tree before P1 was committed). #82 closed.
 
 ---
 

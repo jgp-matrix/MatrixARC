@@ -25,16 +25,14 @@ v1.20.94 (deployed 2026-06-03). Two fixes: #92-P1 cache re-key + Noah BOM revert
 - [DONE] **Noah BOM revert fix** — Root cause: `saveProjectPanel` did not set `updatedBy`, defeating the onSnapshot echo guard. Fix: one-liner adding `updatedBy: uid`. Pre/post validation confirmed 0 echo soft-applies vs 5. See `NOAH-BOM-REVERT-EVIDENCE.md`.
 - [DONE] **Startup workflow improvements** — `FREDDY-PASTE.md` drag-and-drop file replaces inline paste generation. Explorer auto-opens with file highlighted. App URL opens in linked browser session at startup. Large-content-to-Freddy protocol added to CLAUDE.md.
 
-## URGENT — Undeployed Cloud Function Fix (#82)
+## #82 — RESOLVED (2026-06-03)
 
-Coach investigation found: #82 P1/P2 fixes (removing `noBomReason` escape on CropBox pages, scan quality alerts) are **committed to `functions/index.js` but may not be deployed to production**. `deploy.sh` only deploys hosting — Cloud Functions require separate `firebase deploy --only functions`. No repo-record evidence of a functions deploy after commits `10fdced5` / `4e31f918`. If undeployed, scanned-bitmap PDFs on projects like PRJ402119 silently return empty BOMs because the model bails with `noBomReason:"wrong-page-type"`. See `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`.
-
-**Next session action:** Execute `PRJ402119-DEPLOY-GAP-WORKORDER.md` (Freddy's work order). Steps 1-3 are read-only investigation. Do NOT deploy functions until steps are reported and reviewed.
+P1/P2 verified live (Coach C22): byte-for-byte deployed-source diff + runtime log of scanned PDF extracting to completion. PRJ402119 empty-BOM, IF still occurring, is DECOUPLED from #82 — pending fresh confirmation of a live failing example before any trace. Candidate causes if confirmed: #83/H10 re-extraction gaps, or a different per-PDF failure mode.
 
 ## WATCH Items
 - **Noah BOM revert** — fix deployed (v1.20.94) but investigation stays WATCH until Noah confirms reverts have stopped. Secondary mechanism (W9/W10 pricing stale-snapshot) identified as separate risk — not yet fixed. If reverts recur WITHOUT `[CONCURRENT] Soft-applied remote update` in console, it's the pricing mechanism.
 - **Quotes randomly drop fields** — SEPARATE root cause from BOM revert (Freddy analysis). `saveProject` writes a stale `project` arg missing fields (no read-before-write for project-level fields). NOT fixed by the `updatedBy` change. Needs own scope: project-level field merge in `saveProject`, or callers use `projectRef.current` not closure snapshots.
-- **Deploy drift (SYSTEMIC)** — `deploy.sh` deploys hosting only → silent Cloud Function drift. PRJ402119 empty-BOM is a symptom. Needs: (a) enumerate undeployed function commits, (b) fold functions deploy into deploy flow, (c) deployed-vs-committed version check. Precedent: F-1d.8.
+- **Deploy drift (SYSTEMIC)** — `deploy.sh` deploys hosting only → silent Cloud Function drift. #82 verified live but only because Coach ran a full REST API source-archive verification (C22). TODO #15 ELEVATED with recommendation: deployed-vs-committed function-hash check as minimum viable fix. Precedent: F-1d.8.
 
 ## Open Items — Architectural Hardening
 
@@ -83,4 +81,4 @@ Coach investigation found: #82 P1/P2 fixes (removing `noBomReason` escape on Cro
 - `BOM-REVERT-FIX-PLAN.md` — Coach's plan for the saveProjectPanel updatedBy fix
 - `BOM-WRITE-PATHS-MAP.md` — Coach's write paths map for the BOM revert investigation
 - `NOAH-BOM-REVERT-EVIDENCE.md` — Marc's evidence report with root cause analysis
-- `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md` — Coach's investigation: #82 Cloud Function fixes possibly undeployed
+- `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md` — Coach's investigation: #82 deploy gap (DISPROVEN per C22 — fixes ARE live)
