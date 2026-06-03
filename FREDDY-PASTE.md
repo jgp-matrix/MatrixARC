@@ -404,7 +404,7 @@ v1.20.94 (deployed 2026-06-03). Two fixes: #92-P1 cache re-key + Noah BOM revert
 
 Coach investigation found: #82 P1/P2 fixes (removing `noBomReason` escape on CropBox pages, scan quality alerts) are **committed to `functions/index.js` but may not be deployed to production**. `deploy.sh` only deploys hosting — Cloud Functions require separate `firebase deploy --only functions`. No repo-record evidence of a functions deploy after commits `10fdced5` / `4e31f918`. If undeployed, scanned-bitmap PDFs on projects like PRJ402119 silently return empty BOMs because the model bails with `noBomReason:"wrong-page-type"`. See `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`.
 
-**Next session action:** Run `firebase functions:log --only extractBomPage` to confirm deploy status. If undeployed, run `firebase deploy --only functions`.
+**Next session action:** Execute `PRJ402119-DEPLOY-GAP-WORKORDER.md` (Freddy's work order). Steps 1-3 are read-only investigation. Do NOT deploy functions until steps are reported and reviewed.
 
 ## WATCH Items
 - **Noah BOM revert** — fix deployed (v1.20.94) but investigation stays WATCH until Noah confirms reverts have stopped. Secondary mechanism (W9/W10 pricing stale-snapshot) identified as separate risk — not yet fixed. If reverts recur WITHOUT `[CONCURRENT] Soft-applied remote update` in console, it's the pricing mechanism.
