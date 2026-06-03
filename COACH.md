@@ -1108,6 +1108,40 @@ This means:
 
 **Verification status:** Hotfix deployed. PRJ402111 re-extracted with correct data. Cross-project navigation during extraction no longer causes contamination.
 
+### C17 — 2026-06-03 — #92 Background Task UI Ownership Audit (COMPLETE)
+
+**Scope:** All async/background completion handlers in `src/app.jsx`. Also closes #91 (extraction-completion subset).
+
+**Method:** Enumerated 48 handlers across 9 categories (extraction, pricing, BC sync, archive/restore, copy, portal apply, onSnapshot listeners, module-scoped caches, URL deep-links). Classified each on two axes: UI behavior (does it seize foreground?) and identity resolution (does it write to the correct entity?).
+
+**Results:** `92-UI-OWNERSHIP-AUDIT.md`
+- 42 SAFE, 4 GUARD-NEEDED, 2 UNSAFE-UI, 2 UNSAFE-IDENTITY
+- UNSAFE-IDENTITY: `_pendingPagesCache` (line 433) and `_bgTasks` (line 421) — both keyed by `panelId` alone, collide across projects with `panel-1`
+- UNSAFE-UI: `handleRestoreComplete` (44917), `CopyProjectModal.onCopied` (45326), `autoOpenPortal` edge case (34854) — navigate without focus guard
+- GUARD-NEEDED: pricing/validation progress bars (cosmetic, data writes are correct)
+- #91 closed: all 12 extraction-completion functions are SAFE on both axes post-#86
+
+### C18 — 2026-06-03 — #92 Phase 1 Detailed Plan: Cache Re-Key (H1 + H2)
+
+**Scope:** Re-key `_pendingPagesCache` and `_bgTasks` from `panelId` to `${projectId}:${panelId}`.
+
+**Key findings:**
+1. Both caches are purely in-memory (module-scoped `let`). No persistence, no migration needed.
+2. `_pendingPagesCache`: 3 accessor functions gain `projectId` param, 5 write sites + 1 read site — all inside PanelCard where `projectId` is a prop. No blockers.
+3. `_bgTasks`: ~50 write sites (bgStart/bgSetPct/bgUpdate/bgDone/bgError callers) + 1 key-based read site. All have `projectId` in scope. Introduced `_bgKey(projectId, panelId)` helper to avoid inline construction at 50+ sites.
+4. PanelCard already has a partial guard at line 22422 (`bgTaskIsForThisProject = bgTask.projectId === projectId`) — this becomes redundant after re-key and can be removed.
+5. Re-key fully closes H1 contamination vector independent of #87. #87 can downgrade from MEDIUM to LOW (defense-in-depth, no longer data-integrity risk).
+
+**Plan:** `92-PHASE1-DETAILED-PLAN.md`. Single atomic commit (~70 lines). Test plan included with pre-fix repro steps.
+
+**Closure (2026-06-03):** v1.20.93 (a6906355). Marc implemented per plan. Pre/post-fix repro validated.
+- #92 Phase 1: CLOSED. Cache re-key shipped.
+- #91: CLOSED. All 12 extraction handlers SAFE; subsumed by #92 audit.
+- #87: DOWNGRADED MEDIUM → LOW. Re-key closes contamination independent of panel-ID uniqueness.
+- #92 Phase 2: OPEN, queued — D2 (`handleRestoreComplete`) + E1 (`CopyProjectModal.onCopied`) UNSAFE-UI focus guards.
+- #92 Phase 3: OPEN, queued — portal auto-open edge case (verify-first, may close as cannot-reproduce).
+- B1/B4: OPEN, low-priority cosmetic — pricing progress-bar flicker on panel switch.
+
 ## Open Questions for Jon
 
 1. How many concurrent users / active projects does ARC typically serve? Trying to calibrate whether the monolith's complexity ceiling is a near-term or long-term concern.

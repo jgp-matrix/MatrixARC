@@ -19,7 +19,9 @@ Extract these values from the config (use throughout this skill):
 - `ANALYST_HAS_FILES` = roles.analyst.hasFileAccess
 - `SESSION_STATE` = files.sessionState
 - `ANALYST_ONBOARDING` = files.analystOnboarding
+- `ANALYST_PASTE` = files.analystPaste (combined onboarding + session state file for drag-and-drop)
 - `ARCH_LOG` = files.architectLog
+- `APP_URL` = appUrl (the deployed app URL to open in browser)
 
 You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
 
@@ -31,14 +33,15 @@ You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
 {TEAM} STARTUP CHECKLIST
 ─────────────────────────────
 □ Step 1 — Verify repo state (automatic — no user action)
-□ Step 2 — Generate {ARCH_SHORT} paste + {ANALYST_SHORT} paste (automatic)
+□ Step 2 — Generate {ARCH_SHORT} paste + {ANALYST_SHORT} file (automatic)
    → USER ACTION: Copy {ARCH_SHORT} paste into {ARCH_ENV}
-   → USER ACTION: Copy {ANALYST_SHORT} paste into {ANALYST_ENV}
-□ Step 3 — Wait for user to confirm both sessions initialized
+   → USER ACTION: Copy/drag {ANALYST_SHORT} file into {ANALYST_ENV}
+□ Step 3 — Open app in browser + link to CCD (automatic)
+□ Step 4 — Wait for user to confirm both sessions initialized
    → USER ACTION: Confirm "{ARCH_SHORT} is up" and "{ANALYST_SHORT} is up"
-□ Step 4 — Cross-reference sync check ({IMPL_SHORT} states version/queue/role)
+□ Step 5 — Cross-reference sync check ({IMPL_SHORT} states version/queue/role)
    → USER ACTION: Relay {ARCH_SHORT}'s and {ANALYST_SHORT}'s confirmations back
-□ Step 5 — Work begins
+□ Step 6 — Work begins
    → USER ACTION: Give first work instruction
 ```
 
@@ -69,13 +72,9 @@ Mark complete: `✓ Step 1 — Repo state verified. v{VERSION} on {BRANCH}`
 
 **Guided tip (only if GUIDED):**
 ```
-💡 TIP: You'll see two code blocks below. Each one is an instruction set for
-one of your other team roles. Copy-paste each into its respective Claude session.
-
-The Architect gets FILE PATHS to read (they have repo access).
-The Analyst gets FULL CONTENT pasted inline (if in browser, no file access).
-
-Don't edit the pastes — they're ready to go as-is.
+💡 TIP: You'll see two code blocks below. The Architect gets a paste to
+copy into their terminal. The Analyst gets a drag-and-drop file — just
+drag it into the Claude.ai browser window. Much faster than pasting.
 ```
 
 ### Architect paste (for {ARCH_ENV})
@@ -99,10 +98,19 @@ After reading, report back:
 - "{ARCH_SHORT} ready"
 ```
 
-### Analyst paste (for {ANALYST_ENV})
+### Analyst file (for {ANALYST_ENV})
 
 **If ANALYST_HAS_FILES is false (browser):**
-Read `{ANALYST_ONBOARDING}` and `{SESSION_STATE}` from disk. Output a single large code block containing the **full literal content** of both files — onboarding file first, then a `---` separator, then session state. Do NOT use placeholders. The paste must be self-contained for zero-edit copy-paste.
+
+The analyst paste file `{ANALYST_PASTE}` combines `{ANALYST_ONBOARDING}` + `{SESSION_STATE}` into a single file. It was last regenerated during the previous session's close out. No freshness check needed — it's only used at startup and close out keeps it current.
+
+Open Explorer with the file pre-selected so the user can drag it directly into Claude.ai:
+```powershell
+Start-Process explorer.exe -ArgumentList "/select,{repo root path}\{ANALYST_PASTE}"
+```
+
+Tell the user:
+> **{ANALYST_SHORT} file:** Explorer opened with `{ANALYST_PASTE}` selected — drag it into Claude.ai.
 
 **If ANALYST_HAS_FILES is true (terminal/CCD):**
 Output a code block with file paths, same format as the Architect paste:
@@ -122,9 +130,22 @@ After reading, report back:
 - "{ANALYST_SHORT} ready"
 ```
 
-Mark complete: `✓ Step 2 — {ARCH_SHORT} paste + {ANALYST_SHORT} paste generated`
+Mark complete: `✓ Step 2 — {ARCH_SHORT} paste + {ANALYST_SHORT} file ready`
 
-## Step 3 — Wait for initialization
+## Step 3 — Open app in browser
+
+If `APP_URL` is set in the config, open it in a linked browser session so {IMPL_SHORT} has a live view of the deployed app:
+
+1. Use `tabs_context_mcp` (with `createIfEmpty: true`) to get or create the MCP tab group.
+2. Create a new tab with `tabs_create_mcp`.
+3. Navigate to `{APP_URL}` in the new tab.
+4. Take a screenshot to confirm the app loaded.
+
+This tab becomes the linked browser session for live testing during the work session. All browser-based verification, runtime investigation, and UI testing should use this tab group.
+
+Mark complete: `✓ Step 3 — App opened at {APP_URL}, browser linked`
+
+## Step 4 — Wait for initialization
 
 **Guided tip (only if GUIDED):**
 ```
@@ -134,13 +155,13 @@ context and report back. Come back here and tell me when both are ready.
 ```
 
 Tell the user:
-> Pastes are ready above. Copy each into the appropriate session. Let me know when both are up.
+> Coach paste is ready above. {ANALYST_SHORT} file: `{ANALYST_PASTE}` — copy or drag into Claude.ai. Let me know when both are up.
 
 **Do not proceed** until user confirms both sessions are initialized.
 
-Mark complete: `✓ Step 3 — {ARCH_SHORT} and {ANALYST_SHORT} initialized`
+Mark complete: `✓ Step 4 — {ARCH_SHORT} and {ANALYST_SHORT} initialized`
 
-## Step 4 — Cross-reference sync check
+## Step 5 — Cross-reference sync check
 
 **Guided tip (only if GUIDED):**
 ```
@@ -166,15 +187,16 @@ Ask user to relay the other roles' confirmations. Each must confirm:
 
 If any mismatch: identify cause (stale file?), fix, re-paste if needed.
 
-Mark complete: `✓ Step 4 — All three roles synced: v{VERSION}, top of queue: {ITEM}`
+Mark complete: `✓ Step 5 — All three roles synced: v{VERSION}, top of queue: {ITEM}`
 
-## Step 5 — Work begins
+## Step 6 — Work begins
 
 ```
 ✓ {TEAM} STARTUP COMPLETE
 ──────────────────────────
 Version: v{VERSION}
 Roles: {IMPL_SHORT} ({IMPL_ENV}) + {ARCH_SHORT} ({ARCH_ENV}) + {ANALYST_SHORT} ({ANALYST_ENV})
+Browser: linked to {APP_URL}
 Top of queue: {ITEM}
 Awaiting first work instruction.
 ```

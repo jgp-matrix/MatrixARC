@@ -16,6 +16,7 @@ Extract config values:
 - `ANALYST_SHORT` = roles.analyst.shortName
 - `SESSION_STATE` = files.sessionState
 - `ANALYST_ONBOARDING` = files.analystOnboarding
+- `ANALYST_PASTE` = files.analystPaste (combined onboarding + session state file for drag-and-drop)
 - `ARCH_LOG` = files.architectLog
 
 **Guided mode:** If `GUIDED` is true, show the `💡 TIP` blocks below at each step. If the user says "stop handholding", "I got it", "skip tips", or similar at ANY point, set `guidedMode: false` in `.claude/team-config.json` and stop showing tips for the rest of this session and all future sessions.
@@ -114,7 +115,7 @@ One-paragraph summary including:
 
 Mark complete: `✓ Step 6 — Summary provided`
 
-## Step 6b — Regenerate session state
+## Step 6b — Regenerate session state + analyst paste file
 
 Regenerate `{SESSION_STATE}` from current repo state:
 1. Read version from source
@@ -125,7 +126,9 @@ Regenerate `{SESSION_STATE}` from current repo state:
 6. Check for overnight/coordination logs
 7. Write `{SESSION_STATE}`
 
-Mark complete: `✓ Step 6b — {SESSION_STATE} regenerated`
+Then regenerate `{ANALYST_PASTE}` — write the full content of `{ANALYST_ONBOARDING}`, then a `---` separator, then the full content of `{SESSION_STATE}`. This is the drag-and-drop file the analyst uses at next startup.
+
+Mark complete: `✓ Step 6b — {SESSION_STATE} + {ANALYST_PASTE} regenerated`
 
 ## Step 6c — Durable-record check
 
@@ -153,6 +156,7 @@ approve the changes before I touch anything.
   - Version reference — must match post-deploy version
   - Recently active work — must reflect this session's output
   - Any new protocols or behavioral notes established this session
+- **{ANALYST_PASTE}** — will be regenerated automatically in step 6e after all handoff edits are approved. No manual check needed here, but flag if `{ANALYST_ONBOARDING}` changes require a re-merge.
 - **{ARCH_LOG}** — if Architect was active, verify tail reflects this session. Implementer does not write to {ARCH_LOG} (Architect-owned) but flags staleness.
 - **Auto-memory** — save any feedback, project knowledge, or user preferences learned this session to memory files if applicable.
 
@@ -178,9 +182,9 @@ Mark complete: `✓ Step 6d — Handoff changes approved`
 
 ## Step 6e — Commit handoff file updates
 
-Apply approved edits, stage, commit, push:
+Apply approved edits, then regenerate `{ANALYST_PASTE}` (write full content of `{ANALYST_ONBOARDING}` + `---` separator + full content of `{SESSION_STATE}`). Stage, commit, push:
 ```
-git add {SESSION_STATE} {ANALYST_ONBOARDING} [any other changed files]
+git add {SESSION_STATE} {ANALYST_ONBOARDING} {ANALYST_PASTE} [any other changed files]
 git commit -m "Update handoff files for next session"
 git push origin master
 ```
@@ -220,7 +224,7 @@ When user types "Closed" after close out:
 2. `git log master..origin/master` — must be empty
 3. Commits on master (or intentionally on feature branch per user choice)
 4. TODO.md updates applied or waived
-5. Handoff files ({SESSION_STATE}, {ANALYST_ONBOARDING}) committed and pushed
+5. Handoff files ({SESSION_STATE}, {ANALYST_ONBOARDING}, {ANALYST_PASTE}) committed and pushed
 
 If all pass: `✓ Session closed cleanly. All changes committed and pushed. Handoff files current. Safe to end.`
 

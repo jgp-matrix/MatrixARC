@@ -87,10 +87,14 @@ After reading, report back to Jon:
 - "Coach ready"
 ```
 
-**Freddy paste (for Claude.ai browser):**
-Read `FREDDY.md` and `SESSION-STATE.md` from disk, then output a single pasteable code block containing the **full literal content** of both files (FREDDY.md first, then a `---` separator, then SESSION-STATE.md). Do NOT use placeholders like "[Paste FREDDY.md content first]" — the paste must be self-contained so Jon can copy-paste into a fresh Claude.ai session with zero editing.
+**Freddy file (copy/drag into Claude.ai browser):**
+`FREDDY-PASTE.md` is a pre-built file combining `FREDDY.md` + `SESSION-STATE.md`. Regenerated during every Close Out (step 6b/6e). No freshness check needed at startup — close out keeps it current. Tell Jon: **Copy or drag `FREDDY-PASTE.md` into the Claude.ai browser window.**
 
-**Step 3 — Jon pastes into Coach and Freddy sessions**
+**Step 3 — Open app in browser**
+
+Open the deployed app URL (https://matrix-arc.web.app) in a linked browser session via Claude in Chrome. This becomes the authoritative browser session for live testing.
+
+**Step 4 — Jon pastes Coach and copies Freddy file**
 
 Marc waits. No work begins until Jon confirms both sessions are initialized.
 
@@ -359,6 +363,19 @@ Three Claude instances plus Jon operate against this codebase with distinct role
 | `src/app.jsx`, `functions/index.js`, all source | CCD | Coach reads for review |
 | `tests/extraction-baseline/` | CCD | Coach reads for review |
 | `TODO.md` | CCD (during Close Out) | Coach references |
+
+### Delivering large content to Freddy
+
+Freddy lives in Claude.ai (browser) with no repo access. When Marc or Coach needs to send Freddy a large document (report, supplement, plan, audit results, diagnostic findings), do NOT dump it into chat for Jon to relay. Instead:
+
+1. Write the content to a file in the repo (e.g., `docs/`, repo root, or wherever the document type belongs).
+2. Open Explorer with the file pre-selected so Jon can drag it into Claude.ai:
+   ```powershell
+   Start-Process explorer.exe -ArgumentList "/select,C:\Users\jon\AppDev\MatrixARC\<filename>"
+   ```
+3. Tell Jon: "Report written to `<filename>` — Explorer opened, drag it to Freddy."
+
+This applies to any content longer than ~50 lines. Short messages (status updates, quick answers, work orders) can still be relayed via chat.
 
 ### Discipline for non-trivial work items (H-items)
 
@@ -660,7 +677,7 @@ Long-running async operations must be project-scoped. The currently open project
 
 **React-specific:** Any component that owns long-running async operations MUST have a `key` prop that forces unmount/remount when the underlying entity changes. Without this, React reuses the component instance and stale closures from the previous entity survive into the new one.
 
-**Module-scoped caches** (`_pendingPagesCache`, `_bgTasks`, or any future cache) must be keyed by `projectId:panelId`, not `panelId` alone. Panel IDs are not globally unique — all single-panel projects share `panel-1`.
+**Module-scoped caches** (`_pendingPagesCache`, `_bgTasks`, or any future cache) must be keyed by `projectId:panelId`, not `panelId` alone. Panel IDs are not globally unique — all single-panel projects share `panel-1`. Use the `_bgKey(projectId, panelId)` helper (returns `projectId + ':' + panelId`) for consistent key construction.
 
 **Origin:** TODO #86 (2026-06-03). PRJ402119's BOM was written into PRJ402111 via stale extraction callback + React component reuse. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md` for full incident report.
 

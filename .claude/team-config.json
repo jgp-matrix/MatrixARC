@@ -22,9 +22,11 @@
       "hasFileAccess": false
     }
   },
+  "appUrl": "https://matrix-arc.web.app",
   "files": {
     "sessionState": "SESSION-STATE.md",
     "analystOnboarding": "FREDDY.md",
+    "analystPaste": "FREDDY-PASTE.md",
     "architectLog": "COACH.md"
   }
 }
