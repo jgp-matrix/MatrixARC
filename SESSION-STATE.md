@@ -1,99 +1,95 @@
-# Session State — 2026-06-02 22:30 MDT
+# Session State — 2026-06-03 14:30 MDT
 
 ## Version
-v1.20.87 (deployed 2026-06-02). JPEG+P2 extraction fix shipped. PNG reverted.
+v1.20.90 (deployed 2026-06-03). Cross-project contamination fix + background pricing.
 
 ## Recent Commits (last 15)
+- 7c7041e3 Add workflow lessons from contamination investigation
+- 19435b11 Close contamination incident — v1.20.90 validation passed all checks
+- 1d4112f4 Release v1.20.90
+- 9d78a035 Add Analyst Communication Model to FREDDY.md
+- 53b2aaf6 Expand TODO #92 audit scope: add re-extraction and validation requests
+- fcd11f17 Add TODO #92: background task UI ownership audit (HIGH)
+- 438ff9f4 Release v1.20.89
+- 71337de3 Add live testing environment confirmation to session startup
+- bd3cb890 Add evidence-first debugging mode to FREDDY.md
+- 3351b7b2 Add #86 incident report + lessons learned across team docs
+- a3c10b8c Release v1.20.88
+- 8949e170 Fix SESSION-STATE.md: routing nondeterminism was real, now resolved with ~16s waste
+- 6d9e3be6 Session close-out: extraction investigation resolved, SESSION-STATE regenerated
 - fc78d4de Release v1.20.87
 - ed6699f2 Add TODO #84-85: missing items + Excel cross-check validation finding
-- 9df5d295 Release v1.20.86
-- 057f85fd Release v1.20.85
-- b13f6b59 Update TODO #81: expand to extraction anomaly detection modal
-- 10fdced5 Fix #82 P1: remove noBomReason escape from pdf-native when CropBox applied
-- 4e31f918 Add scan quality alert to bom-region-crop fallback prompt (#82 P2)
-- 2f4ef29d Release v1.20.84
-- 706bf803 Release v1.20.83
-- 4b1ee010 Add TODO #81-83: PRJ402119 extraction failure findings
-- 126f5f35 Fix supplier portal catch to distinguish timeout vs network error
-- 4f8796f4 Add 480s AbortController timeout to all Anthropic API fetch calls
-- 34e89677 Add TODO #80: feedback re-extract PN-only dedup key merges too aggressively
-- 96023467 Release v1.20.82
-- 4c77f5da Close TODO #79 verification gap — runtime dedup test passes all 5 scenarios
 
-## EXTRACTION INVESTIGATION — RESOLVED
+## CROSS-PROJECT CONTAMINATION INCIDENT — CLOSED
 
-**READ THIS BEFORE ANYONE RE-OPENS EXTRACTION WORK.**
+**Status: VALIDATED AND CLOSED (v1.20.90, 2026-06-03)**
 
-The "persistent 3036338→3038338 misread" that drove hours of PNG/upscale/native-res/temperature investigation was a **GROUND-TRUTH ERROR**, not a model bug. The drawing says 3038338. The model read it correctly every run. Marc's comparison table had the wrong reference value (3036338). Both are valid Phoenix Contact parts — the BC catalog could NOT disambiguate; only the drawing/source could. There is NO scan-quality ceiling on this character.
+Full incident report: `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
 
-**Do NOT re-chase:** PNG encode, 2000px upscale removal, native-res crop, temperature/determinism fixes — all of this work was chasing a phantom error that didn't exist.
+Root cause: stale extraction callback + React component reuse (`<ProjectView>` had no `key` prop) + panel ID collision (`panel-1` shared across all single-panel projects). When extraction completed after user navigated away, `onDone` wrote wrong BOM into the active project's React state.
 
-Key findings that DO stand:
-- **P2 quality alert is the real fix** — accurate part numbers on scanned drawings (v1.20.84, #82 P2)
-- **Nondeterminism = routing variance**, not model variance (5/5 byte-identical runs on same path)
-- **#83 reliable routing** addresses the variance by ensuring scanned docs hit JPEG+P2 path
-- **PNG reverted** — JPEG+P2 found MORE items (13 vs 12)
-- **PRJ402119 outcome:** 13 of 14 items found, all found items accurate, 1 missing (#84)
-- **Image fidelity audit** (Coach): cataloged 4 pipeline leaks (#1 upload double-JPEG, #2 ensureDataUrl re-encode, #3 useless 2000px upscale, #4 crop JPEG encode). Leak #3 confirmed useless overhead — worth removing. PDF-native is the lossless gold path when it works. Audit stands as permanent reference even though the acute bug was a phantom.
+Fixes shipped:
+- v1.20.88 (#86): `key={openProject.id}` on `<ProjectView>` + `_extractionProjectId` guard in `onDone`
+- v1.20.89 (#89): Background pricing on `confirmAndExtract` path
+- v1.20.90 (#89): Background pricing on Re-Extract + `reExtractWithFeedback` paths
 
-**Validation finding (load-bearing for Ovivo):** BC catalog validation alone cannot catch a misread that lands on another valid PN. Only the drawing/source disambiguates. This makes the Excel cross-check (#85) load-bearing for Ovivo-class customers, not optional.
+Validation (v1.20.90): guard fired, background pricing executed, correct project updated, sentinel unchanged, no forced navigation.
+
+**Do NOT re-investigate the contamination.** It is resolved. Remaining work is architectural hardening tracked as separate TODOs below.
+
+## EXTRACTION INVESTIGATION — RESOLVED (prior session)
+
+The "persistent 3036338→3038338 misread" was a ground-truth error, not a model bug. Do NOT re-chase PNG encode, upscale, native-res crop, or temperature fixes. See previous SESSION-STATE for full details.
 
 ## Shipped This Session
-- [DONE] #77/#78 — Pre-extraction page mgmt — v1.20.80 (dfbb2293), field-verified by Jon + Noah
-- [DONE] F-1d.8 / F-1a.3 / TODO #79 — BOM prompt duplicate-merge fix — v1.20.81 (4cfaeb81 + 67dd897c). Server half-deploy gap found and closed (deploy.sh only deploys hosting; functions deployed separately)
-- [DONE] Cross-session Freddy continuity — FREDDY.md startup directive, CLAUDE.md step 6c (91f180d9)
-- [DONE] AbortController on extraction fetches — 480s timeout on all Anthropic API calls (4f8796f4)
-- [DONE] #82 P2 — Scan quality alert added to bom-region-crop fallback prompt (4e31f918)
-- [DONE] #82 P1 — Removed noBomReason escape from pdf-native when CropBox applied (10fdced5)
-- [DONE] #83 — Reliable routing for scanned documents to JPEG+P2 path. Earlier routing nondeterminism WAS real (different paths across runs producing different results). Now deterministic — always reaches JPEG+P2 — but wastes ~16s on two doomed pdf-native calls first. Optimization pending, reliability achieved.
-- [DONE] PNG revert — JPEG+P2 outperforms PNG on scanned drawings (v1.20.87)
+- [DONE] #86 — Cross-project BOM contamination fix (v1.20.88)
+- [DONE] #89 — Background pricing on all three extraction paths (v1.20.89 + v1.20.90)
+- [DONE] Incident report: DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md
+- [DONE] CLAUDE.md: Async Project Ownership Rule, Multi-Project Workflow Assumption, Dashboard Command Center Principle, Live Testing Environment Confirmation
+- [DONE] FREDDY.md: Evidence-First Debugging Mode, Analyst Communication Model, Pending Response Rule, Incident Closure Criteria, Cross-Project Contamination Investigation Protocol, Post-Investigation Documentation Checklist, Durable-Record Assignment Practice
+- [DONE] COACH.md: C16 (contamination finding), C17 (#89 analysis), C18 (extraction architecture priority plan)
+- [DONE] TODO #88 (async ownership audit), #90 (ARC Cross UX), #91 (background workflow audit), #92 (UI ownership audit), #93 (extraction pipeline consolidation)
 
-## Open Items
+## Open Items — Architectural Hardening
 
-### HIGH — Next extraction work (fresh-head)
-- **#84 — Missing items (13/14).** Two specific drops on PRJ402119:
-  - LNM40BPK100: last-row drop — possibly systematic trailing-item truncation. Check if reproducible across projects.
-  - TYD2CW6: companion-on-same-row — splitCompanionParts didn't fire. Why?
-  - Coach trace points: `_parseAndVerifyBomRaw` (silent item drop), `filterNonBomRows` (4-field structural reject), L3 merge pick-winner on duplicate itemNo keys.
+### HIGH — Next active investigation
+- **#92 — Background Task UI Ownership Audit.** Background operations must never seize foreground UI. Audit all completion handlers for modal opens, route changes, required-input interruptions. Coach-owned.
 
-### MEDIUM — Confirm/close
-- **#83 — Reliable routing:** Working — scanned docs deterministically reach JPEG+P2. Optimization opportunity: skip the two doomed pdf-native calls (~16s waste) for pages with `warningLevel: "high"` scan quality.
-- **#82 — PDF-native empty on scanned-bitmap-in-PDF.** Likely WON'T-FIX / route around. JPEG+P2 works for scans; PDF-native not needed. Decision item, not a code fix.
+### MEDIUM — Queued
+- **#91 — Background Workflow Audit.** Classify all 12 extraction-completion functions as safe/UI-only/unsafe in background mode. Coach-owned.
+- **#93 — Extraction Pipeline Consolidation.** Shared `onExtractionComplete` for all three extraction paths. Coach to design, Marc to implement.
+- **#87 — Panel ID Hardening.** Generate unique panel IDs instead of sequential `panel-1`. Follow-up for #86.
+- **#88 — Async Ownership Audit.** Broader audit: all long-running operations, not just extraction. Coach-owned.
 
-### FEATURE — Multi-day, gated
-- **#85 — Excel BOM cross-check/import.** Full feature. Gated on Noah confirming Ovivo will send Excel files. Design pipeline complete: Brief + Supplement + Analyst Review done. Needs Detailed Plan. D-REV-1 (revision metadata cross-check) open.
-- **F-1g.1 — Dedup message fix.** Analyst Review + Detailed Plan (F-1g1-DETAILED-PLAN.md) approved. Was queued for Marc. 5 code sites, ~35 LOC, 5-case test matrix.
+### HIGH — Pre-existing (from prior sessions)
+- **#84 — Missing items (13/14)** on PRJ402119. Last-row truncation + companion-part miss.
+- **#85 — Excel BOM cross-check.** Gated on Noah/Ovivo. Design pipeline complete, Detailed Plan pending.
+- **#64 — BC concurrency sweep.** ~44 ungated fetch sites remain.
+- **#66 — bcCreatePanelTaskStructure idempotency gap.** ~20 LOC.
 
-### HIGH — Ongoing
-- **F-2d.1 / #64** — BC concurrency sweep. ~44 ungated fetch sites remain. Phase 1 shipped (v1.20.79). Absorbed into #64.
-- **#66** — bcCreatePanelTaskStructure idempotency gap (~20 LOC)
+### FEATURE — Queued
+- **F-1g.1 — Dedup message fix.** Detailed Plan approved (F-1g1-DETAILED-PLAN.md). 5 code sites, ~35 LOC.
+- **#90 — ARC Cross UX.** Supersession not visually distinct from extraction error.
 
-## Noah Production Bugs (reported today, NOT diagnosed)
-- **BOM edits revert** — suspected stale-state-overwrite race (#65 class). Needs investigation.
-- **Quotes randomly drop fields** including Budgetary header. A quote ALREADY SHIPPED to a customer may be missing the Budgetary header — **needs human verification of the sent PDF** before any code investigation.
-
-## Design Banked (ready for implementation)
-- **#85 Excel import** — Brief + Supplement + Analyst Review complete. Detailed Plan pending. D-REV-1 open.
-- **F-1g.1 dedup message** — Analyst Review final. Detailed Plan at F-1g1-DETAILED-PLAN.md (in repo, untracked). 5 code sites, ~35 LOC, approved.
-
-## Freddy Docs NOT in Repo
-The following exist only in the Claude.ai browser session (Freddy). Commit if durable copies wanted:
-- Excel BOM Import Brief + Analyst Review
-- F-1g.1 Brief + Analyst Review
+## Noah Production Bugs (from prior session, NOT diagnosed)
+- **BOM edits revert** — suspected stale-state-overwrite race (#65 class).
+- **Quotes randomly drop fields** including Budgetary header — needs human verification of sent PDF first.
 
 ## Work Queue
-1. Noah production bugs (BOM revert, quote field drop) — triage/diagnose
-2. #84 — Missing items investigation (fresh-head)
-3. F-1g.1 — Implementation (Detailed Plan approved)
-4. #66 — bcCreatePanelTaskStructure idempotency
-5. #64 — BC concurrency sweep
+1. #92 — Background Task UI Ownership Audit (active investigation)
+2. Noah production bugs — triage/diagnose when prioritized
+3. #84 — Missing items investigation
+4. F-1g.1 — Implementation (plan approved)
+5. #66 — bcCreatePanelTaskStructure idempotency
+6. #64 — BC concurrency sweep
 
 ## Working Tree
-- Branch: master (up to date with origin/master at fc78d4de)
+- Branch: master (up to date with origin/master at 7c7041e3)
 - Untracked: F-1g1-DETAILED-PLAN.md
+- Clean: no uncommitted changes (pending TODO #93 commit)
 
 ## Open TODOs
-51 OPEN findings in TODO.md
+48 OPEN findings in TODO.md
 
 ## Codebase Audit
-76 total findings in ARC-AUDIT-FINDINGS.md. F-1a.3 RESOLVED v1.20.81. F-2d.1 downgraded to HIGH (absorbed into #64). Top unresolved CRITICALs: F-1g.1 (misleading dedup message — plan approved), F-2b.1 (save guard asymmetry), F-3c.4 (partial sync green checkmark), F-3a.1 (restore lock leak).
+76 total findings in ARC-AUDIT-FINDINGS.md. Top unresolved CRITICALs: F-1g.1 (misleading dedup message — plan approved), F-2b.1 (save guard asymmetry), F-3c.4 (partial sync green checkmark), F-3a.1 (restore lock leak).

@@ -1689,6 +1689,21 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (v1.20.89 testing — background task pulled user into wrong context).
     Owner for investigation: Coach.
 
+93. **OPEN** (MEDIUM) — Extraction pipeline consolidation: shared completion handler for all three
+    extraction paths. Currently `confirmAndExtract`, Re-Extract Drawings, and `reExtractWithFeedback`
+    each have their own `onDone` callback with independently implemented guards, background pricing,
+    and BC sync logic. The #86/#89 fixes were applied to each path separately — same pattern, three
+    copies.
+    Recommended: extract a shared `onExtractionComplete(finalPanel, {extractionProjectId, ...})`
+    function that owns the project-switch guard, background pricing, BC sync, and UI suppression.
+    Each entry point calls `runExtractionTask` with an `onDone` that delegates to the shared function.
+    Per-path differences (validation after first extract, feedback merge) happen BEFORE `onDone`.
+    Risk: MEDIUM — touches three code sites in a 46K-line file. Requires Coach review before merge.
+    Do not start until #89 is validated and #92 audit is understood.
+    Related: #86, #89, #91, #92. See C18 in COACH.md for architecture recommendation.
+    Discovered: 2026-06-03 (C18 extraction architecture priority plan).
+    Owner: Coach (design) → Marc (implement).
+
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source
