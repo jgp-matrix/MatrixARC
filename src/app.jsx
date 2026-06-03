@@ -23994,6 +23994,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   async function runExtraction(startMsg){
     _logQvHistory(project.id,{type:"re_extract",panelId:panel.id,panelName:panel.name||("Panel "+(idx+1))});
+    const _reExtractProjectId=projectId;
     // DECISION(v1.19.611): Wrap the entire re-extract in try/finally so a thrown error anywhere
     // (pricing, validation, save) can't leave an orphan activeExtractions doc as "running".
     // The finally runs bgDone only if bgError hasn't already fired.
@@ -24188,43 +24189,52 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     ep.set(80,"Saving BOM…");
     bgSetPct(panel.id,80,"Saving BOM…");
     const reEqs=mergeEngineeringQuestions([],reQs,null); // fresh questions on re-extract
-    // DECISION(v1.19.607): Always overwrite aiQuestions (even with []) so stale questions
-    // from prior extractions get cleared. Questions feature disabled globally (v1.19.601).
     let updated={...latestPanelRef.current,bom,aiQuestions:reQs||[],engineeringQuestions:reEqs,extractionReport:reExtractionReport,status:"extracted",updatedAt:Date.now()};
-    try{await onSaveImmediate(updated);}catch(e){}
-    onUpdate(updated);
-    setTagsChanged(false);
-    if(!eqModalShownRef.current){
+    const _reIsBackground=_currentProjectId!==_reExtractProjectId;
+    if(_reIsBackground){
+      console.warn(`[EXTRACTION GUARD] Background re-extract — extraction for ${_reExtractProjectId}, active project is ${_currentProjectId}. Saving directly to Firestore.`);
+      try{await saveProjectPanel(uid,_reExtractProjectId,panel.id,updated);}catch(e){console.error("[EXTRACTION GUARD] re-extract save failed:",e);}
+    }else{
+      try{await onSaveImmediate(updated);}catch(e){}
+      onUpdate(updated);
+    }
+    try{setTagsChanged(false);}catch(e){}
+    if(!_reIsBackground&&!eqModalShownRef.current){
       eqModalShownRef.current=true;
-      // DECISION(v1.19.398): Don't auto-open questions modal during re-extraction either.
-      // if((updated.engineeringQuestions||[]).some(q=>q.status==="open")){setShowEqModal(true);}
-      // else if(updated.aiQuestions?.length>0){setShowAiQuestions(true);setAiAnswers({});}
     }
     // Re-run validation (schematic/layout analysis) if applicable
     const valPages=(pages||[]).filter(p=>["schematic","backpanel","enclosure","layout"].some(t=>getPageTypes(p).includes(t))&&(p.dataUrl||p.storageUrl));
     if(valPages.length>0&&_apiKey){
       ep.set(65,"Validating drawings…");
       bgSetPct(panel.id,82,"Validating drawings…");
-      setValidatingPanel(true);
+      try{setValidatingPanel(true);}catch(e){}
       try{
         const result=await runPanelValidation(latestPanelRef.current,pct=>{const p=65+Math.round(pct*0.15);ep.set(p,"Validating…");bgSetPct(panel.id,82+Math.round(pct*0.04),"Validating…");});
         if(result?.validation||result?.laborData){
           updated={...latestPanelRef.current,...(result.validation?{validation:result.validation}:{}),...(result.laborData?{laborData:result.laborData}:{}),status:"validated"};
-          onUpdate(updated);
-          try{await onSaveImmediate(updated);}catch(e){}
+          if(_reIsBackground){
+            try{await saveProjectPanel(uid,_reExtractProjectId,panel.id,updated);}catch(e){}
+          }else{
+            onUpdate(updated);
+            try{await onSaveImmediate(updated);}catch(e){}
+          }
         }
       }catch(valEx){console.warn("Re-extract validation failed:",valEx);}
-      setValidatingPanel(false);
+      try{setValidatingPanel(false);}catch(e){}
     }
     // Auto-run pricing after re-extraction
     if(bom.length>0&&_apiKey){
-      ep.set(82,"Getting prices…");
-      bgSetPct(panel.id,88,"Getting prices…");
-      try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);bgSetPct(panel.id,88+Math.round(pct*0.10),"Getting prices…");});}catch(e){console.warn("Post-extract pricing failed:",e);}
+      if(_reIsBackground){
+        try{await runPricingBackground(uid,_reExtractProjectId,panel.id,updated,bcProjectNumber,idx,projectName);}catch(e){console.warn("[EXTRACTION GUARD] background pricing failed:",e);}
+      }else{
+        ep.set(82,"Getting prices…");
+        bgSetPct(panel.id,88,"Getting prices…");
+        try{await runPricingOnPanel(bom,updated,pct=>{ep.set(82+Math.round(pct*0.16),null);bgSetPct(panel.id,88+Math.round(pct*0.10),"Getting prices…");});}catch(e){console.warn("Post-extract pricing failed:",e);}
+      }
     }
-    ep.finish(`✓ ${bom.length} items extracted`);
-    setExtracting(false);
-    bgDone(panel.id,`✓ ${bom.length} items re-extracted`);
+    if(!_reIsBackground)ep.finish(`✓ ${bom.length} items extracted`);
+    try{setExtracting(false);}catch(e){}
+    bgDone(panel.id,`✓ ${bom.length} items re-extracted${_reIsBackground?" (background)":""}`);
     _reBgFinished=true;
     // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
@@ -24272,6 +24282,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   async function reExtractWithFeedback(){
     eqModalShownRef.current=false;
+    const _fbExtractProjectId=projectId;
     let bomPages=pages.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
     if(!aiFeedback.trim())return;
 
@@ -24391,15 +24402,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
     const fbEqs=mergeEngineeringQuestions([],fbQs,null);
-    // DECISION(v1.19.607): Always set aiQuestions (including []) so stale questions clear.
     const updated={...latestPanel,bom,aiQuestions:fbQs||[],engineeringQuestions:fbEqs,extractionReport:fbReport,status:"extracted",extractionFeedbackLog:feedbackLog,updatedAt:Date.now()};
-    try{await onSaveImmediate(updated);}catch(e){}
-    onUpdate(updated);
+    const _fbIsBackground=_currentProjectId!==_fbExtractProjectId;
+    if(_fbIsBackground){
+      console.warn(`[EXTRACTION GUARD] Background feedback re-extract — extraction for ${_fbExtractProjectId}, active project is ${_currentProjectId}. Saving directly to Firestore.`);
+      try{await saveProjectPanel(uid,_fbExtractProjectId,panel.id,updated);}catch(e){console.error("[EXTRACTION GUARD] feedback re-extract save failed:",e);}
+      if((bom||[]).length>0&&_apiKey){
+        try{await runPricingBackground(uid,_fbExtractProjectId,panel.id,updated,bcProjectNumber,idx,projectName);}catch(e){console.warn("[EXTRACTION GUARD] feedback background pricing failed:",e);}
+      }
+    }else{
+      try{await onSaveImmediate(updated);}catch(e){}
+      onUpdate(updated);
+    }
     const laborMsg=laborResult?.wires!=null?` · labor set to ${updated.pricing?.laborHoursOverride} hrs`:"";
-    ep.finish(`✓ ${bom.length} items extracted${laborMsg}`);
-    setFeedbackSaved(true);setTimeout(()=>setFeedbackSaved(false),3000);
-    setAiFeedback("");
-    setReExtracting(false);
+    if(!_fbIsBackground)ep.finish(`✓ ${bom.length} items extracted${laborMsg}`);
+    try{setFeedbackSaved(true);setTimeout(()=>setFeedbackSaved(false),3000);}catch(e){}
+    try{setAiFeedback("");}catch(e){}
+    try{setReExtracting(false);}catch(e){}
   }
 
   // DECISION(v1.19.868, ECO Stage B): Edit interception. When the user is in
