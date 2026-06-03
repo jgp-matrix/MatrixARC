@@ -23202,18 +23202,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setExtracting(bomPages.length>0);setValidatingPanel(willValidate);
     const _stampPanel=updated;
     const _stampBcProjNo=bcProjectNumber;
+    const _extractionProjectId=projectId;
     runExtractionTask(uid,projectId,updated,{
       projectName,bcProjectNumber,
       onDone:(finalPanel)=>{
+        if(_currentProjectId!==_extractionProjectId){
+          console.warn(`[EXTRACTION GUARD] Stale extraction completion — extraction was for project ${_extractionProjectId} but active project is now ${_currentProjectId}. Firestore save targeted the correct project; React state update skipped to prevent cross-project contamination.`);
+          try{setExtracting(false);setValidatingPanel(false);}catch(e){}
+          bgDone(panel.id,`✓ ${(finalPanel.bom||[]).length} items (saved to original project)`);
+          return;
+        }
         try{onUpdate(finalPanel);}catch(e){}
         try{setExtracting(false);setValidatingPanel(false);}catch(e){}
-        // Show AI questions if any (guarded to prevent double-trigger from notifyProjectListeners)
         if(!eqModalShownRef.current){
           eqModalShownRef.current=true;
-          // DECISION(v1.19.398): Don't auto-open questions modal during extraction — let user review when ready.
-          // Questions badge on the panel card shows the count. User can click it to open.
-          // if((finalPanel.engineeringQuestions||[]).some(q=>q.status==="open")){try{setShowEqModal(true);}catch(e){}}
-          // else if(finalPanel.aiQuestions?.length>0){try{setShowAiQuestions(true);setAiAnswers({});}catch(e){}}
         }
         // Auto-run pricing after extraction — keep bg bar alive through pricing
         if((finalPanel.bom||[]).length>0&&_apiKey){
@@ -23228,7 +23230,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         }else{
           bgDone(panel.id,(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
         }
-        // BC sync + PDF upload deferred until after pricing completes (see runPricingOnPanel)
       },
       // DECISION(v1.19.662): stampFn accepts an optional ctx arg so runExtractionTask
       // can pass a specific hazloc value. During EARLY UPLOAD we pass hazloc=false
@@ -45156,7 +45157,7 @@ INSTRUCTIONS:
           projects, engineering, purchasing, production. */}
       {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
+          <ProjectView key={openProject.id} project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
         </ErrorBoundary>
       )}
       </div>{/* end main content column */}
