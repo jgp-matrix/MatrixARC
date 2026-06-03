@@ -1,0 +1,189 @@
+# /team-closeout — Dev Team Session Close Out
+
+This skill runs the full close out procedure. The Implementer (you) orchestrates.
+
+## Prerequisites
+
+Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/team-setup` first and stop.
+
+Extract config values:
+- `TEAM` = teamName
+- `IMPL_SHORT` = roles.implementer.shortName
+- `ARCH_SHORT` = roles.architect.shortName
+- `ANALYST_SHORT` = roles.analyst.shortName
+- `SESSION_STATE` = files.sessionState
+- `ANALYST_ONBOARDING` = files.analystOnboarding
+- `ARCH_LOG` = files.architectLog
+
+## Display the checklist
+
+```
+{TEAM} CLOSE OUT CHECKLIST
+───────────────────────────
+□ Step 1 — Commit uncommitted work (automatic unless ambiguous)
+□ Step 2 — Merge feature branch to master + push (automatic)
+□ Step 3 — Deploy (automatic)
+□ Step 4 — Show session commits (automatic — review output)
+□ Step 5 — Surface TODO.md updates
+   → USER ACTION: Approve, modify, or waive proposed TODO changes
+□ Step 6 — One-paragraph summary (automatic — review output)
+□ Step 6b — Regenerate {SESSION_STATE} (automatic)
+□ Step 6c — Durable-record check (automatic — may surface gaps)
+□ Step 6d — Handoff file freshness ({ANALYST_ONBOARDING}, {ARCH_LOG}, memory)
+   → STOP: {IMPL_SHORT} presents proposed changes and waits
+   → USER ACTION: Approve, modify, or waive each proposed change
+□ Step 6e — Commit approved handoff file updates + push (automatic)
+□ Step 7 — STOP — waiting for user
+   → USER ACTION: Direct additional work, type "Closed", or continue working
+```
+
+Then run `bash ./tools/closeout-auto.sh` to gather current state.
+
+## Step 1 — Commit uncommitted work
+
+Run `git status`. If modified or staged files:
+- Stage relevant files and commit.
+- If ambiguous (unrecognized files, .env, WIP), ask before committing.
+- If clean, note it and proceed.
+
+**Exception:** If user previously said "leave on the branch" this session, note it and skip Step 2.
+
+Mark complete: `✓ Step 1 — {committed SHA / already clean}`
+
+## Step 2 — Merge feature branch to master
+
+If current branch is not master and has unmerged commits:
+1. Checkout master, merge, push
+2. Verify `git rev-parse master origin/master` match
+3. Worktree cleanup: prune, clean orphaned dirs, delete feature branch
+
+If already on master or no session commits, skip.
+
+Mark complete: `✓ Step 2 — {merged BRANCH / already on master}`
+
+## Step 3 — Deploy
+
+Run the project's deploy command (e.g., `bash deploy.sh`). If it fails, surface the error and wait.
+
+Mark complete: `✓ Step 3 — Deployed v{VERSION} ({SHA})`
+
+## Step 4 — Show session commits
+
+List all commits this session: `git log --oneline {start-SHA}..HEAD` (or last 10).
+
+Mark complete: `✓ Step 4 — {N} session commits listed`
+
+## Step 5 — Surface TODO.md updates
+
+Based on session work, list:
+- Findings to mark RESOLVED (with commit SHAs)
+- New findings to capture
+- Findings whose notes should be updated
+
+Do NOT auto-edit. Present proposals and **wait for user to approve, modify, or waive**.
+
+Mark complete: `✓ Step 5 — TODO updates {applied / waived}`
+
+## Step 6 — Summary
+
+One-paragraph summary including:
+- Master tip SHA after deploy
+- Deployed version
+- origin/master sync confirmation
+- Remaining branches
+- What was accomplished, what's pending, next session focus
+
+Mark complete: `✓ Step 6 — Summary provided`
+
+## Step 6b — Regenerate session state
+
+Regenerate `{SESSION_STATE}` from current repo state:
+1. Read version from source
+2. `git log --oneline -15`
+3. Read audit/findings summary if it exists
+4. `git status`
+5. Count OPEN items in TODO.md
+6. Check for overnight/coordination logs
+7. Write `{SESSION_STATE}`
+
+Mark complete: `✓ Step 6b — {SESSION_STATE} regenerated`
+
+## Step 6c — Durable-record check
+
+Verify every design decision, review result, or scope change from this session exists in a repo file — not just in conversation. If anything is missing, write it now.
+
+Mark complete: `✓ Step 6c — All session knowledge persisted to repo`
+
+## Step 6d — Handoff file freshness check
+
+**This is a STOP point.** Check each file, present findings, and wait for approval.
+
+- **{SESSION_STATE}** — already regenerated. Confirm post-deploy version and session commits.
+- **{ANALYST_ONBOARDING}** — check:
+  - Version reference — must match post-deploy version
+  - Recently active work — must reflect this session's output
+  - Any new protocols or behavioral notes established this session
+- **{ARCH_LOG}** — if Architect was active, verify tail reflects this session. Implementer does not write to {ARCH_LOG} (Architect-owned) but flags staleness.
+- **Auto-memory** — save any feedback, project knowledge, or user preferences learned this session to memory files if applicable.
+
+**Present all proposed changes:**
+
+```
+HANDOFF FILE UPDATES (pending approval)
+────────────────────────────────────────
+{ANALYST_ONBOARDING}:
+  - [change 1]
+  - [change 2]
+{ARCH_LOG}:
+  - [status: current / stale]
+Memory:
+  - [memories to save, if any]
+{SESSION_STATE}:
+  - Already regenerated ✓
+```
+
+**STOP and wait for user to approve, modify, or waive each change.**
+
+Mark complete: `✓ Step 6d — Handoff changes approved`
+
+## Step 6e — Commit handoff file updates
+
+Apply approved edits, stage, commit, push:
+```
+git add {SESSION_STATE} {ANALYST_ONBOARDING} [any other changed files]
+git commit -m "Update handoff files for next session"
+git push origin master
+```
+
+Mark complete: `✓ Step 6e — Handoff files committed and pushed ({SHA})`
+
+## Step 7 — STOP
+
+Display the completed checklist, then:
+
+```
+{TEAM} CLOSE OUT COMPLETE
+──────────────────────────
+Version: v{VERSION} ({SHA})
+All changes committed and pushed.
+Handoff files current.
+
+Waiting for:
+  → Additional work instructions, OR
+  → "Closed" to confirm safe shutdown, OR
+  → Continue working (aborts close-out)
+```
+
+## "Closed" verification
+
+When user types "Closed" after close out:
+
+1. `git status` — must be clean
+2. `git log master..origin/master` — must be empty
+3. Commits on master (or intentionally on feature branch per user choice)
+4. TODO.md updates applied or waived
+5. Handoff files ({SESSION_STATE}, {ANALYST_ONBOARDING}) committed and pushed
+
+If all pass: `✓ Session closed cleanly. All changes committed and pushed. Handoff files current. Safe to end.`
+
+If any fail: state which check failed and wait for resolution.

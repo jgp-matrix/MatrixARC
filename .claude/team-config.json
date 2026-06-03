@@ -1,0 +1,29 @@
+{
+  "teamName": "Matrix ARC Team",
+  "roles": {
+    "implementer": {
+      "name": "Marc Masdev",
+      "shortName": "Marc",
+      "environment": "ccd",
+      "notifyPrefix": "MARC"
+    },
+    "architect": {
+      "name": "Sam Wize",
+      "shortName": "Coach",
+      "environment": "terminal",
+      "notifyPrefix": "COACH"
+    },
+    "analyst": {
+      "name": "Freddy Lyst",
+      "shortName": "Freddy",
+      "environment": "browser",
+      "notifyPrefix": "FREDDY",
+      "hasFileAccess": false
+    }
+  },
+  "files": {
+    "sessionState": "SESSION-STATE.md",
+    "analystOnboarding": "FREDDY.md",
+    "architectLog": "COACH.md"
+  }
+}
