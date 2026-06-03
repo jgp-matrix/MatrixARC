@@ -207,8 +207,9 @@ CLOSE OUT CHECKLIST
 □ Step 6b — Regenerate SESSION-STATE.md (automatic)
 □ Step 6c — Durable-record check (automatic — may surface gaps)
 □ Step 6d — Handoff file freshness (FREDDY.md, COACH.md, memory)
-   → USER ACTION: Approve any FREDDY.md or COACH.md updates
-□ Step 6e — Commit handoff file updates + push (automatic)
+   → STOP: Marc presents proposed changes and waits
+   → USER ACTION: Approve, modify, or waive each proposed change
+□ Step 6e — Commit approved handoff file updates + push (automatic)
 □ Step 7 — STOP — waiting for user
    → USER ACTION: Direct additional work, type "Closed", or continue working
 ```
@@ -257,18 +258,20 @@ Then execute each step, checking off as completed. If a step requires user input
 
 6c. **Durable-record check**: Before stopping, verify that every design decision, analyst review result, or scope change made during this session exists in a repo file — not just in conversation. Freddy's analysis lives only in browser chat; Coach's investigation notes live only in terminal context. If any session-critical decision hasn't been written to a design doc, CLAUDE.md, TODO.md, or SESSION-STATE.md, write it now. This is what enables cross-session continuity — the next session (any role) can only recover what's in the repo.
 
-6d. **Handoff file freshness check**: The next session's startup consumes these files directly — if they're stale, the next team boots with wrong context. Verify and update each:
+6d. **Handoff file freshness check**: The next session's startup consumes these files directly — if they're stale, the next team boots with wrong context. Verify each and **present proposed changes to Jon before applying**:
 
    - **SESSION-STATE.md** — already regenerated in step 6b. Confirm it includes the post-deploy version and all commits from this session.
    - **FREDDY.md** — check these sections against this session's work:
      - "Current version" in "What You Know About Matrix ARC" — must match post-deploy version.
      - "Recently Active Work" — shipped items, open items, and Noah bugs must reflect this session's output.
      - Any new protocols, behavioral notes, or investigation patterns established this session.
-     - If any section is stale, update it now. FREDDY.md is what a brand-new Freddy reads cold — stale content causes version drift and re-litigation of settled questions.
+     - If any section is stale, list the specific changes needed and **wait for Jon to approve before editing**. FREDDY.md is what a brand-new Freddy reads cold — stale content causes version drift and re-litigation of settled questions.
    - **COACH.md** — if Coach was active this session, verify the tail reflects this session's findings and verdicts. If Coach was NOT active, no update needed. Marc does not write to COACH.md (Coach-owned), but flags staleness to Jon.
    - **CCD auto-memory** — review the session for feedback, project knowledge, or user preferences that should persist across conversations. Save to memory files (`C:\Users\jon\.claude\projects\C--Users-jon-AppDev-MatrixARC\memory\`) if applicable. Examples: corrections to Marc's approach ("don't do X"), project state changes ("merge freeze after Thursday"), new reference locations ("bugs tracked in Linear project X"). Do NOT save things derivable from code, git history, or files already updated above.
 
-6e. **Commit handoff file updates**: If steps 6b-6d produced file changes, stage and commit them with a message like "Update handoff files for next session" before stopping. These must be on master and pushed — handoff files that exist only on a feature branch are invisible to the next session.
+   **STOP after presenting 6d findings.** Wait for Jon to approve, modify, or waive each proposed change before proceeding to 6e. Do not auto-apply handoff file edits.
+
+6e. **Commit handoff file updates**: After Jon approves the 6d changes, apply the approved edits, stage, and commit with a message like "Update handoff files for next session". These must be on master and pushed — handoff files that exist only on a feature branch are invisible to the next session.
 
 7. **Stop.** Wait for the user to either:
    - Direct additional actions (update TODO.md, etc.) — execute as instructed
