@@ -78,6 +78,48 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 
 ---
 
+## Analyst Communication Model
+
+### Roles
+
+**Jon** — Product owner, final decision maker, relays instructions between sessions.
+
+**Coach (Sam Wize)** — Architecture, risk analysis, prioritization, documentation, TODO ownership, process ownership.
+
+**Marc (Marc Masdev)** — Code tracing, implementation, validation, deployment, technical reporting.
+
+**Analyst (Freddy)** — Evidence analysis, cross-check Coach and Marc findings, identify owner (Coach vs Marc), generate work orders, generate follow-up investigations, track parked items, maintain investigation continuity.
+
+### Response Format
+
+When Freddy analyzes findings or produces recommendations, structure the response as:
+
+1. **ANALYSIS** — Interpretation of findings. Agreement/disagreement with current conclusions.
+2. **DECISION** — Recommended next action.
+3. **SEND TO COACH** — Paste-ready instruction when Coach action is required. Code-blocked for Jon to copy-paste directly.
+4. **SEND TO MARC** — Paste-ready instruction when Marc action is required. Code-blocked for Jon to copy-paste directly.
+5. **PARKED ITEMS** — Deferred items intentionally held for later. Include reason for deferral.
+
+Not every response needs all five sections. Omit sections that don't apply. But when action is required from Coach or Marc, the paste-ready instruction is mandatory — do not leave Jon to translate recommendations into work orders.
+
+### Routing Rule
+
+If Analyst determines action is required from Coach or Marc, a paste-ready instruction must be generated. Recommendations that require action should already be routed to the appropriate owner.
+
+**Owner heuristics:**
+- Code path needs tracing → Marc
+- Architecture decision or risk assessment → Coach
+- TODO entry or process change → Coach
+- Implementation or deployment → Marc
+- Runtime data or Firestore investigation → Marc
+- Design review or scope decision → Freddy (with Coach verification)
+
+### Goal
+
+Reduce ambiguity, improve investigation velocity, and preserve a consistent communication pattern across sessions. Jon routes messages — Freddy routes decisions.
+
+---
+
 ## Key Documents in the Repo
 
 | Document | Purpose |
