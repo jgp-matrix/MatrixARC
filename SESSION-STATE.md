@@ -1,9 +1,20 @@
-# Session State — 2026-06-03 14:30 MDT
+# Session State — 2026-06-03 17:01 MDT
+
+## Startup/Shutdown Procedure Change (2026-06-03)
+
+The startup and close out procedures in CLAUDE.md were rewritten this session. Key changes:
+- **Startup**: "startup" now always means full team (F+C+M). Marc boots first, produces paste-ready blocks for Coach and Freddy, then runs a cross-reference sync check. No role question asked. Variants: `startup solo`, `startup code`, `startup custom`.
+- **Close Out**: New steps 6d (handoff file freshness — FREDDY.md, COACH.md, CCD memory) and 6e (commit handoff updates). "Closed" now verifies handoff files are committed and pushed.
+- **Both**: Display a visible checklist before executing so Jon can follow the procedure step by step.
+
+Read the updated CLAUDE.md sections "Team startup (default)" and "Session shutdown procedure" for full details.
 
 ## Version
 v1.20.90 (deployed 2026-06-03). Cross-project contamination fix + background pricing.
 
 ## Recent Commits (last 15)
+- 853913fb Add Session Closeout Verification Procedure to FREDDY.md
+- a5c8f1f1 Add TODO #93 extraction pipeline consolidation + regenerate SESSION-STATE
 - 7c7041e3 Add workflow lessons from contamination investigation
 - 19435b11 Close contamination incident — v1.20.90 validation passed all checks
 - 1d4112f4 Release v1.20.90
@@ -17,8 +28,6 @@ v1.20.90 (deployed 2026-06-03). Cross-project contamination fix + background pri
 - a3c10b8c Release v1.20.88
 - 8949e170 Fix SESSION-STATE.md: routing nondeterminism was real, now resolved with ~16s waste
 - 6d9e3be6 Session close-out: extraction investigation resolved, SESSION-STATE regenerated
-- fc78d4de Release v1.20.87
-- ed6699f2 Add TODO #84-85: missing items + Excel cross-check validation finding
 
 ## CROSS-PROJECT CONTAMINATION INCIDENT — CLOSED
 
@@ -41,12 +50,12 @@ Validation (v1.20.90): guard fired, background pricing executed, correct project
 
 The "persistent 3036338→3038338 misread" was a ground-truth error, not a model bug. Do NOT re-chase PNG encode, upscale, native-res crop, or temperature fixes. See previous SESSION-STATE for full details.
 
-## Shipped This Session
+## Shipped Prior Session
 - [DONE] #86 — Cross-project BOM contamination fix (v1.20.88)
 - [DONE] #89 — Background pricing on all three extraction paths (v1.20.89 + v1.20.90)
 - [DONE] Incident report: DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md
 - [DONE] CLAUDE.md: Async Project Ownership Rule, Multi-Project Workflow Assumption, Dashboard Command Center Principle, Live Testing Environment Confirmation
-- [DONE] FREDDY.md: Evidence-First Debugging Mode, Analyst Communication Model, Pending Response Rule, Incident Closure Criteria, Cross-Project Contamination Investigation Protocol, Post-Investigation Documentation Checklist, Durable-Record Assignment Practice
+- [DONE] FREDDY.md: Evidence-First Debugging Mode, Analyst Communication Model, Pending Response Rule, Incident Closure Criteria, Cross-Project Contamination Investigation Protocol, Post-Investigation Documentation Checklist, Durable-Record Assignment Practice, Session Closeout Verification Procedure
 - [DONE] COACH.md: C16 (contamination finding), C17 (#89 analysis), C18 (extraction architecture priority plan)
 - [DONE] TODO #88 (async ownership audit), #90 (ARC Cross UX), #91 (background workflow audit), #92 (UI ownership audit), #93 (extraction pipeline consolidation)
 
@@ -84,12 +93,11 @@ The "persistent 3036338→3038338 misread" was a ground-truth error, not a model
 6. #64 — BC concurrency sweep
 
 ## Working Tree
-- Branch: master (up to date with origin/master at 7c7041e3)
-- Untracked: F-1g1-DETAILED-PLAN.md
-- Clean: no uncommitted changes (pending TODO #93 commit)
+- Branch: master (up to date with origin/master at 853913fb)
+- Clean: no uncommitted changes
 
 ## Open TODOs
-48 OPEN findings in TODO.md
+56 OPEN findings in TODO.md
 
 ## Codebase Audit
 76 total findings in ARC-AUDIT-FINDINGS.md. Top unresolved CRITICALs: F-1g.1 (misleading dedup message — plan approved), F-2b.1 (save guard asymmetry), F-3c.4 (partial sync green checkmark), F-3a.1 (restore lock leak).

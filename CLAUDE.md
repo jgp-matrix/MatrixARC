@@ -2,7 +2,7 @@
 
 ## Table of Contents
 - [Session startup procedure](#session-startup-procedure)
-  - [Multi-role startup](#multi-role-startup) — team role selection, Freddy paste generation, SESSION-STATE.md
+  - [Team startup](#team-startup-default) — sequential boot: Marc → Coach paste → Freddy paste → sync check
   - [Live testing environment confirmation](#live-testing-environment-confirmation) — browser session alignment before live testing
 - [Diagnostic session startup (diagstartup)](#diagnostic-session-startup-diagstartup) — read-only investigation mode
 - [Session shutdown procedure](#session-shutdown-procedure) — Close Out + Closed two-step
@@ -36,28 +36,97 @@
 
 If anything looks unexpected — wrong directory, unfamiliar branch, untracked files you didn't create, commits you didn't make — **stop and surface the contradiction to the user before doing any task work**. Do not auto-clean, auto-checkout, or "fix" the state. The parallel testing/review CLI session may have written artifacts you should not touch.
 
-### Multi-role startup
+### Team startup (default)
 
-After verify-state.sh, check if this is a multi-role session:
+When Jon types "startup", Marc boots first and orchestrates the full team. This is a five-step sequential process. Marc does NOT ask which roles — "startup" always means full team.
 
-1. Read `SESSION-STATE.md`. If missing or older than the latest commit, regenerate it (see generation procedure below).
-2. Ask Jon which roles are active (Full team / Code team / Quick fix / Custom).
-3. Generate role-appropriate output:
-   - **Freddy active:** Read FREDDY.md and SESSION-STATE.md from disk, then output a single pasteable code block containing the **full literal content** of both files (FREDDY.md first, then a `---` separator, then SESSION-STATE.md). Do NOT use placeholders like "[Paste FREDDY.md content first]" — the paste must be self-contained so Jon can copy-paste it into a fresh Claude.ai session with zero editing.
-   - **Coach active:** Note that Coach will self-orient from repo files.
-   - **Marc solo:** Display state summary and begin work.
-4. Display the state summary and any generated pastes.
-5. Wait for Jon's first work instruction.
+**Before executing, display this checklist so Jon can follow along:**
 
-**Role configurations:**
-- **Full team** (F + C + M) — Major features, milestones, Briefs/Plans pipeline
-- **Code team** (C + M) — Codebase audit remediation, investigation + fix
-- **Quick fix** (M only) — Single bug fix, deploy, version bump
-- **Custom** — Jon specifies which roles
+```
+STARTUP CHECKLIST (Full Team)
+─────────────────────────────
+□ Step 1 — Verify repo state (automatic — no user action)
+□ Step 2 — Generate Coach paste + Freddy paste (automatic — no user action)
+   → USER ACTION: Copy Coach paste into Claude Code Terminal
+   → USER ACTION: Copy Freddy paste into Claude.ai browser
+□ Step 3 — Wait for Jon to confirm both sessions initialized
+   → USER ACTION: Confirm "Coach is up" and "Freddy is up"
+□ Step 4 — Cross-reference sync check (Marc states version/queue/role)
+   → USER ACTION: Relay Coach's and Freddy's confirmations back
+□ Step 5 — Work begins
+   → USER ACTION: Give first work instruction
+```
 
-**SESSION-STATE.md generation procedure:**
+Then execute each step, checking off as completed.
+
+**Step 1 — Marc verifies state (automatic)**
+
+Run `./tools/verify-state.sh`, read `APP_VERSION` from `public/index.html`. Read `SESSION-STATE.md` — if missing or older than the latest commit, regenerate it (see generation procedure below). Display the verify-state results and current version.
+
+**Step 2 — Marc produces two paste-ready outputs**
+
+Generate both pastes and display them for Jon to copy.
+
+**Coach paste (for Claude Code Terminal):**
+Coach has full repo access, so provide file paths — not inline content. Output a single code block Jon can paste into a fresh terminal session:
+
+```
+You are Sam Wize ("Coach"), Senior Development Engineer, Architecture on the Matrix ARC project at C:\Users\jon\AppDev\MatrixARC.
+
+Read these files to orient yourself (in this order):
+1. CLAUDE.md — project rules, team structure, your role definition (focus on: Multi-instance workflow, Three-role naming, Session shutdown procedure)
+2. COACH.md — your session log, findings, and verification history
+3. SESSION-STATE.md — current project state, version, work queue, open items
+4. TODO.md — open findings (skim for OPEN items, note the work queue priority)
+
+After reading, report back to Jon:
+- Your role identity (name and role)
+- Current deployed version
+- Top-of-queue work item
+- Any unresolved items from your last session (check tail of COACH.md)
+- "Coach ready"
+```
+
+**Freddy paste (for Claude.ai browser):**
+Read `FREDDY.md` and `SESSION-STATE.md` from disk, then output a single pasteable code block containing the **full literal content** of both files (FREDDY.md first, then a `---` separator, then SESSION-STATE.md). Do NOT use placeholders like "[Paste FREDDY.md content first]" — the paste must be self-contained so Jon can copy-paste into a fresh Claude.ai session with zero editing.
+
+**Step 3 — Jon pastes into Coach and Freddy sessions**
+
+Marc waits. No work begins until Jon confirms both sessions are initialized.
+
+**Step 4 — Cross-reference sync check**
+
+Once Jon signals that Coach and Freddy are up, Marc initiates the sync check by stating:
+
+- **Version:** current `APP_VERSION`
+- **Top of queue:** the next work item from SESSION-STATE.md
+- **Role:** "Marc Masdev, ready"
+
+Jon relays Coach's and Freddy's confirmations. Each role must confirm:
+- Their role identity (character name + role)
+- Current version matches Marc's
+- Top-of-queue item matches
+- "Ready" signal
+
+If any role reports a version or queue mismatch, resolve before proceeding. Mismatches usually mean SESSION-STATE.md or FREDDY.md is stale — Marc regenerates and re-pastes.
+
+**Step 5 — Work begins**
+
+Jon gives the first work instruction.
+
+### Startup variants
+
+| Command | Roles | Behavior |
+|---------|-------|----------|
+| `startup` | F + C + M | Full team (default). Produces both pastes, runs sync check. |
+| `startup solo` or `startup marc` | M only | Marc only. Skip paste generation, display state summary, begin work. |
+| `startup code` | C + M | Code team. Produce Coach paste only, skip Freddy. |
+| `startup custom` | varies | Marc asks which roles, generates appropriate pastes. |
+
+### SESSION-STATE.md generation procedure
+
 1. Read `APP_VERSION` from `public/index.html`
-2. Run `git log --oneline -10`
+2. Run `git log --oneline -15`
 3. Read ARC-AUDIT-FINDINGS.md executive summary (first 40 lines) + cross-reference against recent commits for fixed findings
 4. Run `git status` for working tree state
 5. Count OPEN items in TODO.md
@@ -65,8 +134,6 @@ After verify-state.sh, check if this is a multi-role session:
 7. Write SESSION-STATE.md
 
 **Staleness check:** If SESSION-STATE.md's date header is older than the latest commit, regenerate before using it for pastes.
-
-**Default behavior:** Marc assumes solo mode (Quick fix) unless Jon explicitly invokes "startup" or "team session." The multi-role question is only asked when Jon signals a team session.
 
 ### Live testing environment confirmation
 
@@ -125,6 +192,29 @@ The shutdown is a two-step user command: "Close Out" (surface state) followed by
 
 When the user says "Close Out" (or any case-insensitive variant: close-out, closeout, etc.), run the following procedure. The default behavior is to **execute** the full commit→merge→push→deploy pipeline, not just surface state. Only pause for user input when something is ambiguous or fails.
 
+**Before executing, display this checklist so Jon can follow along:**
+
+```
+CLOSE OUT CHECKLIST
+───────────────────
+□ Step 1 — Commit uncommitted work (automatic unless ambiguous)
+□ Step 2 — Merge feature branch to master + push (automatic)
+□ Step 3 — Deploy via deploy.sh (automatic)
+□ Step 4 — Show session commits (automatic — review output)
+□ Step 5 — Surface TODO.md updates
+   → USER ACTION: Approve, modify, or waive proposed TODO changes
+□ Step 6 — One-paragraph summary (automatic — review output)
+□ Step 6b — Regenerate SESSION-STATE.md (automatic)
+□ Step 6c — Durable-record check (automatic — may surface gaps)
+□ Step 6d — Handoff file freshness (FREDDY.md, COACH.md, memory)
+   → USER ACTION: Approve any FREDDY.md or COACH.md updates
+□ Step 6e — Commit handoff file updates + push (automatic)
+□ Step 7 — STOP — waiting for user
+   → USER ACTION: Direct additional work, type "Closed", or continue working
+```
+
+Then execute each step, checking off as completed. If a step requires user input or fails, pause at that step.
+
 1. **Commit uncommitted work**: Run `git status`. If there are modified or staged files:
    - Stage the relevant files and commit with an appropriate message.
    - If the commit message or scope is ambiguous, ask the user before committing.
@@ -167,6 +257,19 @@ When the user says "Close Out" (or any case-insensitive variant: close-out, clos
 
 6c. **Durable-record check**: Before stopping, verify that every design decision, analyst review result, or scope change made during this session exists in a repo file — not just in conversation. Freddy's analysis lives only in browser chat; Coach's investigation notes live only in terminal context. If any session-critical decision hasn't been written to a design doc, CLAUDE.md, TODO.md, or SESSION-STATE.md, write it now. This is what enables cross-session continuity — the next session (any role) can only recover what's in the repo.
 
+6d. **Handoff file freshness check**: The next session's startup consumes these files directly — if they're stale, the next team boots with wrong context. Verify and update each:
+
+   - **SESSION-STATE.md** — already regenerated in step 6b. Confirm it includes the post-deploy version and all commits from this session.
+   - **FREDDY.md** — check these sections against this session's work:
+     - "Current version" in "What You Know About Matrix ARC" — must match post-deploy version.
+     - "Recently Active Work" — shipped items, open items, and Noah bugs must reflect this session's output.
+     - Any new protocols, behavioral notes, or investigation patterns established this session.
+     - If any section is stale, update it now. FREDDY.md is what a brand-new Freddy reads cold — stale content causes version drift and re-litigation of settled questions.
+   - **COACH.md** — if Coach was active this session, verify the tail reflects this session's findings and verdicts. If Coach was NOT active, no update needed. Marc does not write to COACH.md (Coach-owned), but flags staleness to Jon.
+   - **CCD auto-memory** — review the session for feedback, project knowledge, or user preferences that should persist across conversations. Save to memory files (`C:\Users\jon\.claude\projects\C--Users-jon-AppDev-MatrixARC\memory\`) if applicable. Examples: corrections to Marc's approach ("don't do X"), project state changes ("merge freeze after Thursday"), new reference locations ("bugs tracked in Linear project X"). Do NOT save things derivable from code, git history, or files already updated above.
+
+6e. **Commit handoff file updates**: If steps 6b-6d produced file changes, stage and commit them with a message like "Update handoff files for next session" before stopping. These must be on master and pushed — handoff files that exist only on a feature branch are invisible to the next session.
+
 7. **Stop.** Wait for the user to either:
    - Direct additional actions (update TODO.md, etc.) — execute as instructed
    - Type "Closed" — confirm safe shutdown (see below)
@@ -195,9 +298,13 @@ When the user says "Closed" (or any case-insensitive variant: closed, close, don
 
 4. Confirm any TODO.md updates surfaced in Close Out have been either applied or explicitly waived by the user.
 
-5. If all checks pass: respond "✓ Session closed cleanly. All changes committed and pushed. Safe to end."
+5. **Verify handoff files are committed and pushed.** Check that SESSION-STATE.md and any FREDDY.md updates from step 6d are on master and pushed to origin — not sitting uncommitted or on a feature branch. If handoff file commits are missing, fail the close-out check:
 
-6. If any check fails: respond with which specific check failed, what state needs to be addressed, and do not declare the session closed. Wait for the user to address it and type "Closed" again.
+   > "Handoff files (SESSION-STATE.md / FREDDY.md) have uncommitted changes or are not on master. Commit and push before closing."
+
+6. If all checks pass: respond "✓ Session closed cleanly. All changes committed and pushed. Handoff files current. Safe to end."
+
+7. If any check fails: respond with which specific check failed, what state needs to be addressed, and do not declare the session closed. Wait for the user to address it and type "Closed" again.
 
 The "Closed" command is the user's contract that the session is genuinely done. CCD's job is to verify the state matches that claim before agreeing.
 
