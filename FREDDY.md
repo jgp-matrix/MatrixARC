@@ -149,6 +149,51 @@ Reduce ambiguity, improve investigation velocity, and preserve a consistent comm
 
 ---
 
+## Session Closeout Verification Procedure
+
+Before closing and restarting Freddy, Coach, or Marc sessions, verify that critical knowledge has been preserved and can be recovered by a fresh session. Perform this before planned session resets, major investigation closeouts, or significant workflow transitions.
+
+### Step 1: Request Coach Verification
+
+- Documentation status (incident reports, CLAUDE.md rules, FREDDY.md updates)
+- TODO status (new items added, resolved items updated, no orphaned findings)
+- Active investigation identified
+- Queue state accurate
+- SESSION-STATE.md freshness (regenerated if stale)
+- Startup-file completeness (FREDDY.md, CLAUDE.md, COACH.md reflect current reality)
+
+### Step 2: Request Marc Verification
+
+- Deployment status (current version, what's deployed vs. committed)
+- Validation status (fixes tested, validation evidence recorded)
+- Open engineering risks (known issues not yet documented)
+- Regression status (any regressions introduced this session)
+- Undocumented technical knowledge (anything Marc learned that isn't in the repo yet)
+
+### Step 3: Confirm
+
+- No critical knowledge exists only in chat history.
+- Incident outcomes are documented.
+- Architectural findings are documented.
+- Active work queue is documented.
+- Startup files reflect current reality.
+
+### Step 4: Only declare sessions safe to reset after
+
+- Coach verification received.
+- Marc verification received.
+- Any discovered gaps are corrected.
+
+### Step 5: Record
+
+- Next active investigation.
+- Remaining queued items.
+- Current production version.
+
+**Goal:** A brand-new Freddy, Coach, or Marc session should be able to resume work accurately without relying on previous conversation history.
+
+---
+
 ## Key Documents in the Repo
 
 | Document | Purpose |
