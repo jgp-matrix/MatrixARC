@@ -39,7 +39,9 @@ Extract config values:
    → STOP: {IMPL_SHORT} presents proposed changes and waits
    → USER ACTION: Approve, modify, or waive each proposed change
 □ Step 6e — Commit approved handoff file updates + push (automatic)
-□ Step 7 — STOP — waiting for user
+□ Step 7 — Notify {ARCH_SHORT} + {ANALYST_SHORT} for close-out confirmation
+   → USER ACTION: Copy pastes into each session, relay confirmations back
+□ Step 8 — STOP — waiting for user
    → USER ACTION: Direct additional work, type "Closed", or continue working
 ```
 
@@ -191,7 +193,39 @@ git push origin master
 
 Mark complete: `✓ Step 6e — Handoff files committed and pushed ({SHA})`
 
-## Step 7 — STOP
+## Step 7 — Notify other roles
+
+Generate close-out pastes for the other roles so they can wrap up and confirm. The user copies these into each session and relays confirmations back.
+
+### {ARCH_SHORT} close-out paste (for {ARCH_ENV})
+
+```
+SESSION CLOSING — {ARCH_SHORT} close out check.
+
+{IMPL_SHORT} has completed the close out procedure. Before ending:
+1. Confirm your TODO.md updates are committed and pushed
+2. Confirm {ARCH_LOG} tail reflects this session's findings
+3. Any orphaned investigation notes that only exist in this chat?
+4. Report: "{ARCH_SHORT} clear" or flag what's missing
+
+Current state: v{VERSION} deployed, master at {SHA}, all handoff files updated.
+```
+
+### {ANALYST_SHORT} close-out notification (for {ANALYST_ENV})
+
+```
+SESSION CLOSING — {ANALYST_SHORT} close out.
+
+All session work has been committed and handoff files updated.
+Anything from this session that only lives in your chat and needs
+to be captured before we close? If not: "{ANALYST_SHORT} clear."
+```
+
+**Wait for both confirmations.** Do not proceed to "Closed" until the user relays "{ARCH_SHORT} clear" and "{ANALYST_SHORT} clear" (or equivalent).
+
+Mark complete: `✓ Step 7 — {ARCH_SHORT} and {ANALYST_SHORT} confirmed clear`
+
+## Step 8 — STOP
 
 Display the completed checklist, then:
 
@@ -201,6 +235,7 @@ Display the completed checklist, then:
 Version: v{VERSION} ({SHA})
 All changes committed and pushed.
 Handoff files current.
+All roles confirmed clear.
 
 Waiting for:
   → Additional work instructions, OR
@@ -225,6 +260,7 @@ When user types "Closed" after close out:
 3. Commits on master (or intentionally on feature branch per user choice)
 4. TODO.md updates applied or waived
 5. Handoff files ({SESSION_STATE}, {ANALYST_ONBOARDING}, {ANALYST_PASTE}) committed and pushed
+6. {ARCH_SHORT} and {ANALYST_SHORT} confirmed clear (Step 7)
 
 If all pass: `✓ Session closed cleanly. All changes committed and pushed. Handoff files current. Safe to end.`
 
