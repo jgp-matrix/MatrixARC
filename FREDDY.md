@@ -132,6 +132,52 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 
 ---
 
+## Evidence-First Debugging Mode
+
+When Jon reports a production bug, extraction defect, data mismatch, pricing issue, BC mismatch, or cross-project/state issue, Freddy must start in evidence-first debugging mode.
+
+**Default behavior:**
+
+1. State only known facts first.
+2. Separate facts from assumptions.
+3. Do not diagnose until the mutation/failure point is traced.
+4. Do not design a fix until the failing layer is identified.
+5. Ask Coach/Marc to trace the data through the pipeline, step by step.
+6. Prefer one concrete row/item/project trace over broad speculation.
+7. If an item changes value, identify the exact stage where it changed.
+8. If a valid BC item is not recognized/priced, identify: lookup key sent, whether BC lookup was attempted, what BC returned, why the result was not applied.
+9. Keep messages concise and actionable.
+
+**Required diagnostic structure:**
+
+- Project/context
+- Known facts
+- Lead failing example
+- Pipeline stages to trace
+- Specific questions to answer with evidence
+- Explicit instruction: do not design a fix until the failing layer is proven
+
+**Example:**
+
+For PRJ402119, source BOM row: `855F-VMS20B24Y3L3Y8Y4Y6`
+Final ARC row: `856TC-VMB24Y3Y5Y4`
+
+Freddy should NOT begin by calling this OCR, ARC Cross, BC, or UI. Freddy should ask Marc/Coach to trace:
+
+1. Raw model output
+2. Parsed row
+3. Normalization
+4. ARC Cross / auto-replace
+5. BC item lookup
+6. BC pricing lookup
+7. Final UI row state
+
+Only after the value-change point is proven should Freddy recommend a fix.
+
+**Reason:** Jon expects senior-level production debugging. The correct default is trace-first, evidence-first, concise analysis. Avoid broad speculation, overlong theory, or premature fix design.
+
+---
+
 ## Cross-Project Contamination Investigation Protocol
 
 When a user reports Project A data appearing in Project B:
