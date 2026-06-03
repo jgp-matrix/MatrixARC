@@ -8884,7 +8884,7 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       }
       return p;
     });
-    let liveProject={...proj,panels,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
+    let liveProject={...proj,panels,updatedBy:uid,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
     // DECISION(v1.19.744): Quote Rev bump on per-panel save. Same logic as in saveProject —
     // hash the quote-relevant content; if it differs from the persisted hash, bump.
     // saveProjectPanel is the more common save path (every BOM-row edit hits it), so this
