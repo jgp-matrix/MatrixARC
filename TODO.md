@@ -1644,6 +1644,50 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (follow-up from #89 investigation).
     Owner for investigation: Coach.
 
+92. **OPEN** (HIGH) — Background task UI ownership audit: background operations must never seize
+    foreground UI control.
+    Observed during v1.20.89 testing: background extraction/project updates appear capable of
+    pulling the user into another project, screen, panel, or required-input workflow when
+    milestones are reached or user attention is requested.
+    Core rule: the active user workflow always owns the foreground UI. Background operations may
+    request attention but may not seize control.
+    Allowed (passive, non-disruptive):
+    - Task chip updates (`_bgTasks` status/progress)
+    - Notifications (bell badge, Pushover)
+    - Badges (amber pills, red dots)
+    - Passive status indicators (progress bars within the originating panel's chip)
+    - Action-center items (queued for user to act on when ready)
+    Not allowed (foreground-seizing):
+    - Route changes (navigating to a different project/view)
+    - Project switches (changing `openProject` from a background callback)
+    - Panel switches (changing `selectedPanelId` from a background callback)
+    - Modal opens (`arcAlert`, `arcConfirm`, pricing report, auto-assign, EQ modal)
+    - Focus changes (scrolling to a panel, highlighting a row)
+    - Screen navigation (switching from dashboard to project view)
+    - Required-input interruptions (dialogs that block until user responds)
+    Audit scope — identify every path capable of changing foreground UI state from a background
+    project's completion handler:
+    1.  Extraction completion (`onDone` → modals, EQ modal, auto-assign)
+    2.  Pricing completion (`runPricingOnPanel` → pricing report modal, auto-assign trigger)
+    3.  BC sync (`bcSyncPanelPlanningLines` → error modals, posting group fix alerts)
+    4.  Imports (supplier portal apply → modal opens, navigation)
+    5.  AI jobs (validation completion → status changes that trigger re-renders)
+    6.  Task completions (`bgDone` → chip updates are OK, but check for side effects)
+    7.  Required-input requests (EQ modal, confidence review, budgetary enforcement)
+    8.  Notifications (`onSupplierQuoteSubmitted` listener → auto-navigate to project on click)
+    For each path, classify as:
+    - Passive (chip/badge/notification) — allowed, no change needed
+    - Foreground-seizing — must be suppressed or deferred when the originating project is not active
+    - Conditional — safe when originating project is active, must be suppressed otherwise
+    Implementation pattern: before any modal open, route change, or focus action, check
+    `_currentProjectId === originatingProjectId`. If mismatch, queue the action as a notification
+    or deferred item instead of executing it immediately.
+    This is an architectural hardening item — not a single bug fix. The goal is to establish and
+    enforce the rule that background operations never own the foreground.
+    Related: #86 (contamination), #89 (background pricing), #91 (background workflow audit).
+    Discovered: 2026-06-03 (v1.20.89 testing — background task pulled user into wrong context).
+    Owner for investigation: Coach.
+
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source
