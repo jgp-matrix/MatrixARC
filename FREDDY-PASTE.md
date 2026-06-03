@@ -408,7 +408,8 @@ Coach investigation found: #82 P1/P2 fixes (removing `noBomReason` escape on Cro
 
 ## WATCH Items
 - **Noah BOM revert** — fix deployed (v1.20.94) but investigation stays WATCH until Noah confirms reverts have stopped. Secondary mechanism (W9/W10 pricing stale-snapshot) identified as separate risk — not yet fixed. If reverts recur WITHOUT `[CONCURRENT] Soft-applied remote update` in console, it's the pricing mechanism.
-- **Quotes randomly drop fields** — same root cause as BOM revert (saveProjectPanel echo). Fix should resolve both. WATCH alongside.
+- **Quotes randomly drop fields** — SEPARATE root cause from BOM revert (Freddy analysis). `saveProject` writes a stale `project` arg missing fields (no read-before-write for project-level fields). NOT fixed by the `updatedBy` change. Needs own scope: project-level field merge in `saveProject`, or callers use `projectRef.current` not closure snapshots.
+- **Deploy drift (SYSTEMIC)** — `deploy.sh` deploys hosting only → silent Cloud Function drift. PRJ402119 empty-BOM is a symptom. Needs: (a) enumerate undeployed function commits, (b) fold functions deploy into deploy flow, (c) deployed-vs-committed version check. Precedent: F-1d.8.
 
 ## Open Items — Architectural Hardening
 

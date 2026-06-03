@@ -1142,6 +1142,30 @@ This means:
 - #92 Phase 3: OPEN, queued — portal auto-open edge case (verify-first, may close as cannot-reproduce).
 - B1/B4: OPEN, low-priority cosmetic — pricing progress-bar flicker on panel switch.
 
+### C19 — 2026-06-03 — BOM Write-Paths Map (for BOM-revert investigation)
+
+Read-only enumeration of every code path that writes the panel BOM array. 24 writers classified across 4 categories (user-initiated synchronous, async completion, automated/periodic, onSnapshot echo). Traced two flows end-to-end: price edit and delete. Ranked stale-snapshot-capable writers by risk.
+
+**Key finding:** `saveProjectPanel` does NOT set `updatedBy`, leaving the onSnapshot echo guard (line 34836: `remote.updatedBy !== uid`) open for same-user writes when the doc's `updatedBy` was set by a different user (e.g., Jon's uid on docs Noah is editing). Ranked W9 (`runPricingOnPanel`) as #1 stale-snapshot risk, but the `updatedBy` gap was the confirmed root cause.
+
+**Deliverable:** `BOM-WRITE-PATHS-MAP.md`
+
+### C20 — 2026-06-03 — BOM Revert Fix Plan (updatedBy gap)
+
+Detailed Plan for the one-line fix: add `updatedBy: uid` to `liveProject` in `saveProjectPanel` (line ~8887). Enumerated all 22 `saveProjectPanel` call sites with per-caller echo-impact verdict — all safe. Three completeness checks answered: (1) W24 `notifyProjectListeners` is inert for this bug (user edits pass `skipNotify=true`). (2) "Quotes drop fields" is a different root cause (write-side staleness in `saveProject`, not echo). (3) Multi-user echoes unaffected (different uid → guard still passes).
+
+**Deliverable:** `BOM-REVERT-FIX-PLAN.md`. Awaiting Jon approval → Marc implements.
+
+### C21 — 2026-06-03 — PRJ402119 Extraction Regression Findings
+
+Read-only investigation of PRJ402119 returning empty BOM. Recovered current repo state: #82 P1/P2 (COMMITTED to `functions/index.js`, deployment unconfirmed), #83 (OPEN, never implemented), H10 (OPEN, never shipped), zero-BOM warning (shipped, fires visibly).
+
+**Prime suspect:** #82 P1/P2 fixes are committed to `functions/index.js` but there is no repo-record evidence that `firebase deploy --only functions` was run. Production Cloud Function likely running pre-fix code — the `noBomReason` escape is still offered, model bails on scanned bitmap. Scanned PDFs always route to `pdf-native` (because `originalPdfPath` is present), and the JPEG+P2 fallback only fires when `originalPdfPath` is absent.
+
+**Runtime confirmation needed:** Check `panel.extractionReport.extractionPath` — if `pdf-native` with `rawCount: 0`, confirms undeployed fix hypothesis. #92 re-key ruled out (extraction pipeline doesn't consume `_pendingPagesCache` directly).
+
+**Deliverable:** `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`
+
 ## Open Questions for Jon
 
 1. How many concurrent users / active projects does ARC typically serve? Trying to calibrate whether the monolith's complexity ceiling is a near-term or long-term concern.
