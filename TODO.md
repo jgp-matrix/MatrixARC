@@ -1668,13 +1668,15 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Audit scope — identify every path capable of changing foreground UI state from a background
     project's completion handler:
     1.  Extraction completion (`onDone` → modals, EQ modal, auto-assign)
-    2.  Pricing completion (`runPricingOnPanel` → pricing report modal, auto-assign trigger)
-    3.  BC sync (`bcSyncPanelPlanningLines` → error modals, posting group fix alerts)
-    4.  Imports (supplier portal apply → modal opens, navigation)
-    5.  AI jobs (validation completion → status changes that trigger re-renders)
-    6.  Task completions (`bgDone` → chip updates are OK, but check for side effects)
-    7.  Required-input requests (EQ modal, confidence review, budgetary enforcement)
-    8.  Notifications (`onSupplierQuoteSubmitted` listener → auto-navigate to project on click)
+    2.  Re-extraction completion (`reExtractWithFeedback` → same completion chain as extraction)
+    3.  Pricing completion (`runPricingOnPanel` → pricing report modal, auto-assign trigger)
+    4.  BC sync (`bcSyncPanelPlanningLines` → error modals, posting group fix alerts)
+    5.  Imports (supplier portal apply → modal opens, navigation)
+    6.  AI jobs (validation completion → status changes that trigger re-renders)
+    7.  Task completions (`bgDone` → chip updates are OK, but check for side effects)
+    8.  Validation requests (panel validation → status updates, potential modal triggers)
+    9.  Required-input requests (EQ modal, confidence review, budgetary enforcement)
+    10. Notifications (`onSupplierQuoteSubmitted` listener → auto-navigate to project on click)
     For each path, classify as:
     - Passive (chip/badge/notification) — allowed, no change needed
     - Foreground-seizing — must be suppressed or deferred when the originating project is not active
