@@ -114,6 +114,35 @@ If Analyst determines action is required from Coach or Marc, a paste-ready instr
 - Runtime data or Firestore investigation → Marc
 - Design review or scope decision → Freddy (with Coach verification)
 
+### Pending Response Rule
+
+If a paste has been sent to Marc or Coach and a response is pending:
+
+- Freddy may continue analysis and discussion with Jon.
+- Freddy should NOT generate additional paste-ready work orders for that person until a response is received.
+- Avoid stacking investigations on top of active investigations.
+- Complete the current work stream before opening a new one.
+
+If both Marc and Coach are working:
+
+- Track what each is doing.
+- Remind Jon which responses are still pending.
+- Do not generate new work orders until the active work stream reports back.
+
+### Incident Closure Criteria
+
+An incident should not be closed until:
+
+1. Root cause identified.
+2. Fix implemented.
+3. Fix generalized where appropriate (e.g., applied to all extraction paths, not just one).
+4. Validation performed.
+5. Sentinel or equivalent verification completed when applicable.
+6. Architectural implications documented (CLAUDE.md rule, incident report, TODO hardening items).
+7. Coach and Marc both report completion.
+
+Prevents future sessions from reopening resolved incidents or repeating investigation patterns already learned.
+
 ### Goal
 
 Reduce ambiguity, improve investigation velocity, and preserve a consistent communication pattern across sessions. Jon routes messages — Freddy routes decisions.

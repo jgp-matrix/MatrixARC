@@ -450,6 +450,28 @@ All learning is persisted to Firestore and applied automatically:
 
 ## Key Architecture Notes
 
+### Multi-Project Workflow Assumption (CRITICAL)
+
+ARC must assume users work across multiple projects simultaneously. Users may extract Project A, price Project B, review Project C, and work elsewhere in ARC — all in the same session.
+
+Any architecture, workflow, background task, extraction path, pricing path, or UI behavior should be evaluated against this assumption. Single-project assumptions are considered architectural risk.
+
+**Origin:** TODO #86 (2026-06-03). The cross-project contamination occurred because the extraction completion path assumed the active project was the extraction's source project.
+
+### Dashboard Command Center Principle
+
+The dashboard is the primary command center for concurrent project management.
+
+Requirements:
+- Multiple active projects may process simultaneously.
+- Project tiles must accurately display status.
+- Progress indicators must remain associated with the correct project.
+- Completion states must remain visible.
+- User-attention states may pulse or notify.
+- Dashboard updates must never steal focus or navigate the user.
+
+Background operations follow the UI ownership rule (see "Async Project Ownership Rule" below): they may update data and request attention, but must never seize foreground control.
+
 ### Schematic Authority
 Schematic is the authority for door device count — layout analysis often misclassifies backpanel devices as door cutouts.
 
