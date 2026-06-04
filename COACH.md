@@ -1178,7 +1178,13 @@ Read-only investigation of PRJ402119 returning empty BOM. Recovered current repo
 
 **Notable:** #84's two symptoms (last-row truncation on LNM40BPK100, companion-part miss on TYD2CW6) were BOTH ABSENT on this run — both items came through. May have been artifacts of the prior image path (in-memory addFiles render) rather than systematic failures. #84 updated: not-reproduced pending further evidence.
 
-**New finding — TODO #95 (HIGH):** 8 of 13 PNs extracted wrong. Two failure classes: digit-substitution (5 items, OCR/vision fidelity) and wholesale-replacement (3 items, suspect ARC Cross or post-processing). Leading hypothesis: the #94 fix changed the image source from in-memory render to Storage-fetched JPEG via `ensureDataUrl` — if the Storage image is lower-fidelity, it directly causes the digit-substitution class. Next-session trace: Item 8 (MPWS, right-description/wrong-PN) end-to-end to discriminate OCR vs auto-replace.
+**New finding — TODO #95 (HIGH):** PN accuracy errors on the post-#94 extraction. Error scoring NOT settled — ground truth itself is in dispute (three conflicting source readings: Jon's screenshot, Marc's drawing zoom, extracted PN). The Claudes are misreading the drawing at approximately the rate they attribute to the model.
+
+**Unambiguous errors** (3 items — PN doesn't match its own description): Item 8 TYD15X3/4PWS→MPWS (compound PN mangled), Items 12-13 LNM→LNMQ (phantom Q insertion). **Contested** (5+ items — digit-level disputes unadjudicated, including Item 10 where extracted value is likely CORRECT and Marc's source transcription was the error).
+
+**Two hypotheses, both OPEN:** (1) Path/image fidelity — digit substitutions suggest vision model reading a rendered image, not text layer. Marc asserted "PDF-native vector text" but this needs verification: what does the model actually receive? (2) ARC Cross / auto-replace — structural errors (MPWS, LNMQ) may be raw model output or downstream swap. Raw model output has NOT been inspected.
+
+**Action required before scoring:** Authoritative ground-truth PN list from Jon/engineering source. **Next-session trace:** Marc to confirm model input (image vs text, resolution) then trace Item 8 (MPWS) end-to-end: raw model output → parsed → normalization → ARC Cross → BC lookup → final UI.
 
 ## Open Questions for Jon
 

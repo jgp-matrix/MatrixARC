@@ -1729,38 +1729,49 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (PRJ402119 Line 1 empty-BOM trace, Coach C23).
     Owner: Coach (C23) → Marc (implemented A+B).
 
-95. **OPEN** (HIGH) — PRJ402119 Line 1 PN fidelity: 8/13 part numbers wrong on post-#94 extraction.
-    Ground truth captured from source BOM image (Noah, 2026-06-03). Two failure classes:
+95. **OPEN** (HIGH) — PRJ402119 Line 1 PN accuracy: extraction errors on post-#94 run.
+    Error scoring IS NOT SETTLED — ground truth itself is in dispute. Three conflicting source
+    readings exist (Jon's screenshot, Marc's drawing zoom, extracted PN). Do NOT treat the
+    error count as final until an authoritative PN list is provided by Jon/engineering source.
 
-    **Digit-substitution class (vision/OCR fidelity — same family as May crop-path B↔8/I↔1):**
-    - Item 1: SCE-1412PCW → SCE-1413PCW (2→3)
-    - Item 2: SCE-14P12AL → SCE-14P13AL (2→3)
-    - Item 3: 3038338 → 3036038 (8→6, 3→0) + QTY 8→9
-    - Item 5: 3214314 → 3214014 (3→0)
-    - Item 7: 0807012 → 0907012 (8→9)
+    **UNAMBIGUOUS ERRORS (PN doesn't match the family named in its own description):**
+    - Item 8 main: TYD15X3/4PWS → MPWS (compound PN w/ slash, mangled; description correct)
+    - Item 12: LNM25BPC100 → LNMQ3RP-100 (restructured, phantom "Q")
+    - Item 13: LNM40BPC100 → LNMQ8RP-100 (same pattern)
 
-    **Wholesale-replacement class (NOT OCR — suspect ARC Cross/auto-replace or normalization):**
-    - Item 8: TYD15X3WPW6 → MPWS (description CORRECT, PN wholesale wrong) + cover TYD2CW6 → TYD2CWS (6→S)
-    - Item 12: LNM25BPK100 → LNMQ3RP-100
-    - Item 13: LNM40BPK100 → LNMQ8RP-100
-    (note the inserted "Q" in items 12-13 — source has no Q)
+    **CONTESTED (do NOT score — ground truth in dispute):**
+    - Items 1, 2, 3, 5, 7: digit-level disputes (2↔3, 8↔6, 3↔0, 8↔9) — unadjudicated.
+      Multiple readers (human and AI) disagree on what the source drawing says.
+    - Item 10: Marc scored SECM25G as WRONG vs source "SECME5G" — but description says
+      "M25 gray" and Hubbell M25 = SECM25G. Extracted value is LIKELY CORRECT; Marc's source
+      transcription was the error. The Claudes are misreading the drawing at ~the rate they
+      attribute to the model.
+    - Item 7: read 3 different ways by 3 sources.
 
-    **Leading hypothesis (couples to #94):** The #94 inclusion fix changed the image source from
-    in-memory addFiles render (original PDF resolution) to ensureDataUrl (Storage-fetched JPEG).
-    If the Storage image is lower-res or more-compressed than the original render, that would
-    directly cause the digit-substitution class. Test: compare image bytes/resolution from
-    ensureDataUrl vs addFiles render for these pages.
+    **ACTION REQUIRED:** Authoritative ground-truth PN list from Jon/engineering source BEFORE
+    scoring. Without it, error rates are meaningless.
 
-    **Next-session trace (evidence-first, do NOT design fix):** Marc to trace one failing PN
-    end-to-end: raw model output → parsed row → normalization → ARC Cross/auto-replace → BC
-    lookup → final UI. Start with Item 8 (MPWS) — the right-description/wrong-PN signature
-    is the highest-value discriminator between OCR vs auto-replace. If MPWS appears in the raw
-    model output, it's vision. If it appears post-processing, it's auto-replace (#C5 class).
+    **Two hypotheses (both OPEN — neither verified):**
+    1. PATH/IMAGE FIDELITY: digit-substitution errors (3→0, 2→3, 6→S) are the signature of a
+       VISION model reading a RENDERED IMAGE, not a text layer — text extraction is lossless or
+       fails, it doesn't swap digits. The #94 fix routes via storageUrl→ensureDataUrl; if that
+       image is lower-res than the addFiles render, it directly explains the digit class. Marc
+       asserted "PDF-native vector text" — that assertion needs verification (confirm what the
+       model actually receives: text layer vs rendered image vs JPEG crop, at what resolution).
+    2. ARC CROSS / AUTO-REPLACE: the structural errors (MPWS, LNMQ#RP-100) may be raw model
+       output OR a downstream "known-equivalent" swap (C5 class). Raw model output has NOT been
+       inspected — only final UI rows.
 
-    Related: #94 (inclusion fix that changed image source), #84 (same project, truncation/companion
-    symptoms NOT reproduced on this run), #85 (Excel cross-check — load-bearing for disambiguating
-    valid-PN-to-valid-PN misreads like item 3), C5 (auto-cross silent corruption, OPEN).
-    Discovered: 2026-06-03 (PRJ402119 Line 1 post-#94 validation, Jon + Noah ground truth).
+    **Next-session trace (Marc, evidence-first, do NOT design fix):**
+    a) Confirm the actual image/text the model receives for Line 1's BOM page + resolution.
+    b) ONE structural failing PN (start Item 8 / MPWS) end-to-end: raw model output → parsed
+       → normalization → ARC Cross/auto-replace → BC lookup → final UI. The right-description/
+       wrong-PN signature is the sharpest discriminator between vision error and auto-replace.
+
+    Related: #94 (inclusion fix that changed image source), #84 (same project, truncation/
+    companion symptoms NOT reproduced), #85 (Excel cross-check), C5 (auto-cross corruption).
+    Discovered: 2026-06-03 (PRJ402119 Line 1 post-#94 validation). Corrected same day after
+    Marc's source comparison revealed ground-truth disputes.
 
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
