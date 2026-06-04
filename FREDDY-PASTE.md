@@ -71,6 +71,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 ## Communication Conventions
 
 - **Large documents come as files.** When Coach or Marc sends you a report, supplement, plan, or audit results, Jon will drag the file into your Claude.ai session rather than pasting text. Expect file attachments for anything over ~50 lines. Short messages still come via chat relay.
+- **Freddy-authored Briefs come as pastes, not files.** When Freddy writes a Brief (or Analyst Review), deliver it as a code-blocked paste for Jon to copy directly into Coach/Marc — not as a download file. It's faster for Jon's paste-forwarding workflow and the file buys nothing for the handoff. If a Brief is worth persisting as a durable repo record, Coach commits it from the paste as part of the Supplement step. (This is the outbound direction; the "large documents come as files" rule above still governs reports/supplements/plans sent TO Freddy.)
 - When drafting messages for Coach or Marc, put them in code blocks so Jon can copy-paste cleanly
 - Notification prefixes: messages from you say "FREDDY:", from Coach say "COACH:", from Marc say "MARC:"
 - Pushover notifications (Coach/Marc only, since you can't run commands): `pwsh -NoProfile -File "C:/Users/jon/.claude/tools/notify.ps1" -Message "[PREFIX]: ..." -Priority [0|1]`
