@@ -1186,6 +1186,561 @@ Read-only investigation of PRJ402119 returning empty BOM. Recovered current repo
 
 **Action required before scoring:** Authoritative ground-truth PN list from Jon/engineering source. **Next-session trace:** Marc to confirm model input (image vs text, resolution) then trace Item 8 (MPWS) end-to-end: raw model output → parsed → normalization → ARC Cross → BC lookup → final UI.
 
+### C24 — 2026-06-04 — #97: Slash-Split × Positional-Dedup Destructive Interaction (CRITICAL, DETERMINISTIC)
+
+**Finding:** The companion-PN slash-split in `_parseAndVerifyBomRaw` (line 11643) creates sibling rows with identical spatial coordinates. Positional dedup (line 10629) invariably merges them, and `scoreItem` (line 10689) selects the WRONG sibling — the sub-part fragment — because the appended `" (sub-part from above)"` suffix (+22 chars) gives it a higher description-length score. The main part number is silently destroyed. This is deterministic, silent, and customer-facing.
+
+**Proven in production:** PRJ402119 Line 1 Item 8. Drawing PN `TYD15X3WPW6` (no slash in source). Model fabricated a `/` in its output → slash-split fired → two siblings at y_top=0.916 → positional dedup merged them → sub-part "MPWS" survived, main PN destroyed. All transform flags negative (isCrossed/isCorrection/correctedByLibrary undefined, priceSource "ai"). rawCount 14 → exactCount 13: the positional merge is the only explanation for the dropped row.
+
+#### Verification 1 — `{...item}` spread copies spatial coords to all segments
+
+**CONFIRMED.** Line 11649:
+```js
+expanded.push({...item,partNumber:segments[si],description:desc});
+```
+The spread copies ALL fields from the original item — `y_top`, `y_bottom`, `x_left`, `x_right` — then overrides only `partNumber` and `description`. After the per-page loop at line 13870 adds `sourcePageIdx:pgIdx`, all split siblings share identical spatial identity: same `y_top`, `y_bottom`, `x_left`, `x_right`, `sourcePageIdx`.
+
+The synthetic-coordinate assignment at lines 11657-11665 is a no-op here because the original item has real `y_top` from the model (numeric, not NaN) — the spread preserves it.
+
+#### Verification 2 — Positional dedup merges split siblings at ΔY=0
+
+**CONFIRMED.** Split siblings pass every merge gate:
+
+| Gate | Line | Check | Split siblings | Result |
+|------|------|-------|----------------|--------|
+| Has y_top/y_bottom/sourcePageIdx | 10638 | All three present | Same values from spread | **PASS** → enters `withY` |
+| Same page | 10671 | `b.sourcePageIdx !== base.sourcePageIdx` | Identical | **PASS** |
+| Same column | 10675 | `\|b.x_left - base.x_left\| > X_TOL(0.15)` | Δ=0 | **PASS** |
+| Same Y | 10677 | `\|b.y_top - base.y_top\| > Y_TOL(0.004)` | Δ=0 | **PASS** |
+| Same height | 10682 | `\|b.y_bottom - base.y_bottom\| > Y_TOL*2(0.008)` | Δ=0 | **PASS** |
+
+All five gates pass trivially at Δ=0. Siblings are merged unconditionally.
+
+#### Verification 3 — scoreItem makes the sub-part win
+
+**CONFIRMED.** `scoreItem` at lines 10689-10696:
+```js
+return s + ((it.partNumber||"").length * 0.01) + ((it.description||"").length * 0.005);
+```
+
+The integer part (`s`) is identical for both siblings — same manufacturer, itemNo, qty, both have non-empty PN and description. The tiebreaker reduces to:
+
+- PN length contribution: `seg0_PN.length × 0.01` vs `seg1_PN.length × 0.01`
+- Description length contribution: `desc.length × 0.005` vs `(desc.length + 22) × 0.005`
+
+The sub-part's description bonus is always `22 × 0.005 = +0.11`. The main part's PN advantage is `(seg0.length - seg1.length) × 0.01`. The sub-part wins whenever the main part's PN is fewer than 11 characters longer — which is virtually always for two halves of a single slash-split PN.
+
+For the PRJ402119 case: any split producing "MPWS" (4 chars) as segment 1 gives the sub-part +0.11 from the description suffix minus 0.01×(seg0.length - 4) for the PN difference. Even if segment 0 were 14 chars (e.g., `TYD15X3WPW6XX`, 13 chars), the PN advantage would be `(13-4) × 0.01 = 0.09 < 0.11`. Sub-part wins.
+
+#### Additional finding: positional dedup drops are unreported
+
+`posMerges` is accumulated at line 10701 and logged to console at line 10707, but `positionalMergeBomItems` returns only `[...merged,...withoutY]` at line 10711. The merge data is discarded. This is why the drop appears as "NO entry in exactMerges/nonBomRowsFiltered/fuzzyMerges" — positional dedup is the ONLY merge stage without a reporting channel:
+
+| Stage | Returns merge data? |
+|-------|-------------------|
+| Positional dedup (`positionalMergeBomItems`, L10629) | **NO** — `posMerges` local, discarded |
+| Exact-PN dedup (inline, L13922) | Yes — `exactMerges` array, flows to `mergeStats` |
+| Fuzzy merge (`fuzzyMergeBomItemsWithReport`, L10517) | Yes — `{items, merges}`, flows to `mergeStats.fuzzyMerges` |
+
+#### Fix Design
+
+**(i) Remove the slash-split from `_parseAndVerifyBomRaw`**
+
+**Recommendation: REMOVE (lines 11640-11651).**
+
+The slash-split is redundant, unsafe, and unsalvageable:
+
+1. **Redundant.** `splitCompanionParts` (L10826, step 10 in the pipeline) handles companion-part splitting safely — it runs POST-DEDUP (after positional, exact, and fuzzy merge), consumes the structured `additionalPartNumbers` field (the AI's authoritative companion channel), and validates candidates via `_looksLikeCompanionPn` (4+ chars, letter+digit mix, not a ref designator, not a spec keyword).
+
+2. **Unsafe.** The slash-split runs PRE-DEDUP (inside `_parseAndVerifyBomRaw`, step 1). Its siblings have identical spatial coords, so positional dedup at step 4 invariably merges them. The `scoreItem` tiebreaker reliably picks the wrong sibling. The interaction is deterministic and produces silent data loss.
+
+3. **Cannot distinguish legitimate `/` from companion `/` from fabricated `/`.** Many catalog numbers legitimately contain `/` — dimensional separators (`TYD15X3/4PWS` = 3/4 inch), voltage ratings, model variants. The regex `pn.split(/\s*\/\s*|\s*,\s*/)` splits ALL of them. The only way to tell a legitimate `/` from a companion separator is semantic understanding of the part number family — something only the model (via `additionalPartNumbers`) or the structured `splitCompanionParts` can do.
+
+4. **The BOM_PROMPT is contradictory.** Line 90 says "output a SEPARATE row for each" (which the slash-split duplicates). Lines 111-116 say "additional parts: additionalPartNumbers entries" (which `splitCompanionParts` consumes). The prompt instructs two different behaviors for the same input. When the model follows lines 111-116 (uses `additionalPartNumbers`), the slash-split is inert. When the model follows line 90 (separate rows with slash in PN), the slash-split fires redundantly — and destructively. The code should follow the structured path and ignore the unstructured one.
+
+**Coverage gap analysis:** If the slash-split is removed, what companion splits are lost?
+
+| Source | Slash-split catches? | `splitCompanionParts` catches? | Gap? |
+|--------|---------------------|-------------------------------|------|
+| `additionalPartNumbers` array | No | Yes (L10839-10853) | No |
+| Description with companion keyword | No | Yes (L10854-10879) | No |
+| Slash in `partNumber` field, model followed line 90 prompt | Yes → then destroyed by dedup | No — doesn't scan PN for slashes | **Theoretically yes, practically no** |
+
+The theoretical gap (model puts "PN-A / PN-B" in partNumber, doesn't populate additionalPartNumbers) is real but is not worth a destructive early-split to cover. The correct fix for that gap — if it matters — is to add a PN-slash scan to `splitCompanionParts` (post-dedup, with validation), not to keep the unsafe early-split. But this case proves the model fabricates slashes in PNs that have NO companion, so splitting on model-emitted slashes is fundamentally unreliable.
+
+**Fix:** Replace lines 11640-11651 with a passthrough:
+
+```js
+// Companion-PN splitting moved to splitCompanionParts (post-dedup, structured data).
+// Early slash-split removed: creates siblings with identical spatial coords that
+// positional dedup invariably merges, destroying the main PN (#97).
+const expanded = items;
+```
+
+**(ii) Report positional dedup drops — independent fix**
+
+**Recommendation: Ship alongside (i), same commit or follow-up.**
+
+Change `positionalMergeBomItems` return to `{items: [...merged,...withoutY], merges: posMerges}`. Update the single call site at L13921 to destructure both. Plumb `posMerges` into `mergeStats` (L13964) as `positionalMerges`. This makes positional dedup match the reporting pattern of exact dedup and fuzzy merge — no more invisible drops.
+
+Additionally, this permanently closes the class of bug where positional dedup silently destroys data without any audit trail (the same reporting gap that delayed diagnosis of H6's cross-column merges).
+
+#### Hotfix vs Queue
+
+**HOTFIX.** All four criteria met:
+
+1. **Deterministic** — fires every time the model emits a `/` in a partNumber string.
+2. **Silent** — zero reporting: no flag on the row, no merge report entry, no console warning beyond a generic `BOM POS MERGE` log that doesn't distinguish split-siblings from legitimate merges.
+3. **Customer-facing** — the surviving row has a mangled fragment PN (`MPWS`) with "(sub-part from above)" in the description. If quoted, the wrong part is ordered.
+4. **Proven in production** — PRJ402119 Line 1 Item 8.
+
+The fix for (i) is a 10-line deletion with zero regression risk — `splitCompanionParts` provides identical companion-splitting capability at a safe pipeline stage. No new code, no new behavior, just removal of a destructive code path.
+
+**(ii) is lower urgency** (reporting improvement, not data loss prevention) but small enough to ship in the same session. ~15 lines: return type change + call-site destructure + `mergeStats` field addition.
+
+### C25 — 2026-06-04 — #98 Supplement: BOM Extraction Audit Brief Verification
+
+**Source:** Freddy's `BOM-EXTRACTION-AUDIT-BRIEF.md` (2026-06-04). Five assumptions verified against the codebase.
+
+---
+
+#### 1. STEP ZERO — Raw Model Output Discarded
+
+**CONFIRMED, with precision on the discard points.**
+
+The Brief cites "app.jsx:11713" — that's actually the batch path's debug-log block, not the exact discard. The actual discard happens at **two sites**, both inside the return-value reduction from CF response → parsed items:
+
+| Path | CF response consumed at | `data.raw` passed to | Raw discarded after |
+|------|------------------------|---------------------|-------------------|
+| Per-page server | `extractBomPageViaServer` L11699 | `_parseAndVerifyBomRaw(data.raw, ...)` | L11699 — return is `parsed` (items + verification), not raw |
+| Batch server | `extractBomBatchViaServer` L11722 | `_parseAndVerifyBomRaw(r.raw, ...)` per page | L11723 — same reduction |
+| Client PDF fallback | L11823-11835 | `_parseAndVerifyBomRaw(raw, ...)` | L11835 — same |
+| Client crop fallback | L11865-11868 | `_parseAndVerifyBomRaw(raw, ...)` | L11868 — same |
+
+In all four paths, `_parseAndVerifyBomRaw` consumes the raw JSON text and returns `{items, questions, noBomReason, extractionVerification, extractionPath}`. The raw text is a local variable that goes out of scope. No reference survives.
+
+**Feasibility assessment — persisting raw output:**
+
+*What to persist:* `data.raw` is a JSON string containing the model's complete structured output — the `items` array with all per-item fields (partNumber, description, manufacturer, qty, itemNo, confidence, y_top, y_bottom, x_left, x_right, additionalPartNumbers, notes), plus `questions`, `noBomReason`, `detectedLineCount`. For a 13-item BOM, this is typically 3-8 KB. For a 50-item BOM, ~15-25 KB. For a 87-item BOM with full spatial coords, ~30-40 KB.
+
+*Storage cost:* Firestore 1 MB document limit is the constraint. A panel document with 50 BOM rows, pricing, labor data, and all metadata is typically 200-400 KB. Adding 20-30 KB of raw output is ~5-10% increase — well within the budget. The `extractionReport` already stores `learnedCorrectionsLog` (up to 50 entries), `snippetCorrectionsLog` (up to 50), `perPageOutcomes`, and `fuzzyMerges` — the raw output is no larger than data already persisted.
+
+*Minimal change — two options:*
+
+**Option A — Store raw per-page inside extractionReport (RECOMMENDED).** Add `rawModelOutput` to the per-page outcomes array at L13824. Each page's raw text is captured alongside its existing `pageId`, `pageName`, `itemsFound`, `extractionPath`, `pdfQuality`. The data flows naturally into `extractionReport.perPageOutcomes` which already persists. ~5 lines changed: (1) capture `data.raw` in `extractBomPageViaServer` return, (2) thread it through the per-page result in the extraction loop, (3) attach to `_perPageOutcomes` at L13824. Size gating: truncate at 50 KB per page if needed (`raw.slice(0, 50000)`).
+
+**Option B — Store a per-item "original model values" snapshot.** Instead of the raw JSON text, store the pre-pipeline partNumber/description/manufacturer/qty per item as `_modelOriginal: {partNumber, description, manufacturer, qty}` on each BOM row. This survives into Firestore via the BOM array itself. Advantage: attribution is trivially per-row ("compare `_modelOriginal.partNumber` to final `partNumber`"). Disadvantage: requires threading through every pipeline stage's `{...item}` spread without dropping the field; if any stage reconstructs the item object without spreading, the field is lost. Also doesn't capture `noBomReason`, `detectedLineCount`, or the full JSON structure for debugging parse failures.
+
+**Recommendation: Option A.** Store the raw text per-page in `extractionReport.perPageOutcomes`. It's the minimal change (no pipeline threading), captures the complete model output (including thinking-block artifacts and structural metadata), and the storage is bounded by the existing `perPageOutcomes` architecture. Transient-vs-persisted is a non-question — persist it; the cost is negligible and the audit needs it across sessions.
+
+---
+
+#### 2. RE-EXTRACTION BLOCKER — "wrong-page-type" on All Pages
+
+**Marc's hypothesis ("original page-type classifications are no longer stored") is WRONG.** Page types DO persist to Firestore.
+
+Both save paths (`saveProject` at L8700, `saveProjectPanel` at L8918) strip only `dataUrl` from page objects. All other fields — `types`, `regions`, `aiBomRegion`, `originalPdfPath`, `pageNumber` — survive the save-reload cycle. Confirmed by reading the destructure at L8700: `const {dataUrl,...rest}=p;return rest;`. The `types` array is preserved.
+
+**The actual cause of "wrong-page-type" is the MODEL'S response, not ARC's filtering.**
+
+Trace:
+1. Re-extraction at L23993 filters: `pages.filter(p=>getPageTypes(p).includes("bom"))`. For PRJ402119, pages 3-4 were BOM-typed (confirmed in C23). This filter PASSES them — otherwise the error message would be "No pages tagged BOM yet" (L23994), not "wrong-page-type."
+2. The pages reach the extraction call. The model receives the PDF page and inspects it.
+3. The model returns `noBomReason: "wrong-page-type"` — it's the MODEL deciding the page doesn't contain a BOM table.
+
+**Why the model rejects pages it previously extracted from:** Two likely causes, both code-level:
+
+**(A) Missing `bomRegion` on the re-extraction batch path (TODO #57, C14/C15).** Line 24053 constructs batch pages WITHOUT `bomRegion`:
+```js
+return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+// ↑ bomRegion is ABSENT — compare to initial extraction at L13647:
+// return{..., bomRegion:unit.bomRegion||null};
+```
+Without `bomRegion`, the Cloud Function skips CropBox (L2384-2393). The model sees the FULL drawing page — which for RSW1596-126 is primarily a schematic/enclosure drawing with a small BOM table in one corner. The model correctly classifies the full page as "not a BOM page" because the BOM is a small fraction of the visual content.
+
+On initial extraction (v1.20.95), `confirmAndExtract` → `runExtractionTask` → L13647 passes `bomRegion`. The model receives the CropBox'd page focused on just the BOM table → extraction succeeds. On re-extraction, the missing `bomRegion` means the model sees the full page → "wrong-page-type."
+
+**(B) The `#82 P1 noBomReason escape removal` (L2414-2417) only fires when `pdfCropped === true`.** When the CF applies CropBox, it removes the `noBomReason` escape from the prompt, forcing the model to extract. Without `bomRegion` (re-extraction batch), `pdfCropped` is false, the escape is offered, and the model takes it.
+
+**Fix:** This is TODO #57 — add `bomRegion:unit.bomRegion||null` to L24053. One field, already designed in C14. This is the SECOND prerequisite the Brief should list: Step Zero needs BOTH raw-output persistence AND the #57 bomRegion fix for re-extraction to work.
+
+**Note for Jon:** #57 is a mechanical one-field addition. It was identified in Session 1 (C14, May 22) and is part of the unshipped H10 scope. It can be extracted as a standalone hotfix independent of H10's larger architectural work.
+
+---
+
+#### 3. RENDER FIDELITY — What the Model Receives on pdf-native
+
+**The Brief's characterization is accurate. Elaboration below.**
+
+On the pdf-native path (CF `extractBomPage`, functions/index.js:2362-2423):
+
+1. CF downloads the ORIGINAL PDF from Firebase Storage (L2370: `const [buf] = await file.download()`).
+2. Slices to a single page via pdf-lib (L2376-2378: `singlePagePdf.copyPages(fullPdf, [pageNumber - 1])`).
+3. Optionally applies CropBox if `bomRegion` provided (L2384-2393).
+4. Serializes to base64 (L2401-2402: `singlePagePdf.save()` → `Buffer.from(...).toString('base64')`).
+5. Sends as `{type: 'document', source: {type: 'base64', media_type: 'application/pdf', data: pdfBase64}}` (L2420-2421).
+
+**What ARC controls:**
+- The PDF bytes sent to the API (original vector content, losslessly sliced).
+- CropBox application (when `bomRegion` is provided — focuses the visible area).
+- Prompt text (SCANNED DOCUMENT ALERT when `pdfQuality.warningLevel !== 'none'`).
+- Model selection (Opus), max_tokens (64000), thinking budget (8000).
+
+**What ARC does NOT control:**
+- The API's internal rendering of the PDF document. Anthropic's vision pipeline rasterizes PDF pages internally before feeding them to the model's vision encoder. The resolution, compression, and rendering parameters are API-internal. ARC has zero visibility into or control over this step.
+- Whether the API extracts a text layer vs renders to an image. The `document` content type gives the API the option to extract embedded text programmatically, but there is no guarantee it does so — and the digit-substitution errors on vector-text PDFs (Items 3, 5, 7 of PRJ402119) prove the model is reading VISUALLY even when vector text is present.
+
+**The Brief's Hypothesis 1 (render-resolution) correctly notes this uncertainty.** The effective DPI the API uses for PDF documents is unknown and uncontrollable. Testing it would require sending the same BOM as both a PDF document and a pre-rendered high-DPI image, then comparing error rates — exactly the kind of controlled experiment the Brief proposes, and exactly what the re-extraction blocker (#57) prevents.
+
+**One ARC-side lever the Brief doesn't mention:** CropBox. When a `bomRegion` is applied, the model receives a PDF page where the MediaBox/CropBox is tightly focused on the BOM table. If the API's internal renderer uses a fixed pixel budget per page, CropBox effectively increases the DPI of the BOM content by reducing the rendered area. This is a plausible (but unproven) lever for Class 1 errors. It's already operational on the initial extraction path but missing from re-extraction (#57).
+
+---
+
+#### 4. STAGE J — `resolveInternalPartNumbers` Reachability
+
+**CONFIRMED — silent replacement path with no transform flag on the replaced rows.**
+
+`resolveInternalPartNumbers` (L11024-11047):
+
+**Firing condition:** >50% of eligible BOM rows have PNs matching `_INTERNAL_PN_RE` = `/^\d{3,4}-\d{3,5}$|^\d{7,12}$/`. This means all-numeric PNs in the format `NNNN-NNNNN` or `NNNNNNN` through `NNNNNNNNNNNN`. When the threshold is met, EVERY matching PN is replaced with a manufacturer PN extracted from the description via `_extractMfrPnFromDesc`.
+
+**What it sets:** `{partNumber: mfrPn, customerPartNumber: origPn}` (L11040). The original PN is preserved in `customerPartNumber`. When no MFR PN can be extracted from the description, it sets `{customerPartNumber: origPn, confidence: "low"}` (L11043).
+
+**What it does NOT set:** No `isResolved` flag, no `resolvedFrom` field, no `priceSource` change. The replacement is invisible to downstream consumers — `partNumber` simply has a different value with no audit trail beyond `customerPartNumber` (which is not surfaced in any UI or report).
+
+**Silent path confirmed.** The console.log at L11039 and L11045 are the only signals. No debug log entry, no extractionReport field, no row-level flag. A row that entered with `partNumber: "1234-56789"` exits with `partNumber: "AF09-30-10-13"` (extracted from description) and no indication that the PN was algorithmically derived from description text rather than read from the drawing's PN column.
+
+**Reachability for the audit baseline:** FLS drawings use internal catalog codes (the comment at L10983 explicitly names FLS). FLS is one of the three major customers (~76% of revenue per the Brief). Any FLS project in the baseline sample will likely trigger this path. The audit MUST check FLS projects for Stage J activity.
+
+**Risk the Brief should elevate:** Stage J's `_extractMfrPnFromDesc` is a regex-based heuristic that scans description text backwards for tokens that "look like" manufacturer PNs. It can extract the WRONG token from a complex description (e.g., a measurement or spec value that happens to contain mixed alpha-numeric characters). When it does, the BOM row silently carries a PN that was never on the drawing — a Class 2-like error introduced by ARC's own pipeline, not the model. This is distinct from #97 (which destroyed a correct PN) — Stage J can CREATE a wrong PN from description text.
+
+---
+
+#### 5. CLASS 2 BACKSTOP — Known-Parts Validation Feasibility
+
+**High-level architecture assessment (what it would touch):**
+
+A post-extraction validation layer that cross-checks extracted PNs against known-good sources. Three candidate data sources already exist in ARC:
+
+**(A) BC Item Catalog (already wired).** `bcFuzzyLookup` (L4739) already searches BC by part number with 5 increasingly aggressive matching strategies. `runPricingOnPanel` (L14313+, L25511+) already builds a `bcMap` by fuzzy-matching every BOM row against BC. The infrastructure to answer "does this PN exist in BC?" is fully built — it runs on every pricing cycle.
+
+What's missing: the pricing path uses BC match to REPLACE the PN (L14369: `partNumber: bcMap[key].bcNumber || r.partNumber`) rather than VALIDATE it. A validation mode would check "does the extracted PN or a close variant exist in BC?" and flag non-matches as suspect — without replacing the PN. This is a mode change on existing infrastructure, not a new data path.
+
+Touch points: ~20 lines. Add a `bcValidateBom(bom)` function that runs `bcFuzzyLookup` per row and returns `{matched, unmatched, suspicious}` counts. Attach the result to `extractionReport`. Fire between `applyLearnedCorrections` (step 13) and the final save. No PN mutation — read-only validation.
+
+**(B) Alternates / Corrections DB (already wired).** `applyLearnedCorrections` (L10331) already loads the user's part crosses, corrections, and description crosses. Every PN that HAS a learned alternate is implicitly "known" — the user has seen it before. PNs that are unknown to ALL learning DBs AND unknown to BC are the highest-risk candidates for Class 2 errors.
+
+Touch points: zero new code needed. The `appliedLog` from `applyLearnedCorrections` already tells you which rows were matched. The complement (rows NOT in `appliedLog` and NOT in `bcMap`) is the "unknown PN" set.
+
+**(C) Historical BOM corpus (not wired).** ARC has extracted BOMs for ~87+ projects. The union of all historical PNs is a de facto parts library. A Firestore query across `users/{uid}/projects/*/panels/*/bom` could build a frequency table of PNs. PNs extracted once and never seen again are higher-risk than PNs that appear across multiple projects. This is the strongest signal for Class 2 ("plausible but wrong") — a structurally valid PN that has never appeared in any other project is suspect.
+
+Touch points: more substantial — requires a one-time corpus scan (Cloud Function or script), result cached in a `users/{uid}/config/knownParts` document. Validation then becomes a Set lookup. ~50-100 lines for the scanner, ~10 lines for the validation check.
+
+**Recommendation for Jon:** (A) alone is sufficient as a first-pass Class 2 backstop and can ship with minimal code. The BC catalog is the authoritative source for "real parts this company buys." An extracted PN that BC has never heard of — when BC typically stocks the manufacturer's full catalog — is a strong Class 2 signal. (B) is free (already computed). (C) is the highest-value long-term investment but can wait until the baseline study shows whether Class 2 is a 5% or 50% problem.
+
+---
+
+#### Additional Risk the Brief Missed
+
+**The Brief's pipeline audit (§6) should add Stage B (companion-PN split in `_parseAndVerifyBomRaw`) as a separate audit target beyond #97.** #97 covers the slash-split × positional-dedup interaction (deterministic destruction). But the slash-split has a SECOND failure mode independent of #97: it splits PNs that legitimately contain `/` as a dimensional separator (e.g., `TYD15X3/4PWS` where `3/4` means ¾ inch). Even after #97's fix removes the positional-dedup interaction, the slash-split itself still produces two rows (`TYD15X3` and `4PWS`) from a single item — both wrong, neither matching the real PN. If #97's fix option (i) (remove the slash-split entirely) ships, this is moot. If only option (ii) ships, this second failure mode survives.
+
+**Sequencing note (§9 decision 4):** The Brief asks whether the baseline study can run in parallel with #97. Answer: yes, with a caveat. The baseline study is measurement (no code change), and #97 is a code fix. They don't conflict. However, baseline measurements taken BEFORE #97 ships will include #97-class errors (slash-split destruction) in the error count. The audit should note which errors in the baseline are #97-attributable so they can be subtracted post-fix. This is clean — any row with "(sub-part from above)" in its description is a #97 artifact.
+
+### C26 — 2026-06-04 — #98 Extraction Pipeline Archaeology (Regression Timeline + Accretion Map)
+
+**Full report:** `98-EXTRACTION-ARCHAEOLOGY.md`
+
+**Summary:** Walked 4 weeks of git history (May 12 – Jun 4). 20+ commits touched the extraction pipeline. Found 4 distinct phases of change, each with measurable accuracy risk:
+
+1. **Phase 1 (pre-May 12):** Minimal pipeline. 5 stages, all March-April. Over-merged but never CREATED wrong PNs.
+2. **Phase 2 (May 13-14):** Stage J added (`resolveInternalPartNumbers`) — new silent-corruption path that CREATES PNs from description regex. L3 retry added — more items recovered but more hallucination risk. Image path removed.
+3. **Phase 3 (May 20):** Crop-first regression (`8d984699`) reintroduced JPEG artifact failures. Rolled back May 22. ~10 versions affected.
+4. **Phase 4 (Jun 1-2):** Dedup key explosion — 3 commits changed both prompt (stop merging same-PN) and code key (3-part with description discriminator). More raw items × less aggressive dedup = more surviving items, some duplicates.
+
+**Accretion thesis CONFIRMED:** 7 of 13 post-extraction stages can corrupt a correctly-extracted PN. The dangerous ones are the TRANSFORM stages (B, J, M, R) vs the safe FLAG-only stages (confusable-glyph, suspect-qty). Every stage added to fix a specific misread can corrupt a good read under different conditions.
+
+**Risk-ranked stages for audit:** (1) Stage B slash-split, (2) Stage J internal-PN resolve, (3) Stage R BC pricing substitution, (4) Stage M ARC Cross, (5) exact dedup key changes, (6) positional dedup reporting gap, (7) L3 retry quality.
+
+**Blocked on Step Zero:** Model-vs-pipeline attribution, prompt change impact, and L3 retry quality all require raw model output (currently discarded). Flagged throughout the report.
+
+### C27 — 2026-06-04 — #98 Step Zero Detailed Plan
+
+**Plan file:** `98-STEP-ZERO-PLAN.md`
+
+Three components, all prerequisite for the #98 audit:
+
+**(a) Raw model output persistence (~15 lines).** Store `data.raw` (truncated to 60KB) per page in `extractionReport.perPageOutcomes`. Four discard sites patched: `extractBomPageViaServer` L11699, `extractBomBatchViaServer` L11723, client PDF fallback L11835, client crop fallback L11868. Threading into `_perPageOutcomes` at L13824. Re-extraction path gets parallel storage.
+
+**(b) #57 bomRegion on re-extraction batch (1 line).** Add `bomRegion:unit.bomRegion||null` to L24053. Matches initial-extraction batch at L13647. Unblocks re-extraction for any project with BOM regions.
+
+**(c) Surfaced correction log (~30 lines).** Stage J (`resolveInternalPartNumbers`): change return to `{bom, resolvedLog}`, persist in `extractionReport.internalPnResolutions`. Stage R (BC pricing): capture PN substitutions in both pricing paths, log via `logDebugEntry` (zero schema change, immediate visibility in Settings → Debug Logs). Stages M/N/O already persist `learnedCorrectionsLog` — no change needed.
+
+Single commit, single deploy. Awaiting Jon approval.
+
+### C28 — 2026-06-04 — #98 Step Zero Gap: rawModelOutput on Re-Extraction Path (Detailed Plan)
+
+**Gap:** Step Zero (a) captures `rawModelOutput` on the initial extraction path via `_perPageOutcomes` (shipped v1.20.98). The re-extraction and feedback re-extraction paths don't have a `_perPageOutcomes` array — their report builders (`reExtractionReport` at L24186, `fbReport` at L24402) use a flatter structure. Raw output is present on the `result` object at L24095/L24098 (it flows through `extractBomPage` → `extractBomPageViaServer` which sets `parsed.rawModelOutput` since v1.20.98) but is never captured — the per-page loop consumes only `result.items` and `result.questions`.
+
+**Plan — 3 changes, ~12 lines:**
+
+---
+
+**Change 1 — Accumulate per-page outcomes in re-extraction loop (L24084)**
+
+Add a `_rePerPageOutcomes` array before the `parallelMap`, then capture per-page data inside the loop body, mirroring the initial extraction's `_perPageOutcomes` pattern at L13824.
+
+Before the try block at L24084, add:
+```js
+const _rePerPageOutcomes = [];
+```
+
+Inside the `parallelMap` callback, after the `for(const unit of units)` loop ends (after L24111, before L24112 `if(pageQs.length)`), add:
+```js
+_rePerPageOutcomes.push({
+  pageId: pg.id,
+  pageName: pg.name || `Page ${pgIdx+1}`,
+  pageNumber: pg.pageNumber || null,
+  itemsFound: pageItems.length,
+  extractionPath: result?.extractionPath || null,
+  rawModelOutput: (result?.rawModelOutput || "").slice(0, 60000),
+});
+```
+
+Note: `result` here is the last unit's result (from the `for(const unit of units)` loop). For single-unit pages (the vast majority), this is the only result. For multi-unit pages (rare — only if `getExtractionUnits` returns >1 unit), this captures the last unit's raw output. This matches the initial extraction path's behavior where `_perPageOutcomes` captures the page-level rollup, not per-unit.
+
+**Scoping note on `result` variable:** `result` is declared with `let` at L24092, inside the `for(const unit of units)` loop body. After the loop completes, `result` holds the LAST unit's value. This is correct for single-unit pages. For multi-unit pages, the raw output of earlier units is lost — but multi-unit extraction is effectively dead code (quadrant extraction was reverted in v1.19.622, `getExtractionUnits` returns exactly 1 unit for all current paths). If multi-unit is ever resurrected, this would need revisiting.
+
+Actually — looking more carefully, `result` is block-scoped inside the `for` loop. Let me re-check.
+
+Looking at L24089-24111: `let result;` is declared at... let me re-read.
+
+Actually, `result` is not declared with `let` before the loop — it's declared inside the loop body at L24092 with `let result;`. That means it's NOT visible after the loop ends. Let me re-examine.
+
+Wait — looking at L24092: `let result;` is inside the `for(const unit of units)` body. So `result` is scoped to each iteration. After the loop ends at L24111, `result` is out of scope.
+
+The fix needs to capture raw output INSIDE the loop. Let me adjust.
+
+**Revised Change 1 — capture inside the per-unit loop:**
+
+Before the `for(const unit of units)` loop at L24089, add:
+```js
+let pageRawModelOutput = null;
+```
+
+Inside the loop, after L24100 (`if(result?.extractionPath)...`), add:
+```js
+if (result?.rawModelOutput) pageRawModelOutput = (result.rawModelOutput || "").slice(0, 60000);
+```
+
+Then after the loop ends (after L24111, before L24112), add the `_rePerPageOutcomes.push(...)` using `pageRawModelOutput` instead of `result?.rawModelOutput`.
+
+```js
+_rePerPageOutcomes.push({
+  pageId: pg.id,
+  pageName: pg.name || `Page ${pgIdx+1}`,
+  pageNumber: pg.pageNumber || null,
+  itemsFound: pageItems.length,
+  rawModelOutput: pageRawModelOutput,
+});
+```
+
+---
+
+**Change 2 — Add `perPageOutcomes` to re-extraction report builder (L24186)**
+
+```js
+// L24186 — CURRENT:
+const reExtractionReport = {
+  rawCount: all.length, exactCount: exactDedup.length, finalCount: fuzzyDedup.length,
+  ...
+  timestamp: Date.now(), version: APP_VERSION,
+};
+
+// ADD to the object:
+  perPageOutcomes: _rePerPageOutcomes,
+```
+
+This places the per-page outcomes (including `rawModelOutput`) in the same `extractionReport.perPageOutcomes` field that the initial extraction uses. Consumers (the audit, Firestore inspection) see the same shape regardless of which extraction path ran.
+
+---
+
+**Change 3 — Same pattern for feedback re-extraction (L24329-24412)**
+
+The feedback re-extraction at `reExtractWithFeedback` (L24293) has the same gap. Apply the identical pattern:
+
+Before the `parallelMap` at L24330, add:
+```js
+const _fbPerPageOutcomes = [];
+```
+
+Inside the `parallelMap` callback, before `return pageItems.map(...)` at L24344, add:
+```js
+let fbPageRaw = null;
+```
+Wait — the feedback path has a slightly different structure. Let me look more carefully.
+
+At L24334: `for(const unit of units)` — same pattern. `result` is `const result = await extractBomPage(...)` at L24336, scoped inside the loop.
+
+Same fix pattern: declare `let pageRawModelOutput = null;` before the loop, capture `result.rawModelOutput` inside the loop, push to `_fbPerPageOutcomes` after the loop.
+
+Add `perPageOutcomes: _fbPerPageOutcomes` to `fbReport` at L24402.
+
+---
+
+**Verification — `internalPnResolutions` on re-extraction/feedback paths:**
+
+Checking whether the other Step Zero log fields already land on the re-extraction report:
+
+- `internalPnResolutions`: L24194 — `internalPnResolutions: reResolvedLog || []` — **PRESENT** on re-extraction report (shipped in v1.20.98 along with the `resolveInternalPartNumbers` return-type change).
+- `internalPnResolutions`: L24410 — `internalPnResolutions: fbResolvedLog || []` — **PRESENT** on feedback report.
+- `learnedCorrectionsLog`: L24190 — **PRESENT** (pre-existing).
+- `positionalMerges`: L24188 — **PRESENT** (from the `positionalMergeBomItems` return-type change in the #97 fix).
+
+All Step Zero log fields are already carried on both re-extraction report builders. The ONLY gap is `perPageOutcomes` (which carries `rawModelOutput`).
+
+---
+
+**Test plan (PRJ402114):**
+
+1. Open PRJ402114. Re-extract a panel.
+2. After completion, inspect `panel.extractionReport.perPageOutcomes` in Firestore.
+3. Each page entry should have `rawModelOutput` containing the model's raw JSON text (up to 60KB).
+4. Verify `rawModelOutput` parses as JSON and contains an `items` array.
+5. Compare item count in `rawModelOutput` to `extractionReport.rawCount`.
+
+**Size: ~12 lines across 2 functions (re-extraction + feedback re-extraction). Zero behavior change — additive instrument only.**
+
+### C29 — 2026-06-04 — #100 Supplement: Completeness Guarantee Brief Verification
+
+**Source:** Freddy's Completeness Guarantee Investigation Brief (#100, 2026-06-04).
+
+---
+
+#### 1. L3 — What It Does, Where It's Wired, What It Detects
+
+**L3 exists ONLY in `runExtractionTask` (initial extraction, L13680-13808).** The re-extraction path (`runExtraction`, L23985) and feedback re-extraction path (`reExtractWithFeedback`, L24293) have NO retry logic. `pageRetryAttempts` is declared only at L13680.
+
+**L3 Phase 1 (broad retry, L13700-13755):**
+- Trigger: `extractionVerification.status === "needs-review" && pageRetryAttempts < 1`
+- Verification flags that trigger `needs-review` (from `_parseAndVerifyBomRaw`, L11592-11616):
+  - `countMismatch`: model's `detectedLineCount` ≠ actual items returned (L11599)
+  - `missingFromStart`: model's lowest `itemNo > 1` (L11604-11609) — **THIS is the signal that would catch the 402114 case** (first item was 26, missingFromStart = 25)
+  - `sequenceGaps`: internal gaps between consecutive itemNos (L11611-11614)
+- Action: sends the SAME page again with feedback describing what was missed. MERGES both passes by itemNo — union, not replace. New items get `_extractionRetried = true`.
+
+**L3 Phase 2 (targeted gap-fill, L13757-13808):**
+- Trigger: after Phase 1 merge, remaining sequence gaps exist AND `pageRetryAttempts <= 1` AND gap count ≤ 20
+- Action: sends a targeted request for ONLY the specific missing itemNos. Filters response to only accept items whose itemNo is in the requested list. Additions get `_extractionGapFill = true`.
+
+**Final gap check (L13938-13957, also L24159-24185 for re-extract):**
+- Runs on the POST-PROCESSED BOM (after all dedup/filter stages)
+- Detects internal gaps only — does NOT detect missing-from-start (C15 finding)
+- Output: `finalSequenceGaps` array in extractionReport
+- **Does NOT trigger any retry or flag** — console.warn only
+
+**L3's detection of the 402114 failure pattern:**
+For items 26-47 (first item = 26): `missingFromStart = 25`, `sequenceGaps = [1,2,...,25]`, `status = "needs-review"` → L3 Phase 1 WOULD trigger. Phase 1's feedback would say "Items 1..25 appear to be MISSING." Phase 2 would follow up for any remaining gaps.
+
+**Critical gap L3 CANNOT detect:** If the model reads items 1-22 and stops (bottom truncation), there is no `missingFromStart`, no internal gaps — the items are sequential. Detection depends ENTIRELY on `detectedLineCount` (model self-reports "I see 47 rows" but only returns 22). If the model reports `detectedLineCount: 22` (consistent with what it returned), L3 sees nothing wrong. **The model can self-consistently partial-read with no internal contradiction.** This is the failure pattern Pillar 1 exists to catch — an INDEPENDENT row-count expectation that doesn't trust the model's self-report.
+
+---
+
+#### 2. Targeted Range Re-Extraction (Pillar 2) — Feasibility
+
+**Can the CF extract "rows N-M" of a region?**
+
+Yes — L3 Phase 2 already does exactly this (L13772). The feedback mechanism sends: "extract ONLY the following missing item numbers: 1, 2, 3, ..., 25." The model receives the same page/region but is asked for specific items. The response is filtered to only accept items whose itemNo is in the requested list (L13777-13779).
+
+**What's needed to make this a first-class, every-path mechanism:**
+
+The L3 Phase 2 code at L13757-13808 is self-contained — it takes the current `result`, computes remaining gaps, builds a feedback string, calls `extractBomPage` again, and filters/merges the response. It has NO dependencies on surrounding `runExtractionTask` state beyond `unit` (the extraction unit) and `notes` (user notes). It could be extracted into a shared function and called from any path.
+
+**Cost per targeted retry:** One additional `extractBomPage` call (same model, same input page, shorter expected output). For a 25-item gap-fill, the response is ~5-8KB vs ~25KB for the full table. Thinking budget is shared. Typically ~5-10 seconds.
+
+**Looping until complete:** L3 Phase 2 currently runs once (capped by `pageRetryAttempts <= 1`). The Brief proposes looping until the sequence is complete or recovery is provably exhausted. This is mechanically simple — replace the single-shot with a `while(remainingGaps.length > 0 && attempts < maxAttempts)` loop. Each iteration asks for the still-missing items, filters responses, updates the gap list. Converges when either all items are found or a retry returns 0 new items (exhaustion).
+
+**Risk:** Each retry loop iteration is an additional API call (~$0.02-0.05 for Opus). For a 47-item BOM missing 25 items, expect 1-3 iterations. For a 100-item BOM missing 50, potentially 3-5. The existing `maxAttempts` cap (currently 1) would need to increase to ~3-5. Hard cap at 5 iterations prevents runaway loops.
+
+---
+
+#### 3. Programmatic Text-Layer Extraction (Pillar 1a) — Feasibility
+
+**Client-side: pdf.js is already loaded and used.** `page.getTextContent()` is called at L29500 in the quote PDF reader. pdf.js is loaded via `window.pdfjsReady()` (CDN). `getTextContent()` returns `{items: [{str, transform, ...}]}` — positioned text fragments with x/y coordinates and content.
+
+**Server-side: NOT currently available.** `functions/index.js` has `pdf-lib` (structural PDF manipulation — copy pages, set CropBox, read XObject metadata). pdf-lib CANNOT extract text content. Server-side text extraction would require adding a dependency:
+- `pdf-parse` (lightweight, wraps pdf.js for Node — ~50KB, pure JS, no native deps)
+- `pdfjs-dist` (full pdf.js for Node — heavier but exact parity with client-side)
+- Neither is currently in `functions/package.json`
+
+**Where it would run:** Two options:
+- **(i) Client-side, before extraction starts** — in `confirmAndExtract` or `runExtraction`, after `ensureDataUrl` hydrates pages but before `runExtractionTask`. Load the original PDF via `pdfjsReady()` + `getDocument()`, call `getTextContent()` on each BOM page, parse item numbers and row count. ~20-30 lines. Advantage: no CF dependency change. Disadvantage: requires downloading the PDF to the browser (already happens for page rendering in `addFiles`, but NOT on save-reload — the original PDF is in Storage, pages are JPEG).
+- **(ii) Server-side, as a new Cloud Function or inside `extractBomPage`** — add `pdf-parse` or `pdfjs-dist` to functions, extract text before/alongside the vision call. Advantage: runs alongside the extraction without browser round-trips. Disadvantage: dependency addition, slightly larger function cold-start.
+
+**What `getTextContent` provides on a vector PDF:** An array of `{str, transform, width, height, dir, fontName}` items. `str` is the text string, `transform` is a 6-element matrix encoding position and scale. For a BOM table in a vector PDF, this gives you every cell's text content with position. Parsing item numbers from this requires:
+1. Filter text items by the BOM region's spatial bounds (transform position within CropBox).
+2. Identify the item-number column (leftmost numeric values in a vertical cluster).
+3. Count distinct rows / extract the sequence.
+
+This is a non-trivial parser (~50-80 lines for robust extraction with position-based column identification), but the data quality is AUTHORITATIVE — it's the PDF's actual text content, not a vision model's reading.
+
+**The caveat Freddy correctly flags:** Scanned/raster PDFs have NO text layer (or a garbage OCR layer). `getTextContent()` returns 0 items or nonsense. `assessPdfPageQuality` (L2265) already probes for `hasVectorText` (checks Font resource dictionary) and `isScanned` (checks XObject filters). These signals can gate whether text-layer extraction is attempted — only on vector PDFs where it's reliable.
+
+**Verdict:** Pillar 1a is feasible and high-value on vector PDFs. The infrastructure (pdf.js client-side, `hasVectorText` detection server-side) already exists. The gap is: (1) a text-content parser for BOM row counting (~50-80 lines), (2) either a client-side pre-extraction step or a server-side dependency addition. Recommend client-side option (i) for the first version — avoids CF dependency changes.
+
+---
+
+#### 4. Item-Number Continuity Gap Detection (Pillar 1b) — Feasibility
+
+**Already partially implemented — the verification at L11602-11616 inside `_parseAndVerifyBomRaw` does exactly this.** It:
+1. Parses all `itemNo` values to integers (L11602)
+2. Sorts and deduplicates (L11604)
+3. Detects `missingFromStart` when `minItemNo > 1` (L11604-11609)
+4. Detects internal gaps between consecutive itemNos (L11611-11614)
+
+**What's missing for a completeness guarantee:**
+
+**(a) Missing-from-END detection.** The final gap check (L13943-13957) iterates from `sortedNos[0]` to `sortedNos[last]` — it finds internal gaps but NOT items missing after the maximum. If a 47-item BOM returns items 1-35, the final gap check sees consecutive 1-35 and reports no gaps. Detection requires an INDEPENDENT expected maximum — either from the text layer (Pillar 1a) or from `detectedLineCount`.
+
+**(b) Not wired to any user-facing signal on the re-extraction path.** The re-extraction final gap check (L24159-24185) computes `_reSeqGaps` and writes it to `reExtractionReport.finalSequenceGaps`. But there is NO UI banner, NO blocking gate, NO flag-for-review mechanism that reads `finalSequenceGaps` from the re-extraction report. On the initial path, the gap data flows into `extractionReport` and the "extraction concerns" banner at L20540 reads `(r.l3MergeRecovered||0)+(r.l3GapFillRecovered||0)` — but that's L3 recovery counts, NOT gap counts. **No UI anywhere reads `finalSequenceGaps` to warn the user.**
+
+**(c) `detectedLineCount` reliability.** The model's self-reported `detectedLineCount` is the only existing signal for expected item count. For the 402114 case: if the model reported `detectedLineCount: 47` (correct) but returned 22 items, `countMismatch` would be true and L3 would trigger. But the model could report `detectedLineCount: 22` (matching its incomplete output). **We don't yet know how reliable `detectedLineCount` is as an independent signal — Step Zero raw output will tell us (it's in the raw JSON).**
+
+**Verdict:** Pillar 1b is the cheapest path to gap detection — the verification code already exists. The gaps are: (1) missing-from-end detection needs an independent expected max, (2) the detection result needs to reach a user-facing signal (banner/flag/gate), (3) it needs to be wired on re-extraction and feedback paths (not just initial). All are small changes (~15-20 lines each). But 1b is WEAKER than 1a — it only works when item numbers are sequential integers starting from 1, and it trusts the model's itemNo assignments (which could be wrong).
+
+---
+
+#### 5. Interim Bleed-Stop Assessment (Brief §8, D1)
+
+Freddy's lean: ship a gap-DETECTION flag, not full L3.
+
+**What a gap-detection flag would look like:**
+
+The verification data already exists on all paths — `_parseAndVerifyBomRaw` computes `missingFromStart` and `sequenceGaps` at L11602-11616. On the re-extraction path, this fires per-page inside `extractBomPage` → `extractBomPageViaServer` → `_parseAndVerifyBomRaw`. The result includes `extractionVerification` with `status: "needs-review"` when gaps exist.
+
+Currently the re-extraction path at L24101 does `const items = translateItemsToPageCoords(result.items||result||[], ...)` — it reads `result.items` and IGNORES `result.extractionVerification` (the C15 finding, still unfixed — H10 scope).
+
+**Minimal interim fix (~10 lines):**
+1. Read `result.extractionVerification` in the re-extraction per-page loop (L24100).
+2. Accumulate per-page verification results.
+3. If ANY page has `status === "needs-review"` with `missingFromStart > 0` or `sequenceGaps.length > 0`, set a flag on the extraction report: `completenessWarning: true, missingFromStart: N, sequenceGaps: [...]`.
+4. Wire a UI banner to `extractionReport.completenessWarning` — amber banner above the BOM: "⚠ Extraction may be incomplete — items [1-25] were not found. Review the BOM against the drawing."
+
+This surfaces the loss LOUDLY without adding retry complexity. It aligns with the "never silent" principle. L3's probabilistic retry can be added later as the permanent Pillar 2 mechanism.
+
+**Risk of the interim fix:** Zero behavior change to the extraction itself — additive flag only. The banner is informational (doesn't block quoting or pricing). Same safety profile as the existing scan-quality banner.
+
+---
+
+#### 6. Additional Risk the Brief Should Note
+
+**The 402114 failure pattern (start at item 26) is the EASY case.** L3's `missingFromStart` detection catches it cleanly — the model's first itemNo is 26, proving 1-25 missing. The HARD case is bottom truncation (model reads items 1-22 of 47 and stops with `end_turn`). In that case:
+- `missingFromStart` = 0 (starts at 1)
+- `sequenceGaps` = [] (1-22 are consecutive)
+- Only `countMismatch` (`detectedLineCount` vs returned count) can signal the problem
+- If the model self-consistently reports `detectedLineCount: 22`, ALL item-number-based detection fails
+
+**Only Pillar 1a (text-layer independent count) catches this case reliably.** Pillar 1b (item-number continuity) is blind to it. This should weight the Q3 text-layer availability measurement highly — if text layers are common, 1a is the priority. If they're rare, we need a different independent-expectation source for bottom truncation (e.g., a separate lightweight model call that just counts rows visually, or a multi-pass strategy where pass 2 starts from the BOTTOM of the table).
+
 ## Open Questions for Jon
 
 1. How many concurrent users / active projects does ARC typically serve? Trying to calibrate whether the monolith's complexity ceiling is a near-term or long-term concern.
