@@ -11614,6 +11614,15 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
       }
     }
     if(verification.sequenceGaps.length>0)verification.status="needs-review";
+    if(sorted.length>=3){
+      const maxItemNo=sorted[sorted.length-1];
+      const expectedMax=detectedLineCount||maxItemNo;
+      if(expectedMax>maxItemNo){
+        verification.missingFromEnd=expectedMax-maxItemNo;
+        verification.expectedMaxItemNo=expectedMax;
+        verification.status="needs-review";
+      }
+    }
   }
   // Confusable-glyph + enclosure auto-downgrade (mirrors v1.19.975 logic)
   const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
@@ -14097,6 +14106,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       scanQuality:(()=>{const rank={high:3,medium:2,low:1,none:0};return(mergeStats.perPageOutcomes||[]).reduce((worst,o)=>{const lvl=o.pdfQuality?.warningLevel||"none";return rank[lvl]>rank[worst]?lvl:worst;},"none");})(),
       scanDetails:(mergeStats.perPageOutcomes||[]).filter(o=>o.pdfQuality?.warningLevel&&o.pdfQuality.warningLevel!=="none").map(o=>({pageName:o.pageName,isMonochrome:o.pdfQuality.isMonochrome,estimatedDpi:o.pdfQuality.estimatedDpi,warningLevel:o.pdfQuality.warningLevel})),
       internalPnResolutions:mergeStats.resolvedLog||[],
+      completenessWarning:(()=>{const ppo=mergeStats.perPageOutcomes||[];const flagged=ppo.filter(o=>o.extractionVerification?.status==="needs-review");if(!flagged.length&&!(mergeStats.finalSequenceGaps||[]).length)return null;const details=flagged.map(o=>{const v=o.extractionVerification;const parts=[];if(v.missingFromStart)parts.push(`items 1-${v.missingFromStart} missing from start`);if(v.missingFromEnd)parts.push(`items ${(v.expectedMaxItemNo||0)-v.missingFromEnd+1}-${v.expectedMaxItemNo} possibly missing from end`);if(v.sequenceGaps?.length)parts.push(`interior gaps: items ${v.sequenceGaps.slice(0,10).join(",")}`);if(v.countMismatch)parts.push(`count mismatch: extracted ${v.extractedCount} vs detected ${v.detectedLineCount}`);return(o.pageName||"?")+": "+parts.join("; ");});return{warning:true,details,finalSequenceGaps:mergeStats.finalSequenceGaps||[]};})(),
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -22091,10 +22101,16 @@ function ScanResultsBanner({panel}){
     if(dedupGaps.length>0)concerns.push(`${dedupGaps.length} duplicate${dedupGaps.length>1?"s":""} consolidated — ${dedupGaps.slice(0,8).map(g=>{const s=consumedToSurvivor[String(g)];return s?.survivorItemNo?`item ${g} → merged with ${s.survivorItemNo}`:`item ${g} consolidated`;}).join(", ")}${dedupGaps.length>8?` (+${dedupGaps.length-8} more)`:""}`);
     if(aiGaps.length>0){const sample=aiGaps.slice(0,10).join(", ");concerns.push(`⚠ ${aiGaps.length} missing item${aiGaps.length>1?"s":""} — line${aiGaps.length>1?"s":""} ${sample}${aiGaps.length>10?` (+${aiGaps.length-10} more)`:""} not found in extraction`);}
   }
+  const cw=r.completenessWarning;
+  if(cw&&cw.warning){
+    const cwDetails=(cw.details||[]).join("; ")||"extraction may be incomplete";
+    concerns.unshift(`⚠ Possible missing items: ${cwDetails}. Verify against the drawing.`);
+  }
   if(concerns.length===0)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
+  const isCritical=!!(cw&&cw.warning);
   return(
-    <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:expanded?"12px 14px":"8px 12px",marginBottom:12,fontSize:12}}>
+    <div style={{background:isCritical?"#4a1500":"#3a1f00",border:`1px solid ${isCritical?"#f97316":C.yellow}`,borderRadius:8,padding:expanded?"12px 14px":"8px 12px",marginBottom:12,fontSize:12}}>
       <div onClick={()=>setExpanded(!expanded)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
         <span style={{fontSize:16}}>⚠️</span>
         <div style={{flex:1}}>
@@ -24082,6 +24098,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
     const _rePerPageOutcomes=[];
+    const _reVerifications=[];
     try{
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         const units=await getExtractionUnits(pg);
@@ -24099,7 +24116,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           }
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
-          _rePerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000)});
+          if(result?.extractionVerification)_reVerifications.push({page:pg.name||`Page ${pgIdx+1}`,...result.extractionVerification});
+          _rePerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
           pageItems.push(...items);
@@ -24185,6 +24203,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       for(let i=0;i<_reSorted.length-1;i++){if(_reSorted[i+1]-_reSorted[i]>1){for(let g=_reSorted[i]+1;g<_reSorted[i+1];g++)_reSeqGaps.push(g);}}
     }
     if(_reSeqGaps.length>0)console.warn(`[RE-EXTRACT] sequence gaps in final BOM: items ${_reSeqGaps.join(", ")} missing`);
+    const _reHasGaps=_reVerifications.some(v=>v.status==="needs-review");
+    const _reGapDetails=_reVerifications.filter(v=>v.status==="needs-review").map(v=>{const parts=[];if(v.missingFromStart)parts.push(`items 1-${v.missingFromStart} missing from start`);if(v.missingFromEnd)parts.push(`items ${(v.expectedMaxItemNo||0)-v.missingFromEnd+1}-${v.expectedMaxItemNo} possibly missing from end`);if(v.sequenceGaps?.length)parts.push(`interior gaps: items ${v.sequenceGaps.slice(0,10).join(",")}`);if(v.countMismatch)parts.push(`count mismatch: extracted ${v.extractedCount} vs detected ${v.detectedLineCount}`);return v.page+": "+parts.join("; ");});
+    const _reCompletenessWarning=_reHasGaps||_reSeqGaps.length>0?{warning:true,details:_reGapDetails,finalSequenceGaps:_reSeqGaps}:null;
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
       positionalMerges:rePositionalMerges,fuzzyMerges:fuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
@@ -24195,6 +24216,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       nonBomRowsFiltered:reNonBomRows,
       internalPnResolutions:reResolvedLog||[],
       perPageOutcomes:_rePerPageOutcomes,
+      extractionVerifications:_reVerifications,
+      completenessWarning:_reCompletenessWarning,
       extractionPath:_reExtractionPath,
       finalSequenceGaps:_reSeqGaps,finalMaxItemNo:_reMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
@@ -24329,6 +24352,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fbRgnCtx=buildRegionContext(pages);
     let all=[];let bomDone=0;
     const _fbPerPageOutcomes=[];
+    const _fbVerifications=[];
     try{
       let fbQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
@@ -24338,7 +24362,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
           const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
-          _fbPerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000)});
+          if(result?.extractionVerification)_fbVerifications.push({page:pg.name||`Page ${pgIdx+1}`,...result.extractionVerification});
+          _fbPerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -24404,6 +24429,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       for(let i=0;i<_fbSorted.length-1;i++){if(_fbSorted[i+1]-_fbSorted[i]>1){for(let g=_fbSorted[i]+1;g<_fbSorted[i+1];g++)_fbSeqGaps.push(g);}}
     }
     if(_fbSeqGaps.length>0)console.warn(`[FEEDBACK EXTRACT] sequence gaps in final BOM: items ${_fbSeqGaps.join(", ")} missing`);
+    const _fbHasGaps=_fbVerifications.some(v=>v.status==="needs-review");
+    const _fbGapDetails=_fbVerifications.filter(v=>v.status==="needs-review").map(v=>{const parts=[];if(v.missingFromStart)parts.push(`items 1-${v.missingFromStart} missing from start`);if(v.missingFromEnd)parts.push(`items ${(v.expectedMaxItemNo||0)-v.missingFromEnd+1}-${v.expectedMaxItemNo} possibly missing from end`);if(v.sequenceGaps?.length)parts.push(`interior gaps: items ${v.sequenceGaps.slice(0,10).join(",")}`);if(v.countMismatch)parts.push(`count mismatch: extracted ${v.extractedCount} vs detected ${v.detectedLineCount}`);return v.page+": "+parts.join("; ");});
+    const _fbCompletenessWarning=_fbHasGaps||_fbSeqGaps.length>0?{warning:true,details:_fbGapDetails,finalSequenceGaps:_fbSeqGaps}:null;
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
       positionalMerges:fbPositionalMerges,fuzzyMerges:fbFuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
@@ -24414,6 +24442,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       nonBomRowsFiltered:fbNonBomRows,
       internalPnResolutions:fbResolvedLog||[],
       perPageOutcomes:_fbPerPageOutcomes,
+      extractionVerifications:_fbVerifications,
+      completenessWarning:_fbCompletenessWarning,
       finalSequenceGaps:_fbSeqGaps,finalMaxItemNo:_fbMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
     };
