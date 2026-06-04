@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-06-03
+**Last updated:** 2026-06-04
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -412,82 +412,89 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# Session State — 2026-06-03 23:30 MDT
+# SESSION STATE — 2026-06-04 (Freddy session close)
 
-## Version
-v1.20.95 (deployed 2026-06-03). dataUrl-gating fix (#94) — BOM extraction no longer silently skips storageUrl-only pages.
+## VERSION
+v1.20.101 deployed (latest).
 
-## Recent Commits (last 15)
-- bf5aea4f Correct #95: ground truth in dispute, error scoring unsettled
-- 89075d95 #94 RESOLVED (v1.20.95) + #95 filed + #84 updated + C23 closure
-- 01ef9cf2 Release v1.20.95
-- fa15c96b Fix dataUrl-gating bug: BOM extraction silently skipped on storageUrl-only pages (#94)
-- 70ac66de Close #82: deploy gap disproven (Coach C22) — docs update
-- 8080e078 Commit Coach C19/C20/C21 entries + final session state updates
-- e5954213 Closeout skill: add Step 7 — notify other roles and wait for confirmations
-- 4713dbfb Add PRJ402119 deploy-gap work order + update session state
-- 67f472dd Update handoff files for next session
-- 525d8586 Add #92-P1 + BOM revert investigation artifacts + startup workflow improvements
-- ad5a7653 Release v1.20.94
-- a6906355 Release v1.20.93
-- 0af48ef2 Team skills: require AskUserQuestion for all decision points
-- ddb2eea2 Update handoff files for next session
-- 0e474d81 Release v1.20.92
+## THE HEADLINE FINDING (most important of the session)
+ARC silently drops large contiguous blocks of BOM rows — proven on PRJ402114 (GOOD-bucket, 100%-BC):
+full BOM 1-47, extraction returned ONLY 26-47. rawModelOutput first item = itemNo:"26", model stopped
+at end_turn (NOT truncation). Loss is UPSTREAM — model PARTIAL-READ the table; pipeline kept all it
+received. Ruled out: page-scoping, crop-cutoff (full table confirmed inside crop). The #98 "good
+bucket" is COMPROMISED — BC match % can be 100% on a BOM missing half its rows. Caught ONLY because
+Step Zero captures raw output. COMPLETENESS failure (rows missing), distinct from ACCURACY (wrong PNs).
 
-## Shipped This Session
-- [DONE] **#94 — dataUrl-gating fix** (v1.20.95). `confirmAndExtract` and `runExtractionTask` filtered BOM pages on `&& p.dataUrl`, silently excluding pages with only `storageUrl` after a save-reload cycle. Fix: filter on `(p.dataUrl||p.storageUrl)` + `ensureDataUrl` hydration in runExtractionTask. Validated: PRJ402119 Line 1 now extracts 13 material items (was 0). Sites A+B shipped; Site C (zoom detection) carved out as #94a. CLAUDE.md dataUrl Ephemerality Rule added.
-- [DONE] **#82 closed** — Coach C22 disproved the deploy gap (functions ARE deployed). Documentation updated across 4 files. TODO #15 elevated with deploy-drift systemic fix recommendation.
-- [DONE] **FREDDY.md paste discipline** — Added pending-response rule: resolve questions BEFORE generating a paste, then stop and wait after sending it.
+## TWO INVESTIGATIONS LIVE
 
-## Discovered This Session
-- **#95 — PN fidelity issue** (HIGH). PRJ402119 Line 1 extraction produces wrong part numbers on clean vector-text PDF. Multiple errors on 13-item BOM: digit substitution (3→0, 2→3, 6→0), wholesale replacement (TYD15X3/4PWS→MPWS, LNM25BPC100→LNMQ3RP-100). Ground truth still in dispute (Coach C23 correction). Next-session priority: end-to-end trace on Item 8 (MPWS) to determine whether the model receives correct text or degraded input.
+**#98 ACCURACY (Foundational Audit)** — Analyst Review with Coach. Thesis: unverified TRANSFORM stages
+(Stage J regex-guess; Stage R BC-pricing overwrite) silently corrupt correct reads; ARC Cross
+human-seeded crosses LEGITIMATE (keep). De-layer = convert blind stages to verify-once-retain, NOT rip
+out. BLOCKED on ground-truth measurement (BC match is circular). Resolving experiment: ground-truth
+PRJ402096 (16 crosses) — ARC Cross safety-net or mirage?
 
-## WATCH Items
-- **Noah BOM revert** — fix deployed (v1.20.94) but stays WATCH until Noah confirms reverts stopped. Secondary pricing stale-snapshot risk (W9/W10) not yet fixed.
-- **Quotes randomly drop fields** — separate root cause (`saveProject` stale-arg). NOT fixed by updatedBy change.
-- **Deploy drift (SYSTEMIC)** — `deploy.sh` is hosting-only. #82 verified live only because Coach ran full C22 verification. TODO #15 elevated.
+**#100 COMPLETENESS GUARANTEE** — Brief delivered, Coach Supplement C29 returned. Permanent fix = two
+pillars: (1) INDEPENDENT row-count expectation [1a text-layer (strongest), 1b item-number continuity,
+1c separate detectedLineCount]; (2) DETERMINISTIC targeted recovery (loop-until-complete) + loud flag
+if unclosable. Root: completeness depends on single-pass model luck + L3 retry (INITIAL path only).
 
-## Open Items — Architectural Hardening
+## COACH C29 KEY FINDINGS
+- L3 retry/gap-fill INITIAL path only (L13680-13808); re-extract+feedback have NONE. L3 Phase 2 IS
+  Pillar 2 — built, single-path, extractable; loop is mechanical (~$0.02-0.05/iter).
+- Pillar 1a text-layer: pdf.js loaded, getTextContent() at L29500, hasVectorText gates existence.
+  Client parser ~50-80 lines.
+- Pillar 1b continuity: half-built in _parseAndVerifyBomRaw (L11602-11616).
+- CRITICAL (C29 #6): BOTTOM-TRUNCATION (1-22 of 47, no gap) UNDETECTABLE by continuity. ONLY
+  text-layer count (1a) catches it. Text-layer is the critical path.
 
-### HIGH — Next active investigation
-- **#95 — PN fidelity on clean vector PDFs.** PRJ402119 Line 1 is the test case. Next-session priority.
-- **#92 — Background Task UI Ownership Audit.** Phase 1 DONE (v1.20.93). Phases 2+ (H3-H5) open. Coach-owned.
+## NEXT STEP (start here)
+Q3 TEXT-LAYER MEASUREMENT on D2 sample: does programmatic text extraction yield clean row counts +
+item numbers; what fraction of drawings have usable text layers? Determines if Pillar 1a is the spine.
+Then Q1 (partial-read frequency on long tables), Q2 (confirm L3 actually recovers on initial path —
+INFERRED, not proven) → architect → build across all paths.
 
-### MEDIUM — Queued
-- **#91 — Background Workflow Audit.** Coach-owned.
-- **#93 — Extraction Pipeline Consolidation.** Coach design, Marc implement.
-- **#87 — Panel ID Hardening.** LOW (defense-in-depth only).
-- **#88 — Async Ownership Audit.** Coach-owned.
+## D2 SAMPLE (provided by Jon)
+ARC is on TEST BC env — nothing breaks, all freely re-extractable. Projects: PRJ402113, 402100, 402101,
+402076, 402092.
+FIRST ACTION NEXT SESSION (Marc — characterize, front half of Q3): per project report page count,
+BOM page(s), BOM row count, customer/format, hasVectorText. Sorts them into Q1 vs Q3 roles.
+KNOWN: 402113 = FLSmidth L1, 84 items, 45% BC (BAD bucket) — strong Q1+Q3 candidate.
 
-### HIGH — Pre-existing
-- **#84 — Missing items on PRJ402119.** Truncation + companion symptoms NOT REPRODUCED on post-#94 run; may have been artifacts of prior image path.
-- **#85 — Excel BOM cross-check.** Gated on Noah/Ovivo. Detailed Plan pending.
-- **#64 — BC concurrency sweep.** ~44 ungated fetch sites.
-- **#66 — bcCreatePanelTaskStructure idempotency.** ~20 LOC.
+## D1 INTERIM — SHIPPED + VALIDATED (v1.20.101)
+Warn-only completeness flag. PART A: extractionVerification (was discarded, C15) now captured on
+re-extract+feedback; completenessWarning computed+stored. PART B: missing-from-END detection added to
+_parseAndVerifyBomRaw. UI: completenessWarning rendered as top concern, critical styling.
+VALIDATED: amber banner fires on 402114 (items 1-25 missing); 402097 (complete) does NOT false-flag;
+warn-only (no "complete" language); all 3 paths.
+SCOPE LIMIT: validated for missing-from-start + interior gaps ONLY. Clean bottom-truncation NOT covered
+— gated on Q3/text-layer. Partial net, NOT permanent fix.
 
-### FEATURE — Queued
-- **F-1g.1 — Dedup message fix.** Plan approved, ~35 LOC.
-- **#90 — ARC Cross UX.** Supersession not visually distinct.
+## SYSTEMIC DISCOVERY — ScanResultsBanner was DEAD CODE
+Defined L22027, NEVER rendered in JSX since written. It surfaces ALL scan concerns (fuzzy merges,
+sequence gaps, suspect parts, L3 recovery, audit flags) — NONE ever visible to Noah/sales. v1.20.101
+wires it in for the first time. Same disease as discarded raw output + silent transforms (3rd instance
+today). "No complaints" never meant "no flags" — flags were never shown. NEXT-SESSION: review what
+users now see; strengthens #98 urgency.
 
-## Work Queue
-1. **#95 — PN fidelity investigation** (next-session priority)
-2. Noah revert WATCH — confirm fix under real usage
-3. #92 — Phases 2+ (H3-H5 foreground-seizing suppression)
-4. #84 — Missing items investigation (symptoms may be resolved by #94)
-5. F-1g.1 — Implementation (plan approved)
-6. #66 — bcCreatePanelTaskStructure idempotency
-7. #64 — BC concurrency sweep
+## OPEN DECISIONS
+D1 DONE (shipped+validated). D2 DONE (sample above).
 
-## Working Tree
-- Branch: master (up to date with origin/master at bf5aea4f)
-- Clean: no uncommitted changes
+## PARKED
+- PRJ402096 ground-truth (ARC Cross helps-or-hides) — #98 measurement.
+- Cross-reason TODO (NEW high-pri, Jon approved): when user crosses/supersedes, ask MFR-discontinuation
+  vs Matrix-internal-standard; apply discontinuations universally, Matrix subs as scoped preferences.
+- Stage R: 0 fires on mostly-wrong-PN panel (rare); NOT cleared on GOOD panels; logging debug-only.
+  Revisit #98.
+- Poe "Claude-OCR" REJECTED (3rd-party Haiku wrapper). Real version = programmatic text-layer (1a).
 
-## Open TODOs
-60 OPEN findings in TODO.md
+## SHIPPED THIS SESSION
+v1.20.96 #97 slash-split removed + positional-drop reporting. v1.20.98 Step Zero core (raw output
+initial + #57 + correction log). v1.20.99 C28 raw output on re-extract/feedback (validated). v1.20.100/
+101 #100 interim + ScanResultsBanner wired. FREDDY.md: d1209c6d (routing rule), 70e870ec (Briefs-as-
+pastes). #95 settled 7/13; Item 10 confirmed correct.
 
-## Codebase Audit
-76 total findings in ARC-AUDIT-FINDINGS.md. Top unresolved CRITICALs: F-1g.1 (misleading dedup message — plan approved), F-2b.1 (save guard asymmetry), F-3c.4 (partial sync green checkmark), F-3a.1 (restore lock leak).
-
-## New Investigation Artifacts (this session)
-- `92-P1-CLOSURE-REPORT.md` — #92 Phase 1 closure (from prior session, carried forward)
-- `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md` — Updated: #82 CLOSED per C22
+## #95 GROUND TRUTH (settled this session)
+PRJ402119 Line 1: 7/13 correct (54%), 6/13 wrong (46%). Drawing read by Marc via browser.
+Errors: Item 3 (3038338→3036038), Item 5 (3214314→3214014), Item 7 (0807012→0907012),
+Item 8 (TYD15X3WPW6→MPWS, slash-split bug now fixed), Items 12-13 (LNM25BPK100→LNMQ3RP-100,
+LNM40BPK100→LNMQ8RP-100). Item 10 SECM25G confirmed CORRECT (Freddy was right).
