@@ -27018,6 +27018,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>
           )}
           {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
+            <ScanResultsBanner panel={panel}/>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
                 {/* DECISION(v1.19.972): Qty column widened from 42 to 56 — 42px
