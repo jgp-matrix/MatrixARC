@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.94 (defined in `public/index.html`)
+- **Current version:** v1.20.95 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -240,19 +240,21 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 - **v1.20.91-92** — Startup/closeout procedure rewrite + shareable Dev Team skill pack (`/team-setup`, `/team-startup`, `/team-closeout`) with config-driven roles, guided mode, quick start doc
 - **v1.20.93** — #92-P1: Cache re-key — `_pendingPagesCache` and `_bgTasks` re-keyed from bare `panelId` to `projectId:panelId`, preventing cross-project cache collisions
 - **v1.20.94** — Noah BOM revert fix — `saveProjectPanel` now sets `updatedBy: uid`, closing the onSnapshot echo guard bypass that caused edits to revert
+- **v1.20.95** — #94 dataUrl-gating fix — `confirmAndExtract` and `runExtractionTask` filtered BOM pages on `&& p.dataUrl`, silently excluding storageUrl-only pages. Fix: `(p.dataUrl||p.storageUrl)` + `ensureDataUrl` hydration. Validated: PRJ402119 Line 1 now extracts items (was 0). CLAUDE.md dataUrl Ephemerality Rule added.
 
 ### Open Items
-- **#84** — Missing items (13/14) on PRJ402119 — last-row truncation, companion-part miss
+- **#95 — PN fidelity on clean vector PDFs** (HIGH). PRJ402119 Line 1: 3 unambiguous errors (Items 8, 12, 13 — wholesale replacement), 5+ contested (digit-level disputes, ground truth itself in dispute). Next-session priority: authoritative PN list, confirm model input format, Item 8 (MPWS) end-to-end trace.
+- **#84** — Missing items on PRJ402119 — truncation + companion symptoms NOT REPRODUCED on post-#94 extraction; may have been artifacts of the prior image path
 - **#85** — Excel BOM cross-check — Brief + Supplement + Analyst Review done, Detailed Plan pending
 - **#87** — Panel ID uniqueness hardening (downgraded to LOW — cache re-key breaks collision independent of unique IDs)
 - **#88** — Async ownership audit across all long-running operations
 - **#92** — Background Task UI Ownership Audit — Phase 1 (H1+H2 cache re-key) DONE. Phases 2+ (H3-H5 foreground-seizing suppression) still open.
 - **F-1g.1** — Dedup message fix — Analyst Review + Detailed Plan approved, queued for Marc
-- **#82 URGENT** — Cloud Function fixes (P1/P2) committed but possibly not deployed. Scanned-bitmap PDFs may silently return empty BOMs. See `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`.
+- **#82 RESOLVED** — Cloud Function deploy gap disproven (Coach C22). Functions ARE deployed; issue was missing audit trail only.
 
 ### Noah Production Bugs (FIX DEPLOYED — WATCH)
 - **BOM edits revert** — ROOT CAUSE FOUND: `saveProjectPanel` didn't set `updatedBy`, defeating onSnapshot echo guard. Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped. See `NOAH-BOM-REVERT-EVIDENCE.md`.
-- **Quotes randomly drop fields** — same root cause as BOM revert. Fix should resolve both. WATCH alongside.
+- **Quotes randomly drop fields** — SEPARATE root cause from BOM revert (Freddy analysis). `saveProject` writes stale project arg missing fields (no read-before-write). NOT fixed by the `updatedBy` change. Needs own scope.
 
 ---
 
