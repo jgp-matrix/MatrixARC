@@ -115,6 +115,31 @@ If Analyst determines action is required from Coach or Marc, a paste-ready instr
 - Runtime data or Firestore investigation → Marc
 - Design review or scope decision → Freddy (with Coach verification)
 
+### Plan-and-Trace Routing: Coach Before Marc
+
+Anything that depends on the code goes to Coach for code-path verification BEFORE it goes to
+Marc for runtime or implementation. This includes:
+  - Implementation plans and fix designs (Detailed Plan precursor)
+  - Traces whose answer lives in the code (which stages exist, what a path feeds the model,
+    whether a mutation is reachable)
+
+Coach narrows the hypothesis space from the code, read-only. Marc then confirms or implements
+against the narrowed target. This is the dual-investigation protocol (code-path + runtime)
+ordered correctly: it prevents Marc spending a runtime pass on stages the code could have ruled
+out, and it stops Freddy designing a fix before the failing layer is proven.
+
+EXCEPTION — Marc-direct, no Coach precursor needed:
+  - Pure runtime/data questions: actual Firestore state, browser console output, whether a
+    deployed fix changed observed behavior, validation of a shipped change.
+  These have no code-path question to answer first.
+
+HEURISTIC: "Can this be answered by reading the code?" -> Coach first.
+           "Does this require observing the running system?" -> Marc, and if a code-path
+           question precedes it, Coach scopes that part first.
+
+Crown-jewel exception: raw model output / actual runtime values are Marc's alone — Coach cannot
+produce them. So a Coach-first scoping does not replace the Marc trace; it aims it.
+
 ### Pending Response Rule
 
 **Resolve all questions BEFORE generating a paste.** If you have clarifying questions, scope decisions, or ambiguities that would change the paste content — ask them first. Only generate the paste once you have everything you need to make it final.
