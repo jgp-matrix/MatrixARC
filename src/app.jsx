@@ -24081,6 +24081,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         }
       }
     }
+    const _rePerPageOutcomes=[];
     try{
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         const units=await getExtractionUnits(pg);
@@ -24098,6 +24099,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           }
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
+          _rePerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000)});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
           pageItems.push(...items);
@@ -24192,6 +24194,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       snippetCorrectionsLog:reSnippetCorrections.slice(-50),
       nonBomRowsFiltered:reNonBomRows,
       internalPnResolutions:reResolvedLog||[],
+      perPageOutcomes:_rePerPageOutcomes,
       extractionPath:_reExtractionPath,
       finalSequenceGaps:_reSeqGaps,finalMaxItemNo:_reMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
@@ -24325,6 +24328,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const fbRgnCtx=buildRegionContext(pages);
     let all=[];let bomDone=0;
+    const _fbPerPageOutcomes=[];
     try{
       let fbQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
@@ -24334,6 +24338,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
           const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
+          _fbPerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000)});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
@@ -24408,6 +24413,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       snippetCorrectionsLog:fbSnippetCorrections.slice(-50),
       nonBomRowsFiltered:fbNonBomRows,
       internalPnResolutions:fbResolvedLog||[],
+      perPageOutcomes:_fbPerPageOutcomes,
       finalSequenceGaps:_fbSeqGaps,finalMaxItemNo:_fbMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
     };
