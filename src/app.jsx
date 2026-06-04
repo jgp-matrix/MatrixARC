@@ -10641,7 +10641,7 @@ function positionalMergeBomItems(items){
       withoutY.push(it);
     }
   }
-  if(withY.length<2)return items;
+  if(withY.length<2)return {items,merges:[]};
   // Sort by (sourcePageIdx, y_top) so same-page items cluster together. Inner loop breaks
   // when sourcePageIdx changes — never compares items across different pages.
   withY.sort((a,b)=>{
@@ -10708,7 +10708,7 @@ function positionalMergeBomItems(items){
     }
     merged.push(base);
   }
-  return [...merged,...withoutY];
+  return {items:[...merged,...withoutY],merges:posMerges};
 }
 // DECISION(v1.19.603): When an extraction unit is a cropped portion of the page, the AI
 // returns y_top/y_bottom/x_left/x_right as fractions of the CROP. Translate them back to
@@ -11636,35 +11636,21 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
   if(verification.lowConfidenceRows.length>0||verification.placeholderRows.length>0){
     verification.status=verification.status==="ok"?"low-confidence":verification.status;
   }
-  // Companion-PN split (matches the post-process in the legacy direct path)
-  const expanded=[];
   for(const item of items){
-    const pn=(item.partNumber||"").trim();
-    const segments=pn.split(/\s*\/\s*|\s*,\s*/).map(s=>s.trim()).filter(s=>s&&/[A-Z0-9]{3,}/i.test(s));
-    if(segments.length>1){
-      for(let si=0;si<segments.length;si++){
-        const base=item.description||"";
-        const alreadyLabeled=base.includes("(sub-part from above)");
-        const desc=si===0?base:(alreadyLabeled?base:base+" (sub-part from above)");
-        expanded.push({...item,partNumber:segments[si],description:desc});
-      }
-    } else expanded.push(item);
-  }
-  for(const item of expanded){
     const q=String(item.qty||"").trim().toUpperCase();
     if(q==="A/R"||q==="AR"||q==="AS REQUIRED"||q==="AS REQ'D"||q==="A.R."||q==="A\\R")item.qty=1;
   }
-  if(expanded.length>0){
-    const count=expanded.length;
+  if(items.length>0){
+    const count=items.length;
     for(let i=0;i<count;i++){
-      const it=expanded[i];
+      const it=items[i];
       if(typeof it.y_top!=="number"||isNaN(it.y_top)){
         it.y_top=i/count;
         if(typeof it.y_bottom!=="number"||isNaN(it.y_bottom))it.y_bottom=(i+1)/count;
       }
     }
   }
-  return{items:expanded,questions,noBomReason:expanded.length?null:noBomReason,extractionVerification:verification,extractionPath};
+  return{items,questions,noBomReason:items.length?null:noBomReason,extractionVerification:verification,extractionPath};
 }
 
 // DECISION(v1.19.981, server-side BOM extraction): Tries the server-side
@@ -13918,7 +13904,8 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // repeats that have different Y positions.
         // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
         const raw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
-        const positional=positionalMergeBomItems(raw);
+        const positionalResult=positionalMergeBomItems(raw);
+        const positional=positionalResult.items;const positionalMerges=positionalResult.merges;
         const map={};const exactMerges=[];
         positional.forEach(item=>{const pn=_bomNormPn(item.partNumber);const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);exactMerges.push({keptItemNo:String(map[key].itemNo||map[key].item||"").replace(/\D/g,""),droppedItemNo:itemNo,keptPn:map[key].partNumber,droppedPn:item.partNumber});console.log(`BOM MERGE: "${item.partNumber}" qty ${item.qty} → merged with existing (now qty ${map[key].qty})`);}else{map[key]={...item};}});
         const exact=Object.values(map);
@@ -13961,7 +13948,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // DECISION(v1.19.1057): Count L3-recovered items for extraction report
         const l3MergeRecovered=withCompanions.filter(it=>it._extractionRetried).length;
         const l3GapFillRecovered=withCompanions.filter(it=>it._extractionGapFill).length;
-        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,fuzzyMerges:fuzzyReport.merges,exactMerges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,positionalMerges,fuzzyMerges:fuzzyReport.merges,exactMerges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
       }).catch(ex=>{
         console.error("BOM extraction failed:",ex);
         // v1.19.983: surface the catch-all failure to remote debug logs so
@@ -14075,6 +14062,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       rawCount:mergeStats.raw,
       exactCount:mergeStats.exact,
       finalCount:mergeStats.fuzzy,
+      positionalMerges:mergeStats.positionalMerges||[],
       fuzzyMerges:mergeStats.fuzzyMerges||[],
       exactMerges:mergeStats.exactMerges||[],
       bomPageCount:bomPages.length,
@@ -24120,7 +24108,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.620): Positional FIRST (max qty), then exact PN (sum qty for legit repeats), then fuzzy.
     // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
     const reRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
-    const positionalDedup=positionalMergeBomItems(reRaw);
+    const positionalResult=positionalMergeBomItems(reRaw);
+    const positionalDedup=positionalResult.items;const rePositionalMerges=positionalResult.merges;
     const map={};const exactMerges=[];
     positionalDedup.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
@@ -24178,7 +24167,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(_reSeqGaps.length>0)console.warn(`[RE-EXTRACT] sequence gaps in final BOM: items ${_reSeqGaps.join(", ")} missing`);
     const reExtractionReport={
       rawCount:all.length,exactCount:exactDedup.length,finalCount:fuzzyDedup.length,
-      fuzzyMerges:fuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
+      positionalMerges:rePositionalMerges,fuzzyMerges:fuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
       learnedCorrections:reLearnedLog.length,
       learnedCorrectionsLog:reLearnedLog.slice(-50),
       snippetCorrectionCount:reSnippetCorrections.length,
@@ -24341,7 +24330,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.620): Positional FIRST (max qty for cross-quadrant), then exact PN, then fuzzy.
     // PRJ402109: Always assign fresh string IDs — AI-returned numeric IDs can collide
     const fbRaw=all.map(it=>({...it,id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),qty:+it.qty||1}));
-    const fbPositional=positionalMergeBomItems(fbRaw);
+    const fbPosResult=positionalMergeBomItems(fbRaw);
+    const fbPositional=fbPosResult.items;const fbPositionalMerges=fbPosResult.merges;
     const map={};const exactMerges=[];
     fbPositional.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
@@ -24392,7 +24382,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(_fbSeqGaps.length>0)console.warn(`[FEEDBACK EXTRACT] sequence gaps in final BOM: items ${_fbSeqGaps.join(", ")} missing`);
     const fbReport={
       rawCount:all.length,exactCount:fbExact.length,finalCount:fbFuzzy.length,
-      fuzzyMerges:fbFuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
+      positionalMerges:fbPositionalMerges,fuzzyMerges:fbFuzzyReport.merges,exactMerges,bomPageCount:bomPages.length,
       learnedCorrections:fbLearnedLog.length,
       learnedCorrectionsLog:fbLearnedLog.slice(-50),
       snippetCorrectionCount:fbSnippetCorrections.length,
