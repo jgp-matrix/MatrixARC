@@ -11024,11 +11024,12 @@ function _extractMfrPnFromDesc(desc){
 function resolveInternalPartNumbers(bom){
   const eligible=bom.filter(r=>!r.isLaborRow&&!r.isContingency&&!r.autoLoaded);
   const pns=eligible.map(r=>(r.partNumber||"").trim()).filter(Boolean);
-  if(pns.length<3)return bom;
+  if(pns.length<3)return{bom,resolvedLog:[]};
   const internalCount=pns.filter(pn=>_INTERNAL_PN_RE.test(pn)).length;
-  if(internalCount/pns.length<=0.5)return bom;
+  if(internalCount/pns.length<=0.5)return{bom,resolvedLog:[]};
   console.log(`BOM FILTER: Detected internal/customer part numbers (${internalCount}/${pns.length} match pattern) — extracting MFR PNs from descriptions`);
   let resolved=0,unresolved=0;
+  const resolvedLog=[];
   const result=bom.map(r=>{
     if(r.isLaborRow||r.isContingency||r.autoLoaded)return r;
     const origPn=(r.partNumber||"").trim();
@@ -11036,6 +11037,7 @@ function resolveInternalPartNumbers(bom){
     const mfrPn=_extractMfrPnFromDesc(r.description);
     if(mfrPn){
       resolved++;
+      resolvedLog.push({stage:"internalPnResolve",rowId:r.id,from:origPn,to:mfrPn,reason:`regex from description: "${(r.description||"").slice(0,60)}"`});
       console.log(`  PN RESOLVE: "${origPn}" → "${mfrPn}" (from: "${(r.description||"").slice(0,80)}")`);
       return{...r,partNumber:mfrPn,customerPartNumber:origPn};
     }
@@ -11043,7 +11045,7 @@ function resolveInternalPartNumbers(bom){
     return{...r,customerPartNumber:origPn,confidence:"low"};
   });
   console.log(`BOM FILTER: Resolved ${resolved} MFR PNs from descriptions, ${unresolved} unresolved`);
-  return result;
+  return{bom:result,resolvedLog};
 }
 
 // ── FIRESTORE TEAM HELPERS ──
@@ -11697,6 +11699,7 @@ async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPat
     }
   }catch(_){}
   const parsed=_parseAndVerifyBomRaw(data.raw,data.extractionPath||intendedPath);
+  parsed.rawModelOutput=(data.raw||"").slice(0,60000);
   if(data.pdfQuality)parsed.pdfQuality=data.pdfQuality;
   return parsed;
 }
@@ -11720,7 +11723,7 @@ async function extractBomBatchViaServer(pdfPath,pages,feedback,userNotes){
   const parsed={};
   for(const r of results){
     if(r.raw){
-      try{const p=_parseAndVerifyBomRaw(r.raw,r.extractionPath||"pdf-native");if(r.pdfQuality)p.pdfQuality=r.pdfQuality;parsed[r.pageNumber]={...p,extractionPath:r.extractionPath,modelUsed:r.modelUsed,stopReason:r.stopReason};}
+      try{const p=_parseAndVerifyBomRaw(r.raw,r.extractionPath||"pdf-native");p.rawModelOutput=(r.raw||"").slice(0,60000);if(r.pdfQuality)p.pdfQuality=r.pdfQuality;parsed[r.pageNumber]={...p,extractionPath:r.extractionPath,modelUsed:r.modelUsed,stopReason:r.stopReason};}
       catch(e){parsed[r.pageNumber]={error:e.message};}
     } else if(r.error){
       parsed[r.pageNumber]={error:r.error};
@@ -11828,7 +11831,9 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (PDF) response:",raw.length,"chars, stop_reason:",d.stop_reason);
         _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-        return _parseAndVerifyBomRaw(raw,"pdf-native");
+        const parsed=_parseAndVerifyBomRaw(raw,"pdf-native");
+        parsed.rawModelOutput=(raw||"").slice(0,60000);
+        return parsed;
       }
     }catch(pdfErr){
       console.warn(`[BOM EXTRACT] PDF native failed: ${pdfErr.message}, falling back to cropped region`);
@@ -11865,7 +11870,9 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         const raw=(d.content||[]).find(b=>b.type==="text")?.text||"";
         console.log("BOM extraction (cropped region) response:",raw.length,"chars, stop_reason:",d.stop_reason);
         _recordAnthropicUsage(d.model||ANTHROPIC_MODELS.OPUS,d.usage);
-        return _parseAndVerifyBomRaw(raw,"bom-region-crop");
+        const parsed=_parseAndVerifyBomRaw(raw,"bom-region-crop");
+        parsed.rawModelOutput=(raw||"").slice(0,60000);
+        return parsed;
       }
     }catch(cropErr){
       throw new Error(`Cropped BOM extraction failed: ${cropErr.message}`);
@@ -13660,6 +13667,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         let pageItems=[],pageQs=[];
         let pageRejectReasons=[];
         let pageExtractionPath=null;
+        let pageRawModelOutput=null;
         // DECISION(v1.19.1057, L3 merge + gap-fill): Two-phase retry strategy.
         // Phase 1 (broad retry): If verification flags count mismatch or sequence
         // gaps, re-extract with feedback. MERGE results from both passes (union by
@@ -13688,6 +13696,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
           if(result?.pdfQuality)pagePdfQuality=result.pdfQuality;
+          if(!pageRawModelOutput&&result?.rawModelOutput)pageRawModelOutput=result.rawModelOutput;
           // L3 Phase 1: broad retry + merge
           const verif=result?.extractionVerification;
           const shouldRetry=verif&&verif.status==="needs-review"&&pageRetryAttempts<1;
@@ -13818,6 +13827,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           rejectReasons:pageRejectReasons,
           types:pg.types||[],
           pdfQuality:pagePdfQuality,
+          rawModelOutput:pageRawModelOutput||null,
         });
         if(pageItems.length===0){
           const reason=pageRejectReasons[0]||"unknown";
@@ -13914,7 +13924,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // DECISION(v1.19.646): Filter non-BOM rows (sheet identifiers, title block artifacts,
         // drawing references) based on the 4-field structural rule + pattern + spatial checks.
         const {kept:filtered,dropped:nonBomRows}=filterNonBomRows(fuzzy);
-        const resolved=resolveInternalPartNumbers(filtered);
+        const {bom:resolved,resolvedLog}=resolveInternalPartNumbers(filtered);
         console.log(`BOM MERGE: ${all.length} raw → ${positional.length} positional → ${exact.length} exact → ${fuzzy.length} fuzzy → ${filtered.length} after non-BOM filter (${nonBomRows.length} dropped)`);
         // DECISION(v1.19.629): Sort by drawing Y-position so ARC BOM matches drawing row order.
         const sorted=sortBomByDrawingPosition(resolved);
@@ -13948,7 +13958,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         // DECISION(v1.19.1057): Count L3-recovered items for extraction report
         const l3MergeRecovered=withCompanions.filter(it=>it._extractionRetried).length;
         const l3GapFillRecovered=withCompanions.filter(it=>it._extractionGapFill).length;
-        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,positionalMerges,fuzzyMerges:fuzzyReport.merges,exactMerges,nonBomRowsFiltered:nonBomRows,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
+        return{bom:appendDefaultBomItems(withCompanions),questions:allQuestions.slice(0,10),mergeStats:{raw:all.length,positional:positional.length,exact:exact.length,fuzzy:fuzzy.length,filtered:filtered.length,positionalMerges,fuzzyMerges:fuzzyReport.merges,exactMerges,nonBomRowsFiltered:nonBomRows,resolvedLog,companionAdded:withCompanions.length-sorted.length,extractionPath:_extractionPath,perPageOutcomes:_perPageOutcomes,finalSequenceGaps,finalMaxItemNo,finalItemCount:withCompanions.length,l3MergeRecovered,l3GapFillRecovered}};
       }).catch(ex=>{
         console.error("BOM extraction failed:",ex);
         // v1.19.983: surface the catch-all failure to remote debug logs so
@@ -14086,6 +14096,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       l3GapFillRecovered:mergeStats.l3GapFillRecovered||0,
       scanQuality:(()=>{const rank={high:3,medium:2,low:1,none:0};return(mergeStats.perPageOutcomes||[]).reduce((worst,o)=>{const lvl=o.pdfQuality?.warningLevel||"none";return rank[lvl]>rank[worst]?lvl:worst;},"none");})(),
       scanDetails:(mergeStats.perPageOutcomes||[]).filter(o=>o.pdfQuality?.warningLevel&&o.pdfQuality.warningLevel!=="none").map(o=>({pageName:o.pageName,isMonochrome:o.pdfQuality.isMonochrome,estimatedDpi:o.pdfQuality.estimatedDpi,warningLevel:o.pdfQuality.warningLevel})),
+      internalPnResolutions:mergeStats.resolvedLog||[],
       timestamp:Date.now(),
       version:APP_VERSION,
     }:null;
@@ -14349,12 +14360,15 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
             }
           }catch(e){console.warn("[BG PRICING] PurchasePrices fetch failed:",e.message);}
         }
+        const bcPnSubstitutions=[];
         updatedBom=updatedBom.map(r=>{
           const key=String(r.id);
           if(key in bcMap){
             const hasPrice=bcMap[key].unitPrice>0;
             const hasPpDate=!!bcMap[key]._ppHasDate;
-            return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,
+            const newPn=bcMap[key].bcNumber||r.partNumber;
+            if(newPn!==r.partNumber)bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.partNumber,to:newPn,reason:"BC fuzzy match"});
+            return{...r,partNumber:newPn,
               ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
               priceSource:"bc",
               ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
@@ -14363,6 +14377,10 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
           }
           return r;
         });
+        if(bcPnSubstitutions.length>0){
+          console.warn(`[BG PRICING] ${bcPnSubstitutions.length} PN substitution(s):`,bcPnSubstitutions.map(s=>`${s.from} → ${s.to}`));
+          try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){window.logDebugEntry({severity:"info",source:"bcPricing",message:`${bcPnSubstitutions.length} PN substitution(s) during background pricing`,extra:{projectId,panelId,substitutions:bcPnSubstitutions.slice(0,20)}});}}catch(_){}
+        }
         console.log(`[BG PRICING] BC: ${bcCount} matched of ${eligible.length} eligible`);
       }
     }catch(ex){console.warn("[BG PRICING] BC phase failed:",ex);}
@@ -24050,7 +24068,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               croppedBomMediaType="image/jpeg";
             }
             const notes=unit.regionNote?(rgnNotes+"\nThis image is a cropped BOM region: "+unit.regionNote):null;
-            return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes};
+            return{pageNumber:pg.pageNumber,croppedBomImage,croppedBomMediaType,notes,bomRegion:unit.bomRegion||null};
           }));
           const _reHb=bgHeartbeat(_bgKey(projectId,panel.id),3,55,`Batch extracting ${_reBatchEligible.length} BOM pages…`);
           try{
@@ -24124,7 +24142,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fuzzyDedup=fuzzyReport.items;
     // DECISION(v1.19.646): Non-BOM row filter (structural + pattern + spatial).
     const {kept:reFiltered,dropped:reNonBomRows}=filterNonBomRows(fuzzyDedup);
-    const reResolved=resolveInternalPartNumbers(reFiltered);
+    const {bom:reResolved,resolvedLog:reResolvedLog}=resolveInternalPartNumbers(reFiltered);
     console.log(`BOM MERGE: ${all.length} raw → ${positionalDedup.length} positional → ${exactDedup.length} exact → ${fuzzyDedup.length} fuzzy → ${reFiltered.length} after non-BOM filter (${reNonBomRows.length} dropped)`);
     const corrected=applyPartCorrections(partCorrections,reResolved.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
@@ -24173,6 +24191,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       snippetCorrectionCount:reSnippetCorrections.length,
       snippetCorrectionsLog:reSnippetCorrections.slice(-50),
       nonBomRowsFiltered:reNonBomRows,
+      internalPnResolutions:reResolvedLog||[],
       extractionPath:_reExtractionPath,
       finalSequenceGaps:_reSeqGaps,finalMaxItemNo:_reMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
@@ -24345,7 +24364,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const fbFuzzy=fbFuzzyReport.items;
     // DECISION(v1.19.646): Non-BOM row filter (structural + pattern + spatial).
     const {kept:fbFiltered,dropped:fbNonBomRows}=filterNonBomRows(fbFuzzy);
-    const fbResolved=resolveInternalPartNumbers(fbFiltered);
+    const {bom:fbResolved,resolvedLog:fbResolvedLog}=resolveInternalPartNumbers(fbFiltered);
     console.log(`BOM MERGE (feedback): ${fbFuzzy.length} fuzzy → ${fbFiltered.length} after non-BOM filter (${fbNonBomRows.length} dropped)`);
     const fbCorrected=applyPartCorrections(partCorrections,fbResolved.map(row=>{
       const sugg=findPartSuggestion(partLibrary,row);
@@ -24388,6 +24407,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       snippetCorrectionCount:fbSnippetCorrections.length,
       snippetCorrectionsLog:fbSnippetCorrections.slice(-50),
       nonBomRowsFiltered:fbNonBomRows,
+      internalPnResolutions:fbResolvedLog||[],
       finalSequenceGaps:_fbSeqGaps,finalMaxItemNo:_fbMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
     };
@@ -25561,18 +25581,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               }
             }catch(e){console.warn("BC PurchasePrices fetch failed:",e.message);}
           }
+          const bcPnSubstitutions=[];
           updatedBom=updatedBom.map(r=>{
             const key=String(r.id);
             if(key in bcMap){
               const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);
               const hasPrice=bcMap[key].unitPrice>0;
               const hasPpDate=!!bcMap[key]._ppHasDate;
-              // DECISION(v1.19.481): Only set priceDate when price is actually > 0.
-              // DECISION(v1.19.638): Don't overwrite unitPrice with $0 when BC has nothing —
-              // preserves any cached / scraper / AI price.
-              // DECISION(v1.19.641): priceDate is stamped ONLY when PP has a Starting_Date.
-              // No fabricated dates. No today's-date. BC Purchase Card is sole source.
-              return{...r,partNumber:bcMap[key].bcNumber||r.partNumber,
+              const newPn=bcMap[key].bcNumber||r.partNumber;
+              if(newPn!==r.partNumber)bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.partNumber,to:newPn,reason:"BC fuzzy match"});
+              return{...r,partNumber:newPn,
                 ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
                 priceSource:"bc",
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
@@ -25581,6 +25599,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             return r;
           });
+          if(bcPnSubstitutions.length>0){
+            console.warn(`[PRICING] ${bcPnSubstitutions.length} PN substitution(s):`,bcPnSubstitutions.map(s=>`${s.from} → ${s.to}`));
+            try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){window.logDebugEntry({severity:"info",source:"bcPricing",message:`${bcPnSubstitutions.length} PN substitution(s) during pricing`,extra:{projectId:project?.id,panelId:panel?.id,substitutions:bcPnSubstitutions.slice(0,20)}});}}catch(_){}
+          }
           if(Object.keys(fuzzySugg).length>0){
             setBcFuzzySuggestions(prev=>({...prev,...fuzzySugg}));
           }
