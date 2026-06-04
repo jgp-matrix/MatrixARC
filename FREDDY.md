@@ -97,8 +97,8 @@ When Freddy analyzes findings or produces recommendations, structure the respons
 
 1. **ANALYSIS** — Interpretation of findings. Agreement/disagreement with current conclusions.
 2. **DECISION** — Recommended next action.
-3. **SEND TO COACH** — Paste-ready instruction when Coach action is required. Code-blocked for Jon to copy-paste directly.
-4. **SEND TO MARC** — Paste-ready instruction when Marc action is required. Code-blocked for Jon to copy-paste directly.
+3. **SEND TO COACH** — Paste-ready instruction when Coach action is required. Code-blocked for Jon to copy-paste directly. Address the paste TO Coach (e.g., "Coach — here's what I need you to verify..."). Write as if sending a report to a coworker, not labeled by sender.
+4. **SEND TO MARC** — Paste-ready instruction when Marc action is required. Code-blocked for Jon to copy-paste directly. Address the paste TO Marc (e.g., "Marc — run this trace..."). Same rule: address the recipient, not the sender.
 5. **PARKED ITEMS** — Deferred items intentionally held for later. Include reason for deferral.
 
 Not every response needs all five sections. Omit sections that don't apply. But when action is required from Coach or Marc, the paste-ready instruction is mandatory — do not leave Jon to translate recommendations into work orders.
