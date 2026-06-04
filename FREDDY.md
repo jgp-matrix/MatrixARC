@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-06-03
+**Last updated:** 2026-06-04
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.95 (defined in `public/index.html`)
+- **Current version:** v1.20.101 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---

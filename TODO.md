@@ -1056,7 +1056,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     determinism check. Not an H9 regression — pipeline preserved all 21 AI items
     (21→21→21→21, zero loss at every stage).
 
-57. **OPEN** — Re-extraction batch path missing bomRegion (Coach C14/C15, promoted to H10).
+57. **RESOLVED** — `4861a967` (v1.20.98, deployed 2026-06-04) — Re-extraction batch path missing bomRegion.
     `app.jsx:22481` constructs batch page objects WITHOUT `bomRegion` — initial extraction
     at line 12305 correctly includes `bomRegion:unit.bomRegion||null`. When
     `extractBomBatchViaServer` maps these pages, `pg.bomRegion` is undefined→null, Cloud
@@ -1729,19 +1729,21 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (PRJ402119 Line 1 empty-BOM trace, Coach C23).
     Owner: Coach (C23) → Marc (implemented A+B).
 
-95. **OPEN** (HIGH) — PRJ402119 Line 1 PN accuracy: extraction errors on post-#94 run.
-    Error scoring IS NOT SETTLED — ground truth itself is in dispute. Three conflicting source
-    readings exist (Jon's screenshot, Marc's drawing zoom, extracted PN). Do NOT treat the
-    error count as final until an authoritative PN list is provided by Jon/engineering source.
+95. **OPEN** (HIGH) — PRJ402119 Line 1 PN accuracy: ground truth SETTLED (2026-06-04).
+    Marc read the drawing via browser. Score: **7/13 correct (54%), 6/13 wrong (46%).**
 
-    **UNAMBIGUOUS ERRORS (PN doesn't match the family named in its own description):**
-    - Item 8 main: TYD15X3/4PWS → MPWS (compound PN w/ slash, mangled; description correct)
-    - Item 12: LNM25BPC100 → LNMQ3RP-100 (restructured, phantom "Q")
-    - Item 13: LNM40BPC100 → LNMQ8RP-100 (same pattern)
+    **CONFIRMED ERRORS (against authoritative drawing):**
+    - Item 3: 3038338 → 3036038 (8→6 at pos 4, 3→0 at pos 5)
+    - Item 5: 3214314 → 3214014 (3→0 at pos 5)
+    - Item 7: 0807012 → 0907012 (8→9 at pos 2)
+    - Item 8: TYD15X3WPW6 → MPWS (wholesale misread + slash-split pipeline bug, fixed in #97)
+    - Item 8 cover: TYD2CW6 → TYD2CWS (6→S)
+    - Item 12: LNM25BPK100 → LNMQ3RP-100 (restructured: 25B→Q3R)
+    - Item 13: LNM40BPK100 → LNMQ8RP-100 (restructured: 40B→Q8R)
+    **CONFIRMED CORRECT:** Items 1,2,4,6,9,10,11. Item 10 SECM25G confirmed correct (Freddy was right).
+    Error classes: digit substitution (items 3,5,7) + structural misread (items 8,12,13) on pdf-native.
 
-    **CONTESTED (do NOT score — ground truth in dispute):**
-    - Items 1, 2, 3, 5, 7: digit-level disputes (2↔3, 8↔6, 3↔0, 8↔9) — unadjudicated.
-      Multiple readers (human and AI) disagree on what the source drawing says.
+    Prior "CONTESTED" items resolved — all originally disputed items now scored.
     - Item 10: Marc scored SECM25G as WRONG vs source "SECME5G" — but description says
       "M25 gray" and Hubbell M25 = SECM25G. Extracted value is LIKELY CORRECT; Marc's source
       transcription was the error. The Claudes are misreading the drawing at ~the rate they
@@ -1789,3 +1791,51 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     typed part numbers, no glyph-reading required. For customers who provide Excel BOMs
     alongside drawings, cross-check extracted PNs against the spreadsheet and flag mismatches.
     Discovered: PRJ402119 diagnostic — Jon confirmed both candidate PNs resolve in BC (2026-06-02).
+
+## Round 18 (extraction pipeline audit, 2026-06-04)
+
+97. **RESOLVED** — `5f3a0b21` (v1.20.96, deployed 2026-06-04) — Slash-split × positional-dedup
+    destructive interaction. The slash-split code at L11643 split compound PNs at "/" into sibling
+    rows sharing identical Y coordinates. Positional dedup then merged these siblings, systematically
+    dropping the MAIN part number (segment 0) because the sub-part's description was longer
+    (due to appended "(sub-part from above)" text). Deterministic on every compound PN with "/".
+    Proven on PRJ402119 Item 8: drawing shows "TYD15X3WPW6" (no slash), model fabricated a "/"
+    in its output, slash-split created two rows, positional dedup destroyed the main PN.
+    Fix: deleted the slash-split block entirely. Companion splitting is handled safely by
+    `splitCompanionParts` via the structured `additionalPartNumbers` array. Also plumbed
+    positional-dedup merge reporting into all 3 extraction paths.
+
+98. **OPEN** (HIGH) — Foundational extraction accuracy audit (Step Zero instrumentation shipped).
+    Raw model output persistence (v1.20.98-99): `rawModelOutput` captured on all extraction paths,
+    stored in `extractionReport.perPageOutcomes`. Stage J (`resolveInternalPartNumbers`) now returns
+    `{bom, resolvedLog}` persisted as `internalPnResolutions`. Stage R (BC pricing PN substitution)
+    logged via `logDebugEntry` to Debug Logs. Stages M/N/O already had `learnedCorrectionsLog`.
+    Full attribution chain: raw output → correction log → final BOM. Any discrepancy explained.
+    BLOCKED on ground-truth measurement (BC match is circular). Next: Q3 text-layer measurement
+    on D2 sample (PRJ402113, 402100, 402101, 402076, 402092).
+    Discovered: 2026-06-04 session — #98 evidence pull showed ARC Cross coverage as primary
+    differentiator between good/bad extractions.
+
+99. **OPEN** (HIGH) — Model partial-read on long single-column BOMs.
+    PRJ402114 (47-item BOM, single column, single page): model returned ONLY items 26-47.
+    rawModelOutput confirms first item = itemNo:"26", stopReason = "end_turn" (not truncation).
+    Ruled out: page-scoping (1 BOM page processed, correct), crop-cutoff (full table within crop
+    at x=0.47 y=0.03 w=0.51 h=0.81). The model simply stopped reading partway through the table.
+    This is a COMPLETENESS failure distinct from ACCURACY (#95). BC match % can be 100% on a BOM
+    missing half its rows — the "good bucket" from #98 evidence pull is compromised.
+    The re-extraction path lacks L3 retry/gap-fill (initial path only, L13680-13808). This is the
+    root cause of differential completeness between initial and re-extraction.
+    Discovered: 2026-06-04 — C28 validation + #99 diagnostic.
+
+100. **OPEN** (MEDIUM) — Completeness guarantee: permanent fix requires text-layer row counting.
+     Interim shipped (v1.20.100-101): warn-only completeness flag. PART A: extractionVerification
+     (was discarded per C15) now captured on re-extract + feedback paths; completenessWarning flag
+     computed and stored. PART B: missing-from-END detection added to `_parseAndVerifyBomRaw`.
+     UI: ScanResultsBanner wired into BOM table (was dead code since written), completenessWarning
+     rendered as top concern with critical orange styling.
+     VALIDATED: fires on PRJ402114 (items 1-25 missing), silent on complete BOMs, warn-only framing.
+     SCOPE LIMIT: detects missing-from-start + interior gaps. Clean bottom-truncation (1-22 of 47,
+     no gap) NOT detectable by continuity — requires text-layer row count (Pillar 1a, gated on Q3).
+     Permanent fix: two pillars — (1) independent row-count expectation via text-layer parsing,
+     (2) deterministic targeted recovery (L3 on all paths) + loud flag if unclosable.
+     Discovered: 2026-06-04 — Coach C29 supplement + Freddy Brief.

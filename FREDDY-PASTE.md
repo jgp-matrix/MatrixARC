@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.95 (defined in `public/index.html`)
+- **Current version:** v1.20.101 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -412,89 +412,53 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# SESSION STATE — 2026-06-04 (Freddy session close)
+# Session State — 2026-06-04 22:00 MDT
 
-## VERSION
-v1.20.101 deployed (latest).
+## Version
+v1.20.101 (deployed 2026-06-04). Completeness warning + ScanResultsBanner wired in.
 
-## THE HEADLINE FINDING (most important of the session)
-ARC silently drops large contiguous blocks of BOM rows — proven on PRJ402114 (GOOD-bucket, 100%-BC):
-full BOM 1-47, extraction returned ONLY 26-47. rawModelOutput first item = itemNo:"26", model stopped
-at end_turn (NOT truncation). Loss is UPSTREAM — model PARTIAL-READ the table; pipeline kept all it
-received. Ruled out: page-scoping, crop-cutoff (full table confirmed inside crop). The #98 "good
-bucket" is COMPROMISED — BC match % can be 100% on a BOM missing half its rows. Caught ONLY because
-Step Zero captures raw output. COMPLETENESS failure (rows missing), distinct from ACCURACY (wrong PNs).
+## Recent Commits (last 15)
+- 2420bdfb Session artifacts: Coach log + investigation docs for #95/#98
+- 86637744 Update FREDDY-PASTE.md session state for 2026-06-04 closeout
+- 488e56e6 Release v1.20.101
+- 42ff249a Release v1.20.100
+- 9d7eee48 Release v1.20.99
+- 4861a967 Release v1.20.98
+- 70e870ec Add Briefs-as-pastes convention to FREDDY.md
+- 5f3a0b21 Release v1.20.96
+- 3c440090 Add paste addressing rule to CLAUDE.md
+- 1390bcea Update paste formatting: address TO recipient, not labeled by sender
+- d1209c6d Add Plan-and-Trace Routing rule to FREDDY.md
+- 7941febc Add TODO #96: Windows facilitator app for three-role Claude workflow
+- a4495418 Update handoff files for next session
+- bf5aea4f Correct #95: ground truth in dispute, error scoring unsettled
+- 89075d95 #94 RESOLVED (v1.20.95) + #95 filed + #84 updated + C23 closure
 
-## TWO INVESTIGATIONS LIVE
+## Shipped This Session
+- [DONE] **#97 — Slash-split removed + positional-dedup reporting** (v1.20.96). Code bug: slash-split × positional-dedup destroyed main PN on compound part numbers. Proven on PRJ402119 Item 8.
+- [DONE] **#98 Step Zero — Raw model output + correction log** (v1.20.98-99). rawModelOutput captured on all paths, Stage J resolvedLog persisted, Stage R bcPricing logged to Debug Logs.
+- [DONE] **#57 — bomRegion on re-extraction batch** (v1.20.98). One-field fix brings re-extraction to parity with initial extraction.
+- [DONE] **#100 Interim — Completeness warning** (v1.20.100-101). extractionVerification wired on re-extract+feedback, missing-from-end detection, ScanResultsBanner wired into UI (was dead code).
+- [DONE] **#95 ground truth settled** — 7/13 correct (54%), 6/13 wrong. Drawing read by Marc via browser. Item 10 SECM25G confirmed correct.
+- [DONE] **FREDDY.md protocol updates** — Plan-and-Trace Routing, Briefs-as-pastes, paste addressing rule.
 
-**#98 ACCURACY (Foundational Audit)** — Analyst Review with Coach. Thesis: unverified TRANSFORM stages
-(Stage J regex-guess; Stage R BC-pricing overwrite) silently corrupt correct reads; ARC Cross
-human-seeded crosses LEGITIMATE (keep). De-layer = convert blind stages to verify-once-retain, NOT rip
-out. BLOCKED on ground-truth measurement (BC match is circular). Resolving experiment: ground-truth
-PRJ402096 (16 crosses) — ARC Cross safety-net or mirage?
+## Headline Finding
+Model partial-read: PRJ402114 (good-bucket, 100% BC) returned only items 26-47 of 47. COMPLETENESS failure distinct from ACCURACY. BC match % can be 100% on half-missing BOM. ScanResultsBanner was dead code — never rendered since written.
 
-**#100 COMPLETENESS GUARANTEE** — Brief delivered, Coach Supplement C29 returned. Permanent fix = two
-pillars: (1) INDEPENDENT row-count expectation [1a text-layer (strongest), 1b item-number continuity,
-1c separate detectedLineCount]; (2) DETERMINISTIC targeted recovery (loop-until-complete) + loud flag
-if unclosable. Root: completeness depends on single-pass model luck + L3 retry (INITIAL path only).
+## Two Live Investigations
+- **#98 ACCURACY** — Analyst Review with Coach. Blocked on ground-truth measurement. Next: Q3 text-layer measurement on D2 sample.
+- **#100 COMPLETENESS** — Interim shipped. Permanent fix = text-layer row counting (Pillar 1a) + L3 on all paths (Pillar 2).
 
-## COACH C29 KEY FINDINGS
-- L3 retry/gap-fill INITIAL path only (L13680-13808); re-extract+feedback have NONE. L3 Phase 2 IS
-  Pillar 2 — built, single-path, extractable; loop is mechanical (~$0.02-0.05/iter).
-- Pillar 1a text-layer: pdf.js loaded, getTextContent() at L29500, hasVectorText gates existence.
-  Client parser ~50-80 lines.
-- Pillar 1b continuity: half-built in _parseAndVerifyBomRaw (L11602-11616).
-- CRITICAL (C29 #6): BOTTOM-TRUNCATION (1-22 of 47, no gap) UNDETECTABLE by continuity. ONLY
-  text-layer count (1a) catches it. Text-layer is the critical path.
+## Work Queue
+1. **Q3 text-layer measurement** on D2 sample (PRJ402113, 402100, 402101, 402076, 402092)
+2. #98 ground-truth experiment on PRJ402096 (ARC Cross safety-net or mirage)
+3. #100 permanent fix — architect after Q3 data
+4. #92 Phases 2+ (H3-H5 foreground-seizing suppression)
+5. #64 BC concurrency sweep
 
-## NEXT STEP (start here)
-Q3 TEXT-LAYER MEASUREMENT on D2 sample: does programmatic text extraction yield clean row counts +
-item numbers; what fraction of drawings have usable text layers? Determines if Pillar 1a is the spine.
-Then Q1 (partial-read frequency on long tables), Q2 (confirm L3 actually recovers on initial path —
-INFERRED, not proven) → architect → build across all paths.
+## Working Tree
+- Branch: master (up to date with origin/master at 2420bdfb)
+- Clean: no uncommitted changes
 
-## D2 SAMPLE (provided by Jon)
-ARC is on TEST BC env — nothing breaks, all freely re-extractable. Projects: PRJ402113, 402100, 402101,
-402076, 402092.
-FIRST ACTION NEXT SESSION (Marc — characterize, front half of Q3): per project report page count,
-BOM page(s), BOM row count, customer/format, hasVectorText. Sorts them into Q1 vs Q3 roles.
-KNOWN: 402113 = FLSmidth L1, 84 items, 45% BC (BAD bucket) — strong Q1+Q3 candidate.
-
-## D1 INTERIM — SHIPPED + VALIDATED (v1.20.101)
-Warn-only completeness flag. PART A: extractionVerification (was discarded, C15) now captured on
-re-extract+feedback; completenessWarning computed+stored. PART B: missing-from-END detection added to
-_parseAndVerifyBomRaw. UI: completenessWarning rendered as top concern, critical styling.
-VALIDATED: amber banner fires on 402114 (items 1-25 missing); 402097 (complete) does NOT false-flag;
-warn-only (no "complete" language); all 3 paths.
-SCOPE LIMIT: validated for missing-from-start + interior gaps ONLY. Clean bottom-truncation NOT covered
-— gated on Q3/text-layer. Partial net, NOT permanent fix.
-
-## SYSTEMIC DISCOVERY — ScanResultsBanner was DEAD CODE
-Defined L22027, NEVER rendered in JSX since written. It surfaces ALL scan concerns (fuzzy merges,
-sequence gaps, suspect parts, L3 recovery, audit flags) — NONE ever visible to Noah/sales. v1.20.101
-wires it in for the first time. Same disease as discarded raw output + silent transforms (3rd instance
-today). "No complaints" never meant "no flags" — flags were never shown. NEXT-SESSION: review what
-users now see; strengthens #98 urgency.
-
-## OPEN DECISIONS
-D1 DONE (shipped+validated). D2 DONE (sample above).
-
-## PARKED
-- PRJ402096 ground-truth (ARC Cross helps-or-hides) — #98 measurement.
-- Cross-reason TODO (NEW high-pri, Jon approved): when user crosses/supersedes, ask MFR-discontinuation
-  vs Matrix-internal-standard; apply discontinuations universally, Matrix subs as scoped preferences.
-- Stage R: 0 fires on mostly-wrong-PN panel (rare); NOT cleared on GOOD panels; logging debug-only.
-  Revisit #98.
-- Poe "Claude-OCR" REJECTED (3rd-party Haiku wrapper). Real version = programmatic text-layer (1a).
-
-## SHIPPED THIS SESSION
-v1.20.96 #97 slash-split removed + positional-drop reporting. v1.20.98 Step Zero core (raw output
-initial + #57 + correction log). v1.20.99 C28 raw output on re-extract/feedback (validated). v1.20.100/
-101 #100 interim + ScanResultsBanner wired. FREDDY.md: d1209c6d (routing rule), 70e870ec (Briefs-as-
-pastes). #95 settled 7/13; Item 10 confirmed correct.
-
-## #95 GROUND TRUTH (settled this session)
-PRJ402119 Line 1: 7/13 correct (54%), 6/13 wrong (46%). Drawing read by Marc via browser.
-Errors: Item 3 (3038338→3036038), Item 5 (3214314→3214014), Item 7 (0807012→0907012),
-Item 8 (TYD15X3WPW6→MPWS, slash-split bug now fixed), Items 12-13 (LNM25BPK100→LNMQ3RP-100,
-LNM40BPK100→LNMQ8RP-100). Item 10 SECM25G confirmed CORRECT (Freddy was right).
+## Open TODOs
+58 OPEN findings in TODO.md
