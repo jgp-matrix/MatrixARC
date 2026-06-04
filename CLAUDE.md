@@ -377,6 +377,14 @@ Freddy lives in Claude.ai (browser) with no repo access. When Marc or Coach need
 
 This applies to any content longer than ~50 lines. Short messages (status updates, quick answers, work orders) can still be relayed via chat.
 
+### Paste addressing rule
+
+All paste-ready messages and file-based deliverables must be addressed TO the recipient, not labeled by the sender. Write as if sending a report to a coworker:
+- **Good:** "Coach — here are the trace findings from the Item 8 investigation..."
+- **Bad:** "MARC RELAY — #95 Item 8 trace results..."
+
+This applies to: code-block pastes for Coach/Marc, file headers for Freddy deliverables, and any cross-role message Jon relays. The recipient needs to see who the message is for, not who composed it.
+
 ### Discipline for non-trivial work items (H-items)
 
 1. **Baseline** — capture regression test data before any changes.
