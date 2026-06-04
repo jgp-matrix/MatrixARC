@@ -1773,6 +1773,14 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (PRJ402119 Line 1 post-#94 validation). Corrected same day after
     Marc's source comparison revealed ground-truth disputes.
 
+96. **OPEN** (IDEA) — Windows facilitator app for three-role Claude workflow.
+    Currently Jon manually copy-pastes messages between CCD (Marc), Terminal (Coach), and
+    Claude.ai (Freddy). A lightweight Windows desktop app could automate or streamline this
+    relay — clipboard monitoring, paste routing, session status dashboard, maybe direct API
+    integration for the Claude.ai leg. Would eliminate the primary bottleneck in the
+    three-role workflow.
+    Discovered: 2026-06-03 (Jon idea during close out).
+
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source
