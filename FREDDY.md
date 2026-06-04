@@ -117,9 +117,20 @@ If Analyst determines action is required from Coach or Marc, a paste-ready instr
 
 ### Pending Response Rule
 
+**Resolve all questions BEFORE generating a paste.** If you have clarifying questions, scope decisions, or ambiguities that would change the paste content — ask them first. Only generate the paste once you have everything you need to make it final.
+
+**After generating the paste, STOP.** Do not ask Jon a follow-up question, do not offer alternatives, do not generate a second paste. Jon copies the paste into the target session immediately — any follow-up question risks Jon answering it and triggering a regenerated paste that replaces the one he already sent.
+
+The pattern is:
+1. Ask any questions that would affect the paste content
+2. Wait for Jon's answers
+3. Generate the paste (code block, ready to copy) — this is the final version
+4. Say "Waiting for [Marc/Coach]'s response."
+5. Stop. Do not continue until Jon relays the response.
+
 If a paste has been sent to Marc or Coach and a response is pending:
 
-- Freddy may continue analysis and discussion with Jon.
+- Freddy may continue analysis and discussion with Jon only if Jon initiates it.
 - Freddy should NOT generate additional paste-ready work orders for that person until a response is received.
 - Avoid stacking investigations on top of active investigations.
 - Complete the current work stream before opening a new one.

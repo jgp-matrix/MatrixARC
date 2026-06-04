@@ -1506,6 +1506,14 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
         always comply on scanned drawings with small text. May need stronger prompt or a
         post-processing pattern match ("WITH COVER", "WITH BASE", "WITH SOCKET").
     Discovered: PRJ402119 variance measurement (2026-06-02).
+    **Update (2026-06-03):** Both symptoms NOT REPRODUCED on the post-#94 extraction run
+    (v1.20.95). LNM40BPK100 (last row) AND TYD2CW6 (companion part) both extracted. The #94
+    inclusion fix changed the image source from in-memory addFiles render to ensureDataUrl
+    (Storage-fetched), which may have altered the image the model sees. Truncation and
+    companion-miss may have been artifacts of the prior image path rather than systematic
+    prompt/model failures. Keep OPEN pending reproduction on another scanned BOM project;
+    if not reproduced after 3+ projects, mark STALE. See #95 for fidelity issues on the same
+    extraction run.
 
 86. **RESOLVED** (CRITICAL) — Cross-project BOM contamination via stale extraction callback + reused ProjectView.
     Root cause: two issues combined. (1) Panel IDs are sequential (`panel-1`, `panel-2`) and
@@ -1701,7 +1709,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (C18 extraction architecture priority plan).
     Owner: Coach (design) → Marc (implement).
 
-94. **OPEN** (HIGH) — dataUrl-gating bug: BOM extraction silently skipped when pages lack dataUrl.
+94. **RESOLVED** — v1.20.95 (2026-06-03). dataUrl-gating bug: BOM extraction silently skipped when pages lack dataUrl.
     `confirmAndExtract` (line 23353) and `runExtractionTask` (line 13512) filtered BOM pages on
     `p.dataUrl` — an ephemeral field stripped by every Firestore save. After a save-reload cycle
     (or component remount during the awaitingConfirm pause), BOM-typed pages with only `storageUrl`
@@ -1720,6 +1728,39 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
          have `dataUrl`, but the inconsistency should be fixed for robustness.
     Discovered: 2026-06-03 (PRJ402119 Line 1 empty-BOM trace, Coach C23).
     Owner: Coach (C23) → Marc (implemented A+B).
+
+95. **OPEN** (HIGH) — PRJ402119 Line 1 PN fidelity: 8/13 part numbers wrong on post-#94 extraction.
+    Ground truth captured from source BOM image (Noah, 2026-06-03). Two failure classes:
+
+    **Digit-substitution class (vision/OCR fidelity — same family as May crop-path B↔8/I↔1):**
+    - Item 1: SCE-1412PCW → SCE-1413PCW (2→3)
+    - Item 2: SCE-14P12AL → SCE-14P13AL (2→3)
+    - Item 3: 3038338 → 3036038 (8→6, 3→0) + QTY 8→9
+    - Item 5: 3214314 → 3214014 (3→0)
+    - Item 7: 0807012 → 0907012 (8→9)
+
+    **Wholesale-replacement class (NOT OCR — suspect ARC Cross/auto-replace or normalization):**
+    - Item 8: TYD15X3WPW6 → MPWS (description CORRECT, PN wholesale wrong) + cover TYD2CW6 → TYD2CWS (6→S)
+    - Item 12: LNM25BPK100 → LNMQ3RP-100
+    - Item 13: LNM40BPK100 → LNMQ8RP-100
+    (note the inserted "Q" in items 12-13 — source has no Q)
+
+    **Leading hypothesis (couples to #94):** The #94 inclusion fix changed the image source from
+    in-memory addFiles render (original PDF resolution) to ensureDataUrl (Storage-fetched JPEG).
+    If the Storage image is lower-res or more-compressed than the original render, that would
+    directly cause the digit-substitution class. Test: compare image bytes/resolution from
+    ensureDataUrl vs addFiles render for these pages.
+
+    **Next-session trace (evidence-first, do NOT design fix):** Marc to trace one failing PN
+    end-to-end: raw model output → parsed row → normalization → ARC Cross/auto-replace → BC
+    lookup → final UI. Start with Item 8 (MPWS) — the right-description/wrong-PN signature
+    is the highest-value discriminator between OCR vs auto-replace. If MPWS appears in the raw
+    model output, it's vision. If it appears post-processing, it's auto-replace (#C5 class).
+
+    Related: #94 (inclusion fix that changed image source), #84 (same project, truncation/companion
+    symptoms NOT reproduced on this run), #85 (Excel cross-check — load-bearing for disambiguating
+    valid-PN-to-valid-PN misreads like item 3), C5 (auto-cross silent corruption, OPEN).
+    Discovered: 2026-06-03 (PRJ402119 Line 1 post-#94 validation, Jon + Noah ground truth).
 
 85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread

@@ -1166,6 +1166,20 @@ Read-only investigation of PRJ402119 returning empty BOM. Recovered current repo
 
 **Deliverable:** `PRJ402119-EXTRACTION-REGRESSION-FINDINGS.md`
 
+### C23 — 2026-06-03 — PRJ402119 Line 1 dataUrl Gating Bug (CONFIRMED + VALIDATED)
+
+**Root cause confirmed:** Three filter sites on the initial extraction path (`confirmAndExtract` line 23353, `runExtractionTask` line 13512, zoom detection line 23242) gated BOM page inclusion on `&& p.dataUrl` — an ephemeral field stripped on every Firestore save. The re-extract path, validation path, and every other extraction-adjacent path correctly used `(p.dataUrl || p.storageUrl)` + `ensureDataUrl`. The asymmetry was a code defect, not a design choice.
+
+**Marc's trace:** Ruled out all 3 prior hypotheses (pages 3-4 were BOM-typed with AI regions; first extraction not re-extract; regions correct). Fourth path — the dataUrl filter — was the root cause.
+
+**Fix design (C23):** Three filter changes + one `ensureDataUrl` insertion, ~6 lines. Extraction Path Change Protocol applies (6 rules). Sites A+B implemented by Marc (v1.20.95), Site C carved out as #94a.
+
+**Validated in production (v1.20.95):** Jon ran extraction on Line 1 fresh-loaded (storageUrl-only pages). All 13 source items extracted (0 items pre-fix). Inclusion fix confirmed.
+
+**Notable:** #84's two symptoms (last-row truncation on LNM40BPK100, companion-part miss on TYD2CW6) were BOTH ABSENT on this run — both items came through. May have been artifacts of the prior image path (in-memory addFiles render) rather than systematic failures. #84 updated: not-reproduced pending further evidence.
+
+**New finding — TODO #95 (HIGH):** 8 of 13 PNs extracted wrong. Two failure classes: digit-substitution (5 items, OCR/vision fidelity) and wholesale-replacement (3 items, suspect ARC Cross or post-processing). Leading hypothesis: the #94 fix changed the image source from in-memory render to Storage-fetched JPEG via `ensureDataUrl` — if the Storage image is lower-fidelity, it directly causes the digit-substitution class. Next-session trace: Item 8 (MPWS, right-description/wrong-PN) end-to-end to discriminate OCR vs auto-replace.
+
 ## Open Questions for Jon
 
 1. How many concurrent users / active projects does ARC typically serve? Trying to calibrate whether the monolith's complexity ceiling is a near-term or long-term concern.
