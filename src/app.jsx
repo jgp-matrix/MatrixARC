@@ -14710,12 +14710,13 @@ async function classifyBomInputTier(page, pdfQualityData) {
     console.warn('[classifyBomInputTier] PDF text check failed:', e.message);
   }
 
-  if (regionTextChars > 20) return 'text-layer';
+  const textThreshold = bomRegion ? 20 : 500;
+  if (regionTextChars > textThreshold) return 'text-layer';
 
   const q = pdfQualityData || null;
   if (q) {
-    if (q.isMonochrome) return 'scan';
-    if (q.isScanned) return 'bitmap';
+    if (q.isMonochrome && regionTextChars === 0) return 'scan';
+    if (q.imageCount >= 2) return 'bitmap';
   }
   return 'vector-stroke';
 }
