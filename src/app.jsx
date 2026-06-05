@@ -14665,6 +14665,61 @@ function resolveBomRegion(pg){
   }
   return null;
 }
+
+async function classifyBomInputTier(page, pdfQualityData) {
+  if (!page.originalPdfPath || !page.pageNumber) return 'no-pdf';
+
+  const bomRegion = resolveBomRegion(page);
+  let regionTextChars = 0;
+
+  try {
+    await window.pdfjsReady();
+    const pdfjs = window._pdfjs;
+    const ref = fbStorage.ref(page.originalPdfPath);
+    const url = await ref.getDownloadURL();
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('fetch ' + resp.status);
+    const buf = await resp.arrayBuffer();
+    if (!buf.byteLength) return 'no-pdf';
+    const pdf = await pdfjs.getDocument({data: buf}).promise;
+    if (page.pageNumber > pdf.numPages) throw new Error('page out of range');
+    const pg = await pdf.getPage(page.pageNumber);
+    const tc = await pg.getTextContent();
+    const vp = pg.getViewport({scale: 1});
+
+    if (bomRegion) {
+      const rL = bomRegion.x * vp.width;
+      const rR = (bomRegion.x + bomRegion.w) * vp.width;
+      const rTop = (1 - bomRegion.y) * vp.height;
+      const rBot = (1 - bomRegion.y - bomRegion.h) * vp.height;
+      for (const item of tc.items) {
+        if (!item.str || !item.str.trim()) continue;
+        const ix = item.transform[4];
+        const iy = item.transform[5];
+        if (ix >= rL && ix <= rR && iy >= rBot && iy <= rTop) {
+          regionTextChars += item.str.length;
+        }
+      }
+    } else {
+      for (const item of tc.items) {
+        if (item.str) regionTextChars += item.str.length;
+      }
+    }
+    pdf.destroy();
+  } catch (e) {
+    console.warn('[classifyBomInputTier] PDF text check failed:', e.message);
+  }
+
+  if (regionTextChars > 20) return 'text-layer';
+
+  const q = pdfQualityData || null;
+  if (q) {
+    if (q.isMonochrome) return 'scan';
+    if (q.isScanned) return 'bitmap';
+  }
+  return 'vector-stroke';
+}
+
 // DECISION(v1.19.819, ECO Phase 2.J): _basePages filters out ECO-tagged drawings so
 // they don't leak into base-quote extraction/validation/UI counters. Pages tagged
 // with `ecoId` belong to a specific Engineering Change Order and are reviewed
