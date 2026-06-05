@@ -26852,6 +26852,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 PDF native
               </span>
             )}
+            {panel.extractionReport?.extractionPath&&panel.extractionReport.extractionPath!=="pdf-native"&&(
+              <span title="Extraction used image fallback — lower accuracy than PDF native."
+                style={{background:"#2a1f0d",border:"1px solid #f59e0b88",color:"#fcd34d",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
+                Image fallback
+              </span>
+            )}
             {(()=>{
               const sq=panel.extractionReport?.scanQuality;
               if(!sq||sq==="none")return null;
