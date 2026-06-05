@@ -14710,7 +14710,7 @@ async function classifyBomInputTier(page, pdfQualityData) {
     console.warn('[classifyBomInputTier] PDF text check failed:', e.message);
   }
 
-  const textThreshold = bomRegion ? 20 : 500;
+  const textThreshold = bomRegion ? 100 : 500;
   if (regionTextChars > textThreshold) return 'text-layer';
 
   const q = pdfQualityData || null;
