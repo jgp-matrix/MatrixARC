@@ -1839,3 +1839,13 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
      Permanent fix: two pillars — (1) independent row-count expectation via text-layer parsing,
      (2) deterministic targeted recovery (L3 on all paths) + loud flag if unclosable.
      Discovered: 2026-06-04 — Coach C29 supplement + Freddy Brief.
+
+101. **OPEN** (HIGH, future milestone) — Estimator's-Eye Cross-Check Workflow — full multi-region
+     quoting intelligence. Encodes a 30-year estimator's cross-check process: customer identification
+     drives structural fingerprinting, layout/enclosure scan for buildability and high-cost flags,
+     schematic scan for wire integrity and cost-tie, then BOM outlier analysis against all three
+     region types. Depends on Layout/Enclosure/Schematic regions maturing beyond primal state and
+     on near-term extraction-accuracy foundation being solid. NOT current scope — resurface when
+     BOM extraction is stable and non-BOM regions are ready to graduate.
+     See `ARC-VISION-ESTIMATOR-REVIEW.md`.
+     Captured: 2026-06-05, from Jon.
