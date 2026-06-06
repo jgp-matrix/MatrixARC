@@ -14109,6 +14109,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       completenessWarning:(()=>{const ppo=mergeStats.perPageOutcomes||[];const flagged=ppo.filter(o=>o.extractionVerification?.status==="needs-review");if(!flagged.length&&!(mergeStats.finalSequenceGaps||[]).length)return null;const details=flagged.map(o=>{const v=o.extractionVerification;const parts=[];if(v.missingFromStart)parts.push(`items 1-${v.missingFromStart} missing from start`);if(v.missingFromEnd)parts.push(`items ${(v.expectedMaxItemNo||0)-v.missingFromEnd+1}-${v.expectedMaxItemNo} possibly missing from end`);if(v.sequenceGaps?.length)parts.push(`interior gaps: items ${v.sequenceGaps.slice(0,10).join(",")}`);if(v.countMismatch)parts.push(`count mismatch: extracted ${v.extractedCount} vs detected ${v.detectedLineCount}`);return(o.pageName||"?")+": "+parts.join("; ");});return{warning:true,details,finalSequenceGaps:mergeStats.finalSequenceGaps||[]};})(),
       timestamp:Date.now(),
       version:APP_VERSION,
+      ...(panel._manualVerifyRequired?{manualVerifyRequired:true}:{}),
     }:null;
     if(mergedBom.length>0||hazlocResult){
       // DECISION(v1.19.607): Always set aiQuestions (including []) so stale questions clear.
@@ -23338,7 +23339,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const _typeCounts={};
       for(const pg of livePages){for(const t of getPageTypes(pg)){_typeCounts[t]=(_typeCounts[t]||0)+1;}}
       const _regionCount=livePages.filter(p=>resolveBomRegion(p)).length;
-      const _typeLabels={bom:"BOM",schematic:"SCH",enclosure:"ENC",backpanel:"BP",p_and_id:"P&ID"};
+      const _typeLabels={bom:"BOM",schematic:"SCH",enclosure:"ENC",backpanel:"BP",p_and_id:"PID"};
       const _summary=Object.entries(_typeCounts).map(([t,n])=>`${n} ${_typeLabels[t]||t.toUpperCase()}`).join(", ");
       const _confirmMsg=`Auto-detected: ${_summary||"no types"}. ${_regionCount} BOM region${_regionCount!==1?"s":""} found. Awaiting confirmation…`;
       bgUpdate(_bgKey(projectId,panel.id),_confirmMsg);
@@ -23393,6 +23394,60 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
     eqModalShownRef.current=false;
+    // Phase 1c: input-tier gate — classify BOM pages and block/warn based on tier + region
+    const _gateLivePages=pendingPages.length>0?pendingPages:(panel.pages||[]);
+    const _gateBomPages=_gateLivePages.filter(p=>getPageTypes(p).includes("bom")&&(p.dataUrl||p.storageUrl));
+    if(_gateBomPages.length>0&&_apiKey){
+      bgUpdate(_bgKey(projectId,panel.id),"Checking drawing quality…");
+      let _gatePdfQuality={};
+      const _gatePdfPages=_gateBomPages.filter(pg=>pg.originalPdfPath&&pg.pageNumber);
+      if(_gatePdfPages.length>0){
+        try{
+          const _gqc=await fbFunctions.httpsCallable("checkPdfQuality",{timeout:15000})({pdfPath:_gatePdfPages[0].originalPdfPath,pageNumbers:[...new Set(_gatePdfPages.map(pg=>pg.pageNumber))]});
+          for(const q of(_gqc?.data?.quality||[]))_gatePdfQuality[q.pageNumber]=q;
+        }catch(_){}
+      }
+      const _gateTiers=[];
+      for(const pg of _gateBomPages){
+        try{
+          const tier=await classifyBomInputTier(pg,_gatePdfQuality[pg.pageNumber]||null);
+          _gateTiers.push({page:pg,tier,hasRegion:!!resolveBomRegion(pg)});
+        }catch(_){_gateTiers.push({page:pg,tier:"vector-stroke",hasRegion:!!resolveBomRegion(pg)});}
+      }
+      const _worstTier=_gateTiers.find(t=>t.tier==="no-pdf")||_gateTiers.find(t=>t.tier==="scan")||_gateTiers.find(t=>t.tier==="bitmap")||_gateTiers.find(t=>t.tier==="vector-stroke")||null;
+      const _isVisionMode=_gateTiers.some(t=>["vector-stroke","bitmap","scan"].includes(t.tier));
+      const _isNoPdf=_gateTiers.some(t=>t.tier==="no-pdf");
+      const _allHaveRegions=_gateTiers.every(t=>t.hasRegion);
+      const _visionNoRegion=_gateTiers.some(t=>["vector-stroke","bitmap","scan"].includes(t.tier)&&!t.hasRegion);
+      const _textNoRegion=_gateTiers.some(t=>t.tier==="text-layer"&&!t.hasRegion);
+      if(_isNoPdf){
+        // Case 5: no-pdf — re-upload prompt
+        const _noPdfChoice=await arcConfirm(
+          "No usable source PDF for this project. Re-upload the source PDF to enable high-quality extraction, or region the BOM and extract from the page image (manual verification required).",
+          {title:"Missing Source PDF",kind:"warning",okLabel:"Region & Extract from Image",cancelLabel:"Cancel"}
+        );
+        if(!_noPdfChoice){setAwaitingConfirm(true);bgUpdate(_bgKey(projectId,panel.id),"Awaiting confirmation…");return;}
+        panel._manualVerifyRequired=true;
+      }else if(_visionNoRegion){
+        // Case 4: vision-mode + NO region — HARD BLOCK
+        const _vmChoice=await arcConfirm(
+          "This drawing has a low-res or image-based BOM that requires more thought. Please region the BOM as tightly as possible to maximize accuracy. Results will need manual verification due to the poor source quality.",
+          {title:"BOM Region Recommended",kind:"warning",okLabel:"Extract Anyway — Manual Verification Required",cancelLabel:"Go Back & Draw Region"}
+        );
+        if(!_vmChoice){setAwaitingConfirm(true);bgUpdate(_bgKey(projectId,panel.id),"Awaiting confirmation…");return;}
+        panel._manualVerifyRequired=true;
+      }else if(_isVisionMode&&_allHaveRegions){
+        // Case 3: vision-mode + region present — info toast, proceed
+        bgUpdate(_bgKey(projectId,panel.id),"Image-based BOM — region applied, extracting…");
+      }else if(_textNoRegion){
+        // Case 2: text-layer + NO region — soft nudge (dismissible)
+        await arcAlert(
+          "This drawing's BOM is clear and readable, and ARC is extracting at high accuracy. To increase accuracy further, please region the BOM area.",
+          {title:"Tip: Draw a BOM Region",kind:"info",okLabel:"Continue"}
+        );
+      }
+      // Case 1: text-layer + region → silent proceed (no modal)
+    }
     bgUpdate(_bgKey(projectId,panel.id),"Starting extraction…");bgSetPct(_bgKey(projectId,panel.id),0,"Starting extraction…");
     // Save learning DB corrections for any page where user changed AI-detected types
     const changes=pageTypeChangesRef.current;
@@ -26918,6 +26973,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               <span title="Extraction used image fallback — lower accuracy than PDF native."
                 style={{background:"#2a1f0d",border:"1px solid #f59e0b88",color:"#fcd34d",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
                 Image fallback
+              </span>
+            )}
+            {panel.extractionReport?.manualVerifyRequired&&(
+              <span title="Extraction ran without BOM region on a vision-mode drawing. Results need manual verification."
+                style={{background:"#2a1f0d",border:"1px solid #f59e0b88",color:"#fcd34d",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
+                Manual verification required
               </span>
             )}
             {(()=>{
