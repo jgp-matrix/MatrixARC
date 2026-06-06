@@ -23335,7 +23335,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Pause for user to review detected page types before extraction begins
     pendingNewItemsRef.current=newItems;
     if(newItems.length>0){
-      bgUpdate(_bgKey(projectId,panel.id),"Awaiting confirmation…");
+      const _typeCounts={};
+      for(const pg of livePages){for(const t of getPageTypes(pg)){_typeCounts[t]=(_typeCounts[t]||0)+1;}}
+      const _regionCount=livePages.filter(p=>resolveBomRegion(p)).length;
+      const _typeLabels={bom:"BOM",schematic:"SCH",enclosure:"ENC",backpanel:"BP",p_and_id:"P&ID"};
+      const _summary=Object.entries(_typeCounts).map(([t,n])=>`${n} ${_typeLabels[t]||t.toUpperCase()}`).join(", ");
+      const _confirmMsg=`Auto-detected: ${_summary||"no types"}. ${_regionCount} BOM region${_regionCount!==1?"s":""} found. Awaiting confirmation…`;
+      bgUpdate(_bgKey(projectId,panel.id),_confirmMsg);
       setAwaitingConfirm(true);
       _logRemote("info",`addFiles awaiting confirmation — ${newItems.length} page(s)`,{detectedTypes:newItems.map(it=>({name:it.name,types:it.types||[]}))});
       // DECISION(v1.19.589): Persist pendingPages + awaitingConfirm to module-scope cache so
