@@ -10328,16 +10328,17 @@ function applyPartCorrections(corrections,bom){
 // Each path checks the row's existing flags so corrections don't cascade/double-apply.
 // The resulting flags (isCrossed/isCorrection/correctedByLibrary) are THE signal that tells
 // the audit's self-healing NOT to override these rows — the user has already vetted them.
-async function applyLearnedCorrections(bom,uid){
-  if(!bom||!bom.length||!uid)return{bom,appliedLog:[]};
+async function applyLearnedCorrections(bom,uid,opts={}){
+  const {manualVerifyRequired=false}=opts;
+  if(!bom||!bom.length||!uid)return{bom,appliedLog:[],heldBackAlternates:[]};
   let userAlts=[],userCorrs=[],userPartCorrs=[],userDescCrosses=[];
   try{[userAlts,userCorrs,userPartCorrs,userDescCrosses]=await Promise.all([
     loadAlternates(uid).catch(()=>[]),
     loadCorrectionDB(uid).catch(()=>[]),
     loadPartCorrections(uid).catch(()=>[]),
     loadDescriptionCrosses(uid).catch(()=>[]),
-  ]);}catch(e){console.warn("applyLearnedCorrections: load failed:",e.message);return{bom,appliedLog:[]};}
-  if(!userAlts.length&&!userCorrs.length&&!userPartCorrs.length&&!userDescCrosses.length)return{bom,appliedLog:[]};
+  ]);}catch(e){console.warn("applyLearnedCorrections: load failed:",e.message);return{bom,appliedLog:[],heldBackAlternates:[]};}
+  if(!userAlts.length&&!userCorrs.length&&!userPartCorrs.length&&!userDescCrosses.length)return{bom,appliedLog:[],heldBackAlternates:[]};
   // v1.19.977: use the same _altNorm/normPN normalization throughout (strips
   // -, _, space, dot, slash, backslash, comma; uppercases). normPart inside the
   // module strips a smaller set; using a shared normalizer prevents drift.
@@ -10347,6 +10348,7 @@ async function applyLearnedCorrections(bom,uid){
   const totalAlt=userAlts.length;
   console.log(`[LEARNING DB] alternates=${totalAlt} (autoReplace=${autoCount}), corrections=${userCorrs.length}, partCorrections=${userPartCorrs.length}, descCrosses=${userDescCrosses.length} | uid=${uid?.slice?.(0,6)} configPath=${_appCtx.configPath||"(user-default)"}`);
   const appliedLog=[];
+  const heldBackAlternates=[];
   const skippedNonAuto=[];
   const result=bom.map(r=>{
     if(r.isLaborRow||r.isContingency)return r;
@@ -10361,11 +10363,18 @@ async function applyLearnedCorrections(bom,uid){
     // BC lookup confirms) but leave priceDate null — the UI shows "—" in the Priced column
     // until runPricingOnPanel fetches the real BC Starting_Date. priceSource="bc" tells the
     // pricing phase to use an EXACT BC lookup, preventing re-crossing of an already-crossed PN.
+    // DECISION(v1.20.110, C5 guard): When manualVerifyRequired is true, hold back auto-cross
+    // alternates instead of applying them. OCR-noisy PNs can match wrong learning DB entries.
+    // Corrections (paths 2-4) still apply — they fix known errors, which helps noisy extraction.
     if(!r.isCrossed){
       const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
       if(alt){
-        appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
-        const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
+        if(manualVerifyRequired){
+          heldBackAlternates.push({rowId:r.id,from:pn,to:alt.replacement.partNumber,toDesc:alt.replacement.description||""});
+        }else{
+          appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
+        }
       }
       // v1.19.977: log when an alternate exists for this PN but isn't set to
       // auto-replace — surfaces a UX bug (user crossed a part but uncheck auto)
@@ -10406,7 +10415,10 @@ async function applyLearnedCorrections(bom,uid){
   if(appliedLog.length>0){
     console.log(`[LEARNING DB] Applied ${appliedLog.length} correction${appliedLog.length>1?"s":""} from memory:`,appliedLog.map(l=>`${l.kind}: ${l.from} → ${l.to}`));
   }
-  return{bom:result,appliedLog};
+  if(heldBackAlternates.length>0){
+    console.log(`[LEARNING DB] Held back ${heldBackAlternates.length} auto-cross alternate${heldBackAlternates.length>1?"s":""} (manualVerifyRequired):`,heldBackAlternates.map(h=>`${h.from} → ${h.to}`));
+  }
+  return{bom:result,appliedLog,heldBackAlternates};
 }
 
 // ── DEFAULT BOM ITEMS (appended after extraction if not already present) ──
@@ -14014,9 +14026,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     let learnedLog=[];
     if(mergedBom.length>0){
       try{
-        const learned=await applyLearnedCorrections(mergedBom,uid);
+        const learned=await applyLearnedCorrections(mergedBom,uid,{manualVerifyRequired:!!panel._manualVerifyRequired});
         mergedBom=learned.bom;
         learnedLog=learned.appliedLog||[];
+        if(learned.heldBackAlternates?.length)latestPanel._heldBackAlternates=learned.heldBackAlternates;
       }catch(e){console.warn("applyLearnedCorrections failed:",e.message);}
     }
     // DECISION(v1.19.639): Per-row snippet self-correction. Each row's y-band is cropped from
@@ -14333,6 +14346,8 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
         });
         await bcGetVendorMap();
         const bcMap={};
+        // DECISION(v1.20.110, F1 guard): Option A — read manualVerifyRequired from panelData param
+        const _bgManualVerify=!!(panelData.extractionReport?.manualVerifyRequired);
         for(let i=0;i<eligible.length;i++){
           const row=eligible[i];
           const pn=(row.partNumber||"").trim();
@@ -14342,15 +14357,21 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
             const exact=await bcLookupItem(pn);
             if(exact&&exact.unitCost!=null){
               const vNo=exact.vendorNo||await bcGetItemVendorNo(pn);
-              bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+              bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
             }
             continue;
           }
           const result=await bcFuzzyLookup(pn);
           if(result.match&&result.match.unitCost!=null){
-            const matchNo=result.match.number||pn;
-            const vNo=result.match.vendorNo||await bcGetItemVendorNo(matchNo);
-            bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+            const _isExact=result.type==="exact";
+            const _needsReview=!_isExact&&_bgManualVerify;
+            if(_needsReview){
+              bcFuzzySugg[String(row.id)]=[result.match];
+            }else{
+              const matchNo=result.match.number||pn;
+              const vNo=result.match.vendorNo||await bcGetItemVendorNo(matchNo);
+              bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:result.type||null};
+            }
           }else if(result.suggestions.length>0){
             bcFuzzySugg[String(row.id)]=result.suggestions;
           }
@@ -14384,7 +14405,8 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
               priceSource:"bc",
               ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
               bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
-              bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||""};
+              bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||"",
+              ...(bcMap[key].bcMatchType?{bcMatchType:bcMap[key].bcMatchType}:{})};
           }
           return r;
         });
@@ -22846,14 +22868,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(altAutoApplied.current)return;
       altAutoApplied.current=true;
       const bom=panel.bom||[];
+      const _mvr=!!panel.extractionReport?.manualVerifyRequired;
       let changed=false;
-      let appliedAlt=0,appliedCorr=0;
+      let appliedAlt=0,appliedCorr=0,heldAlt=0;
       const newBom=bom.map(r=>{
         if(r.isLaborRow||r.isCrossed||r.isCorrection)return r;
         const pn=(r.partNumber||"").trim();
         if(!pn)return r;
         const alt=alts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
         if(alt){
+          // DECISION(v1.20.110, C5 guard): Hold back auto-cross on panel mount when manualVerifyRequired
+          if(_mvr){heldAlt++;return r;}
           changed=true;appliedAlt++;
           const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
         }
@@ -22865,9 +22890,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         return r;
       });
       if(changed){
-        console.log(`[PanelView mount] auto-applied ${appliedAlt} alternates and ${appliedCorr} corrections to existing BOM`);
+        console.log(`[PanelView mount] auto-applied ${appliedAlt} alternates and ${appliedCorr} corrections to existing BOM${heldAlt>0?` (${heldAlt} alternates held back — manualVerifyRequired)`:""}`);
         const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
       }
+      if(heldAlt>0)console.log(`[PanelView mount] ${heldAlt} auto-cross alternate(s) held back — BOM needs manual verification`);
+
     }).catch(e=>console.warn("[PanelView mount] alternates/corrections load failed:",e?.message));
   },[uid]);
 
@@ -24313,10 +24340,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.626): Also apply alternates + correctionDB on re-extract.
     let reLearnedLog=[];
     try{
-      const reLearned=await applyLearnedCorrections(corrected,uid);
+      const _reManualVerify=!!latestPanelRef.current.extractionReport?.manualVerifyRequired;
+      const reLearned=await applyLearnedCorrections(corrected,uid,{manualVerifyRequired:_reManualVerify});
       var bomPreDefaults=reLearned.bom;
       reLearnedLog=reLearned.appliedLog||[];
-    }catch(e){var bomPreDefaults=corrected;}
+      var reHeldBack=reLearned.heldBackAlternates||[];
+    }catch(e){var bomPreDefaults=corrected;var reHeldBack=[];}
     // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
     // DECISION(v1.19.672): Re-run companion-part splitter on re-extract so new companion
     // parts in the refreshed BOM get broken out too.
@@ -24545,10 +24574,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }));
     let fbLearnedLog=[];
     try{
-      const fbLearned=await applyLearnedCorrections(fbCorrected,uid);
+      const _fbManualVerify=!!latestPanel.extractionReport?.manualVerifyRequired;
+      const fbLearned=await applyLearnedCorrections(fbCorrected,uid,{manualVerifyRequired:_fbManualVerify});
       var fbPreDefaults=fbLearned.bom;
       fbLearnedLog=fbLearned.appliedLog||[];
-    }catch(e){var fbPreDefaults=fbCorrected;}
+      var fbHeldBack=fbLearned.heldBackAlternates||[];
+    }catch(e){var fbPreDefaults=fbCorrected;var fbHeldBack=[];}
     // DECISION(v1.19.629): Sort by drawing Y-position for spot-check parity with the drawing.
     // DECISION(v1.19.672): Companion-part splitter also runs on feedback-based re-extract.
     const bomSorted=splitCompanionParts(sortBomByDrawingPosition(fbPreDefaults));
@@ -25711,6 +25742,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           await bcGetVendorMap();
           const bcMap={};
           const fuzzySugg={};
+          // DECISION(v1.20.110, F1 guard): When manualVerifyRequired is true, hold back
+          // non-exact BC fuzzy matches as suggestions instead of auto-accepting. OCR-noisy
+          // PNs can fuzzy-match wrong items that have valid prices, stamping green.
+          const _manualVerifyRequired=!!(panel?.extractionReport?.manualVerifyRequired);
           for(let i=0;i<eligible.length;i++){
             const row=eligible[i];
             const pn=(row.partNumber||"").trim();
@@ -25726,15 +25761,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const exact=await bcLookupItem(pn);
               if(exact&&exact.unitCost!=null){
                 const vNo=exact.vendorNo||await bcGetItemVendorNo(pn);
-                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
               }
               continue;
             }
             const result=await bcFuzzyLookup(pn);
             if(result.match&&result.match.unitCost!=null){
-              const matchNo=result.match.number||pn;
-              const vNo=result.match.vendorNo||await bcGetItemVendorNo(matchNo);
-              bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null};
+              const _isExact=result.type==="exact";
+              const _needsReview=!_isExact&&_manualVerifyRequired;
+              if(_needsReview){
+                // F1 guard: hold fuzzy match as suggestion for user review
+                fuzzySugg[String(row.id)]=[result.match];
+              }else{
+                const matchNo=result.match.number||pn;
+                const vNo=result.match.vendorNo||await bcGetItemVendorNo(matchNo);
+                bcMap[String(row.id)]={unitPrice:result.match.unitCost,source:"bc",bcDisplayName:result.match.displayName,bcInventory:result.match.inventory,bcNumber:matchNo,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:result.type||null};
+              }
             } else if(result.suggestions.length>0){
               fuzzySugg[String(row.id)]=result.suggestions;
             }
@@ -25776,7 +25818,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 priceSource:"bc",
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
                 bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
-                bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||""};
+                bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||"",
+                ...(bcMap[key].bcMatchType?{bcMatchType:bcMap[key].bcMatchType}:{})};
             }
             return r;
           });
@@ -27014,9 +27057,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </span>
             )}
             {panel.extractionReport?.manualVerifyRequired&&(
-              <span title="Extraction ran without BOM region on a vision-mode drawing. Results need manual verification."
-                style={{background:"#2a1f0d",border:"1px solid #f59e0b88",color:"#fcd34d",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
-                Manual verification required
+              <span style={{display:"inline-flex",alignItems:"center",gap:4}}>
+                <span title="Extraction ran without BOM region on a vision-mode drawing. Results need manual verification. Fuzzy BC matches and auto-crosses are held back until verified."
+                  style={{background:"#2a1f0d",border:"1px solid #f59e0b88",color:"#fcd34d",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
+                  Manual verification required
+                </span>
+                {!readOnly&&<button onClick={async()=>{
+                  const ok=await arcConfirm("Mark this BOM as manually verified?\n\nThis clears the verification flag, re-enables auto-cross from the learning DB, and allows fuzzy BC matches to auto-accept on the next pricing run.\n\nOnly do this after reviewing all part numbers.",{kind:"info",okLabel:"Mark Verified"});
+                  if(!ok)return;
+                  const updReport={...(panel.extractionReport||{}),manualVerifyRequired:false};
+                  const upd={...panel,extractionReport:updReport};
+                  onUpdate(upd);try{await onSaveImmediate(upd);}catch(e){}
+                }} title="Clear verification flag after reviewing all part numbers"
+                  style={{background:"#0d2a1a",border:"1px solid #4ade8088",color:"#4ade80",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  ✓ Mark Verified
+                </button>}
               </span>
             )}
             {(()=>{
