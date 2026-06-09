@@ -11683,11 +11683,12 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 // region-learning context) take the IDENTICAL code path. If the function
 // throws (deploy lag, transient error, network), the caller falls back
 // to the legacy direct API path, preserving zero-regression behavior.
-async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion=null){
+async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion=null,regionLearningParts=null){
   if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:540000});
   const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
   if(bomRegion&&originalPdfPath)payload.bomRegion=bomRegion;
+  if(regionLearningParts&&regionLearningParts.length)payload.regionLearningParts=regionLearningParts;
   if(croppedBomDataUrl&&!originalPdfPath){
     const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
     payload.croppedBomImage=base64;
@@ -11765,9 +11766,14 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
     pageNumber=n;
   }
 
+  // Phase 1f: Load region learning for extraction prompt enrichment.
+  // STRUCTURAL ONLY — drawing tier, column layout, region placement. NEVER part-number content.
+  let _regionParts=[];
+  try{const _rlUid=fbAuth.currentUser?.uid;if(_rlUid){const _rlEx=await loadRegionLearning(_rlUid);_regionParts=buildRegionLearningContext(_rlEx,{maxExamples:3});}}catch(_){/* non-blocking */}
+
   // Server-side path FIRST. On error, falls through to direct API.
   try{
-    const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion);
+    const serverResult=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion,_regionParts);
     if((serverResult.items||[]).length===0&&originalPdfPath&&pageNumber){
       // FIX(#82): When PDF-native returns 0 items on a BOM-classified page, retry
       // with full-res PDF CropBox — NOT the lossy JPEG crop.
@@ -11776,7 +11782,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       // If first call had NO bomRegion and we have one available, retry WITH CropBox.
       if(!bomRegion&&croppedBomDataUrl){
         console.warn("[BOM EXTRACT] server PDF-native (full page) returned 0 items, no bomRegion — JPEG crop fallback (lossy)");
-        try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null);}
+        try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null,_regionParts);}
         catch(retryErr){console.warn("[BOM EXTRACT] JPEG crop fallback also failed:",retryErr?.message||retryErr);}
       }
       // bomRegion present + 0 items → falls through to degenerate-crop retry below (line 11776+)
@@ -11790,7 +11796,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       if(items.length===0||allPlaceholder){
         console.warn(`[BOM EXTRACT] CropBox result ${items.length===0?"empty":"all placeholder"} — retrying full page WITHOUT crop`);
         try{
-          const uncropped=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,null);
+          const uncropped=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,null,_regionParts);
           if((uncropped.items||[]).length>=items.length){
             uncropped._regionCropRetried=true;
             console.log(`[BOM EXTRACT] uncropped retry succeeded: ${uncropped.items.length} items (was ${items.length} ${allPlaceholder?"placeholder":"empty"})`);
@@ -11839,6 +11845,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
           thinking:{type:"enabled",budget_tokens:8000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
+            ..._regionParts,
             {type:"document",source:{type:"base64",media_type:"application/pdf",data:pdfBase64}},
             {type:"text",text:pageHint+feedbackSection+notesSection}
           ]}]
@@ -11878,6 +11885,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
           thinking:{type:"enabled",budget_tokens:8000},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
+            ..._regionParts,
             {type:"image",source:{type:"base64",media_type:"image/jpeg",data:base64}},
             {type:"text",text:pageHint+feedbackSection+notesSection}
           ]}]
@@ -12768,13 +12776,14 @@ Return ONLY JSON of this shape:
   "columnHeaders": [...],     // if region is a table — list the column names exactly as they appear; otherwise []
   "rowCount": number,         // if region is a table — estimated count of data rows; otherwise 0
   "structuralSummary": "...", // 1-2 sentence description of what's in the region
-  "signaturePhrase": "..."    // short phrase (≤12 words) that captures what makes this region recognizable on similar drawings
+  "signaturePhrase": "...",   // short phrase (≤12 words) that captures what makes this region recognizable on similar drawings
+  "columnLayoutType": "..."   // one of: single-column, multi-column-side-by-side, multi-section, stacked, grid, other
 }
 
 Examples:
-- BOM table → {"columnHeaders":["ITEM","QTY","PART NO","DESCRIPTION","MFG"],"rowCount":24,"structuralSummary":"Standard BOM table with 5 columns; rows enumerate physical hardware items.","signaturePhrase":"5-column BOM with MFG column"}
-- Door device list → {"columnHeaders":["TAG","DESCRIPTION","QTY"],"rowCount":12,"structuralSummary":"Door device callout listing 12 items by TAG.","signaturePhrase":"door device list with TAG column"}
-- Title block → {"columnHeaders":[],"rowCount":0,"structuralSummary":"Drawing title block with project number, drawing number, revision, scale, date.","signaturePhrase":"title block — std drawing identification"}`;
+- BOM table → {"columnHeaders":["ITEM","QTY","PART NO","DESCRIPTION","MFG"],"rowCount":24,"structuralSummary":"Standard BOM table with 5 columns; rows enumerate physical hardware items.","signaturePhrase":"5-column BOM with MFG column","columnLayoutType":"single-column"}
+- Door device list → {"columnHeaders":["TAG","DESCRIPTION","QTY"],"rowCount":12,"structuralSummary":"Door device callout listing 12 items by TAG.","signaturePhrase":"door device list with TAG column","columnLayoutType":"single-column"}
+- Title block → {"columnHeaders":[],"rowCount":0,"structuralSummary":"Drawing title block with project number, drawing number, revision, scale, date.","signaturePhrase":"title block — std drawing identification","columnLayoutType":"other"}`;
   try{
     const raw=await apiCall({
       model:ANTHROPIC_MODELS.HAIKU,
@@ -20723,6 +20732,9 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,onNotesChange,cu
         regionBox:{x:region.x,y:region.y,w:region.w,h:region.h},
         sourceCustomer:customerName||null,
         sourcePageName:pg?.name||null,
+        // Phase 1f: STRUCTURAL audit fields — never part-number content.
+        contributedBy:fbAuth.currentUser?.uid||null,
+        inputTierClass:pg?.originalPdfPath?"pdf":"image",
         ...(opts?.update?{updatedAt:Date.now()}:{}),
       };
       // Either update an existing entry (if region.id already learned) or insert.
@@ -23391,7 +23403,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const _typeCounts={};
       for(const pg of livePages){for(const t of getPageTypes(pg)){_typeCounts[t]=(_typeCounts[t]||0)+1;}}
       const _regionCount=livePages.filter(p=>resolveBomRegion(p)).length;
-      const _typeLabels={bom:"BOM",schematic:"SCH",enclosure:"ENC",backpanel:"BP",p_and_id:"PID"};
+      const _typeLabels={bom:"BOM",schematic:"SCH",enclosure:"ENC",backpanel:"BP",pid:"P&ID"};
       const _summary=Object.entries(_typeCounts).map(([t,n])=>`${n} ${_typeLabels[t]||t.toUpperCase()}`).join(", ");
       const _confirmMsg=`Auto-detected: ${_summary||"no types"}. ${_regionCount} BOM region${_regionCount!==1?"s":""} found. Awaiting confirmation…`;
       bgUpdate(_bgKey(projectId,panel.id),_confirmMsg);
