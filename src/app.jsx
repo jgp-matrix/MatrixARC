@@ -22733,6 +22733,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const _rawUnified=_activePricing||(_showExtract?extractProgress:null);
   const unifiedProgress=_rawUnified?{..._rawUnified,isError:_rawUnified.isError||_bgTaskHere?.status==="error"}:null;
   const [pricingReport,setPricingReport]=useState(null); // null=hidden, {sections:[{source,obtained,skipped,failed,items}]}
+  const [bcPricingFailToast,setBcPricingFailToast]=useState(null); // {message,unpricedCount} | null
   const [bcConnecting,setBcConnecting]=useState(false);
   const [bcError,setBcError]=useState("");
   const [validatingPanel,setValidatingPanel]=useState(false);
@@ -25665,10 +25666,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let bcCount=0;
 
     // Phase 1: Business Central lookup
+    let _bcWasUnavailable=false;
     if(!_bcToken){
       _pp({msg:"Trying silent BC login…",pct:5});
       try{await Promise.race([acquireBcToken(false),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000))]);}
-      catch(e){_pp({msg:"BC silent login skipped — using AI…",pct:5});}
+      catch(e){_pp({msg:"BC silent login skipped — using AI…",pct:5});_bcWasUnavailable=true;}
     }
     if(_bcToken){
       _pp({msg:"BC: Getting company ID…",pct:5});
@@ -25796,6 +25798,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         console.warn("BC pricing phase failed:",ex);
         _report.push({source:"Business Central",obtained:0,skipped:0,failed:0,total:0,error:ex.message});
         _pp({msg:`BC failed: ${ex.message||ex} — falling back to AI…`,pct:10});
+        _bcWasUnavailable=true;
       }
     }
 
@@ -26188,6 +26191,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setAiPricing(false);
     // Show pricing report if there were any issues
     if(_report.length>0)setPricingReport({sections:_report,totalPriced,totalItems:bom.length,bcCount,aiCount});
+    // DECISION(v1.20.108, F2): When BC was unavailable during pricing, show an actionable
+    // toast instead of silently leaving rows red. Points user at the BC status dot to reconnect.
+    if(_bcWasUnavailable){
+      const _unpricedCount=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(!(r.unitPrice>0)||r.priceSource==="ai")).length;
+      if(_unpricedCount>0){
+        setBcPricingFailToast({message:`BC pricing unavailable — ${_unpricedCount} row${_unpricedCount>1?"s":""} unpriced or AI-estimated. Click BC status to reconnect.`,unpricedCount:_unpricedCount});
+        setTimeout(()=>setBcPricingFailToast(null),12000);
+      }
+    }
     pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
     // Auto-sync to BC after pricing is complete (not during extraction)
     if(bcProjectNumber&&_bcToken&&updatedBom.length>0){
@@ -27100,6 +27112,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
             {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
           </div>
+          {/* DECISION(v1.20.108, F2): BC pricing failure toast — actionable message
+             pointing user at the BC status dot to reconnect. Auto-dismisses after 12s. */}
+          {bcPricingFailToast&&ReactDOM.createPortal(
+            <div style={{position:"fixed",top:16,right:16,zIndex:10001,background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:10,padding:"12px 16px",maxWidth:400,boxShadow:"0 4px 20px rgba(0,0,0,0.5)",display:"flex",alignItems:"flex-start",gap:10}}>
+              <span style={{fontSize:18,flexShrink:0}}>⚠</span>
+              <div style={{flex:1}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.yellow,marginBottom:4}}>BC Pricing Unavailable</div>
+                <div style={{fontSize:11,color:"#fde68a",lineHeight:1.5}}>{bcPricingFailToast.message}</div>
+              </div>
+              <button onClick={()=>setBcPricingFailToast(null)} style={{background:"none",border:"1px solid #fcd34d44",borderRadius:4,padding:"2px 6px",fontSize:11,color:"#fcd34d",cursor:"pointer",flexShrink:0}}>×</button>
+            </div>,document.body
+          )}
           {/* Pricing Report Modal */}
           {pricingReport&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{if(e.target===e.currentTarget)setPricingReport(null);}}>
@@ -35644,6 +35668,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   async function handlePrintQuote(){
     if(quotePrinting)return;
     let proj=projectRef.current;
+    // DECISION(v1.20.108, F3): Non-blocking warning on Just Print when incomplete items
+    // or unverified BOM. Uses the same findIncompleteQuoteItems pipeline as the Send gate
+    // (B1) but as a confirm-to-proceed warning rather than a hard block.
+    const _printIssues=findIncompleteQuoteItems(proj);
+    if(_printIssues.length){
+      const _vb=_printIssues.filter(i=>i.isVerificationBlock);
+      const _pi=_printIssues.filter(i=>!i.isVerificationBlock);
+      let msg="";
+      if(_vb.length)msg+=_vb.map(v=>v.panelName).join(", ")+": BOM needs manual verification (extracted from low-quality source).";
+      if(_vb.length&&_pi.length)msg+="\n\n";
+      if(_pi.length)msg+=_pi.length+" item"+(_pi.length>1?"s":"")+" have incomplete pricing or stale prices.";
+      msg+="\n\nQuote may contain gaps. Print anyway?";
+      const proceed=await arcConfirm(msg,{kind:"warning",okLabel:"Print Anyway"});
+      if(!proceed)return;
+    }
     // v1.19.965: Cross-user print lock check.
     const lockResult=await _tryAcquireQuotePrintLock(proj.id);
     if(!lockResult.ok){
