@@ -15115,6 +15115,18 @@ function findIncompleteQuoteItems(project){
   const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
   for(let pi=0;pi<panels.length;pi++){
     const pan=panels[pi];
+    // DECISION(v1.20.108): Block send when BOM was extracted from a low-quality source
+    // (vision-mode PDF) and has not been manually verified. The manualVerifyRequired flag
+    // is set by the extraction gate (Phase 1c) and carried forward on re-extraction (B2).
+    if(pan.extractionReport?.manualVerifyRequired){
+      issues.push({
+        panelName:pan.name||`Panel ${pi+1}`,
+        partNumber:"(entire BOM)",
+        description:"Extracted from low-quality source — not manually verified",
+        missing:["manual verification"],
+        isVerificationBlock:true,
+      });
+    }
     const bom=pan.bom||[];
     for(const r of bom){
       if(_isExcludedFromPriceCheck(r))continue;
@@ -15144,11 +15156,23 @@ function findIncompleteQuoteItems(project){
 }
 function formatIncompleteQuoteAlert(issues){
   if(!issues.length)return"";
-  const maxShow=12;
-  const shown=issues.slice(0,maxShow);
-  const lines=shown.map(i=>`  • ${i.panelName} — ${i.partNumber}${i.description?" · "+i.description:""}  [missing: ${i.missing.join(", ")}]`);
-  const more=issues.length>maxShow?`\n  … and ${issues.length-maxShow} more`:"";
-  return `Quote cannot be SENT — ${issues.length} item${issues.length>1?"s":""} still need${issues.length===1?"s":""} price, qty, or priced date (or have stale pricing):\n\n${lines.join("\n")}${more}\n\nFix those rows first (run Refresh Pricing for stale ones), or use "🖨 Just Print" if you only want a hard copy for review.`;
+  // DECISION(v1.20.108): Split verification blocks from pricing issues for distinct messaging.
+  const verifyIssues=issues.filter(i=>i.isVerificationBlock);
+  const pricingIssues=issues.filter(i=>!i.isVerificationBlock);
+  const parts=[];
+  if(verifyIssues.length){
+    const panelNames=verifyIssues.map(v=>v.panelName).join(", ");
+    parts.push(`⚠ ${panelNames}: This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending.`);
+  }
+  if(pricingIssues.length){
+    const maxShow=12;
+    const shown=pricingIssues.slice(0,maxShow);
+    const lines=shown.map(i=>`  • ${i.panelName} — ${i.partNumber}${i.description?" · "+i.description:""}  [missing: ${i.missing.join(", ")}]`);
+    const more=pricingIssues.length>maxShow?`\n  … and ${pricingIssues.length-maxShow} more`:"";
+    parts.push(`${pricingIssues.length} item${pricingIssues.length>1?"s":""} still need${pricingIssues.length===1?"s":""} price, qty, or priced date (or have stale pricing):\n\n${lines.join("\n")}${more}\n\nFix those rows first (run Refresh Pricing for stale ones).`);
+  }
+  const suffix=`\n\nUse "🖨 Just Print" if you only want a hard copy for review.`;
+  return `Quote cannot be SENT:\n\n${parts.join("\n\n")}${suffix}`;
 }
 function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
@@ -24338,6 +24362,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       extractionPath:_reExtractionPath,
       finalSequenceGaps:_reSeqGaps,finalMaxItemNo:_reMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
+      ...(latestPanelRef.current.extractionReport?.manualVerifyRequired?{manualVerifyRequired:true}:{}),
     };
     ep.set(80,"Saving BOM…");
     bgSetPct(_bgKey(projectId,panel.id),80,"Saving BOM…");
@@ -24563,6 +24588,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       completenessWarning:_fbCompletenessWarning,
       finalSequenceGaps:_fbSeqGaps,finalMaxItemNo:_fbMaxItemNo,finalItemCount:bomSorted.length,
       timestamp:Date.now(),version:APP_VERSION,
+      ...(latestPanel.extractionReport?.manualVerifyRequired?{manualVerifyRequired:true}:{}),
     };
     const logEntry={timestamp:Date.now(),feedback:aiFeedback,itemCount:bom.length};
     const feedbackLog=[...((latestPanel.extractionFeedbackLog)||[]),logEntry];
@@ -31264,6 +31290,8 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   // (the "🖨 Just Print" button bypasses this). Computed live so edits before clicking Send
   // are reflected.
   const incompleteItems=findIncompleteQuoteItems(project);
+  const _hasVerifyBlock=incompleteItems.some(i=>i.isVerificationBlock);
+  const _pricingIssueCount=incompleteItems.filter(i=>!i.isVerificationBlock).length;
   const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
   async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
@@ -31487,7 +31515,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <div style={{marginTop:12,padding:"10px 12px",background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,flexShrink:0}}>
             <div style={{fontSize:12,fontWeight:700,color:C.yellow,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
               <span>⚠</span>
-              <span>Send disabled — {incompleteItems.length} item{incompleteItems.length>1?"s":""} incomplete</span>
+              <span>Send disabled{_hasVerifyBlock?" — BOM verification required":""}{_pricingIssueCount>0?(_hasVerifyBlock?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
             </div>
             <div style={{fontSize:11,color:"#fde68a",lineHeight:1.5,maxHeight:140,overflow:"auto"}}>
               {incompleteItems.slice(0,8).map((i,k)=>(
@@ -34048,13 +34076,15 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                    when send is blocked to reinforce that something needs fixing first. */}
                 {!readOnly&&(()=>{
                   const _incompleteItems=findIncompleteQuoteItems(project);
+                  const _hasVerify=_incompleteItems.some(i=>i.isVerificationBlock);
+                  const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock).length;
                   // DECISION(v1.19.681): Owner Priority Mode extends the send-block reasons.
                   const _sendBlocked=_incompleteItems.length>0||!!ownerPriorityActive;
                   return(<>
                     {_sendBlocked&&(
                       <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
-                        <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked — {_incompleteItems.length} item{_incompleteItems.length>1?"s":""} incomplete</div>
-                        <div style={{marginBottom:8}}>Fix the red rows in the BOM below (missing price, qty, or priced date). Once fixed, the Send button will enable.</div>
+                        <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked{_hasVerify?" — BOM verification required":""}{_pricingCount>0?(_hasVerify?" + ":` — `)+_pricingCount+" item"+(_pricingCount>1?"s":"")+" incomplete":""}</div>
+                        <div style={{marginBottom:8}}>{_hasVerify?"This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending.":"Fix the red rows in the BOM below (missing price, qty, or priced date). Once fixed, the Send button will enable."}{_hasVerify&&_pricingCount>0?" Also fix "+_pricingCount+" red row"+(_pricingCount>1?"s":"")+" with incomplete pricing.":""}</div>
                         {/* DECISION(v1.19.670): Just Print button lives directly in the banner so
                            users aren't blocked from printing a review copy when Send is disabled.
                            Previously the banner said "use Just Print from the Send dialog" — but the
@@ -34067,7 +34097,8 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       </div>
                     )}
                 <button data-tour="print-quote-btn" disabled={_sendBlocked}
-                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_sendBlocked?`Send disabled — ${_incompleteItems.length} incomplete item${_incompleteItems.length>1?"s":""}. Fix red rows in the BOM.`:"")}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_sendBlocked?`Send disabled${_hasVerify?" — BOM verification required":""}${_pricingCount>0?(_hasVerify?" + ":` — `)+_pricingCount+" incomplete item"+(_pricingCount>1?"s":"")+". Fix red rows in the BOM.":""}`:"")}
+
                   onClick={async()=>{
                   if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
                   if(_incompleteItems.length>0){arcAlert(formatIncompleteQuoteAlert(_incompleteItems));return;}
