@@ -11,6 +11,8 @@ const { digikeySearchPart, digikeySearchBatch } = require('./digikeyApi');
 const { BOM_PROMPT } = require('./bomPrompt');
 const { ANTHROPIC_MODELS, MONITORED_MODELS } = require('./models');
 const { PDFDocument, PDFName, PDFRef } = require('pdf-lib');
+const { Agent: UndiciAgent } = require('undici');
+const _anthropicAgent = new UndiciAgent({ headersTimeout: 520000, bodyTimeout: 520000 });
 
 // Purchasing module functions
 const purchasing = require('./purchasing');
@@ -2321,22 +2323,39 @@ function assessPdfPageQuality(pdfPage, context) {
 // functions/bomPrompt.js — keep in sync with BOM_PROMPT in src/app.jsx.
 
 exports.extractBomPage = functions
-  .runWith({ timeoutSeconds: 540, memory: '1GB', maxInstances: 10 })
+  .runWith({ timeoutSeconds: 540, memory: '2GB', maxInstances: 10 })
   .https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
   const uid = context.auth.uid;
-  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts, croppedBomImage, croppedBomMediaType, bomRegion } = data || {};
+  const ac = new AbortController();
+  const acTimer = setTimeout(() => ac.abort(), 520000);
+  const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts, croppedBomImage, croppedBomMediaType, bomRegion, tiledBomImages, tiledBomMediaType } = data || {};
 
   const hasPdf = !!(pdfPath && pageNumber != null);
   const hasImage = !!(imageBase64 && imageMediaType);
   const hasCroppedBom = !!(croppedBomImage && croppedBomMediaType);
+  // H5 (C49): high-DPI BOM region tiles rendered client-side via pdf.js.
+  const hasTiles = Array.isArray(tiledBomImages) && tiledBomImages.length > 0;
+  if (hasTiles) {
+    if (tiledBomImages.length > 6) {
+      throw new functions.https.HttpsError('invalid-argument', `Too many BOM tiles (max 6, got ${tiledBomImages.length})`);
+    }
+    for (const t of tiledBomImages) {
+      if (typeof t !== 'string' || !t.length) {
+        throw new functions.https.HttpsError('invalid-argument', 'Each BOM tile must be a non-empty base64 string');
+      }
+      if (t.length > 7_000_000) {
+        throw new functions.https.HttpsError('invalid-argument', 'BOM tile too large (>5MB)');
+      }
+    }
+  }
   if (croppedBomImage && croppedBomImage.length > 7_000_000) {
     throw new functions.https.HttpsError('invalid-argument', 'Cropped BOM image too large (>5MB)');
   }
-  if (!hasCroppedBom && !hasPdf && !hasImage) {
-    throw new functions.https.HttpsError('invalid-argument', 'Provide {croppedBomImage}, {pdfPath, pageNumber}, or {imageBase64, imageMediaType}');
+  if (!hasTiles && !hasCroppedBom && !hasPdf && !hasImage) {
+    throw new functions.https.HttpsError('invalid-argument', 'Provide {tiledBomImages}, {croppedBomImage}, {pdfPath, pageNumber}, or {imageBase64, imageMediaType}');
   }
 
   if (pageNumber != null) {
@@ -2358,8 +2377,39 @@ exports.extractBomPage = functions
   let extractionPath;
   let userContent;
   let pdfQuality = null;
+  let _t0, _t1, _t2, _t3, _pdfBufLen, _slicedLen, _pdfWasCropped;
 
-  if (hasPdf) {
+  // Phase 1f: region learning context — STRUCTURAL ONLY (never part-number content).
+  // Spliced into ALL extraction paths so 73% of vision-mode projects on pdf-native benefit.
+  const regionParts = Array.isArray(regionLearningParts) ? regionLearningParts : [];
+
+  if (hasTiles) {
+    // H5 (C48/C49): high-DPI tile path for vision-mode pages. The client rendered
+    // the BOM region via pdf.js at a DPI that exactly fills the model's image
+    // ceiling per tile — no API downsampling, ~600 effective DPI. No noBomReason
+    // escape here: tiles are by definition a known BOM region (#82 P1 rationale).
+    extractionPath = 'hi-dpi-tiles';
+    const feedbackSection = feedback
+      ? `\n\nCORRECTION INSTRUCTIONS FROM USER:\n${feedback}\nApply these corrections carefully and exactly as described.` : '';
+    const notesSection = userNotes
+      ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting.` : '';
+    const tileQualityAlert = `\n\nThis is a HIGH-RESOLUTION render — characters should be legible. Still apply the character-count check to EVERY part number, and for any character that could be B/8, O/0, S/5, I/1, 3/8, G/6, examine the surrounding pattern before committing.\n`;
+    const tileIntro = tiledBomImages.length > 1
+      ? `These ${tiledBomImages.length} images are OVERLAPPING high-resolution tiles of the SAME BOM table region from a UL508A control panel drawing, split into a grid for resolution. Adjacent tiles overlap by ~5%, so rows or columns near a tile edge may appear in two tiles — extract items from ALL tiles and combine into a single deduplicated result (one entry per itemNo).`
+      : `This image is a high-resolution render of the BOM table region from a UL508A control panel drawing.`;
+    const pageHint = `${tileIntro} Extract ALL items from this table.${tileQualityAlert}\n\n`;
+    const tileBlocks = tiledBomImages.map(t => ({
+      type: 'image',
+      source: { type: 'base64', media_type: tiledBomMediaType || 'image/jpeg', data: t },
+    }));
+    userContent = [
+      ...regionParts,
+      ...tileBlocks,
+      { type: 'text', text: pageHint + feedbackSection + notesSection },
+    ];
+    const tileKB = Math.round(tiledBomImages.reduce((s, t) => s + t.length, 0) * 0.75 / 1024);
+    functions.logger.info('extractBomPage using high-DPI tiles (H5)', { uid, tileCount: tiledBomImages.length, totalTileKB: tileKB, pageNumber: pageNumber || null });
+  } else if (hasPdf) {
     extractionPath = 'pdf-native';
     const bucket = admin.storage().bucket();
     const file = bucket.file(pdfPath);
@@ -2367,8 +2417,14 @@ exports.extractBomPage = functions
     if (!exists) {
       throw new functions.https.HttpsError('not-found', `PDF not found: ${pdfPath}`);
     }
+    _t0 = Date.now();
     const [buf] = await file.download();
+    if (!buf.length) {
+      throw new functions.https.HttpsError('failed-precondition', 'PDF file is empty (0 bytes) — re-upload the source PDF.');
+    }
+    _t1 = Date.now();
     const fullPdf = await PDFDocument.load(buf);
+    _t2 = Date.now();
     const totalPages = fullPdf.getPageCount();
     if (pageNumber > totalPages) {
       throw new functions.https.HttpsError('invalid-argument', `Page ${pageNumber} exceeds PDF page count (${totalPages})`);
@@ -2399,6 +2455,10 @@ exports.extractBomPage = functions
     }
 
     const singlePageBytes = await singlePagePdf.save();
+    _t3 = Date.now();
+    _pdfBufLen = buf.length;
+    _slicedLen = singlePageBytes.length;
+    _pdfWasCropped = pdfCropped;
     const pdfBase64 = Buffer.from(singlePageBytes).toString('base64');
     pdfQuality = assessPdfPageQuality(fullPdf.getPage(pageNumber - 1), fullPdf.context);
     functions.logger.info('extractBomPage PDF sliced', { totalPages, extractedPage: pageNumber, fullSizeKB: Math.round(buf.length / 1024), slicedSizeKB: Math.round(singlePageBytes.length / 1024), pdfQuality, pdfCropped });
@@ -2418,6 +2478,7 @@ exports.extractBomPage = functions
     const pageHint = `${cropHintText}Extract ALL Bill of Materials (BOM) items from this page.${qualityAlert}${noBomEscape}\n\n`;
 
     userContent = [
+      ...regionParts,
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
       { type: 'text', text: pageHint + feedbackSection + notesSection },
     ];
@@ -2431,6 +2492,7 @@ exports.extractBomPage = functions
     const cropQualityAlert = `\n\n⚠️ SCANNED IMAGE ALERT: This is a cropped image from a scanned drawing. Characters WILL be ambiguous. APPLY MAXIMUM SCRUTINY:\n- Perform the character-count check on EVERY part number\n- Default ALL rows to confidence "medium" unless every glyph is crystal clear\n- For any character that could be B/8, O/0, S/5, I/1, 3/8, G/6 — examine the surrounding pattern\n- Count total BOM rows TWICE before starting extraction\n`;
     const pageHint = `This image is a CROPPED region showing ONLY the BOM table from a UL508A control panel drawing. Extract ALL items from this table.${cropQualityAlert}\n\n`;
     userContent = [
+      ...regionParts,
       { type: 'image', source: { type: 'base64', media_type: croppedBomMediaType, data: croppedBomImage } },
       { type: 'text', text: pageHint + feedbackSection + notesSection },
     ];
@@ -2442,7 +2504,6 @@ exports.extractBomPage = functions
     const notesSection = userNotes
       ? `\n\nUSER NOTES ABOUT THESE DRAWINGS:\n${userNotes}\nKeep these notes in mind while extracting. They describe specific characteristics of this drawing set.` : '';
 
-    const regionParts = Array.isArray(regionLearningParts) ? regionLearningParts : [];
     userContent = [
       ...regionParts,
       { type: 'image', source: { type: 'base64', media_type: imageMediaType, data: imageBase64 } },
@@ -2452,15 +2513,13 @@ exports.extractBomPage = functions
 
   functions.logger.info('extractBomPage starting', { uid, extractionPath, hasPdf, pageNumber: pageNumber || null });
 
-  // FIX(PRJ402119): Add 480s timeout to prevent undici's default 300s headers timeout
-  // from crashing the function. Gives the API up to 480s within the 540s function budget.
-  const ac = new AbortController();
-  const acTimer = setTimeout(() => ac.abort(), 480000);
+  const t4 = Date.now();
   let response;
   try {
     response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       signal: ac.signal,
+      dispatcher: _anthropicAgent,
       headers: {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
@@ -2470,7 +2529,8 @@ exports.extractBomPage = functions
       body: JSON.stringify({
         model: ANTHROPIC_MODELS.OPUS,
         max_tokens: 64000,
-        thinking: { type: 'enabled', budget_tokens: 8000 },
+        // H5/Opus 4.8: adaptive thinking only — {type:'enabled', budget_tokens} returns 400 on 4.7+.
+        thinking: { type: 'adaptive' },
         system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
         messages: [{ role: 'user', content: userContent }],
       }),
@@ -2479,7 +2539,7 @@ exports.extractBomPage = functions
     clearTimeout(acTimer);
     const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
     functions.logger.error('extractBomPage API timeout/network error', { uid, extractionPath, pageNumber: pageNumber || null, error: fetchErr.message, isTimeout });
-    throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out (480s)' : 'network error'}: ${fetchErr.message}`);
+    throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out (520s)' : 'network error'}: ${fetchErr.message}`);
   }
   clearTimeout(acTimer);
 
@@ -2489,10 +2549,22 @@ exports.extractBomPage = functions
     throw new functions.https.HttpsError('internal', `Anthropic API error: ${response.status} — ${errBody.error?.message || 'unknown'}`);
   }
 
+  const t5 = Date.now();
   const result = await response.json();
   const raw = (result.content || []).find(b => b.type === 'text')?.text || '';
   const modelUsed = result.model || ANTHROPIC_MODELS.OPUS;
   const stopReason = result.stop_reason || 'unknown';
+
+  if (_t0) {
+    functions.logger.info('extractBomPage timing', {
+      uid, extractionPath,
+      downloadMs: _t1 - _t0, parseMs: _t2 - _t1, sliceMs: _t3 - _t2,
+      promptMs: t4 - _t3, apiMs: t5 - t4, totalMs: t5 - _t0,
+      pdfSizeKB: Math.round(_pdfBufLen / 1024),
+      slicedSizeKB: Math.round(_slicedLen / 1024),
+      pdfCropped: _pdfWasCropped
+    });
+  }
 
   functions.logger.info('extractBomPage complete', { uid, extractionPath, rawChars: raw.length, modelUsed, stopReason });
 
@@ -2580,6 +2652,9 @@ exports.extractBomBatch = functions
     throw new functions.https.HttpsError('not-found', `PDF not found: ${pdfPath}`);
   }
   const [buf] = await file.download();
+  if (!buf.length) {
+    throw new functions.https.HttpsError('failed-precondition', 'PDF file is empty (0 bytes) — re-upload the source PDF.');
+  }
   const fullPdf = await PDFDocument.load(buf);
   const totalPages = fullPdf.getPageCount();
   functions.logger.info('extractBomBatch PDF loaded', { uid, pdfPath, totalPages, pdfSizeKB: Math.round(buf.length / 1024), requestedPages: pages.length });
@@ -2657,14 +2732,14 @@ exports.extractBomBatch = functions
           ];
         }
 
-        // FIX(PRJ402119): 480s timeout — same as extractBomPage
         const batchAc = new AbortController();
-        const batchAcTimer = setTimeout(() => batchAc.abort(), 480000);
+        const batchAcTimer = setTimeout(() => batchAc.abort(), 520000);
         let response;
         try {
           response = await fetch('https://api.anthropic.com/v1/messages', {
             method: 'POST',
             signal: batchAc.signal,
+            dispatcher: _anthropicAgent,
             headers: {
               'Content-Type': 'application/json',
               'x-api-key': apiKey,
@@ -2674,7 +2749,8 @@ exports.extractBomBatch = functions
             body: JSON.stringify({
               model: ANTHROPIC_MODELS.OPUS,
               max_tokens: 64000,
-              thinking: { type: 'enabled', budget_tokens: 8000 },
+              // H5/Opus 4.8: adaptive thinking only — {type:'enabled', budget_tokens} returns 400 on 4.7+.
+              thinking: { type: 'adaptive' },
               system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
               messages: [{ role: 'user', content: userContent }],
             }),
@@ -2683,7 +2759,7 @@ exports.extractBomBatch = functions
           clearTimeout(batchAcTimer);
           const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
           functions.logger.error('extractBomBatch page API timeout', { uid, pageNumber: pg.pageNumber, error: fetchErr.message, isTimeout });
-          pageResults.push({ pageNumber: pg.pageNumber, success: false, error: `API ${isTimeout ? 'timeout (480s)' : 'network error'}` });
+          pageResults.push({ pageNumber: pg.pageNumber, success: false, error: `API ${isTimeout ? 'timeout (520s)' : 'network error'}` });
           continue;
         }
         clearTimeout(batchAcTimer);

@@ -16,7 +16,11 @@
 
 const ANTHROPIC_MODELS = {
   // Vision-heavy reasoning: BOM extraction, layout/schematic analysis.
-  OPUS: 'claude-opus-4-6',
+  // H5 (2026-06-10): bumped 4-6 → 4-8 to raise the image input ceiling from
+  // 1568px to 2576px on the long edge — required for the high-DPI tile path
+  // to hit ~600 effective DPI on BOM regions (C48/C49/C50). NOTE: Opus 4.7+
+  // rejects any `temperature` param with a 400 — do not reintroduce it.
+  OPUS: 'claude-opus-4-8',
   // Mid-tier balanced cost/accuracy: supplier-portal extraction, validation,
   // pricing analysis, BC item-browser locate, customer-review summary.
   SONNET: 'claude-sonnet-4-6',
