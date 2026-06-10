@@ -8,11 +8,24 @@ const {useState,useEffect,useRef,useCallback,useMemo}=React;
 // rest of the codebase. Now: bump these constants to roll a new model
 // across the whole app.
 const ANTHROPIC_MODELS={
-  OPUS:"claude-opus-4-6",
+  OPUS:"claude-opus-4-8",
   SONNET:"claude-sonnet-4-6",
   HAIKU:"claude-haiku-4-5",
   HAIKU_DATED:"claude-haiku-4-5-20251001",
 };
+
+// H5/C49: Anthropic vision pipeline downsamples images to the model's native
+// long-edge ceiling. Rendering above this is wasted — the API throws the
+// pixels away. Opus 4.6 and earlier: 1568px. Opus 4.7+/Fable 5: 2576px.
+// The H5 tiling math derives per-tile render DPI from this constant, so a
+// future model bump auto-adjusts effective DPI with zero code changes.
+const ANTHROPIC_MODEL_MAX_PX={
+  "claude-opus-4-6":1568,
+  "claude-opus-4-7":2576,
+  "claude-opus-4-8":2576,
+  "claude-fable-5":2576,
+};
+const MODEL_MAX_PX=ANTHROPIC_MODEL_MAX_PX[ANTHROPIC_MODELS.OPUS]||1568;
 
 // ── JOKE ENGINE — no repeat jokes per user, shuffled queue, persisted in localStorage ──
 const _ARC_JOKES=[
@@ -2592,7 +2605,9 @@ async function apiCall(body){
       const r=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:ANTHROPIC_MODELS.OPUS,temperature:0,...body})
+        // H5/C50: temperature:0 REMOVED — Opus 4.7+ rejects any temperature param with 400.
+        // Callers that need explicit temperature set it in `body` (e.g. SQ chat, Sonnet).
+        body:JSON.stringify({model:ANTHROPIC_MODELS.OPUS,...body})
       });
       const d=await r.json();
       if(r.ok){
@@ -11500,6 +11515,94 @@ async function getExtractionUnits(pg){
   return[{dataUrl:pg.dataUrl,croppedBomDataUrl:null,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion:null}];
 }
 
+// ── H5: REGION-TARGETED HIGH-DPI RENDERING (C48/C49/C50) ──
+// C48 proved vision-mode extraction misreads are a RESOLUTION bottleneck, not a
+// source-quality ceiling: the same drawing's wrong part numbers become correct at
+// 600 DPI with the same model. The native-PDF path lets Anthropic rasterize
+// internally at uncontrolled (low) DPI; CropBox narrows the view but does NOT
+// raise pixels-per-character. H5 renders the BOM region client-side via pdf.js
+// at a DPI derived from the model's image ceiling and sends image tiles instead.
+// Anthropic downsamples anything above MODEL_MAX_PX on the long edge, so each
+// tile is rendered to exactly fill that ceiling — max quality, zero waste.
+const H5_TILE_TARGET_DPI=600;   // C48: 300 DPI = borderline, 600 DPI = clean
+const H5_TILE_MAX_COUNT=6;      // >6 tiles degrades multi-image comprehension (C49)
+const H5_TILE_OVERLAP_FRAC=0.05;// 5% overlap on interior edges — rows/columns at a
+                                // tile boundary appear whole in at least one tile
+
+// Pick the tile grid that maximizes effective DPI within the tile budget.
+// Returns early once TARGET_DPI is reached (prefers fewer tiles).
+function findOptimalGrid(regionWInches,regionHInches){
+  let best={nx:1,ny:1,dpi:MODEL_MAX_PX/Math.max(regionWInches,regionHInches)};
+  for(let nx=1;nx<=4;nx++){
+    for(let ny=1;ny<=4;ny++){
+      if(nx*ny>H5_TILE_MAX_COUNT)continue;
+      const tileW=regionWInches/nx,tileH=regionHInches/ny;
+      const dpi=MODEL_MAX_PX/Math.max(tileW,tileH);
+      if(dpi>best.dpi)best={nx,ny,dpi};
+      if(best.dpi>=H5_TILE_TARGET_DPI)return best;
+    }
+  }
+  return best;
+}
+
+// Render the BOM region of a PDF page to high-DPI JPEG tiles.
+// Returns {tiles: base64[], grid: {nx,ny}, renderDpi} — tiles are raw base64
+// (no data: prefix), ready for the Cloud Function's tiledBomImages param.
+// Renders each tile as its OWN small canvas (pdf.js viewport translate) so no
+// giant full-page canvas is ever allocated — a D-size page at 600 DPI would
+// exceed browser canvas limits, but per-tile canvases stay ≤ MODEL_MAX_PX.
+async function renderBomRegionHighDpi(storagePath,pageNumber,bomRegion){
+  await window.pdfjsReady();
+  const pdfjs=window._pdfjs;
+  const url=await fbStorage.ref(storagePath).getDownloadURL();
+  const resp=await fetch(url);
+  if(!resp.ok)throw new Error("PDF fetch failed: "+resp.status);
+  const buf=await resp.arrayBuffer();
+  if(!buf.byteLength)throw new Error("PDF file is empty (0 bytes) at "+storagePath+" — re-upload the source PDF");
+  const pdf=await pdfjs.getDocument({data:buf}).promise;
+  try{
+    if(pageNumber>pdf.numPages)throw new Error(`page ${pageNumber} exceeds PDF page count (${pdf.numPages})`);
+    const pg=await pdf.getPage(pageNumber);
+    const baseVp=pg.getViewport({scale:1}); // 1 pdf unit = 1/72 inch
+    const regionWIn=bomRegion.w*baseVp.width/72;
+    const regionHIn=bomRegion.h*baseVp.height/72;
+    if(regionWIn<=0.1||regionHIn<=0.1)throw new Error("degenerate BOM region — too small to render");
+    const grid=findOptimalGrid(regionWIn,regionHIn);
+    // Per-tile render DPI fills MODEL_MAX_PX on the tile's long edge (incl. overlap margin)
+    const ovWIn=grid.nx>1?(regionWIn/grid.nx)*H5_TILE_OVERLAP_FRAC:0;
+    const ovHIn=grid.ny>1?(regionHIn/grid.ny)*H5_TILE_OVERLAP_FRAC:0;
+    const tileWIn=regionWIn/grid.nx+2*ovWIn;
+    const tileHIn=regionHIn/grid.ny+2*ovHIn;
+    const renderDpi=MODEL_MAX_PX/Math.max(tileWIn,tileHIn);
+    const vp=pg.getViewport({scale:renderDpi/72});
+    const rX=bomRegion.x*vp.width,rY=bomRegion.y*vp.height;
+    const rW=bomRegion.w*vp.width,rH=bomRegion.h*vp.height;
+    const ovWpx=ovWIn*renderDpi,ovHpx=ovHIn*renderDpi;
+    const tiles=[];
+    for(let j=0;j<grid.ny;j++){
+      for(let i=0;i<grid.nx;i++){
+        // Tile rect with overlap extension on interior edges only
+        const x0=rX+(i/grid.nx)*rW-(i>0?ovWpx:0);
+        const x1=rX+((i+1)/grid.nx)*rW+(i<grid.nx-1?ovWpx:0);
+        const y0=rY+(j/grid.ny)*rH-(j>0?ovHpx:0);
+        const y1=rY+((j+1)/grid.ny)*rH+(j<grid.ny-1?ovHpx:0);
+        const cw=Math.round(x1-x0),ch=Math.round(y1-y0);
+        if(cw<10||ch<10)continue;
+        const canvas=document.createElement("canvas");
+        canvas.width=cw;canvas.height=ch;
+        const ctx=canvas.getContext("2d");
+        ctx.fillStyle="#fff";ctx.fillRect(0,0,cw,ch); // JPEG has no alpha — white bg
+        // transform translates page-space so this tile's rect lands at canvas origin
+        await pg.render({canvasContext:ctx,viewport:vp,transform:[1,0,0,1,-x0,-y0]}).promise;
+        tiles.push(canvas.toDataURL("image/jpeg",0.92).replace(/^data:image\/\w+;base64,/,""));
+      }
+    }
+    if(!tiles.length)throw new Error("H5 render produced no tiles");
+    console.log(`[H5] rendered ${tiles.length} tile(s) ${grid.nx}×${grid.ny} @ ~${Math.round(renderDpi)} DPI — region ${regionWIn.toFixed(1)}"×${regionHIn.toFixed(1)}", model ceiling ${MODEL_MAX_PX}px`);
+    return{tiles,grid,renderDpi};
+  }finally{try{pdf.destroy();}catch(_){}}
+}
+
 // Build region context string for extraction notes
 function buildRegionContext(pages){
   const hints=[];
@@ -11683,18 +11786,28 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
 // region-learning context) take the IDENTICAL code path. If the function
 // throws (deploy lag, transient error, network), the caller falls back
 // to the legacy direct API path, preserving zero-regression behavior.
-async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion=null,regionLearningParts=null){
-  if(!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
+async function extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,bomRegion=null,regionLearningParts=null,tiledBomImages=null){
+  const hasTiles=Array.isArray(tiledBomImages)&&tiledBomImages.length>0;
+  if(!hasTiles&&!croppedBomDataUrl&&(!originalPdfPath||!pageNumber))throw new Error("BOM extraction requires native PDF or cropped BOM image — originalPdfPath is missing. Re-upload the source PDF.");
   const callable=fbFunctions.httpsCallable("extractBomPage",{timeout:540000});
-  const payload={pdfPath:originalPdfPath,pageNumber,feedback:feedback||"",userNotes:userNotes||""};
-  if(bomRegion&&originalPdfPath)payload.bomRegion=bomRegion;
-  if(regionLearningParts&&regionLearningParts.length)payload.regionLearningParts=regionLearningParts;
-  if(croppedBomDataUrl&&!originalPdfPath){
-    const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
-    payload.croppedBomImage=base64;
-    payload.croppedBomMediaType="image/jpeg";
+  const payload={feedback:feedback||"",userNotes:userNotes||""};
+  if(hasTiles){
+    // H5 high-DPI tile path — tiles replace the PDF/crop input entirely
+    payload.tiledBomImages=tiledBomImages;
+    payload.tiledBomMediaType="image/jpeg";
+    if(pageNumber)payload.pageNumber=pageNumber;
+  }else{
+    payload.pdfPath=originalPdfPath;
+    payload.pageNumber=pageNumber;
+    if(bomRegion&&originalPdfPath)payload.bomRegion=bomRegion;
+    if(croppedBomDataUrl&&!originalPdfPath){
+      const base64=croppedBomDataUrl.replace(/^data:image\/\w+;base64,/,"");
+      payload.croppedBomImage=base64;
+      payload.croppedBomMediaType="image/jpeg";
+    }
   }
-  const intendedPath=originalPdfPath?"pdf-native":"bom-region-crop";
+  if(regionLearningParts&&regionLearningParts.length)payload.regionLearningParts=regionLearningParts;
+  const intendedPath=hasTiles?"hi-dpi-tiles":(originalPdfPath?"pdf-native":"bom-region-crop");
   const t0=Date.now();
   const result=await callable(payload);
   const elapsedMs=Date.now()-t0;
@@ -11770,6 +11883,37 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
   // STRUCTURAL ONLY — drawing tier, column layout, region placement. NEVER part-number content.
   let _regionParts=[];
   try{const _rlUid=fbAuth.currentUser?.uid;if(_rlUid){const _rlEx=await loadRegionLearning(_rlUid);_regionParts=buildRegionLearningContext(_rlEx,{maxExamples:3});}}catch(_){/* non-blocking */}
+
+  // ── H5 (C48/C49/C50): region-targeted high-DPI tiles for vision-mode pages ──
+  // Input-TYPE switch driven by tier: text-layer pages keep the PDF-native path
+  // (deterministic, superior for readable text — do NOT change); vision-mode
+  // pages (vector-stroke / bitmap / scan) with a known BOM region get a
+  // client-side high-DPI render sent as image tiles. Any H5 failure falls
+  // through to the unchanged standard paths below — rollback-safe by design.
+  if(originalPdfPath&&pageNumber&&bomRegion){
+    try{
+      const _h5Tier=await classifyBomInputTier({originalPdfPath,pageNumber,regions:[{type:"bom",x:bomRegion.x,y:bomRegion.y,w:bomRegion.w,h:bomRegion.h}]},null);
+      if(_h5Tier!=="text-layer"&&_h5Tier!=="no-pdf"){
+        const _h5=await renderBomRegionHighDpi(originalPdfPath,pageNumber,bomRegion);
+        console.log(`[H5] tier=${_h5Tier} → high-DPI tile path (${_h5.tiles.length} tile(s) @ ~${Math.round(_h5.renderDpi)} DPI)`);
+        const h5Result=await extractBomPageViaServer(dataUrl,feedback,userNotes,null,pageNumber,null,null,_regionParts,_h5.tiles);
+        if((h5Result.items||[]).length>0){
+          h5Result._h5={tiles:_h5.tiles.length,renderDpi:Math.round(_h5.renderDpi),tier:_h5Tier};
+          return h5Result;
+        }
+        console.warn("[H5] high-DPI tiles returned 0 items — falling back to standard extraction paths");
+      }else{
+        console.log(`[H5] tier=${_h5Tier} → standard PDF-native path (text layer present)`);
+      }
+    }catch(_h5Err){
+      console.warn("[H5] high-DPI path failed — falling back to standard paths:",_h5Err?.message||_h5Err);
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"warn",source:"extractBomPage",message:`H5 high-DPI path failed — fell back to standard: ${String(_h5Err?.message||_h5Err).slice(0,200)}`,extra:{pageNumber:pageNumber||null,originalPdfPath:originalPdfPath||null}});
+        }
+      }catch(_){}
+    }
+  }
 
   // Server-side path FIRST. On error, falls through to direct API.
   try{
@@ -22124,7 +22268,7 @@ function ZeroBomBanner({panel,onTriggerReextract}){
               <tr key={i} style={{borderTop:"1px solid #ef444422"}}>
                 <td style={{padding:"3px 6px",color:"#fef3c7",fontWeight:600}}>{p.pageName}</td>
                 <td style={{padding:"3px 6px",textAlign:"center",color:p.itemsFound>0?"#86efac":"#fca5a5",fontWeight:700}}>{p.itemsFound}</td>
-                <td style={{padding:"3px 6px",textAlign:"center",color:p.extractionPath==="pdf-native"?"#86efac":"#fcd34d",fontSize:10}}>{p.extractionPath||"?"}</td>
+                <td style={{padding:"3px 6px",textAlign:"center",color:(p.extractionPath==="pdf-native"||p.extractionPath==="hi-dpi-tiles")?"#86efac":"#fcd34d",fontSize:10}}>{p.extractionPath||"?"}</td>
                 <td style={{padding:"3px 6px",color:"#fecaca",fontSize:10}}>{(p.rejectReasons||[]).join(", ")||"—"}</td>
                 <td style={{padding:"3px 6px",textAlign:"center"}}>{p.hasOriginalPdf?"✓":"✗"}</td>
               </tr>
@@ -27062,7 +27206,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 PDF native
               </span>
             )}
-            {panel.extractionReport?.extractionPath&&panel.extractionReport.extractionPath!=="pdf-native"&&(
+            {panel.extractionReport?.extractionPath==="hi-dpi-tiles"&&(
+              <span title="Extraction used H5 high-DPI region tiles — BOM region rendered at ~600 effective DPI for vision-mode drawings."
+                style={{background:"#0d2a18",border:"1px solid #22c55e88",color:"#86efac",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
+                High-DPI tiles
+              </span>
+            )}
+            {panel.extractionReport?.extractionPath&&panel.extractionReport.extractionPath!=="pdf-native"&&panel.extractionReport.extractionPath!=="hi-dpi-tiles"&&(
               <span title="Extraction used image fallback — lower accuracy than PDF native."
                 style={{background:"#2a1f0d",border:"1px solid #f59e0b88",color:"#fcd34d",borderRadius:14,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"help",whiteSpace:"nowrap"}}>
                 Image fallback
