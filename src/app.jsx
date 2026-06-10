@@ -11986,7 +11986,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         body:JSON.stringify({
           model:ANTHROPIC_MODELS.OPUS,
           max_tokens:64000,
-          thinking:{type:"enabled",budget_tokens:8000},
+          thinking:{type:"adaptive"},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             ..._regionParts,
@@ -12026,7 +12026,7 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
         body:JSON.stringify({
           model:ANTHROPIC_MODELS.OPUS,
           max_tokens:64000,
-          thinking:{type:"enabled",budget_tokens:8000},
+          thinking:{type:"adaptive"},
           system:[{type:"text",text:BOM_PROMPT,cache_control:{type:"ephemeral"}}],
           messages:[{role:"user",content:[
             ..._regionParts,
@@ -12397,7 +12397,7 @@ If you cannot read the image at all, return {"rowChecks": [], "missingRows": [],
     const raw=await apiCall({
       model:ANTHROPIC_MODELS.OPUS,
       max_tokens:8000,
-      thinking:{type:"enabled",budget_tokens:4000},
+      thinking:{type:"adaptive"},
       messages:[{role:"user",content:[...imgSources,{type:"text",text:prompt}]}]
     });
     const cleaned=(raw||"").replace(/```json|```/g,"").trim();
@@ -20616,12 +20616,10 @@ async function extractTitleBlock(dataUrl,opts){
       headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-beta":"interleaved-thinking-2025-05-14","anthropic-dangerous-direct-browser-access":"true"},
       body:JSON.stringify({
         model:ANTHROPIC_MODELS.OPUS,
-        // DECISION(v1.19.637): max_tokens MUST exceed budget_tokens when thinking is enabled —
-        // thinking tokens are drawn from the max budget. Previously max=2000, budget=2000 left
-        // zero room for the JSON text response, so title block extraction silently returned
-        // nothing. 4000 total / 2000 thinking gives ~2000 tokens for the ~300-token JSON output.
+        // H5/Opus 4.8: adaptive thinking replaces the fixed budget (v1.19.637's
+        // max>budget rule no longer applies — the model self-allocates thinking).
         max_tokens:4000,
-        thinking:{type:"enabled",budget_tokens:2000},
+        thinking:{type:"adaptive"},
         messages:[{role:"user",content:[
           ...imageContents,
           {type:"text",text:`You are extracting title-block information from an engineering drawing. ${images.length>1?`You are shown ${images.length} images of the SAME drawing (${tagList})${titleblockRegion?" — the user-region image is a high-resolution crop of the exact title block area. Prefer reading from that image.":" — Image 2 and 3 are zoomed crops of likely title block locations."} Cross-reference between images.`:"You are shown a single image."}${customerHint}
