@@ -3944,3 +3944,242 @@ This corrects the #113 conclusion that "scans are floor-limited by source scan q
 Both scenarios are well above the 600 DPI target. The tight user-drawn region delivers nearly 2× the DPI of full-page at 1/3 the tile count.
 
 ---
+
+## C53 — #121 Region Edge-Padding Fix Review
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** H-item step 7 review of #121 (region edge-padding in `renderBomRegionHighDpi`)
+**Diff reviewed:** Uncommitted changes in `src/app.jsx` (constant + padding block + downstream derivation)
+
+### Verdict: APPROVED — ship it
+
+The change is correct, minimal, and well-placed. Six lines of padding math, one constant, clean handoff from `bomRegion` → `region` with no stale references downstream.
+
+### Code Review
+
+1. **Constant placement** — `H5_REGION_PAD_FRAC=0.02` at line 11531, adjacent to `H5_TILE_OVERLAP_FRAC`. Right neighborhood. Comment is accurate and sufficient.
+
+2. **Padding math** — Proportional to region dimensions (`bomRegion.w * 0.02`, `bomRegion.h * 0.02`), applied symmetrically to all four edges, clamped to `[0,1]` page bounds. The asymmetric clamp (`Math.max(0,...)` on origin, `Math.min(1,...)` on extent) correctly handles regions flush against any edge — padding extends only inward on clamped edges. Width/height are computed as `(clamped far edge) - (clamped origin)`, so the geometry is self-consistent regardless of which edges clamp.
+
+3. **Downstream references** — Verified: within `renderBomRegionHighDpi` (lines 11558–11616), `bomRegion` appears only in lines 11574–11578 (the padding computation). All subsequent code (`regionWIn`, `regionHIn`, `rX`, `rY`, `rW`, `rH`, tile loop) derives from `region`. No stale-reference bug.
+
+4. **Call site** — Single entry point at line 11909: `renderBomRegionHighDpi(originalPdfPath, pageNumber, bomRegion)`. The raw `bomRegion` is still passed to `classifyBomInputTier` at line 11907 for tier classification — correct, since tier classification should see the user's original region, not the padded one. The padding is a render-time concern only.
+
+5. **No Cloud Function change needed** — H5 tiling is client-side; the CF receives tiles as images. Confirmed.
+
+### Answers to Marc's Questions
+
+**Q1 — 2% per edge is correct.** My C52 said "pad ~2% before rendering" — that means 2% on each edge, not 2% total. The TODO's "~5-10 DPI" estimate was based on smaller region geometry; actual cost is ~18 DPI on PRJ402101 (440→422) and ~69 DPI on PRJ402119 (1079→1010). Both remain far above the 600 DPI clean threshold and even farther above the 300 DPI borderline. The margin is enormous. 1% per edge would risk being too timid for the clipping case.
+
+**Q2 — Clamp behavior is correct.** The PRJ402119 failure was bottom-row clipping on a tight user-drawn region. A region whose bottom edge is at, say, `y+h=0.98` gets padded to `min(1, 0.98+pad)` — extends downward. A region already at `y+h=1.0` (touching the page bottom) correctly clamps to 1.0 and doesn't extend past the page. That matches: the user draws tight, the pad extends to catch the clipped row, but never off-page. The inward-only pad on clamped edges is the right behavior — a BOM table flush against the page edge has no content to capture beyond the edge.
+
+**Q3 — Logical review is sufficient. No re-run needed.** The change is 6 lines of geometry math upstream of the tile loop. The tile loop, DPI calculation, overlap logic, and render pipeline are untouched. H5 failure already falls through to standard extraction paths (rollback-safe by design, confirmed in C51). The DPI cost is provably small relative to the margin. Re-running PRJ402119's 14/14 test would confirm what the math already proves. Save the verification cycle for something where the outcome is uncertain.
+
+### DPI Impact Summary
+
+| Drawing | Region | Grid | Pre-pad DPI | Post-pad DPI | Delta | vs 600 target |
+|---------|--------|:----:|:-----------:|:------------:|:-----:|:-------------:|
+| PRJ402101 | 16.0"×10.1" | 3×2 | ~440 | ~422 | -18 | still above 300 borderline |
+| PRJ402119 | 4.77"×1.63" | 2×1 | ~1,079 | ~1,010 | -69 | 1.7× target |
+
+No risk to extraction quality on any known drawing.
+
+---
+
+## C54 — #121 Region Edge-Padding v2 Review (Floor Pad)
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** H-item step 7 re-review of #121 after Freddy analyst feedback. Two-part pad: proportional ceiling + absolute floor.
+**Diff reviewed:** Uncommitted changes in `src/app.jsx` (two constants + floor→fraction conversion + max-of-two pad logic + downstream derivation)
+
+### Verdict: APPROVED — ship it. Regression re-run requested.
+
+Freddy's insight is correct and important: a clipped row is a fixed-height problem, not a proportional one. The proportional-only pad from C53 would have delivered only 0.38% of page height per Y-edge on PRJ402119's tight 1.63" region — about 2.3pt, roughly a quarter of a BOM row. That's not enough. The floor term is the load-bearing fix.
+
+### Review Point 1: Floor→Fraction Conversion
+
+**Confirmed correct.** `baseVp = pg.getViewport({scale:1})` returns page dimensions in PDF points (1pt = 1/72 inch). For PRJ402119 (11.0"×8.5" = 792×612 pts):
+
+- `_floorFracX = 14/792 ≈ 0.0177` → 14pt horizontal pad per edge
+- `_floorFracY = 14/612 ≈ 0.0229` → 14pt vertical pad per edge
+
+The division is dimensionally correct: PDF points ÷ PDF points = unitless page fraction. The `Math.max` then picks whichever is larger (floor or proportional) per axis independently. On PRJ402119, the floor wins both axes (0.0177 > 0.00868 on X, 0.0229 > 0.00384 on Y).
+
+### Review Point 2: Floor Value — 14pt
+
+**14pt is geometrically correct for the failure mode.** A standard BOM table row is 10-14pt (8-10pt font + 2-4pt cell padding). The clipping Marc observed on PRJ402119 was partial-row clipping at the region boundary — the user drew to the last row's baseline, cutting off the bottom cell border or descenders. 14pt covers one full row height, which is sufficient for boundary clipping.
+
+**I do NOT have a measured clip distance from the PRJ402119 test.** The C52 finding recorded the symptom ("tight user-drawn region cut bottom rows until padded") but not the point measurement — Marc adjusted the region visually, not numerically. However, the geometry is sound: if the clip had exceeded one row (14pt), Marc would have reported losing multiple rows, not "edge rows." 14pt is the right order of magnitude.
+
+**On Freddy's Y-axis pollution concern:** 14pt ≈ one row of pad is the minimum effective dose. The title block and revision table on PRJ402119 are several rows away from the BOM table boundary — typical BOM-to-titleblock gap on ANSI B drawings is 0.5-1.0 inches (36-72pt). 14pt won't reach it. This is a safe value. If field data later shows phantom-row injection, the floor can be lowered to 10pt without losing the fix.
+
+### Review Point 3: DPI Impact
+
+| Drawing | Region | Grid | Floor pad (Y) | Pre-pad DPI | Post-pad DPI | Delta |
+|---------|--------|:----:|:-------------:|:-----------:|:------------:|:-----:|
+| PRJ402119 | 4.77"×1.63" | 2×1 | 14pt (0.194") | ~1,079 | ~1,050 | -29 |
+| PRJ402101 | 16.0"×10.1" | 3×2 | 14pt (0.194") | ~440 | ~436 | -4 |
+
+Floor pad is larger than proportional on PRJ402119 (0.194" vs 0.033") but the DPI cost is still modest because the region only grows ~24% on its short axis. PRJ402101's large region is dominated by the proportional term (2% of 10.1" = 0.202" > 0.194"), so floor barely matters there. Both remain far above 600 DPI target.
+
+### Review Point 4: Code Structure
+
+Same clean structure as C53's review — `bomRegion` referenced only in the padding computation (lines 11584-11588), `region` used for everything downstream. The `Math.max` between proportional and floor is per-axis, which is correct (X and Y have different page dimensions, so the floor→fraction conversion yields different values). Asymmetric clamp to [0,1] unchanged from v1. No stale references. `classifyBomInputTier` at line 11907 still sees the raw `bomRegion` — correct.
+
+### Review Point 5: Regression Re-run
+
+**Requested.** Unlike the proportional-only C53 review, the floor pad changes the actual padding behavior significantly on tight regions — PRJ402119's Y-axis pad goes from ~2.3pt (proportional) to 14pt (floor). That's a 6× increase in padding on the axis that matters. The change is still geometrically safe by analysis, but:
+
+1. The 14/14 result was achieved with zero padding. The floor pad adds ~0.39" total height (~24% region growth on Y). I want to see that no phantom rows from adjacent drawing elements leak in.
+2. This is a one-time cost — extract one page, count items, compare to the known-good 14. Five minutes of work, high-confidence ship signal.
+
+Specifically: extract PRJ402119 page 3 (the BOM page) with the padded build. Confirm 14 items returned, all matching the C52 ground truth. If item count >14, check for phantom rows from title block / revision table (Freddy's watch-item). If <14, the pad isn't sufficient and we need to investigate.
+
+---
+
+## C55 — H5 Render Path Headless Reachability Analysis
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Read-only code-path trace — can `renderBomRegionHighDpi` + extraction be invoked from Node.js without a browser?
+
+### Answer: NOT cleanly reachable — but a BYPASS exists that avoids the hard parts entirely.
+
+The render path has **four browser-hard dependencies**. But the Cloud Function already accepts pre-rendered tiles, so a Node.js test harness can render tiles server-side and call the CF directly, bypassing the entire client render chain. This is the recommended path.
+
+### Browser-Hard Dependencies in the Client Render Chain
+
+Tracing `renderBomRegionHighDpi` (app.jsx:11564):
+
+1. **`window.pdfjsReady()` + `window._pdfjs`** (line 11565-11566) — pdf.js is loaded as a browser ES module from CDN (index.html:229), injected via `document.createElement("script")`. The loader itself uses `document.head.appendChild`. **Browser-only.** Node.js equivalent exists: `pdfjs-dist` npm package provides the same API. Not currently in any `package.json`.
+
+2. **`fbStorage.ref(storagePath).getDownloadURL()`** (line 11567) — Firebase client SDK Storage call. Requires browser Firebase auth context. **Browser-only.** Node.js equivalent: `firebase-admin` Storage with `bucket.file(path).download()`. Already used in `tests/extraction-baseline/extract-baseline.js`.
+
+3. **`document.createElement("canvas")` + `canvas.getContext("2d")` + `canvas.toDataURL("image/jpeg", 0.92)`** (lines 11614-11620) — DOM Canvas API for rendering each tile. This is the hardest dependency. **Browser-only.** Node.js equivalent: `node-canvas` (`canvas` npm package) or `@napi-rs/canvas`. Not currently installed. Requires native compilation (C++ bindings to Cairo). On Windows, `node-canvas` needs `node-gyp` + Visual C++ Build Tools — fragile install.
+
+4. **`pg.render({canvasContext: ctx, ...})`** (line 11619) — pdf.js renders to a canvas context. In the browser, this is a `CanvasRenderingContext2D`. In Node with `pdfjs-dist`, you'd pass a `node-canvas` context. **Requires dependency #3 to work.**
+
+### The Bypass: Skip Client Rendering, Call the CF Directly
+
+The Cloud Function `extractBomPage` (functions/index.js:2334) accepts `tiledBomImages` — an array of base64 JPEG strings — as a **standalone input path** (line 2340: `hasTiles`). When tiles are present, the CF ignores `pdfPath`/`croppedBomImage` entirely and sends the tiles straight to Anthropic. The CF doesn't know or care whether tiles were rendered by a browser canvas, a Node script, or a GIMP export.
+
+This means a headless test harness can:
+
+1. **Render tiles in Node** using `pdfjs-dist` + `node-canvas`, then call the CF with the tiles.
+2. **OR** (simpler, zero new dependencies): render tiles ONCE in the browser (or extract them from a successful production run's debug output), save them to disk as a fixture, and replay them against the CF from Node.
+
+**Option 2 is the zero-dependency path for the #121 gate specifically.** The regression test question is "does the PADDED REGION produce the same 14 items?" — the pad changes which pixels are in each tile, so you need a fresh render from the padded code. But you only need that render ONCE — then the tiles are a static fixture.
+
+### Option-by-Option Cost Assessment
+
+**Option A — Full headless render (Node.js script)**
+
+New dependencies: `pdfjs-dist@4.4.168` + `canvas` (node-canvas).
+
+Shim work:
+- Replace `window.pdfjsReady()` → `require('pdfjs-dist')`
+- Replace `fbStorage.ref().getDownloadURL()` + `fetch()` → `admin.storage().bucket().file().download()`
+- Replace `document.createElement('canvas')` → `const {createCanvas} = require('canvas')`
+- Replace `canvas.toDataURL('image/jpeg', 0.92)` → `canvas.toBuffer('image/jpeg', {quality: 0.92}).toString('base64')`
+- Port `findOptimalGrid` + the H5 constants + the #121 padding math (pure JS, no browser deps — copy directly)
+
+Estimated: ~80-120 lines of test script. The hard part is `node-canvas` installation on Windows (native build, Cairo dependency). If it installs cleanly: ~2 hours. If node-gyp fights: unpredictable.
+
+**Benefit beyond #121:** Every future H5 gate runs headless. Marc scripts it, no browser, no connector limit, no Jon relay. Worth it if H5 gates recur (they will — #121, future region changes, model upgrades).
+
+**Option B — One-shot fixture replay (zero dependencies)**
+
+Steps:
+1. Jon runs the padded build in the browser ONCE on PRJ402119, with Marc's console logging capturing the tile base64 output (the `[H5] rendered N tile(s)` line already fires, but tiles aren't logged — would need a temporary `console.log(JSON.stringify(tiles))` or equivalent).
+2. Save tiles to a JSON fixture file.
+3. Node script (using existing `firebase-admin` infra from `tests/extraction-baseline/`) calls `extractBomPage` CF directly with the fixture tiles.
+4. Compare returned items to C52 ground truth.
+
+Estimated: ~30 min, zero new npm packages, works immediately. But it's a ONE-TIME fixture — every new pad value or region change needs a fresh browser capture.
+
+**Option C — Live with the manual relay**
+
+Jon triggers extraction in the browser, Marc reads the console output. Works for #121 right now. Recurring cost for every future gate.
+
+### Recommendation
+
+**For #121 today: Option B** (fixture replay) or just the manual relay (Option C). Either unblocks the ship gate in <30 min.
+
+**For the long term: Option A** (full headless render). The connector restriction means every non-prod H5 gate hits this wall. `node-canvas` installation is a one-time cost; once it works, the test harness is reusable indefinitely. Schedule it as a tooling item after #121 ships.
+
+### What NOT to Do
+
+Do NOT try to drive the extraction through `puppeteer` or headless Chrome against the test site. That's a heavier dependency than `node-canvas`, introduces auth/session complexity, and doesn't solve the connector problem — it creates a second browser to manage.
+
+---
+
+## C56 — H5 Headless Harness Built + #121 PRJ402119 Regression Result
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Build Option A headless harness (C55), run #121 PRJ402119 regression gate
+
+### Harness Construction
+
+**Dependencies installed cleanly** — `canvas` (node-canvas) 3.1.0 used prebuilt binaries, installed in 6 seconds. `pdfjs-dist@4.4.168` installed alongside. Both as devDependencies in project root `package.json`. Zero native compilation.
+
+**Harness location:** `tests/extraction-baseline/h5-headless.js`
+
+**Architecture:** Downloads PDF via `firebase-admin` Storage → renders tiles via `pdfjs-dist` + `node-canvas` (ported H5 math including #121 padding) → authenticates via custom token → calls `extractBomPage` Cloud Function with `tiledBomImages` (the standalone tile input at functions/index.js:2340) → parses and displays results.
+
+**CLI interface:**
+```
+node tests/extraction-baseline/h5-headless.js                     # PRJ402119 page 3 (default)
+node tests/extraction-baseline/h5-headless.js --project PRJ402101 # PRJ402101 page 10
+node tests/extraction-baseline/h5-headless.js --no-pad             # baseline (no #121 padding)
+node tests/extraction-baseline/h5-headless.js --pad-floor 10       # override floor to 10pt
+node tests/extraction-baseline/h5-headless.js --save-tiles ./tiles  # write tile JPEGs to disk
+```
+
+Known projects (extend `KNOWN_PROJECTS` for new targets): PRJ402119 (page 3), PRJ402101 (page 10).
+
+**pdfjs-dist note:** v4.4.168 ships ESM-only. Harness uses `await import('pdfjs-dist/legacy/build/pdf.mjs')` from CJS.
+
+### #121 PRJ402119 Regression: PASS — 13/13 items, 14/14 PNs, zero phantoms
+
+**Run output:**
+```
+[H5] rendered 2 tile(s) 2×1 @ ~906 DPI — region 5.2"×2.0", model ceiling 2576px
+[H5] pad=ON floor=14pt
+[H5] original region: x=0.0679 y=0.6906 w=0.4344 h=0.1922
+[H5] padded region:   x=0.0502 y=0.6677 w=0.4697 h=0.2380
+[H5] region growth: X +8.1%, Y +23.8%
+```
+
+**Item-by-item vs C52 ground truth:**
+
+| # | Ground Truth PN | Headless PN | Match | Qty | Conf |
+|---|-----------------|-------------|:-----:|-----|------|
+| 1 | SCE-1412PCW | SCE-1412PCW | ✓ | 1 | med |
+| 2 | SCE-14P12AL | SCE-14P12AL | ✓ | 1 | med |
+| 3 | 3038338 | 3038338 | ✓ | 8 | high |
+| 4 | 3214259 | 3214259 | ✓ | 20 | high |
+| 5 | 3214314 | 3214314 | ✓ | 4 | high |
+| 6 | 3022276 | 3022276 | ✓ | 7 | high |
+| 7 | 0807012 | 0807012 | ✓ | 1 (A/R) | high |
+| 8 | TYD15X3WPW6 | TYD15X3WPW6 | ✓ | 1 (A/R) | med |
+| 8 cover | TYD2CW6 | TYD2CW6 (in `additionalPartNumbers`) | ✓ | — | — |
+| 9 | HS-CG2 | HS-CG2 | ✓ | 3 | high |
+| 10 | SECM25G | SECM25G | ✓ | 5 | high |
+| 11 | SECM40G | SECM40G | ✓ | 1 | high |
+| 12 | LNM25BPK100 | LNM25BPK100 | ✓ | 1 (A/R) | high |
+| 13 | LNM40BPK100 | LNM40BPK100 | ✓ | 1 (A/R) | high |
+
+**14/14 part numbers correct. 13/13 rows present. Zero phantom rows.**
+
+The "14/14" from C52's generalization test was 14 part numbers across 13 BOM rows — item 8 has a paired cover PN (TYD2CW6) captured in `additionalPartNumbers`. The headless run matches exactly.
+
+**Phantom check (Freddy's Y-axis watch-item):** The padded region grew 23.8% on Y (from h=0.1922 to h=0.2380). This extended the top edge from y=0.6906 to y=0.6677 and the bottom from y=0.8828 to y=0.9057. No phantom rows from title block, revision table, or adjacent drawing elements appeared in the extraction. 13 items in, 13 items out — the 14pt floor pad is safe on this drawing.
+
+**DPI impact:** ~906 DPI (down from ~1079 unpadded). Still 1.5× the 600 DPI target. The DPI drop is larger than C54's theoretical estimate (~1010) because the floor pad dominates both axes on this tight region, producing 8.1% X growth and 23.8% Y growth (vs the proportional-only ~4%/axis from C53).
+
+### Verdict: #121 regression gate PASSES. Ship it.
+
+---
