@@ -1,5 +1,7 @@
 # MatrixARC — Development Rules
 
+> Work item numbering follows NUMBERING-CONVENTION.md: #N — description [Status].
+
 ## Table of Contents
 - [Session startup procedure](#session-startup-procedure)
   - [Team startup](#team-startup-default) — sequential boot: Marc → Coach paste → Freddy paste → sync check

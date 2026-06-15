@@ -1,50 +1,79 @@
-# Session State — 2026-06-04 22:00 MDT
+# Session State — 2026-06-15 MDT
 
 ## Version
-v1.20.101 (deployed 2026-06-04). Completeness warning + ScanResultsBanner wired in.
+v1.20.113 (deployed 2026-06-10). H5 high-DPI region tiling + Opus 4.8 model bump. Stable.
+
+## Deploy State
+- Master tip: 6ea797e4 ("H5: high-DPI region tiles + Opus 4.8 (functions side) + verification doc")
+- Local master == origin/master (synced)
+- Latest tag: v1.20.113
+- No code changes since deploy — close-out commit adds only investigation artifacts and record updates
 
 ## Recent Commits (last 15)
-- 2420bdfb Session artifacts: Coach log + investigation docs for #95/#98
-- 86637744 Update FREDDY-PASTE.md session state for 2026-06-04 closeout
-- 488e56e6 Release v1.20.101
-- 42ff249a Release v1.20.100
-- 9d7eee48 Release v1.20.99
-- 4861a967 Release v1.20.98
-- 70e870ec Add Briefs-as-pastes convention to FREDDY.md
-- 5f3a0b21 Release v1.20.96
-- 3c440090 Add paste addressing rule to CLAUDE.md
-- 1390bcea Update paste formatting: address TO recipient, not labeled by sender
-- d1209c6d Add Plan-and-Trace Routing rule to FREDDY.md
-- 7941febc Add TODO #96: Windows facilitator app for three-role Claude workflow
-- a4495418 Update handoff files for next session
-- bf5aea4f Correct #95: ground truth in dispute, error scoring unsettled
-- 89075d95 #94 RESOLVED (v1.20.95) + #95 filed + #84 updated + C23 closure
+- 6ea797e4 H5: high-DPI region tiles + Opus 4.8 (functions side) + verification doc
+- 1465d2e0 Release v1.20.113
+- 003cb014 Release v1.20.112
+- 590d1ff4 Release v1.20.111
+- d7ff88a5 Release v1.20.110
+- c1c6f9c3 Release v1.20.109
+- 240081c5 Release v1.20.108
+- e420f538 Release v1.20.107
+- 0c03599c Release v1.20.106
+- 74748d7b Release v1.20.105
+- c84a4aa2 Release v1.20.104
+- dce38c77 Release v1.20.103
+- 345d7963 Release v1.20.102
+- cf05391b Add ARC Vision: Estimator's-Eye Cross-Check Workflow (#101)
+- d15faa97 Update handoff files for next session
 
-## Shipped This Session
-- [DONE] **#97 — Slash-split removed + positional-dedup reporting** (v1.20.96). Code bug: slash-split × positional-dedup destroyed main PN on compound part numbers. Proven on PRJ402119 Item 8.
-- [DONE] **#98 Step Zero — Raw model output + correction log** (v1.20.98-99). rawModelOutput captured on all paths, Stage J resolvedLog persisted, Stage R bcPricing logged to Debug Logs.
-- [DONE] **#57 — bomRegion on re-extraction batch** (v1.20.98). One-field fix brings re-extraction to parity with initial extraction.
-- [DONE] **#100 Interim — Completeness warning** (v1.20.100-101). extractionVerification wired on re-extract+feedback, missing-from-end detection, ScanResultsBanner wired into UI (was dead code).
-- [DONE] **#95 ground truth settled** — 7/13 correct (54%), 6/13 wrong. Drawing read by Marc via browser. Item 10 SECM25G confirmed correct.
-- [DONE] **FREDDY.md protocol updates** — Plan-and-Trace Routing, Briefs-as-pastes, paste addressing rule.
+## Headline: Vision-Mode Resolution Problem SOLVED
 
-## Headline Finding
-Model partial-read: PRJ402114 (good-bucket, 100% BC) returned only items 26-47 of 47. COMPLETENESS failure distinct from ACCURACY. BC match % can be 100% on half-missing BOM. ScanResultsBanner was dead code — never rendered since written.
+H5 (region-targeted high-DPI rendering) shipped and verified. 2-for-2 at 100% on worst-case drawings:
+- **PRJ402101:** 54/54 = 100% (up from ~36-65% baseline). 3×2 grid, ~440 DPI.
+- **PRJ402119:** 14/14 = 100% (up from 36-50% baseline). 2×1 grid, ~1079 DPI.
 
-## Two Live Investigations
-- **#98 ACCURACY** — Analyst Review with Coach. Blocked on ground-truth measurement. Next: Q3 text-layer measurement on D2 sample.
-- **#100 COMPLETENESS** — Interim shipped. Permanent fix = text-layer row counting (Pillar 1a) + L3 on all paths (Pillar 2).
+Model: Claude Opus 4.8 (2576 px ceiling). v1.20.113 converted 6 Opus call sites to `thinking:{type:"adaptive"}`. All 8 Opus call sites verified clean (Coach C51). Text-layer pages completely unaffected.
 
-## Work Queue
-1. **Q3 text-layer measurement** on D2 sample (PRJ402113, 402100, 402101, 402076, 402092)
-2. #98 ground-truth experiment on PRJ402096 (ARC Cross safety-net or mirage)
-3. #100 permanent fix — architect after Q3 data
-4. #92 Phases 2+ (H3-H5 foreground-seizing suppression)
-5. #64 BC concurrency sweep
+## Shipped Since Last SESSION-STATE (v1.20.101 → v1.20.113)
 
-## Working Tree
-- Branch: master (up to date with origin/master at 2420bdfb)
-- Clean: no uncommitted changes
+### Required-BOM-Region Feature (#103-#112) — PHASE 1 COMPLETE
+- #103 Phase 0a/0b timeout fix (v1.20.108-area)
+- #104 Phase 1e 0-byte hardening (v1.20.102)
+- #105 Phase 1b input-tier classifier (v1.20.105)
+- #106 Phase 1a detection summary (v1.20.106)
+- #107 Phase 1c block-with-override gate (v1.20.107)
+- #108 B2 carry-forward + B1 send-gate (v1.20.108)
+- #109 F3 print warning + F2 toast (v1.20.109)
+- #110 F1/C5 noisy-PN guard + Mark Verified (v1.20.110)
+- #111 Phase 1d no-PDF handling (via 1c Case 5)
+- #112 Phase 1f region learning + L3 wire-up (v1.20.111)
+All verified by Coach (C31-C45).
+
+### Sales-Path Trust Layer — COMPLETE
+B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, Mark Verified action. Coach C40-C42.
+
+### H5 High-DPI Rendering (#120) — RESOLVED
+v1.20.112 (H5 build) + v1.20.113 (Opus 4.8 thinking fix). Coach C51 verified.
+
+### Closed
+- #113 CropBox bitmap proof — superseded by H5
+- #114 Phase 2 voting — killed (voting counterproductive; resolution was the lever)
+
+## No Open Threads Blocking
+The H5 generalization test came back positive. No in-flight work, no pending merges, no feature branches.
+
+## Parked Backlog (priority order)
+1. **#121** Region edge-padding fix — pad resolved region ~2% before rendering to prevent edge-row clipping. ~5 lines. [Backlog]
+2. **#117** Quote Payment Terms / Shipping Method intermittent missing — root-caused (two print paths diverge), ~20 lines. [Decided]
+3. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator. [Backlog]
+4. **#85** Internal Excel fast-quote — audited (EXCEL-BOM-IMPORT-AUDIT.md), needs Brief. [Backlog]
+5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating. [Discovery]
+6. **#118** Batch extraction path missing region learning context. [Backlog]
+7. Item 16 / BC-fill cluster (long-standing)
 
 ## Open TODOs
-58 OPEN findings in TODO.md
+~68 OPEN findings in TODO.md (includes backlog items with activation triggers).
+
+## Working Tree
+- Branch: master (up to date with origin/master)
+- Close-out commit pending: COACH.md, TODO.md, CLAUDE.md, SESSION-STATE.md, + 20 investigation docs

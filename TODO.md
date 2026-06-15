@@ -1,5 +1,7 @@
 # ARC Review Findings
 
+> Work item numbering follows NUMBERING-CONVENTION.md: #N — description [Status].
+
 Captured: Thu May  7 10:54:16 MDT 2026
 Source: ./tools/review.sh first runs
 
@@ -10,20 +12,20 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 
 ## Round 1 (firestore.rules + deploy.sh diff)
 
-1. **RESOLVED** — `701d693` (2026-05-07). Firestore rules: `rfqUploads` write access not role-gated.
+1. **RESOLVED** [Verified] — `701d693` (2026-05-07). Firestore rules: `rfqUploads` write access not role-gated.
    CREATE was wide-open to any authenticated user (including view-only members) and allowed
    spoofing someone else's `uid`. UPDATE/DELETE only matched `uid` so teammates with edit role
    couldn't dismiss/delete a coworker's RFQ. Fix added a `_writerIsCompanyWriter(cid)` helper
    inside the `match /rfqUploads/{token}` block; CREATE now requires uid-self-match + non-`view`
    role; UPDATE/DELETE auth path now extends to same-company writers; legacy uid-only docs and
    solo accounts (no companyId) preserved.
-2. **RESOLVED** — `701d693` (subsumed by #1, verified 2026-05-07). The CREATE rule now reads
+2. **RESOLVED** [Verified] — `701d693` (subsumed by #1, verified 2026-05-07). The CREATE rule now reads
    `request.resource.data.get('companyId', null) == null || _writerIsCompanyWriter(request.resource.data.companyId)`.
    The helper does `exists(...members/$(request.auth.uid))`, so a writer setting `companyId`
    to a company they aren't a member of fails the existence check and the create is rejected.
    The legacy/solo bypass (`companyId == null`) is intentional — those docs are uid-only by
    design and don't participate in team-scoped queries.
-5. **STALE** (verified 2026-05-07) — Firestore rules: "Missing `rfq_history` match rule." The
+5. **STALE** [Verified] (verified 2026-05-07) — Firestore rules: "Missing `rfq_history` match rule." The
    path `users/{uid}/rfq_history` is fully covered by the catch-all
    `match /users/{uid}/{document=**}` rule at `firestore.rules:12-14`, which gates read/write
    on `request.auth.uid == uid`. Same pattern as `users/{uid}/projects`, `users/{uid}/config`,
@@ -31,12 +33,12 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 
 ## Round 2 (functions/index.js diff)
 
-6. **OPEN** — Stale API key caching in `_resolveAnthropicKey` (~line 2149). Cached key isn't
+6. **OPEN** [Backlog] — Stale API key caching in `_resolveAnthropicKey` (~line 2149). Cached key isn't
    invalidated when an admin rotates the Anthropic key in Settings → API. Calls keep using the
    old key until the function instance is recycled.
-7. **OPEN** — Ledger schema mismatch — server vs client. Server writes one shape, client reads
+7. **OPEN** [Backlog] — Ledger schema mismatch — server vs client. Server writes one shape, client reads
    another, leading to monthly spend being under-counted in the toolbar pill.
-8. **STALE** (verified 2026-05-07) — "Unawaited `_writeDebugLog` — fire-and-forget risks lost
+8. **STALE** [Verified] (verified 2026-05-07) — "Unawaited `_writeDebugLog` — fire-and-forget risks lost
    writes." The function is actually `logDebugEntry`, defined in `public/index.html:277` and
    `public/modules/shared.js:201`. It is BROWSER-side only — there is no Cloud Function
    equivalent. In browser code, `await`-ing the log write blocks the UI without improving
@@ -44,13 +46,13 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
    await). The codebase already awaits at `shared.js:329` (user-reported issue submit) where
    the caller actually needs the write to complete before showing success UI. The mixed
    pattern is deliberate, not a bug.
-9. **RESOLVED** — `b33df02` (2026-05-07). Prompt injection via `pageNumber`. Note: the original
+9. **RESOLVED** [Verified] — `b33df02` (2026-05-07). Prompt injection via `pageNumber`. Note: the original
    finding mis-located the vector in `functions/index.js`. The actual interpolation lives in
    `src/app.jsx:9588` (the `extractBomPage` PDF-native path). Cloud Function `extractBomPage`
    referenced by the client doesn't currently exist in `functions/index.js`. Fix added a
    bounded-positive-integer validator at the top of `extractBomPage` covering both the
    server-callable path and the direct-API path. Hard-throws on invalid input.
-10. **OPEN** — Duplicate Firestore member queries in email fan-out. Same `members` collection
+10. **OPEN** [Backlog] — Duplicate Firestore member queries in email fan-out. Same `members` collection
     queried twice per recipient when sending engineer-question / supplier-quote notifications.
     Cache once, reuse.
 
@@ -59,20 +61,20 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 Stale Round 1 findings #3, #4, #11 were dropped — they referenced a deploy.sh state that no
 longer matches what's committed. Re-reviewed deploy.sh against current reality and found:
 
-12. **RESOLVED** — `29bec5d` (2026-05-08). Adds the `node validate_jsx.js` build step before
+12. **RESOLVED** [Verified] — `29bec5d` (2026-05-08). Adds the `node validate_jsx.js` build step before
     `git commit`, plus the bundle `?v=` cache-bust sed (so the bumped bundle URL forces a fresh
     fetch on every deploy). Same commit also rewrote the original DECISION(v1.19.769) comment
     that claimed a nonexistent placeholder-restore step, and added the bundle `?v=` verifier
     tracked separately as #16 below.
-13. **OPEN** — Hardcoded `git push origin master` and `git push origin "$NEW_VERSION"` regardless
+13. **OPEN** [Backlog] — Hardcoded `git push origin master` and `git push origin "$NEW_VERSION"` regardless
     of current branch. Running `deploy.sh` from a worktree branch would push the wrong ref or
     refuse the push. Fix: capture `git rev-parse --abbrev-ref HEAD` and either gate on `master`
     or push the current branch.
-14. **RESOLVED** — `b61eedf` (2026-05-07). Added a post-sed `grep -q` verification that the
+14. **RESOLVED** [Verified] — `b61eedf` (2026-05-07). Added a post-sed `grep -q` verification that the
     replaced `APP_VERSION="$NEW_VERSION"` actually exists in `public/index.html`. If not,
     aborts with a clear error message naming the expected pattern and the file to inspect,
     rather than letting the failure cascade into a confusing downstream "nothing to commit".
-15. **OPEN** (ELEVATED) — No functions deploy + no preflight invocation. `deploy.sh` runs
+15. **OPEN** [Backlog] (ELEVATED) — No functions deploy + no preflight invocation. `deploy.sh` runs
     `firebase deploy --only hosting`. Cloud Functions changes need a separate manual
     `firebase deploy --only functions` (per CLAUDE.md). The toolkit's `tools/preflight-functions.sh`
     isn't wired in anywhere. Fix: either auto-detect functions changes and run the preflight,
@@ -83,7 +85,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     trail exists in the repo. Recommend minimum viable fix: a deployed-vs-committed
     function-hash check runnable from the repo, before any larger "fold functions into
     deploy.sh" work.
-16. **RESOLVED** — `29bec5d` (2026-05-08, caught during pre-merge review, resolved in same commit).
+16. **RESOLVED** [Verified] — `29bec5d` (2026-05-08, caught during pre-merge review, resolved in same commit).
     Added `grep -q` verification on the bundle `?v=` sed in `deploy.sh`, mirroring #14's APP_VERSION
     verifier. sed exits 0 even with no match, so without this the deploy could silently ship
     without busting the browser cache if the `index.bundle.js?v=` pattern ever shifts (e.g. someone
@@ -92,7 +94,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 4 (caught during pre-commit review of merge resolution, 2026-05-08)
 
-17. **OPEN** — Fire-and-forget call to async `_showPopupBlockedFallback` from the synchronous
+17. **OPEN** [Backlog] — Fire-and-forget call to async `_showPopupBlockedFallback` from the synchronous
     `arcDocOpen` helper in `src/app.jsx`. Source commit `3fd29f6`
     ("arcDocOpen: drop features string so window.open returns a normal tab"). The fallback is
     invoked without `await` from a non-async caller, so any rejection inside it (e.g. an
@@ -104,7 +106,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 5 (orphan Cloud Functions, caught during 2026-05-07 deploy)
 
-18. **RESOLVED** — `904a60b`, `edeede1` (2026-05-12, deployed to production) —
+18. **RESOLVED** [Verified] — `904a60b`, `edeede1` (2026-05-12, deployed to production) —
     Two Cloud Functions in production had no local source. One (`extractBomPage`) is on
     the active BOM extraction path — pressing Y at firebase's deletion prompt would have
     broken production.
@@ -250,7 +252,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 6 (user-reported, 2026-05-08)
 
-19. **RESOLVED** (b492069, 64ddd51, deployed in v1.19.1004 / a730a4e) —
+19. **RESOLVED** [Verified] (b492069, 64ddd51, deployed in v1.19.1004 / a730a4e) —
     Project Line Item disappears when drawings are dropped onto a freshly-added
     panel. Original capture said "BOM line item" — incorrect; the actual
     symptom is the entire Quote Line / panel card vanishing while the
@@ -296,7 +298,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
       the flag if `ProjectView` ever receives a different `init.id` without
       unmounting (defensive — current navigation always unmounts).
 
-20. **OPEN** — `deploy.sh` cache-bust verifier doesn't cover bundle regeneration.
+20. **OPEN** [Backlog] — `deploy.sh` cache-bust verifier doesn't cover bundle regeneration.
     The `grep -q "index.bundle.js?v=$NEW_VERSION"` check at `deploy.sh:48`
     confirms the HTML's query string was updated, but does not confirm
     `validate_jsx.js` produced a fresh `public/index.bundle.js`. Failure modes
@@ -322,7 +324,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 7 (CLEANUP_PLAN follow-up, 2026-05-08)
 
-21. **RESOLVED** (no commit SHA — local hook deletion, not tracked in git) —
+21. **RESOLVED** [Verified] (no commit SHA — local hook deletion, not tracked in git) —
     Post-commit hook auto-pushing deleted 'main' branch. The
     `.git/hooks/post-commit` hook (31 bytes, created 2026-03-02) ran
     `git push origin main` after every commit. After Session 5 deleted
@@ -333,7 +335,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 8 (discovered while verifying #19 fix, 2026-05-08)
 
-22. **RESOLVED** — `b4c6167` (2026-05-08, deployed in v1.19.1005) — `addPanel` does not create the per-panel BC Project Task block
+22. **RESOLVED** [Verified] — `b4c6167` (2026-05-08, deployed in v1.19.1005) — `addPanel` does not create the per-panel BC Project Task block
     (20N00 / 20N10 / 20N20 / 20N99) in Business Central. User expected the
     same task-creation behavior as the New Project flow, where
     `bcCreatePanelTaskStructure` lays down all panel task scaffolding at
@@ -529,7 +531,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     5. **Cross-env mismatch** — `_bcEnvMismatched(project)===true`: helper
        not invoked, no queue entry, no errors.
 
-23. **OPEN** — Drawing delete/re-drop leaves BC planning line 10000 holding the
+23. **OPEN** [Backlog] — Drawing delete/re-drop leaves BC planning line 10000 holding the
     prior sell price until the next pricing run. `removePage` at
     `src/app.jsx:21679` clears `panel.bom`, `pricing`, `laborData`, etc.
     when `remaining.length===0`, but does NOT trigger a `bcSyncPanelPlanningLines`
@@ -562,7 +564,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     Low severity; out of scope for v1.19.1005 deploy. Pick up in a follow-up
     session.
 
-24. **OPEN** — Remove auto-creation of Project Task `20N20 Engineering Design`.
+24. **OPEN** [Backlog] — Remove auto-creation of Project Task `20N20 Engineering Design`.
     This task is auto-created on new projects (likely in the BC job/project
     creation path or initial project template), but is no longer needed since
     Engineering Design is now handled as a separate line item on the
@@ -571,7 +573,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 9 (user-reported, 2026-05-08)
 
-25. **RESOLVED** — `4da7909` (2026-05-08, deployed in v1.19.1007) — BOM
+25. **RESOLVED** [Verified] — `4da7909` (2026-05-08, deployed in v1.19.1007) — BOM
     extraction silently dropped pages where ENC and BOM share the same
     drawing. The AI page-type detector (`PAGE_TYPE_DETECT_PROMPT` at
     `src/app.jsx:12626`) is instructed via DECISION ORDER to pick ONE
@@ -607,7 +609,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     Side note: v1.19.1006 was an empty version bump — see #26 below for
     the deploy.sh worktree-mismatch root cause.
 
-26. **OPEN** — `deploy.sh` builds from the main checkout
+26. **OPEN** [Backlog] — `deploy.sh` builds from the main checkout
     (`C:\Users\jon\AppDev\MatrixARC\src\app.jsx`), not from the cwd
     worktree's source. If a fix is edited inside a worktree
     (`.claude/worktrees/...`) and `bash deploy.sh` is invoked from that
@@ -638,12 +640,12 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 10 (user-reported, 2026-05-12)
 
-27. **OPEN** — Status pills in Quote Summary do not match the status pills on the
+27. **OPEN** [Backlog] — Status pills in Quote Summary do not match the status pills on the
     Panel Card. The two UI surfaces render panel status independently and their
     styling / label logic has diverged. They should be visually identical for the
     same underlying status value.
 
-28. **RESOLVED** — `b077999f` (2026-05-12, deployed in v1.19.1034) — Auto-populating
+28. **RESOLVED** [Verified] — `b077999f` (2026-05-12, deployed in v1.19.1034) — Auto-populating
     Crossed/Superseded list should exclude "CRATES" and "JOB BUYOFF" entries.
     Fix: new `_isBuyoffOrCrate(r)` helper checks `partNumber`, `description`,
     AND `crossedFrom` fields for `/buyoff/` and `/crat(e|ing)/` patterns. Applied
@@ -654,46 +656,46 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     part number (e.g. "JOB BUYOFF") while the new `partNumber` was just "BUYOFF";
     (b) these rows weren't always at the end of the BOM array.
 
-29. **OPEN** — Auto-add "ECO FEE STANDARD" line item on ECO creation. When a new
+29. **OPEN** [Backlog] — Auto-add "ECO FEE STANDARD" line item on ECO creation. When a new
     ECO is created, automatically insert a line item just below the Labor lines
     called "ECO FEE STANDARD". This is an active BC Service Item representing a
     standard fee applied to every ECO. The amount is variable (configurable), with
     a default of $1,500.
 
-30. **OPEN** — Budgetary designation should be project-level, not per-panel. When a
+30. **OPEN** [Backlog] — Budgetary designation should be project-level, not per-panel. When a
     project is marked as "Budgetary", apply the designation to the entire quote
     rather than each individual panel. Move the "BUDGETARY" pill from inside each
     Panel Line card in Quote Summary to sit next to the total price instead.
 
 ## Round 11 (BC integration fixes, 2026-05-12)
 
-31. **RESOLVED** — `5d459657` (2026-05-12, deployed in v1.19.1025) — BC+ pills
+31. **RESOLVED** [Verified] — `5d459657` (2026-05-12, deployed in v1.19.1025) — BC+ pills
     (red "+" indicators) not persisting after "Get New Pricing" / "Sync BC".
     Root cause: `bcVerify` stamping in `runPricingOnPanel` ran AFTER the
     Firestore save (`onSaveImmediate`), so stamps only existed in React state
     and were lost on reload. Fix: moved stamping block BEFORE the save.
 
-32. **RESOLVED** — `a7c10da6` (2026-05-12, deployed in v1.19.1026) — Item
+32. **RESOLVED** [Verified] — `a7c10da6` (2026-05-12, deployed in v1.19.1026) — Item
     Browser USE applying stale Item Card price over Purchase Price. `commitBcItem`
     applied `bcItem.unitCost` (Item Card `Unit_Cost`, often stale) immediately,
     then did an async PP fetch that arrived too late. Fix: made `commitBcItem`
     async, fetches Purchase Prices BEFORE the first save, uses PP
     `directUnitCost` when available (falls back to `unitCost` if PP unavailable).
 
-33. **RESOLVED** — `f95d319c` (2026-05-12, deployed in v1.19.1025) — Manual
+33. **RESOLVED** [Verified] — `f95d319c` (2026-05-12, deployed in v1.19.1025) — Manual
     price entry via confirmed price dialog set `priceSource:"manual"`, causing
     an "M" pill and exclusion from RFQs. Since the price IS pushed to BC,
     `applyConfirmedPrice` now sets `priceSource:"bc"` with `bcPoDate`. If BC
     push fails, safely reverts to `priceSource:"manual"` with valid `priceDate`.
 
-34. **RESOLVED** — `be6ff11f` (2026-05-12, deployed in v1.19.1028) — Panel lead
+34. **RESOLVED** [Verified] — `be6ff11f` (2026-05-12, deployed in v1.19.1028) — Panel lead
     time calculation showing less than longest item lead time. When a TRAQS
     absolute production date was earlier than the material chain
     (engineering + approval + longest item lead), `leadDays` could be less than
     `longestItemDays`. Fix: `productionDoneDays` now floored at
     `materialsCompleteDays`.
 
-35. **RESOLVED** — `f436d9e6` (2026-05-12, deployed in v1.19.1029) — Admin
+35. **RESOLVED** [Verified] — `f436d9e6` (2026-05-12, deployed in v1.19.1029) — Admin
     override for AI-estimated lead time budgetary enforcement. Admins can now
     bypass the forced BUDGETARY flag when AI-estimated lead times are present.
     On send: two-step confirm (Cancel → "Override, Send as Firm"). On print:
@@ -702,7 +704,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 12 (user-reported, 2026-05-14)
 
-36. **OPEN** — Service line items (Commissioning, Programming, Design) need a proper
+36. **OPEN** [Backlog] — Service line items (Commissioning, Programming, Design) need a proper
     status lifecycle. Currently they lack progression tracking. Desired flow:
     **DRAFT** (initial creation) → **READY** (when costs and qty are entered) →
     **IN PRE_REVIEW** (when sent for review) → **QUOTES SENT** (once the quote is
@@ -711,7 +713,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 13 (BOM extraction token truncation, 2026-05-20)
 
-37. **RESOLVED** — `48deb1c9` (2026-05-20, deployed in v1.20.1) — BOM extraction
+37. **RESOLVED** [Verified] — `48deb1c9` (2026-05-20, deployed in v1.20.1) — BOM extraction
     silently returning 0 items on dense/large BOMs (reported on PRJ402101,
     Clearstream drawing format). Root cause: `max_tokens: 16000` was too low for
     large BOMs — Anthropic returned `stopReason: "max_tokens"` with truncated
@@ -724,11 +726,11 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     cropped-BOM path returns 0 items, extraction now retries via the full
     PDF-native path before giving up.
 
-38. **RESOLVED** — `48deb1c9` (2026-05-20, deployed in v1.20.1) — Same
+38. **RESOLVED** [Verified] — `48deb1c9` (2026-05-20, deployed in v1.20.1) — Same
     `max_tokens: 16000` truncation affected `extractSupplierQuotePricing` Cloud
     Function (supplier portal quote uploads). Bumped to `max_tokens: 64000`.
 
-39. **RESOLVED** — `48deb1c9` (2026-05-20, deployed in v1.20.1) — Added admin
+39. **RESOLVED** [Verified] — `48deb1c9` (2026-05-20, deployed in v1.20.1) — Added admin
     warning email at 75% token usage. New `warnAdminsTokenUsage()` helper in
     `functions/index.js` resolves the user's companyId, finds admin UIDs, and
     sends a SendGrid alert when `output_tokens >= 0.75 * maxTokens`. Wired into
@@ -737,13 +739,13 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 14 (RFQ / Supplier Portal bug fixes, 2026-05-20)
 
-40. **RESOLVED** — `52394c87` (2026-05-20, deployed in v1.20.3) — Duct and DIN rail
+40. **RESOLVED** [Verified] — `52394c87` (2026-05-20, deployed in v1.20.3) — Duct and DIN rail
     items appearing on RFQs. `RFQ_EXCLUDE_ITEMS` regex in `buildRfqSupplierGroups()`
     only excluded job buyoff / crating / crate. Fix: added `\b(din\s*rail|duct)\b`
     to the exclusion pattern. These are bulk cut-to-length consumables sourced
     internally — never belong on supplier RFQs.
 
-41. **RESOLVED** — `aa9b45c1` (2026-05-20, deployed in v1.20.3) — Crossed parts
+41. **RESOLVED** [Verified] — `aa9b45c1` (2026-05-20, deployed in v1.20.3) — Crossed parts
     using stale vendor/manufacturer for RFQs. Auto-cross at `src/app.jsx` line
     ~9014 spreads `{...r, partNumber:alt.replacement.partNumber}` without clearing
     `bcVendorName`/`bcVendorNo`, so the RFQ routes to the original part's supplier
@@ -751,7 +753,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     re-resolves vendor from BC for any `isCrossed` item before the existing
     empty-vendor fallback. Falls back to stale vendor if BC lookup fails.
 
-42. **RESOLVED** — `c2bba6cf` (2026-05-20, deployed in v1.20.3) — "Default for
+42. **RESOLVED** [Verified] — `c2bba6cf` (2026-05-20, deployed in v1.20.3) — "Default for
     future RFQs" vendor email persistence — three bugs:
     (A) Emails only saved on checkbox toggle — edits made after checking "remember"
     were never persisted. Fix: save all remembered vendor emails at send time in
@@ -761,7 +763,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     (C) Silent `.catch(()=>{})` on Firestore writes swallowed errors. Fix: replaced
     with `console.warn` logging.
 
-43. **RESOLVED** — `e61f13ed` (2026-05-20, deployed in v1.20.4) — No admin
+43. **RESOLVED** [Verified] — `e61f13ed` (2026-05-20, deployed in v1.20.4) — No admin
     notifications when supplier portal encounters failures. New
     `notifyAdminPortalFailure()` helper in `functions/index.js` sends de-duplicated
     emails (1/hr per alert type) to company admins for: AI extraction errors,
@@ -769,38 +771,38 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     email delivery failures. Also wrapped `onSupplierQuoteSubmitted` notification
     creation in try/catch to prevent unhandled rejections from killing the trigger.
 
-44. **RESOLVED** — `09c1f79b` (2026-05-20, deployed in v1.20.4) — Supplier-facing
+44. **RESOLVED** [Verified] — `09c1f79b` (2026-05-20, deployed in v1.20.4) — Supplier-facing
     error message shows raw technical error text. Replaced with user-friendly copy:
     "We couldn't auto-extract pricing from your quote — our team has been notified
     and will review it. Please enter prices manually below to keep things moving."
     Raw error still stored in state for console diagnostics.
 
-T1. **OPEN** — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
+T1. **OPEN** [Backlog] — Pre-commit hook only inspects `.js` files (`grep -E '\.js$'` skips `.jsx`).
     Most of ARC lives in `src/app.jsx` (~2 MB), so the hook is currently silent on the largest
     surface area of the codebase. `node --check` doesn't parse JSX natively — fixing this needs
     a different syntax-check approach (Babel parse, esbuild --syntax, or a small wrapper).
-T2. **RESOLVED** — `150f75e` (2026-05-07). Pre-commit hook now collects `.js` and `.jsx`
+T2. **RESOLVED** [Verified] — `150f75e` (2026-05-07). Pre-commit hook now collects `.js` and `.jsx`
     files separately. Syntax check still runs on `.js` only (T1 still open — `node --check`
     can't parse JSX). The advisory Claude review now scans both, with `app\.jsx` added
     explicitly to the risk pattern. Re-installed via `./tools/install-hooks.sh`. Note: the
     risk pattern is a basename-style match, so any path containing `app.jsx` qualifies —
     intentional, since the file might be moved or referenced via worktree paths.
-T3. **OPEN** — BOM row ordering: JOB BUYOFF and CRATE rows should always sort to the bottom
+T3. **OPEN** [Backlog] — BOM row ordering: JOB BUYOFF and CRATE rows should always sort to the bottom
     of the BOM, just above CONTINGENCY. Currently they can appear at arbitrary positions
     depending on extraction/insertion order, which causes them to show up in crossed-item
     notes and lead-time drivers despite content-based filtering. Fix: enforce a stable
     sort in the BOM display/save path that pins these utility rows to the end.
-T4. **OPEN** — `firestore.rules` and other non-JS files (`.rules`, `.json`, `.html`) get no
+T4. **OPEN** [Backlog] — `firestore.rules` and other non-JS files (`.rules`, `.json`, `.html`) get no
     coverage from the syntax check or the risk-pattern review. The rfqUploads fix (#1, commit
     `701d693`) committed without any pre-commit feedback. Low priority; add a separate
     rules-syntax check (`firebase deploy --only firestore --dry-run` or similar) if/when it
     becomes a real risk.
-T5. **OPEN** — Quote package enhancement: investigate sending the client a copy of the
+T5. **OPEN** [Backlog] — Quote package enhancement: investigate sending the client a copy of the
     ARC-stamped drawings and ARC BOM alongside the quote PDF. Customers may find it valuable
     to receive the stamped drawings (with ARC markups/redlines) and the extracted BOM as part
     of the quote package. Would require bundling or attaching additional PDFs to the quote
     email or print output.
-T6. **OPEN** — `extractionReport` not updated on re-extraction. When a user re-extracts a
+T6. **OPEN** [Backlog] — `extractionReport` not updated on re-extraction. When a user re-extracts a
     panel, the `panel.extractionReport` retains the timestamp and stats from the PREVIOUS
     extraction. Observed on PRJ402101: extractionReport timestamp 2026-05-20T22:23Z is from
     Round 1 extraction, but qvHistory shows `re_extract` at 2026-05-20T21:20Z (Round 2).
@@ -809,7 +811,7 @@ T6. **OPEN** — `extractionReport` not updated on re-extraction. When a user re
     if the report-generation code path is skipped or conditional. Fix: ensure `extractionReport`
     is always rebuilt from scratch on every extraction, not merged with prior data.
     Discovered: 2026-05-21 diagnostic session (Issue E).
-T7. **OPEN** — Duplicate Firestore documents: 23 BC project numbers have two documents in
+T7. **OPEN** [Backlog] — Duplicate Firestore documents: 23 BC project numbers have two documents in
     `companies/{companyId}/projects/` — one created manually by a user (with pages/BOM), one
     from BC import (empty, `importedFromBC: true`, panels: 0). No data divergence (all 23
     BC-import docs are empty shells), but the duplicate causes confusion: different users may
@@ -819,7 +821,7 @@ T7. **OPEN** — Duplicate Firestore documents: 23 BC project numbers have two d
     Remediation: all 23 BC-import docs are safe to delete (0 BOM, 0 pages). See audit data
     from 2026-05-21 diagnostic session.
     Discovered: 2026-05-21 diagnostic session (Issue A root cause).
-T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:30 AM 5/21/2026
+T8. **OPEN** [Backlog] — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:30 AM 5/21/2026
     (post-hard-refresh) showed enclosure qty=8 and A/C qty=48, but current Firestore has qty=1
     for both. Extraction completed 4:23 PM 5/20 — no extraction was running at 8:30 AM.
     Investigation paths:
@@ -848,7 +850,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Round 15 (diagnostic session fixes, 2026-05-21)
 
-45. **RESOLVED** — (firestore.rules deployed 2026-05-21, commit pending) — Issue I: `_snapshots`
+45. **RESOLVED** [Verified] — (firestore.rules deployed 2026-05-21, commit pending) — Issue I: `_snapshots`
     subcollection under `companies/{companyId}/projects/{projectId}` had no matching Firestore
     rule. The `users/{uid}/{document=**}` recursive wildcard covers user-path subcollections,
     but the company-path `match /projects/{projectId}` block only had explicit rules for the
@@ -868,7 +870,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     "Before Get New Pricing — 5/21/2026, 6:13:36 PM · 50 BOM items" with working Restore
     button. PASS.
 
-46. **RESOLVED** — `ab5f3b91` (v1.20.13, deployed 2026-05-21) — Issue H: BC sync self-conflict — "Another user has already changed the
+46. **RESOLVED** [Verified] — `ab5f3b91` (v1.20.13, deployed 2026-05-21) — Issue H: BC sync self-conflict — "Another user has already changed the
     record" ETag concurrency errors on valid BC Items during planning line sync.
     Observed on PRJ402105 during pricing run: 3 items (CHCC2DIU, 592273, 2910386) all
     show the same error with different CorrelationIds. All items exist in BC; single user.
@@ -930,7 +932,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     previously-failing items. Long-term: if multi-user BC editing is introduced,
     revisit the wildcard assumption (TODO comment in code marks both sites).
 
-47. **RESOLVED** — `9987dc4a` (v1.20.12, deployed 2026-05-21) — FIX 2: AI determinism
+47. **RESOLVED** [Verified] — `9987dc4a` (v1.20.12, deployed 2026-05-21) — FIX 2: AI determinism
     + structured output + multi-type page classification.
     Three changes shipped together:
     (a) `apiCall` now defaults `temperature:0` for all AI calls, eliminating
@@ -949,7 +951,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Round 16 (crop-path rollback + scanned PDF quality + progress bar, 2026-05-22)
 
-48. **RESOLVED** — `ed1c6a42` (v1.20.14, deployed 2026-05-22) — Crop-path extraction
+48. **RESOLVED** [Verified] — `ed1c6a42` (v1.20.14, deployed 2026-05-22) — Crop-path extraction
     regression rollback. Commit `8d984699` (2026-05-20, v1.20.5) reintroduced
     crop-first BOM extraction priority, unknowingly re-enabling the same JPEG
     compression artifact failure mode that caused ~20 wrong part numbers on dense
@@ -966,7 +968,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Protocol to CLAUDE.md to prevent recurrence. Exposure assessment: 87 projects
     scanned, 7 affected, 1 quoted (MTX-Q202018) — manually verified clean.
 
-49. **RESOLVED** — `06a0b9ee` (v1.20.15, deployed 2026-05-22) — Scanned PDF quality
+49. **RESOLVED** [Verified] — `06a0b9ee` (v1.20.15, deployed 2026-05-22) — Scanned PDF quality
     detection and enhanced extraction for degraded source material. Multi-part feature:
 
     (a) Server-side `assessPdfPageQuality()` helper in `functions/index.js` — inspects
@@ -992,7 +994,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     (f) Confidence dot indicators on BOM rows — red (#ef4444) for low confidence,
     amber (#f59e0b) for medium. Tooltip shows "AI confidence: {level}".
 
-50. **RESOLVED** — `8a3e8773` (v1.20.16, deployed 2026-05-22) — Pre-extraction scan
+50. **RESOLVED** [Verified] — `8a3e8773` (v1.20.16, deployed 2026-05-22) — Pre-extraction scan
     quality warning. New `checkPdfQuality` Cloud Function (30s timeout, 512MB, no AI
     call) — lightweight pre-flight check that downloads PDF and inspects XObjects.
     Client calls it before extraction starts; for re-extractions uses cached
@@ -1000,7 +1002,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     "Low-quality scanned drawing detected (N fax-scan pages) — extraction will take
     longer and part numbers may need review." Non-blocking (try/catch).
 
-51. **RESOLVED** — `4c6581d7` (v1.20.18, deployed 2026-05-22) — Progress bar heartbeat
+51. **RESOLVED** [Verified] — `4c6581d7` (v1.20.18, deployed 2026-05-22) — Progress bar heartbeat
     during long API calls. Added `bgHeartbeat()` function that ticks the progress bar
     forward every 3 seconds using an asymptotic curve (fast initial progress, slows
     over time, never reaches cap). Wired into 3 stall points: batch extraction, per-page
@@ -1008,18 +1010,18 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     pages… (42%)". v1.20.17 had a scoping bug (function defined inside `runExtractionTask`
     but called from `PanelCard`) — fixed in v1.20.18 by hoisting to module scope.
 
-52. **OPEN** — Progress bar streaming (future improvement). Current heartbeat is synthetic
+52. **OPEN** [Backlog] — Progress bar streaming (future improvement). Current heartbeat is synthetic
     — it shows simulated progress, not real extraction progress. The Anthropic API
     supports `stream: true` which could provide token-level progress updates. Would
     require server-side streaming (Cloud Functions → client) or SSE/WebSocket bridge.
     Significantly more complex than the heartbeat approach. Deferred.
 
-53. **OPEN** — ECO page type detection bug (Issue G from 2026-05-22 diagnostic). When an
+53. **OPEN** [Backlog] — ECO page type detection bug (Issue G from 2026-05-22 diagnostic). When an
     ECO is created from a panel, the page type detection may misclassify pages that were
     previously correctly typed. Needs investigation — observed during the PRJ402107
     diagnostic session but not root-caused.
 
-54. **OPEN** — BC sync 400 errors on valid items (Issue J from 2026-05-22 diagnostic).
+54. **OPEN** [Backlog] — BC sync 400 errors on valid items (Issue J from 2026-05-22 diagnostic).
     Separate from the ETag self-conflict (#46) — these are HTTP 400 validation errors
     where the PATCH payload includes fields that BC considers read-only or invalid for
     the target entity type. Needs investigation to identify which fields in the PATCH
@@ -1027,7 +1029,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Round 17 (H9 fuzzy merge fix + Coach post-deploy findings, 2026-05-22)
 
-55. **RESOLVED** — `6d47099b` (v1.20.21), `2d707228` (v1.20.22, deployed 2026-05-22) —
+55. **RESOLVED** [Verified] — `6d47099b` (v1.20.21), `2d707228` (v1.20.22, deployed 2026-05-22) —
     H9: fuzzy merge itemNo guard. Added a 3-line predicate to
     `fuzzyMergeBomItemsWithReport` (app.jsx:9221-9223) that blocks merges when both items
     have different non-empty itemNo values. Prevents false merges of product-family
@@ -1047,7 +1049,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     `tests/extraction-baseline/prj402104-post-h9.json`,
     `tests/extraction-baseline/prj402104-post-h9-diff.md`.
 
-56. **OPEN** — PRJ402104 re-extraction raw count drop 50→21 (Coach C14). Post-H9
+56. **OPEN** [Backlog] — PRJ402104 re-extraction raw count drop 50→21 (Coach C14). Post-H9
     re-extraction produced items 27-47 only — items 1-26 entirely absent from AI output.
     This is upstream of the fuzzy merge fix (raw count, not pipeline loss). Most likely
     hypothesis: multi-page BOM where page 1 wasn't included in re-extraction batch.
@@ -1056,14 +1058,14 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     determinism check. Not an H9 regression — pipeline preserved all 21 AI items
     (21→21→21→21, zero loss at every stage).
 
-57. **RESOLVED** — `4861a967` (v1.20.98, deployed 2026-06-04) — Re-extraction batch path missing bomRegion.
+57. **RESOLVED** [Verified] — `4861a967` (v1.20.98, deployed 2026-06-04) — Re-extraction batch path missing bomRegion.
     `app.jsx:22481` constructs batch page objects WITHOUT `bomRegion` — initial extraction
     at line 12305 correctly includes `bomRegion:unit.bomRegion||null`. When
     `extractBomBatchViaServer` maps these pages, `pg.bomRegion` is undefined→null, Cloud
     Function skips CropBox. AI sees full page instead of focused BOM region. One-field
     mechanical fix, but part of broader H10 re-extraction architecture work.
 
-58. **OPEN** — Re-extraction verification gap (Coach C15, CRITICAL, H10). Re-extraction
+58. **OPEN** [Backlog] — Re-extraction verification gap (Coach C15, CRITICAL, H10). Re-extraction
     path computes per-page verification via `verifyBomExtraction` but silently discards
     the result. The verification object is computed, not read, and never stored. H10 scope:
     (1) bomRegion in batch payload (#57), (2) read extractionVerification result,
@@ -1071,14 +1073,14 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     extractionReport, (6) L3 report fields, (7) shared L3 function. Absorbs H7
     (re-extraction path was previously tracked separately). Monday work.
 
-59. **OPEN** — 4 panels with fuzzy merges but no sequence gaps (from H9 regression test).
+59. **OPEN** [Backlog] — 4 panels with fuzzy merges but no sequence gaps (from H9 regression test).
     PRJ402091, PRJ402083, PRJ402093, PRJ402079 each have 1-3 saved fuzzy merges in
     `extractionReport.fuzzyMerges` but empty `finalSequenceGaps`. These merges were
     legitimate (true duplicates, not product-family variants) — the itemNo guard would
     not have changed the outcome. Worth spot-checking to confirm no false positives exist
     in production merge history beyond the 10 known IDEC-family cases.
 
-60. **OPEN** — Latent identifier scope bugs in existing codebase (discovered by
+60. **OPEN** [Backlog] — Latent identifier scope bugs in existing codebase (discovered by
     `tools/check-scope.js` during Milestone B, v1.20.26). Eight pre-existing identifier
     scope bugs documented as `KNOWN_VIOLATIONS` in the scope checker. Each is the same bug
     class as the v1.20.23 `onArchive` regression (JSX compiles, runtime crashes when code
@@ -1103,7 +1105,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Address after Milestone C ships. The `KNOWN_VIOLATIONS` baseline in `tools/check-scope.js`
     ensures these don't get worse, and the scope checker catches any new instances immediately.
 
-61. **RESOLVED** (v1.20.36, index deployed separately) — Missing Firestore composite index
+61. **RESOLVED** [Verified] (v1.20.36, index deployed separately) — Missing Firestore composite index
     for `loadArchives()` query. The query uses `where('_archiveComplete', '==', true)` combined
     with `orderBy('archivedAt', 'desc')` on `companies/{companyId}/projects_archive`. Firestore
     requires a composite index for any query that filters on one field and orders on a different
@@ -1114,7 +1116,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     BEFORE the query goes live. Milestone D may add restore history queries (filtered by user,
     ordered by date) — check index requirements during planning.
 
-62. **OPEN** — BC sync doesn't update BOM row descriptions. BOM rows retain the originally
+62. **OPEN** [Backlog] — BC sync doesn't update BOM row descriptions. BOM rows retain the originally
     scanned (OCR/AI-extracted) descriptions even after BC sync executes. Part numbers and
     pricing sync correctly; descriptions don't. Quote PDFs and downstream BC writes carry the
     scanned text, not the BC ItemCard description.
@@ -1139,7 +1141,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Should be resolved before Milestone D ships so restore execution writes BC-truth descriptions,
     not scanned text.
 
-63. **OPEN** — Archive availability incorrectly gated by project status. Archive option is
+63. **OPEN** [Backlog] — Archive availability incorrectly gated by project status. Archive option is
     locked/disabled for projects in "Quote Sent" status (and possibly other statuses — needs
     investigation). Archive is a non-destructive snapshot operation that does NOT modify the
     source project. There is no business reason to restrict it by status — it should be
@@ -1159,7 +1161,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Post-Milestone-D BC Housekeeping (discovered during Phase 2.1 smoke test, v1.20.52)
 
-64. **OPEN** — BC concurrency cap and exponential backoff. BC requests fire without
+64. **OPEN** [Backlog] — BC concurrency cap and exponential backoff. BC requests fire without
     coordination. Multiple parallel call paths hit 429 simultaneously. Retries don't back off
     correctly — same calls re-hit 429 in tight loops.
 
@@ -1173,7 +1175,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: HIGH — first item after Milestone D wind-down.
     Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
 
-65. **OPEN** — Project-open BC sync hygiene. Opening any project triggers cascading BC sync
+65. **OPEN** [Backlog] — Project-open BC sync hygiene. Opening any project triggers cascading BC sync
     work — customer re-sync, BC verify, purchase price fetch, labor sync, progress billing
     patch, panel task block backfill. Multiple parallel BC calls per open. Restored projects
     with partial state continuously try to "catch up" forever, each open firing another sync
@@ -1192,7 +1194,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: HIGH — second item after Milestone D wind-down.
     Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
 
-66. **OPEN** — bcCreatePanelTaskStructure idempotency gap. When resuming a partial restore,
+66. **OPEN** [Backlog] — bcCreatePanelTaskStructure idempotency gap. When resuming a partial restore,
     `bcCreatePanelTaskBlock` probes for one task (20100) but the wider
     `bcCreatePanelTaskStructure` tries to create all six tasks (10000, 20100, 20110, 20120,
     20199, 99999) sequentially without probing. On resume, the previously-created tasks return
@@ -1210,7 +1212,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: HIGH — third item after Milestone D wind-down.
     Discovered: Phase 2.1 smoke test (v1.20.52) when retrying PRJ402113 restore, by Jon, 2026-06-01.
 
-67. **OPEN** — Test cleanup utility for smoke-test-restored projects. Each test restore creates
+67. **OPEN** [Backlog] — Test cleanup utility for smoke-test-restored projects. Each test restore creates
     a real BC project + real Firestore project. They persist forever, each one auto-syncing on
     every open. Compounds BC load over time.
 
@@ -1221,7 +1223,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: MEDIUM — after #64, #65, #66 ship.
     Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
 
-68. **OPEN** — BC rate limit observability. 429 errors are silent (only visible in DevTools
+68. **OPEN** [Backlog] — BC rate limit observability. 429 errors are silent (only visible in DevTools
     console). No proactive signal to user when throttling is happening.
 
     Required behavior: Surface 429 count in UI, optionally log to Firestore for cross-session
@@ -1230,7 +1232,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: LOWER — after the actual throttling improvements (#64) ship.
     Discovered: Phase 2.1 smoke test (v1.20.52) by Jon, 2026-06-01.
 
-69. **OPEN** — Posting-group auto-fix fails on service items (BUYOFF, Contingency).
+69. **OPEN** [Backlog] — Posting-group auto-fix fails on service items (BUYOFF, Contingency).
     `bcSyncPanelPlanningLines` attempts to patch Gen. Prod. Posting Group on every planning line
     that mismatches, but service-type items (BUYOFF, Contingency, Crate) have a different posting
     group structure in BC. The PATCH returns 400, logged as "posting group fix failed" in console.
@@ -1244,7 +1246,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: LOW — cosmetic console noise, no data impact.
     Discovered: Phase B investigation, 2026-06-01.
 
-70. **OPEN** — bcFetchCustomerContacts 400 on specific customer C10114. Opening projects tied to
+70. **OPEN** [Backlog] — bcFetchCustomerContacts 400 on specific customer C10114. Opening projects tied to
     customer C10114 triggers a 400 from the BC `customerContacts` endpoint. Other customers work
     fine. Likely a data-quality issue in BC (malformed contact record or missing required field on
     the BC side), but ARC doesn't handle the 400 gracefully — it logs a console error and
@@ -1257,7 +1259,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Priority: LOW — only affects one customer, non-blocking.
     Discovered: Phase B investigation, 2026-06-01.
 
-71. **OPEN** — Vendor field source-of-truth audit. `bcVendorNo` and `bcVendorName` are
+71. **OPEN** [Backlog] — Vendor field source-of-truth audit. `bcVendorNo` and `bcVendorName` are
     independently populated in BOM data. Many projects have `bcVendorName` but no `bcVendorNo`.
     Different code paths check different fields for vendor presence.
 
@@ -1280,7 +1282,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: Milestone E Phase 2 smoke test on PRJ402064 (v1.20.62), 2026-06-01.
     Owner for investigation: Coach.
 
-72. **OPEN** — Cannot change customer on existing project from ARC UI.
+72. **OPEN** [Backlog] — Cannot change customer on existing project from ARC UI.
     After a project is created, ARC's UI allows editing project name and customer contact, but not
     the underlying customer (the `Bill_to_Customer_No` that ties the project to "Ovivo", "FLSmidth",
     etc.).
@@ -1299,7 +1301,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     problem if a customer assignment mistake happens.
     Discovered: Milestone E Phase 3 planning (v1.20.63), 2026-06-01.
 
-73. **OPEN** — BOM extraction warning visibility (Scan Results banner).
+73. **OPEN** [Backlog] — BOM extraction warning visibility (Scan Results banner).
     Symptom: When extraction produces issues (missing rows, sequence gaps, dedup-caused gaps),
     warnings appear in the ScanResultsBanner component above the BOM table. But the banner is
     collapsed by default. The collapsed summary shows all concerns on one line separated by
@@ -1326,7 +1328,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: RSD0203-126 extraction spot-check after v1.20.66, 2026-06-01.
     Owner for design: Coach.
 
-75. **OPEN** — Extraction progress bar accuracy.
+75. **OPEN** [Backlog] — Extraction progress bar accuracy.
     Symptom: During extraction, the progress bar does not move smoothly or accurately. User has
     limited visibility into how far along the extraction is.
 
@@ -1363,7 +1365,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Development Direction (2026-06-01)
 
-76. **OPEN** — Multi-Claude coordination layer (Freddy ↔ Coach ↔ Marc).
+76. **OPEN** [Backlog] — Multi-Claude coordination layer (Freddy ↔ Coach ↔ Marc).
     Symptom: Three-role workflow currently requires Jon to manually copy/paste messages between
     Claude.ai (Freddy Lyst / Analyst), CC Terminal (Sam Wize / Coach), and CCD (Marc Masdev / Dev).
     Each exchange is a forwarded paste. Friction is real: latency, lossy summarization,
@@ -1405,14 +1407,14 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     version-tracking confusion and added latency between sessions.
     Owner for design: Coach (with Jon coordination on broader Matrix ARC tooling stack).
 
-77. **RESOLVED** (v1.20.80, dfbb2293, field-verified by Jon + Noah — all 5 tests pass incl. navigate-away-return symptom check) — UI bug: page delete renders broken state during pre-extraction phase.
+77. **RESOLVED** [Verified] (v1.20.80, dfbb2293, field-verified by Jon + Noah — all 5 tests pass incl. navigate-away-return symptom check) — UI bug: page delete renders broken state during pre-extraction phase.
     Root cause: removePage wrote to panel.pages and Firestore instead of pendingPages; Firestore
     save stripped dataUrl, causing black images on fallback. Fix: pre-extraction-aware removePage
     updates pendingPages/cache directly, no Firestore write.
     Design: PRE-EXTRACTION-PAGE-MGMT-DESIGN.md (Coach v3), PRE-EXTRACTION-PAGE-MGMT-ANALYST-REVIEW.md (Freddy).
     Discovered: Noah's workflow feedback during pre-extraction page management (2026-06-02).
 
-78. **RESOLVED** (v1.20.80, dfbb2293, field-verified by Jon + Noah — all 5 tests pass) — Feature: pre-extraction page selection/deletion.
+78. **RESOLVED** [Verified] (v1.20.80, dfbb2293, field-verified by Jon + Noah — all 5 tests pass) — Feature: pre-extraction page selection/deletion.
     Shipped alongside #77. Delete-based page management per Jon's 5-step flow (drop → scan →
     delete unwanted → confirm types → extract remaining). "Proceed with Extraction" button shows
     live page count after deletions and disables when list is empty. Pre-extraction deletes
@@ -1422,7 +1424,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## BOM Prompt Fix (2026-06-02)
 
-79. **RESOLVED** (v1.20.81) — F-1a.3 / F-1d.8: BOM prompt duplicate-merge instruction caused silent data loss.
+79. **RESOLVED** [Verified] (v1.20.81) — F-1a.3 / F-1d.8: BOM prompt duplicate-merge instruction caused silent data loss.
     The `DUPLICATE PART NUMBERS` prompt instruction told the AI to combine same-PN rows with
     summed qty before returning results. This destroyed data inside the model's response before
     ARC's code dedup (positional → exact → fuzzy merge at line 13884+) could handle it correctly.
@@ -1440,7 +1442,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Feedback Re-Extract Dedup Key Mismatch (2026-06-02)
 
-80. **OPEN** (HIGH) — Feedback re-extract path uses PN-only dedup key — merges more aggressively
+80. **OPEN** [Backlog] (HIGH) — Feedback re-extract path uses PN-only dedup key — merges more aggressively
     than first-extract/re-extract paths.
     Feedback re-extract (`app.jsx:24101-24103`) dedups on PN alone, while first-extract (line
     13893) and re-extract (line 23889) key on `PN + itemNo + descNorm`. Consequence: two distinct
@@ -1456,7 +1458,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## PRJ402119 Extraction Failure (2026-06-02)
 
-81. **OPEN** (HIGH) — Extraction anomaly detection: warn user when results look suspicious.
+81. **OPEN** [Backlog] (HIGH) — Extraction anomaly detection: warn user when results look suspicious.
     When extraction produces anomalous results, ARC should surface a modal warning instead of
     silently accepting bad data. Anomaly signals (any should trigger):
     - Zero items from a user-asserted BOM region (wrong region/drawing)
@@ -1473,7 +1475,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Design: Freddy scope (modal triggers, wording, actions). Not part of F-1g.1.
     Discovered: PRJ402119 diagnostic (2026-06-02).
 
-82. **RESOLVED** — `10fdced5` + `4e31f918` (2026-06-02, functions deployed 2026-06-02T21:49:04Z).
+82. **RESOLVED** [Verified] — `10fdced5` + `4e31f918` (2026-06-02, functions deployed 2026-06-02T21:49:04Z).
     PDF-native extraction bailing on CropBox pages with `noBomReason:"wrong-page-type"`.
     P1: removed noBomReason escape when `pdfCropped===true` (both `extractBomPage` and
     `extractBomBatch`). P2: added scan quality alert to bom-region-crop fallback prompt.
@@ -1482,7 +1484,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     confirmed scanned PDF extracting to completion post-fix.
     Discovered: PRJ402119 diagnostic (2026-06-02).
 
-83. **OPEN** (HIGH) — Image/crop fallback path architecture — replace lossy JPEG with full-res
+83. **OPEN** [Backlog] (HIGH) — Image/crop fallback path architecture — replace lossy JPEG with full-res
     PDF region crop or fail visibly.
     The current bom-region-crop fallback sends a canvas-cropped JPEG of the page image. On
     scanned monochrome drawings (166 DPI), JPEG compression destroys edge detail on text
@@ -1494,7 +1496,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     produce a GOOD BOM vs garbled? Investigation pending.
     Discovered: PRJ402119 diagnostic (2026-06-02).
 
-84. **OPEN** (MEDIUM) — Extraction drops last row(s) on scanned BOMs + misses companion parts.
+84. **OPEN** [Backlog] (MEDIUM) — Extraction drops last row(s) on scanned BOMs + misses companion parts.
     On PRJ402119 Sht 3/6 (13-row BOM), the JPEG+P2 path consistently extracts 13/14 items
     (missing LNM40BPK100, the last row) and the companion TYD2CW6 (written as "WITH COVER
     TYD2CW6" on the same line as TYD15X3WPW6, row 8). The splitCompanionParts post-processor
@@ -1515,7 +1517,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     if not reproduced after 3+ projects, mark STALE. See #95 for fidelity issues on the same
     extraction run.
 
-86. **RESOLVED** (CRITICAL) — Cross-project BOM contamination via stale extraction callback + reused ProjectView.
+86. **RESOLVED** [Verified] (CRITICAL) — Cross-project BOM contamination via stale extraction callback + reused ProjectView.
     Root cause: two issues combined. (1) Panel IDs are sequential (`panel-1`, `panel-2`) and
     collide across every project. (2) `<ProjectView>` had no `key` prop, so React reused the
     same component instance when the user navigated directly between projects (e.g., notification
@@ -1539,14 +1541,14 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     `app.jsx:35110` (setProject function updater), `app.jsx:25783` (pricing onSaveImmediate).
     Fix sites: `app.jsx:45160` (key prop), `app.jsx:23209` (extraction guard).
 
-87. **OPEN** (MEDIUM) — Panel IDs are non-unique across projects (follow-up hardening for #86).
+87. **OPEN** [Backlog] (MEDIUM) — Panel IDs are non-unique across projects (follow-up hardening for #86).
     All projects generate panel IDs as `panel-1`, `panel-2`, etc. (`app.jsx:10043`, `app.jsx:39799`).
     Any module-scoped cache or callback keyed by panel.id can cross-contaminate between projects.
     Known affected: `_pendingPagesCache` (app.jsx:433), `_bgTasks` (app.jsx:421).
     Fix: generate unique IDs (`panel-${Date.now()}-${random}`) for new panels. Existing projects
     keep their current IDs (migration not needed — the #86 fix prevents the acute contamination).
 
-88. **OPEN** (MEDIUM) — Async ownership audit: verify all long-running operations have project-scoped
+88. **OPEN** [Backlog] (MEDIUM) — Async ownership audit: verify all long-running operations have project-scoped
     completion behavior. TODO #86 proved that async completion handlers can write to the wrong
     project if the user navigates away during execution. The extraction path is now fixed, but
     the same class of bug could exist in other async operations.
@@ -1565,7 +1567,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (lesson learned from #86 investigation).
     Owner for investigation: Coach.
 
-89. **RESOLVED** (HIGH) — Background extraction pricing completion.
+89. **RESOLVED** [Verified] (HIGH) — Background extraction pricing completion.
     When extraction completes for a project that is no longer the active view, pricing does not
     run. The #86 contamination guard correctly blocks `onDone` → `runPricingOnPanel` to prevent
     cross-project state writes, but the result is that the originating project's BOM is saved
@@ -1585,7 +1587,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Related: #86 (guard that causes this), #88 (async ownership audit), #91 (background workflow
     audit), #92 (UI ownership audit).
 
-90. **OPEN** (MEDIUM) — ARC Cross UX: supersession not visually distinct from extraction error.
+90. **OPEN** [Backlog] (MEDIUM) — ARC Cross UX: supersession not visually distinct from extraction error.
     Lead case on PRJ402119: model correctly read `855F-VMS20B24Y3L3Y8Y4Y6` (discontinued
     Allen-Bradley 855F stack light), ARC Cross correctly auto-replaced with `856TC-VMB24Y3Y5Y4`
     (current successor). Both extraction and ARC Cross worked as designed — the original part IS
@@ -1608,7 +1610,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     labels. Low effort, high UX value.
     Discovered: 2026-06-03 (PRJ402119 BOM diagnostic — Jon initially suspected extraction defect).
 
-91. **OPEN** (MEDIUM) — Background workflow audit: verify all extraction-completion functions are
+91. **OPEN** [Backlog] (MEDIUM) — Background workflow audit: verify all extraction-completion functions are
     background-safe and do not depend on active UI state.
     The #86 contamination fix and #89 pricing fix exposed that pricing was part of the extraction
     completion chain and broke when the user navigated away. We fixed the immediate issue, but
@@ -1648,7 +1650,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (follow-up from #89 investigation).
     Owner for investigation: Coach.
 
-92. **OPEN** (HIGH) — Background task UI ownership audit: background operations must never seize
+92. **OPEN** [Backlog] (HIGH) — Background task UI ownership audit: background operations must never seize
     foreground UI control.
     Observed during v1.20.89 testing: background extraction/project updates appear capable of
     pulling the user into another project, screen, panel, or required-input workflow when
@@ -1694,7 +1696,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (v1.20.89 testing — background task pulled user into wrong context).
     Owner for investigation: Coach.
 
-93. **OPEN** (MEDIUM) — Extraction pipeline consolidation: shared completion handler for all three
+93. **OPEN** [Backlog] (MEDIUM) — Extraction pipeline consolidation: shared completion handler for all three
     extraction paths. Currently `confirmAndExtract`, Re-Extract Drawings, and `reExtractWithFeedback`
     each have their own `onDone` callback with independently implemented guards, background pricing,
     and BC sync logic. The #86/#89 fixes were applied to each path separately — same pattern, three
@@ -1709,7 +1711,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (C18 extraction architecture priority plan).
     Owner: Coach (design) → Marc (implement).
 
-94. **RESOLVED** — v1.20.95 (2026-06-03). dataUrl-gating bug: BOM extraction silently skipped when pages lack dataUrl.
+94. **RESOLVED** [Verified] — v1.20.95 (2026-06-03). dataUrl-gating bug: BOM extraction silently skipped when pages lack dataUrl.
     `confirmAndExtract` (line 23353) and `runExtractionTask` (line 13512) filtered BOM pages on
     `p.dataUrl` — an ephemeral field stripped by every Firestore save. After a save-reload cycle
     (or component remount during the awaitingConfirm pause), BOM-typed pages with only `storageUrl`
@@ -1721,7 +1723,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     detection 23242) CARVED OUT — needs `ensureDataUrl` or a `detectZoomedPages` guard;
     tracked as #94a, Coach to design. Root cause PRJ402119 Line 1 (Noah 2026-06-03),
     confirmed Coach C23, Site C correction Freddy.
-    94a. **OPEN** (LOW) — Site C follow-up: `detectZoomedPages` reads `pg.dataUrl` directly
+    94a. **OPEN** [Backlog] (LOW) — Site C follow-up: `detectZoomedPages` reads `pg.dataUrl` directly
          (line 12874) without `ensureDataUrl`. If storageUrl-only pages reach it, zoom detection
          fails silently. Needs either `ensureDataUrl` hydration before the call, or an internal
          guard in `detectZoomedPages`. Low-risk: Site C runs during `addFiles` when pages normally
@@ -1729,7 +1731,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (PRJ402119 Line 1 empty-BOM trace, Coach C23).
     Owner: Coach (C23) → Marc (implemented A+B).
 
-95. **OPEN** (HIGH) — PRJ402119 Line 1 PN accuracy: ground truth SETTLED (2026-06-04).
+95. **OPEN** [Backlog] (HIGH) — PRJ402119 Line 1 PN accuracy: ground truth SETTLED (2026-06-04).
     Marc read the drawing via browser. Score: **7/13 correct (54%), 6/13 wrong (46%).**
 
     **CONFIRMED ERRORS (against authoritative drawing):**
@@ -1775,7 +1777,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-03 (PRJ402119 Line 1 post-#94 validation). Corrected same day after
     Marc's source comparison revealed ground-truth disputes.
 
-96. **OPEN** (IDEA) — Windows facilitator app for three-role Claude workflow.
+96. **OPEN** [Backlog] (IDEA) — Windows facilitator app for three-role Claude workflow.
     Currently Jon manually copy-pastes messages between CCD (Marc), Terminal (Coach), and
     Claude.ai (Freddy). A lightweight Windows desktop app could automate or streamline this
     relay — clipboard monitoring, paste routing, session status dashboard, maybe direct API
@@ -1783,7 +1785,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     three-role workflow.
     Discovered: 2026-06-03 (Jon idea during close out).
 
-85. **OPEN** (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
+85. **OPEN** [Backlog] (HIGH) — BC validation cannot disambiguate all misreads — need Excel cross-check.
     On PRJ402119, both 3036338 and 3038338 are valid Phoenix Contact SKUs in BC. A misread
     that lands on ANOTHER valid PN is invisible to BC lookup validation — only the source
     drawing (or the customer's Excel/spreadsheet BOM) can disambiguate. This is the strongest
@@ -1794,7 +1796,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
 
 ## Round 18 (extraction pipeline audit, 2026-06-04)
 
-97. **RESOLVED** — `5f3a0b21` (v1.20.96, deployed 2026-06-04) — Slash-split × positional-dedup
+97. **RESOLVED** [Verified] — `5f3a0b21` (v1.20.96, deployed 2026-06-04) — Slash-split × positional-dedup
     destructive interaction. The slash-split code at L11643 split compound PNs at "/" into sibling
     rows sharing identical Y coordinates. Positional dedup then merged these siblings, systematically
     dropping the MAIN part number (segment 0) because the sub-part's description was longer
@@ -1805,7 +1807,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     `splitCompanionParts` via the structured `additionalPartNumbers` array. Also plumbed
     positional-dedup merge reporting into all 3 extraction paths.
 
-98. **OPEN** (HIGH) — Foundational extraction accuracy audit (Step Zero instrumentation shipped).
+98. **OPEN** [Backlog] (HIGH) — Foundational extraction accuracy audit (Step Zero instrumentation shipped).
     Raw model output persistence (v1.20.98-99): `rawModelOutput` captured on all extraction paths,
     stored in `extractionReport.perPageOutcomes`. Stage J (`resolveInternalPartNumbers`) now returns
     `{bom, resolvedLog}` persisted as `internalPnResolutions`. Stage R (BC pricing PN substitution)
@@ -1816,7 +1818,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     Discovered: 2026-06-04 session — #98 evidence pull showed ARC Cross coverage as primary
     differentiator between good/bad extractions.
 
-99. **OPEN** (HIGH) — Model partial-read on long single-column BOMs.
+99. **OPEN** [Backlog] (HIGH) — Model partial-read on long single-column BOMs.
     PRJ402114 (47-item BOM, single column, single page): model returned ONLY items 26-47.
     rawModelOutput confirms first item = itemNo:"26", stopReason = "end_turn" (not truncation).
     Ruled out: page-scoping (1 BOM page processed, correct), crop-cutoff (full table within crop
@@ -1827,7 +1829,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
     root cause of differential completeness between initial and re-extraction.
     Discovered: 2026-06-04 — C28 validation + #99 diagnostic.
 
-100. **OPEN** (MEDIUM) — Completeness guarantee: permanent fix requires text-layer row counting.
+100. **OPEN** [Backlog] (MEDIUM) — Completeness guarantee: permanent fix requires text-layer row counting.
      Interim shipped (v1.20.100-101): warn-only completeness flag. PART A: extractionVerification
      (was discarded per C15) now captured on re-extract + feedback paths; completenessWarning flag
      computed and stored. PART B: missing-from-END detection added to `_parseAndVerifyBomRaw`.
@@ -1840,7 +1842,7 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
      (2) deterministic targeted recovery (L3 on all paths) + loud flag if unclosable.
      Discovered: 2026-06-04 — Coach C29 supplement + Freddy Brief.
 
-101. **OPEN** (HIGH, future milestone) — Estimator's-Eye Cross-Check Workflow — full multi-region
+101. **OPEN** [Backlog] (HIGH, future milestone) — Estimator's-Eye Cross-Check Workflow — full multi-region
      quoting intelligence. Encodes a 30-year estimator's cross-check process: customer identification
      drives structural fingerprinting, layout/enclosure scan for buildability and high-cost flags,
      schematic scan for wire integrity and cost-tie, then BOM outlier analysis against all three
@@ -1849,3 +1851,192 @@ T8. **OPEN** — Qty inflation (Issue A2): Noah's screenshot of PRJ402101 at 8:3
      BOM extraction is stable and non-BOM regions are ready to graduate.
      See `ARC-VISION-ESTIMATOR-REVIEW.md`.
      Captured: 2026-06-05, from Jon.
+
+102. **OPEN** [Backlog] (MEDIUM, Phase 2 ENTRY GATE) — classifyBomInputTier scan/bitmap leak to vector-stroke.
+     The classifier checks `q.isMonochrome` but not `q.isScanned`, and uses `imageCount >= 2` for
+     bitmap. A non-monochrome (color/grayscale) single-image scan with 0 text chars would leak to
+     `vector-stroke` — the one tier that under-warns AND gets voted on in Phase 2. Fix FIRST thing
+     in Phase 2 before any voting code: add `q.isScanned` check; change bitmap signal to
+     `imageCount >= 1 AND low/zero region chars`. Masked today only because all census scans are
+     monochrome and both bitmaps have `imageCount >= 2`. Becomes a live cost/quality bug the moment
+     Phase 2 voting exists.
+     Discovered: 2026-06-06, Coach C31 verification of Phase 1b (7/8 pass, PRJ402100 scan-vs-bitmap
+     was the miss — gate-equivalent but reveals the leak path).
+
+## Required-BOM-Region Feature (shipped sub-phases, 2026-06-04 → 2026-06-09)
+
+103. **RESOLVED** [Verified] — Phase 0a/0b timeout fix (undici override, v1.20.108-area).
+     Server-side extraction timeout hardening. Prerequisite for reliable Phase 1 testing.
+
+104. **RESOLVED** [Verified] — Phase 1e 0-byte hardening (v1.20.102).
+     Graceful handling of 0-byte PDF uploads. Sets manualVerifyRequired and routes through
+     the Phase 1c gate as Case 5.
+
+105. **RESOLVED** [Verified] — Phase 1b input-tier classifier (v1.20.105).
+     `classifyBomInputTier` function: text-layer / vector-stroke / bitmap / scan / no-pdf.
+     Feeds Phase 1c gate with extraction tier. See #102 for known leak path.
+     Verified: Coach C31.
+
+106. **RESOLVED** [Verified] — Phase 1a detection summary (v1.20.106).
+     Pre-extraction scan quality detection and user-facing summary in extraction report.
+     Shows tier, page quality details, and scan warnings before extraction starts.
+
+107. **RESOLVED** [Verified] — Phase 1c block-with-override gate (v1.20.107).
+     `confirmAndExtract` 5-case tier+region gate. Sets `panel._manualVerifyRequired` on
+     Cases 4 (vision+no-region) and 5 (no-PDF). Includes arcConfirm modal with proceed/cancel.
+     Verified: Coach C37.
+
+## Sales-Path Trust Layer (2026-06-09)
+
+108. **RESOLVED** [Verified] — B2 manualVerifyRequired carry-forward + B1 send-gate (v1.20.108).
+     B2: manualVerifyRequired survives both re-extraction paths (reExtractionReport line 24365,
+     fbReport line 24591). B1: findIncompleteQuoteItems blocks send across all three surfaces
+     (QuoteSendModal, pre-gate banner, inline send) when manualVerifyRequired=true.
+     Verified: Coach C40.
+
+109. **RESOLVED** [Verified] — F3 print warning + F2 BC-failure toast (v1.20.109).
+     F3: handlePrintQuote warns on verification block (even when fully priced) via arcConfirm
+     with "Print Anyway" option. F2: BC pricing failure surfaces toast with unpriced count
+     and 12s auto-dismiss.
+     Verified: Coach C41.
+
+110. **RESOLVED** [Verified] — F1/C5 noisy-PN guard + Mark-Verified action (v1.20.110).
+     F1: bcFuzzyLookup results held as suggestions (not auto-accepted) when manualVerifyRequired
+     AND match type is not "exact". Both foreground and background pricing paths.
+     C5: applyLearnedCorrections Path 1 (auto-cross alternates) frozen when manualVerifyRequired;
+     Paths 2-4 (corrections/library/description) still apply. All 4 call sites thread the flag.
+     bcMatchType field stored on rows (exact/fuzzy/fuzzy-normalized/null).
+     "Mark Verified" button clears flag with arcConfirm explaining consequences.
+     Verified: Coach C42. Completes the unsupervised-Sales safety net.
+
+## Deferred Items (backlog with activation triggers)
+
+111. **RESOLVED** [Verified] — Required-BOM-Region Phase 1d: no-PDF lazy handling.
+     Completed via Phase 1c Case 5 (v1.20.107). Case 5 detects no-PDF at extraction time
+     via classifyBomInputTier, shows re-upload/region-image modal, sets manualVerifyRequired
+     on the image path, cancel returns user to panel. No residual scope — extraction-time
+     detection was always the design intent. Verified: Coach C44.
+
+112. **RESOLVED** [Verified] — Required-BOM-Region Phase 1f: per-company structural learning + L3 wire-up.
+     v1.20.111. Region learning context now reaches all single-page extraction paths (pdf-native,
+     bom-region-crop, image-fallback) on both server and client. Schema extended with contributedBy
+     (uid), inputTierClass (pdf/image), columnLayoutType (structural enum). Per-company pooling
+     via _appCtx.configPath confirmed — no migration needed. GAP: batch path (extractBomBatch)
+     not wired (#118). Verified: Coach C45. PHASE 1 COMPLETE.
+
+113. **CLOSED** — CropBox bitmap latency+accuracy proof.
+     Superseded by H5 (#120). CropBox confirmed counterproductive on low-DPI rasters (0 items
+     on PRJ402119 scan-tier, see docs/113-CROPBOX-SCAN-PROOF.md). High-DPI region tiling is
+     the shipped approach — renders client-side at controlled DPI instead of relying on CropBox.
+     Original question (does CropBox help bitmap-tier?) is moot: H5 bypasses CropBox entirely.
+
+114. **CLOSED** — Phase 2 vector-stroke voting + self-test.
+     Killed. #113b proved voting is counterproductive on bitmap-tier (59.3% voting < 64.8% best
+     single run). H5 (#120) solved the accuracy problem via resolution (100% on both test drawings)
+     — voting is unnecessary when the model reads every glyph correctly at high DPI.
+     Dependency #113 closed (superseded by H5); #102 remains open but no longer gates this.
+
+## F1/C5 Guard Follow-ups (2026-06-09)
+
+115. **OPEN** [Backlog] — Held-back-cross review UI.
+     C5 guard freezes auto-cross alternates but reHeldBack / fbHeldBack / _heldBackAlternates
+     are scaffolding only — assigned to variables and console-logged, not surfaced in UI.
+     The scope doc (NOISY-PN-GUARD-SCOPE.md) estimated ~30-40 lines for a per-row indicator
+     showing "N learned crosses available pending verification." Freeze is fail-safe as-is
+     (withholds the risky action), so this is a usability follow-up, not a safety gap.
+     Activation: if field testing shows users confused by held-back crosses.
+     Discovered: Coach C42 verification (2026-06-09).
+
+116. **OPEN** [Backlog] — "Mark Verified" auto-re-price question.
+     After clicking "Mark Verified", manualVerifyRequired clears but held-back fuzzy matches
+     remain unpriced (red) and auto-cross alternates remain unapplied. User must manually
+     click "Get New Pricing" or navigate away and back. By design (scope doc note #3), but
+     revisit if users find the manual re-price step confusing. Options: auto-trigger pricing
+     after Mark Verified, or show a toast prompting re-price.
+     Activation: if user testing surfaces confusion.
+     Discovered: Coach C42 verification (2026-06-09).
+
+## Quote & Pricing Issues (2026-06-09)
+
+117. **OPEN** [Decided] — Payment Terms / Shipping Method missing from quote (intermittent).
+     Root cause: two print paths diverge. Path A (handlePrintQuote, line 35735) runs BC
+     auto-populate before generating PDF. Path B ("Generate PDF" button in QuoteView, line
+     19469) reads React state directly — no BC fetch. Additionally: quote field edits have
+     NO auto-save (edits live in React state only), saveProject at line 35945 is fire-and-forget,
+     and BC token expiry silently skips the entire fetch. Fix: (1) debounced auto-save for
+     quote edits (~5 lines), (2) await the save in handlePrintQuote (~3 lines), (3) BC
+     auto-populate before direct PDF generation (~10 lines). ~20 lines total.
+     Investigation: Coach C46 (2026-06-09). Discovered: 2026-06-09 (user report).
+
+## Phase 1f Follow-ups (2026-06-09)
+
+118. **OPEN** [Backlog] — Batch extraction path missing region learning context.
+     `extractBomBatch` (Cloud Function) and `extractBomBatchViaServer` (client) do not send
+     or splice regionLearningParts. Same pattern as extractBomPage — destructure, splice before
+     content parts. Low priority: batch is pdf-native only (vector text, lower benefit from
+     region learning), and batch failures fall back to per-page extractBomPage which HAS it.
+     Activation: next extraction reliability pass.
+     Discovered: Coach C45 verification (2026-06-09).
+
+## Silent Zero-BOM (2026-06-09)
+
+119. **OPEN** [Discovery] — Legacy panels invisible to Phase 1 safety systems.
+     SYSTEMIC: every Phase 1 safety mechanism (ZeroBomBanner, amber chip, send gate, completeness
+     warning) is gated on `panel.extractionReport` existing. Projects extracted before v1.19.598
+     have no extractionReport — all safety systems silently return null/undefined. PRJ402119
+     is the poster child: 0 BOM items, regioned, legible, zero warnings.
+     Root cause chain: (1) extracted pre-v1.19.598 → hit C23 dataUrl gating bug → 0 items,
+     (2) no extractionReport saved (didn't exist yet), (3) ZeroBomBanner `if(!r)return null`,
+     (4) amber chip `panel.extractionReport?.manualVerifyRequired` → undefined.
+     Secondary finding: re-extract paths (runExtraction, reExtractWithFeedback) bypass 1c gate.
+     Fix scope: (1) legacy ZeroBomBanner fallback ~8 lines, (2) 1c gate on re-extract ~5 lines,
+     (3) optional on-load backfill ~10 lines. Fix 1 is minimum viable.
+     Investigation: Coach C47 (2026-06-09).
+
+## Extraction Accuracy — High-DPI Rendering (2026-06-09)
+
+120. **RESOLVED** [Verified] — H5: Region-targeted high-DPI rendering for vision-mode BOM pages.
+     Shipped v1.20.112 + v1.20.113 (commit 6ea797e4). Model: Claude Opus 4.8 (2576 px ceiling).
+     Client-side pdf.js renders BOM region at high DPI as JPEG tiles, sent to API as image blocks.
+     Tier gate: `classifyBomInputTier` — text-layer keeps PDF-native, vision tiers use H5 tiles.
+     Results: PRJ402101 54/54 = 100% (up from ~36-65% baseline), PRJ402119 14/14 = 100% (up from
+     36-50% baseline). Effective DPI ~440 (94%-of-page auto-region) to ~1079 (tight user-drawn
+     region), both well above 300 DPI quality threshold. All three Jon-verified anchor PNs resolved.
+     v1.20.113 converted 6 Opus call sites from `thinking:{type:"enabled",budget_tokens}` to
+     `thinking:{type:"adaptive"}` — required for Opus 4.8 compatibility.
+     Does NOT fix: Pattern C (BC data contamination), D (wrong-row reads), F (qty errors).
+     Supersedes #113 (CropBox doesn't raise DPI; H5 renders directly).
+     Verified: Coach C51 (H5 verification, 2026-06-10), Coach PRJ402119 generalization test.
+     Scoping: Coach C48 (proof) + C49 (plan) (2026-06-09).
+
+## H5 Close-Out Findings (2026-06-10 → 2026-06-15)
+
+121. **OPEN** [Backlog] — Region edge-padding to prevent edge-row clipping.
+     H5 renders the resolved BOM region at high DPI, but an over-tight region silently clips
+     edge rows. Marc hit this on PRJ402119 — tight user-drawn region cut bottom rows until
+     padded. Fix: pad the resolved region ~2% on all edges before rendering. Cheap insurance
+     against edge-clip, negligible DPI cost (~5-10 DPI reduction on typical regions).
+     Supersedes the bare "region tightly" wording in Phase 1c — guidance is "tight AND complete."
+     Estimated: ~5 lines in renderBomRegionHighDpi. Activation: next extraction reliability pass.
+     Discovered: Coach PRJ402119 generalization test (2026-06-10).
+
+122. **RESOLVED** [Record correction] — #113 ground-truth items 1-2 wrong in answer key.
+     #113's answer key (from 95-ITEM8-TRACE-RESULTS.md) listed item 1 as SCE-1413PCW and
+     item 2 as SCE-14P13AL. Both are wrong — correct PNs are SCE-1412PCW / SCE-14P12AL,
+     confirmed at 2400 DPI by Coach independent reading and consistent with both H5 extraction
+     runs. The "12" vs "13" ambiguity is a font rendering issue at low DPI (the vector "2" and
+     "3" are near-identical in this drawing's font). H5 read them correctly; the human-verified
+     key was wrong. PRJ402119 baseline scoring in #113 is unaffected (both items were wrong
+     regardless), but the corrected key must be used for any future regression testing.
+     Discovered: Coach PRJ402119 ground-truth exercise (2026-06-10).
+
+123. **RESOLVED** [Record correction] — PRJ402119 is vector content, not a raster fax-scan.
+     #113 characterized PRJ402119 page 3 as "168 DPI monochrome fax-scan." This was incorrect.
+     The page contains 15,307 vector drawing paths with BOM text rendered as vector outlines,
+     plus 1 small embedded monochrome image (1425×472 — the company logo only). The "168 DPI
+     fax" label came from assessPdfPageQuality detecting the embedded monochrome image and
+     misclassifying the entire page. classifyBomInputTier correctly returns 'vector-stroke'.
+     This corrects the record: the "scans are floor-limited by source quality" conclusion from
+     #113 was based on a misclassified page. The 36→100% accuracy delta on PRJ402119 was
+     entirely send-resolution (same class of fix as PRJ402101), not a scan quality ceiling.
+     Discovered: Coach PRJ402119 generalization test (2026-06-10).
