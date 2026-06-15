@@ -7767,6 +7767,17 @@ async function ensureQuoteFieldsPopulated(project,uid){
     if(newSalespersonCode)merged.bcSalespersonCode=newSalespersonCode;
     if(Object.keys(autoFields).length)merged.quote={...q,...autoFields};
   }
+  // #117 Fix 3a: BC-linked + terms needed but no token → couldn't populate from BC.
+  // Not silent — the caller decides whether to warn (print) or block (send).
+  if(project.bcProjectNumber&&needsBcFetch&&!_bcToken){
+    warnings.push("bc-unavailable");
+  }
+  // #117 Fix 3b: required terms still blank on the final output, whatever the cause
+  // (token null, 401/expired, BC card empty, or never manually entered).
+  const finalQ=merged.quote||{};
+  if(!finalQ.paymentTerms||!finalQ.shippingMethod){
+    warnings.push("missing-required-terms");
+  }
   return{project:merged,warnings};
 }
 
@@ -31789,6 +31800,25 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       if(recipients.length===0){arcAlert("Enter at least one recipient email.");return;}
       if(bad.length){arcAlert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
     }
+    // #117 Fix 3c: populate quote fields via the shared gate + persist, THEN hard-block
+    // if BC is unavailable or required terms are blank. This path emails a customer with
+    // no human glance — a silent blank-terms send is the worst-case outcome. Runs before
+    // setSending(true) so the user sees no spinner during the BC fetch (matches modal UX).
+    const _pop=await ensureQuoteFieldsPopulated(project,uid);
+    const populated=_pop.project;
+    if(populated!==project)await persistProject(populated);
+    const _sq=populated.quote||{};
+    if(_pop.warnings.length>0||!_sq.paymentTerms||!_sq.shippingMethod){
+      const missing=[];
+      if(!_sq.paymentTerms)missing.push("Payment Terms");
+      if(!_sq.shippingMethod)missing.push("Shipping Method");
+      let msg=_pop.warnings.includes("bc-unavailable")
+        ?"BC is not connected — quote fields could not be auto-populated from the project card.\n\n":"";
+      if(missing.length)msg+=`Missing required fields: ${missing.join(", ")}. The sent quote would show "---".\n\n`;
+      msg+="Connect to BC or enter the fields manually before sending.";
+      arcAlert(msg);
+      return;
+    }
     setSending(true);
     try{
       const graphToken=await acquireGraphToken();
@@ -31797,7 +31827,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
       const jsPDF=await ensureJsPDF();
       const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
-      await buildQuotePdfDoc(pdfDoc,project);
+      await buildQuotePdfDoc(pdfDoc,populated);
       const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
       console.log("[SEND QUOTE] PDF generated, base64 length:",pdfBase64?.length||0,"mode:",sendMode);
       // DECISION(v1.19.931, Send w/BOM): When the user clicks "Send w/BOM",
@@ -31851,7 +31881,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // DECISION(v1.19.667): Email has been confirmed sent at this point (await above).
       // Separate the Firestore lock try/catch so a save failure doesn't look like a send failure.
       // Sales rep needs to know "email went out but lock didn't save" vs "email never sent".
-      const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
+      // #117 Fix 3c: spread `populated` (not the stale closure `project`) so the post-send
+      // lock-save preserves the BC-populated terms — otherwise it would clobber them blank.
+      const upd={...populated,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
       try{
         persistProject(upd);
       }catch(saveErr){
@@ -36159,9 +36191,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // (awaited) before the checklist/print. This flushes any RAM-only setQ edits and the
     // BC populate to Firestore so they survive even if the print itself fails. Both print
     // paths now share ensureQuoteFieldsPopulated, killing the A/B divergence.
+    let _populateWarnings=[];
     try{
       const _pop=await ensureQuoteFieldsPopulated(proj,uid);
       proj=_pop.project;
+      _populateWarnings=_pop.warnings;
       setProject(proj);projectRef.current=proj;onChange(proj);
       await saveProject(uid,proj);
     }catch(e){
@@ -36256,6 +36290,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const needsUpload=bcNum&&!(projectRef.current.panels||[]).every(p=>(p.bcUploadQuoteRev||0)>=currentRev)&&(projectRef.current.panels||[]).some(p=>(p.pages||[]).length>0);
     if(needsUpload){
       issues.push({type:"upload",label:"Upload Drawings to BC",detail:`Rev ${String(currentRev).padStart(2,"0")} not yet uploaded`,checked:true});
+    }
+
+    // #117 Fix 4: BC unavailable — couldn't auto-populate terms. Unchecked → user acknowledges.
+    if(_populateWarnings.includes("bc-unavailable")){
+      issues.push({type:"bctoken",label:"BC Not Connected",detail:"Payment Terms / Shipping Method not auto-populated — connect to BC or enter manually",checked:false});
+    }
+    // #117 Fix 4: required quote fields still blank (would print as "---"). Unchecked → user acknowledges.
+    const _qCheck=projectRef.current.quote||{};
+    const _missingFields=[];
+    if(!_qCheck.paymentTerms)_missingFields.push("Payment Terms");
+    if(!_qCheck.shippingMethod)_missingFields.push("Shipping Method");
+    if(_missingFields.length>0){
+      issues.push({type:"blankfields",label:"Missing Quote Fields",detail:_missingFields.join(", ")+" — enter manually before printing",checked:false});
     }
 
     // If no issues at all — go straight to print
@@ -37377,6 +37424,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       {issue.type==="pricing"&&<span style={{fontSize:16,flexShrink:0}}>💲</span>}
                       {issue.type==="eqs"&&<span style={{fontSize:16,flexShrink:0}}>❓</span>}
                       {issue.type==="upload"&&<span style={{fontSize:16,flexShrink:0}}>📤</span>}
+                      {issue.type==="bctoken"&&<span style={{fontSize:16,flexShrink:0}}>🔌</span>}
+                      {issue.type==="blankfields"&&<span style={{fontSize:16,flexShrink:0}}>📋</span>}
                     </label>
                   ))}
                 </div>
