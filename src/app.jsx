@@ -7591,6 +7591,185 @@ async function generateQuotePdf(project){
   return{printed:true,hash:computeBomHash(project.panels)};
 }
 
+// #117 (C59): Shared quote-field populate gate. BOTH print paths — handlePrintQuote
+// (Path A) and QuoteView's Generate PDF (Path B) — call this BEFORE rendering so the two
+// can never diverge again. Pulls paymentTerms/shippingMethod (+ company/address/contact/
+// salesperson) from the BC project card, falling back to the customer card. Returns a
+// SHALLOW COPY and NEVER mutates the input project — both bcSalespersonCode (top-level)
+// and the quote-field merge flow through the returned project; callers own state updates
+// and persistence. `warnings` is reserved for Phase 2 loud-on-failure signals (empty now).
+async function ensureQuoteFieldsPopulated(project,uid){
+  const warnings=[];
+  // Auto-populate quote fields from panel data and BC project card if empty
+  const panels=project.panels||[];
+  const q=project.quote||{};
+  const firstPanel=panels[0]||{};
+  const autoFields={};
+  let newSalespersonCode=null;
+  if(!q.description&&firstPanel.drawingDesc)autoFields.description=firstPanel.drawingDesc;
+  if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
+  if(!q.projectNumber&&project.bcProjectNumber)autoFields.projectNumber=project.bcProjectNumber;
+  // Fetch contact and salesperson from BC project card — skip if quote already has key fields
+  // DECISION(v1.19.953): Also re-fetch when paymentTerms or shippingMethod
+  // are missing. The earlier gate only checked company/address/salesperson,
+  // so projects where those filled in WITHOUT a BC pull (or with a stale BC
+  // pull from before terms were configured) never got their Pmt Terms +
+  // Shipping Method back-filled even though BC has them populated.
+  const spLooksLikeCode=q.salesperson&&/^[SP]-/i.test(q.salesperson);
+  const needsBcFetch=!q.company||!q.address||!q.salesperson||spLooksLikeCode||!q.paymentTerms||!q.shippingMethod;
+  if(project.bcProjectNumber&&_bcToken&&needsBcFetch){
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const projectPage=allPages.find(n=>/^project(card)?$/i.test(n));
+      if(projectPage){
+        // DECISION(v1.19.400): Fetch all fields from BC project card — $select with specific field names
+        // causes 400 errors when CCS_ prefixed fields don't match across BC configurations.
+        const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${projectPage}?$filter=No eq '${project.bcProjectNumber}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(pr.ok){
+          const bc=((await pr.json()).value||[])[0];
+          if(bc){
+            // DECISION(v1.19.346): Always re-populate company/salesperson/contact from BC if the quote
+            // fields are empty. Previous versions had timing bugs where these didn't get saved.
+            if(!q.company&&bc.Sell_to_Customer_Name)autoFields.company=bc.Sell_to_Customer_Name;
+            let addr=[bc.Sell_to_Address,bc.Sell_to_Address_2,bc.Sell_to_City&&bc.Sell_to_County?`${bc.Sell_to_City}, ${bc.Sell_to_County} ${bc.Sell_to_Post_Code||""}`.trim():bc.Sell_to_City].filter(Boolean).join("\n");
+            // Fallback: if project card address is empty, fetch from Customer card
+            if(!addr&&bc.Sell_to_Customer_No){
+              try{
+                const compId2=await bcGetCompanyId();
+                const custR=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${bc.Sell_to_Customer_No}'&$select=addressLine1,addressLine2,city,state,postalCode,phoneNumber,email,taxAreaDisplayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                if(custR.ok){
+                  const cust=((await custR.json()).value||[])[0];
+                  if(cust){
+                    addr=[cust.addressLine1,cust.addressLine2,cust.city&&cust.state?`${cust.city}, ${cust.state} ${cust.postalCode||""}`.trim():cust.city].filter(Boolean).join("\n");
+                    if(!q.phone&&cust.phoneNumber)autoFields.phone=cust.phoneNumber;
+                    if(!q.email&&cust.email)autoFields.email=cust.email;
+                    if(cust.taxAreaDisplayName)autoFields.taxAreaCode=cust.taxAreaDisplayName;
+                  }
+                }
+              }catch(e){console.warn("Customer card fetch failed:",e);}
+            }
+            if(!q.address&&addr)autoFields.address=addr;
+            // Get contact details from BC Contact Card — find person with email/phone under the company
+            const compId=await bcGetCompanyId();
+            const contactNo=bc.Sell_to_Contact_No||"";
+            const custName=bc.Sell_to_Customer_Name||"";
+            // DECISION(v1.19.403): Only auto-fill contact info from BC if NO contact person has been
+            // explicitly selected via the dropdown. If a contact is selected (project.bcContactNo set),
+            // their info is authoritative — don't override with a different person's email/phone.
+            if(compId&&(contactNo||custName)&&!project.bcContactNo&&!q.contact){
+              try{
+                const cFilter=custName?`companyName eq '${custName.replace(/'/g,"''")}'`:`number eq '${contactNo}'`;
+                const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${cFilter}&$select=number,displayName,email,phoneNumber,companyName&$top=10`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                if(cr.ok){
+                  const contacts=(await cr.json()).value||[];
+                  const people=contacts.filter(c=>c.displayName!==c.companyName);
+                  const withEmail=people.filter(c=>c.email);
+                  const bestContact=withEmail[0]||people[0]||contacts[0];
+                  if(bestContact){
+                    if(bestContact.displayName&&bestContact.displayName!==custName)autoFields.contact=bestContact.displayName;
+                    else if(bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
+                    if(bestContact.phoneNumber)autoFields.phone=bestContact.phoneNumber;
+                    else if(bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
+                    if(bestContact.email)autoFields.email=bestContact.email;
+                    else if(bc.SellToEmail)autoFields.email=bc.SellToEmail;
+                  }
+                }
+              }catch(e){console.warn("BC contact lookup failed:",e);}
+            }
+            if(!q.contact&&!autoFields.contact&&bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
+            if(!q.phone&&!autoFields.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
+            if(!q.email&&!autoFields.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
+            // DECISION(v1.19.401): Payment terms & shipping come from project card first, then customer card fallback.
+            // Project card uses CCS_ prefixed fields. Customer card uses paymentTermsId/shipmentMethodId (GUIDs)
+            // that need to be resolved via REST API.
+            let pmtTerms=bc.CCS_Payment_Terms_Code||bc.Payment_Terms_Code||"";
+            let shipMethod=bc.CCS_Shipment_Method_Code||bc.Shipment_Method_Code||"";
+            // Fallback to customer card if project card fields are empty
+            if((!pmtTerms||!shipMethod)&&(bc.Bill_to_Customer_No||bc.Sell_to_Customer_No)){
+              try{
+                const custNo=bc.Bill_to_Customer_No||bc.Sell_to_Customer_No;
+                const compId2=await bcGetCompanyId();
+                const custR=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${custNo}'&$select=number,paymentTermsId,shipmentMethodId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                if(custR.ok){
+                  const cust=((await custR.json()).value||[])[0];
+                  if(cust){
+                    // Resolve payment terms from ID to code
+                    if(!pmtTerms&&cust.paymentTermsId){
+                      try{const ptr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/paymentTerms(${cust.paymentTermsId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                        if(ptr.ok){const pt=await ptr.json();pmtTerms=pt.code||pt.displayName||"";}}catch(e){}
+                    }
+                    // Resolve shipment method from ID to code
+                    if(!shipMethod&&cust.shipmentMethodId){
+                      try{const smr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/shipmentMethods(${cust.shipmentMethodId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                        if(smr.ok){const sm=await smr.json();shipMethod=sm.code||sm.displayName||"";}}catch(e){}
+                    }
+                  }
+                }
+              }catch(e){console.warn("Customer card payment/shipping lookup failed:",e);}
+            }
+            if(pmtTerms)autoFields.paymentTerms=pmtTerms;
+            if(shipMethod)autoFields.shippingMethod=shipMethod;
+            // DECISION(v1.19.346): Use salesperson code from BC project card OR from the project's
+            // bcSalespersonCode (set via the Sales dropdown in PanelListView). BC card may not always
+            // have Person_Responsible populated even when the dropdown was set.
+            const spCode=bc.CCS_Salesperson_Code||bc.Person_Responsible||project.bcSalespersonCode||"";
+            if(spCode&&!project.bcSalespersonCode){
+              newSalespersonCode=spCode;
+            }
+            if(spCode&&(!q.salesperson||q.salesperson===spCode||/^S-/i.test(q.salesperson||""))){
+              // Resolve salesperson name — try published Salesperson OData page first, then SalesOrders fallback
+              let spResolved=false;
+              const spPageNames=["Salesperson_Purchaser","SalespersonPurchaser","Salesperson","Salesperson_Card","SalespersonCard"];
+              for(const spn of spPageNames){
+                try{
+                  const spR=await bcGatedFetch(`${BC_ODATA_BASE}/${spn}?$filter=Code eq '${spCode}'&$select=Code,Name,E_Mail,Phone_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  if(spR.ok){
+                    const spRec=((await spR.json()).value||[])[0];
+                    if(spRec){
+                      if(spRec.Name)autoFields.salesperson=spRec.Name;
+                      if(!q.salesEmail&&spRec.E_Mail)autoFields.salesEmail=spRec.E_Mail;
+                      if(!q.salesPhone&&spRec.Phone_No)autoFields.salesPhone=spRec.Phone_No;
+                      spResolved=true;break;
+                    }
+                  }
+                }catch(e){}
+              }
+              if(!spResolved){
+                // Fallback: SalesOrdersBySalesPerson (only has name, no phone/email)
+                try{
+                  const spR=await bcGatedFetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+                  if(spR.ok){const spName=((await spR.json()).value||[])[0]?.SalesPersonName||"";if(spName)autoFields.salesperson=spName;}
+                }catch(e){}
+              }
+              if(!autoFields.salesperson&&!q.salesperson)autoFields.salesperson=spCode;
+              // Load cached salesperson info from Firestore
+              try{
+                const spDoc=await fbDb.doc(`${_appCtx.configPath||"users/"+uid+"/config"}/salespersonInfo`).get();
+                if(spDoc.exists){
+                  const spInfo=(spDoc.data().people||{})[spCode];
+                  if(spInfo){
+                    if(!q.salesPhone&&spInfo.phone)autoFields.salesPhone=spInfo.phone;
+                    if(!q.salesEmail&&spInfo.email)autoFields.salesEmail=spInfo.email;
+                  }
+                }
+              }catch(e){}
+            }
+          }
+        }
+      }
+    }catch(e){console.warn("BC project card fetch for quote failed:",e);}
+  }
+  // Build the merged result without mutating the input (shallow copy). Both the
+  // bcSalespersonCode change and the quote-field merge ride on the returned project.
+  let merged=project;
+  if(newSalespersonCode||Object.keys(autoFields).length){
+    merged={...project};
+    if(newSalespersonCode)merged.bcSalespersonCode=newSalespersonCode;
+    if(Object.keys(autoFields).length)merged.quote={...q,...autoFields};
+  }
+  return{project:merged,warnings};
+}
+
 // ══════════════════════════════════════════════════════════════════
 // END ARC DOCUMENT FRAMEWORK
 // ══════════════════════════════════════════════════════════════════
@@ -19591,7 +19770,7 @@ function RfqHistoryModal({uid,projectId,onClose}){
 }
 
 // ── QUOTE TAB ──
-function QuoteTab({project,onUpdate}){
+function QuoteTab({project,onUpdate,onGeneratePdf}){
   const [quoteTab,setQuoteTab]=useState("formal");
   const pr=project.pricing||{};
   const bom=project.bom||[];
@@ -19633,7 +19812,7 @@ function QuoteTab({project,onUpdate}){
               {hasSellPrice?`Sell price: ${fmtMoney(sellPrice)}`:"Complete pricing first to populate sell price."}
             </div>
           </div>
-          <button onClick={async()=>{await generateQuotePdf(project);const hash=computeBomHash(project.panels);onUpdate({...project,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:project.quoteRev||0});}} style={btn(C.accent,"#fff",{fontSize:14,padding:"10px 24px"})}>🖨 Generate PDF</button>
+          <button onClick={onGeneratePdf} style={btn(C.accent,"#fff",{fontSize:14,padding:"10px 24px"})}>🖨 Generate PDF</button>
         </div>
         {(()=>{
           const fld=(label,key,ph,w)=>(
@@ -34811,6 +34990,29 @@ function QuoteView({project,uid,onBack,onUpdate}){
     const updatedPanels=(project.panels||[]).map(p=>({...p,pricing:{...(p.pricing||{}),...(upd.pricing||{})}}));
     onUpdate({...project,panels:updatedPanels,quote:upd.quote,pricing:upd.pricing,budgetaryQuote:upd.budgetaryQuote});
   }
+  // #117 (C59, Path B / Option A): Generate PDF lives here in QuoteView so it populates +
+  // PERSISTS the REAL `project` (never the synthetic `aggregated` shape — that would flatten
+  // multi-panel BOM/pages into the doc, the #86 corruption class). Mirrors Path A's two-save
+  // pattern: populate→save BEFORE render (flushes RAM-only setQ edits + BC populate even if
+  // print fails), then mark-printed→save AFTER success. The PDF renders from `aggregated`
+  // (merged multi-panel BOM) with the populated quote spliced in. Uses `onUpdate` (= the
+  // unrestricted update) directly, NOT handleQuoteUpdate, so bcSalespersonCode propagates.
+  async function handleGeneratePdf(){
+    try{
+      const _pop=await ensureQuoteFieldsPopulated(project,uid);
+      const populated=_pop.project;
+      onUpdate(populated);
+      await saveProject(uid,populated);
+      await generateQuotePdf({...aggregated,quote:populated.quote});
+      const hash=computeBomHash(populated.panels);
+      const printed={...populated,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:populated.quoteRev||0};
+      onUpdate(printed);
+      await saveProject(uid,printed);
+    }catch(e){
+      console.error("[QUOTE] Generate PDF (Path B) failed:",e);
+      arcAlert("Failed to populate or save the quote before generating the PDF. Your edits may not persist. Retry or check your connection.");
+    }
+  }
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
   return(
     <div style={{flex:1,display:"flex",flexDirection:"column",background:C.bg}}>
@@ -34842,7 +35044,7 @@ function QuoteView({project,uid,onBack,onUpdate}){
               </div>
             </div>
           )}
-          <QuoteTab project={aggregated} onUpdate={handleQuoteUpdate}/>
+          <QuoteTab project={aggregated} onUpdate={handleQuoteUpdate} onGeneratePdf={handleGeneratePdf}/>
         </div>
       </div>
     </div>
@@ -35817,7 +36019,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Auto-print: wait for quote DOM to render, trigger print, then go back
   useEffect(()=>{
     if(autoPrint&&view==="quote"){
-      const t=setTimeout(async()=>{await generateQuotePdf(projectRef.current);const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);saveProject(uid,upd);setAutoPrint(false);setView("panels");},400);
+      const t=setTimeout(async()=>{await generateQuotePdf(projectRef.current);const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);try{await saveProject(uid,upd);}catch(e){console.error("[QUOTE] autoPrint save failed:",e);arcAlert("Failed to save quote after printing. Your edits may not persist.");}setAutoPrint(false);setView("panels");},400);
       return()=>clearTimeout(t);
     }
   },[autoPrint,view]);
@@ -35953,167 +36155,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }
       }catch(e){console.warn("Auto quote number failed:",e);}
     }
-    // Auto-populate quote fields from panel data and BC project card if empty
-    const panels=proj.panels||[];
-    const q=proj.quote||{};
-    const firstPanel=panels[0]||{};
-    const autoFields={};
-    if(!q.description&&firstPanel.drawingDesc)autoFields.description=firstPanel.drawingDesc;
-    if(!q.drawingRev&&firstPanel.drawingRev)autoFields.drawingRev=firstPanel.drawingRev;
-    if(!q.projectNumber&&proj.bcProjectNumber)autoFields.projectNumber=proj.bcProjectNumber;
-    // Fetch contact and salesperson from BC project card — skip if quote already has key fields
-    // DECISION(v1.19.953): Also re-fetch when paymentTerms or shippingMethod
-    // are missing. The earlier gate only checked company/address/salesperson,
-    // so projects where those filled in WITHOUT a BC pull (or with a stale BC
-    // pull from before terms were configured) never got their Pmt Terms +
-    // Shipping Method back-filled even though BC has them populated.
-    const spLooksLikeCode=q.salesperson&&/^[SP]-/i.test(q.salesperson);
-    const needsBcFetch=!q.company||!q.address||!q.salesperson||spLooksLikeCode||!q.paymentTerms||!q.shippingMethod;
-    if(proj.bcProjectNumber&&_bcToken&&needsBcFetch){
-      try{
-        const allPages=await bcDiscoverODataPages();
-        const projectPage=allPages.find(n=>/^project(card)?$/i.test(n));
-        if(projectPage){
-          // DECISION(v1.19.400): Fetch all fields from BC project card — $select with specific field names
-          // causes 400 errors when CCS_ prefixed fields don't match across BC configurations.
-          const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${projectPage}?$filter=No eq '${proj.bcProjectNumber}'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-          if(pr.ok){
-            const bc=((await pr.json()).value||[])[0];
-            if(bc){
-              // DECISION(v1.19.346): Always re-populate company/salesperson/contact from BC if the quote
-              // fields are empty. Previous versions had timing bugs where these didn't get saved.
-              if(!q.company&&bc.Sell_to_Customer_Name)autoFields.company=bc.Sell_to_Customer_Name;
-              let addr=[bc.Sell_to_Address,bc.Sell_to_Address_2,bc.Sell_to_City&&bc.Sell_to_County?`${bc.Sell_to_City}, ${bc.Sell_to_County} ${bc.Sell_to_Post_Code||""}`.trim():bc.Sell_to_City].filter(Boolean).join("\n");
-              // Fallback: if project card address is empty, fetch from Customer card
-              if(!addr&&bc.Sell_to_Customer_No){
-                try{
-                  const compId2=await bcGetCompanyId();
-                  const custR=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${bc.Sell_to_Customer_No}'&$select=addressLine1,addressLine2,city,state,postalCode,phoneNumber,email,taxAreaDisplayName`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                  if(custR.ok){
-                    const cust=((await custR.json()).value||[])[0];
-                    if(cust){
-                      addr=[cust.addressLine1,cust.addressLine2,cust.city&&cust.state?`${cust.city}, ${cust.state} ${cust.postalCode||""}`.trim():cust.city].filter(Boolean).join("\n");
-                      if(!q.phone&&cust.phoneNumber)autoFields.phone=cust.phoneNumber;
-                      if(!q.email&&cust.email)autoFields.email=cust.email;
-                      if(cust.taxAreaDisplayName)autoFields.taxAreaCode=cust.taxAreaDisplayName;
-                    }
-                  }
-                }catch(e){console.warn("Customer card fetch failed:",e);}
-              }
-              if(!q.address&&addr)autoFields.address=addr;
-              // Get contact details from BC Contact Card — find person with email/phone under the company
-              const compId=await bcGetCompanyId();
-              const contactNo=bc.Sell_to_Contact_No||"";
-              const custName=bc.Sell_to_Customer_Name||"";
-              // DECISION(v1.19.403): Only auto-fill contact info from BC if NO contact person has been
-              // explicitly selected via the dropdown. If a contact is selected (proj.bcContactNo set),
-              // their info is authoritative — don't override with a different person's email/phone.
-              if(compId&&(contactNo||custName)&&!proj.bcContactNo&&!q.contact){
-                try{
-                  const cFilter=custName?`companyName eq '${custName.replace(/'/g,"''")}'`:`number eq '${contactNo}'`;
-                  const cr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/contacts?$filter=${cFilter}&$select=number,displayName,email,phoneNumber,companyName&$top=10`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                  if(cr.ok){
-                    const contacts=(await cr.json()).value||[];
-                    const people=contacts.filter(c=>c.displayName!==c.companyName);
-                    const withEmail=people.filter(c=>c.email);
-                    const bestContact=withEmail[0]||people[0]||contacts[0];
-                    if(bestContact){
-                      if(bestContact.displayName&&bestContact.displayName!==custName)autoFields.contact=bestContact.displayName;
-                      else if(bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
-                      if(bestContact.phoneNumber)autoFields.phone=bestContact.phoneNumber;
-                      else if(bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
-                      if(bestContact.email)autoFields.email=bestContact.email;
-                      else if(bc.SellToEmail)autoFields.email=bc.SellToEmail;
-                    }
-                  }
-                }catch(e){console.warn("BC contact lookup failed:",e);}
-              }
-              if(!q.contact&&!autoFields.contact&&bc.Sell_to_Contact)autoFields.contact=bc.Sell_to_Contact;
-              if(!q.phone&&!autoFields.phone&&bc.SellToPhoneNo)autoFields.phone=bc.SellToPhoneNo;
-              if(!q.email&&!autoFields.email&&bc.SellToEmail)autoFields.email=bc.SellToEmail;
-              // DECISION(v1.19.401): Payment terms & shipping come from project card first, then customer card fallback.
-              // Project card uses CCS_ prefixed fields. Customer card uses paymentTermsId/shipmentMethodId (GUIDs)
-              // that need to be resolved via REST API.
-              let pmtTerms=bc.CCS_Payment_Terms_Code||bc.Payment_Terms_Code||"";
-              let shipMethod=bc.CCS_Shipment_Method_Code||bc.Shipment_Method_Code||"";
-              // Fallback to customer card if project card fields are empty
-              if((!pmtTerms||!shipMethod)&&(bc.Bill_to_Customer_No||bc.Sell_to_Customer_No)){
-                try{
-                  const custNo=bc.Bill_to_Customer_No||bc.Sell_to_Customer_No;
-                  const compId2=await bcGetCompanyId();
-                  const custR=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/customers?$filter=number eq '${custNo}'&$select=number,paymentTermsId,shipmentMethodId`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                  if(custR.ok){
-                    const cust=((await custR.json()).value||[])[0];
-                    if(cust){
-                      // Resolve payment terms from ID to code
-                      if(!pmtTerms&&cust.paymentTermsId){
-                        try{const ptr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/paymentTerms(${cust.paymentTermsId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                          if(ptr.ok){const pt=await ptr.json();pmtTerms=pt.code||pt.displayName||"";}}catch(e){}
-                      }
-                      // Resolve shipment method from ID to code
-                      if(!shipMethod&&cust.shipmentMethodId){
-                        try{const smr=await bcGatedFetch(`${BC_API_BASE}/companies(${compId2})/shipmentMethods(${cust.shipmentMethodId})`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                          if(smr.ok){const sm=await smr.json();shipMethod=sm.code||sm.displayName||"";}}catch(e){}
-                      }
-                    }
-                  }
-                }catch(e){console.warn("Customer card payment/shipping lookup failed:",e);}
-              }
-              if(pmtTerms)autoFields.paymentTerms=pmtTerms;
-              if(shipMethod)autoFields.shippingMethod=shipMethod;
-              // DECISION(v1.19.346): Use salesperson code from BC project card OR from the project's
-              // bcSalespersonCode (set via the Sales dropdown in PanelListView). BC card may not always
-              // have Person_Responsible populated even when the dropdown was set.
-              const spCode=bc.CCS_Salesperson_Code||bc.Person_Responsible||proj.bcSalespersonCode||"";
-              if(spCode&&!proj.bcSalespersonCode){
-                proj={...proj,bcSalespersonCode:spCode};
-              }
-              if(spCode&&(!q.salesperson||q.salesperson===spCode||/^S-/i.test(q.salesperson||""))){
-                // Resolve salesperson name — try published Salesperson OData page first, then SalesOrders fallback
-                let spResolved=false;
-                const spPageNames=["Salesperson_Purchaser","SalespersonPurchaser","Salesperson","Salesperson_Card","SalespersonCard"];
-                for(const spn of spPageNames){
-                  try{
-                    const spR=await bcGatedFetch(`${BC_ODATA_BASE}/${spn}?$filter=Code eq '${spCode}'&$select=Code,Name,E_Mail,Phone_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                    if(spR.ok){
-                      const spRec=((await spR.json()).value||[])[0];
-                      if(spRec){
-                        if(spRec.Name)autoFields.salesperson=spRec.Name;
-                        if(!q.salesEmail&&spRec.E_Mail)autoFields.salesEmail=spRec.E_Mail;
-                        if(!q.salesPhone&&spRec.Phone_No)autoFields.salesPhone=spRec.Phone_No;
-                        spResolved=true;break;
-                      }
-                    }
-                  }catch(e){}
-                }
-                if(!spResolved){
-                  // Fallback: SalesOrdersBySalesPerson (only has name, no phone/email)
-                  try{
-                    const spR=await bcGatedFetch(`${BC_ODATA_BASE}/SalesOrdersBySalesPerson?$filter=SalesPersonCode eq '${spCode}'&$select=SalesPersonCode,SalesPersonName&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                    if(spR.ok){const spName=((await spR.json()).value||[])[0]?.SalesPersonName||"";if(spName)autoFields.salesperson=spName;}
-                  }catch(e){}
-                }
-                if(!autoFields.salesperson&&!q.salesperson)autoFields.salesperson=spCode;
-                // Load cached salesperson info from Firestore
-                try{
-                  const spDoc=await fbDb.doc(`${_appCtx.configPath||"users/"+uid+"/config"}/salespersonInfo`).get();
-                  if(spDoc.exists){
-                    const spInfo=(spDoc.data().people||{})[spCode];
-                    if(spInfo){
-                      if(!q.salesPhone&&spInfo.phone)autoFields.salesPhone=spInfo.phone;
-                      if(!q.salesEmail&&spInfo.email)autoFields.salesEmail=spInfo.email;
-                    }
-                  }
-                }catch(e){}
-              }
-            }
-          }
-        }
-      }catch(e){console.warn("BC project card fetch for quote failed:",e);}
-    }
-    if(Object.keys(autoFields).length){
-      proj={...proj,quote:{...q,...autoFields}};
-      setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
+    // #117 (C59, Fix 1+2a): populate quote fields via the shared gate, then PERSIST
+    // (awaited) before the checklist/print. This flushes any RAM-only setQ edits and the
+    // BC populate to Firestore so they survive even if the print itself fails. Both print
+    // paths now share ensureQuoteFieldsPopulated, killing the A/B divergence.
+    try{
+      const _pop=await ensureQuoteFieldsPopulated(proj,uid);
+      proj=_pop.project;
+      setProject(proj);projectRef.current=proj;onChange(proj);
+      await saveProject(uid,proj);
+    }catch(e){
+      console.error("[QUOTE] Populate/save before print failed:",e);
+      arcAlert("Failed to save quote before printing. Your edits may not persist. Retry or check your connection.");
     }
     // DECISION(v1.19.740): AI lead times in the BOM mean the ship-date math is built on
     // estimates. Flip every panel into Budgetary (with an auto-set sentinel) before the
