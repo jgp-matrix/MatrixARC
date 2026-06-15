@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.113 (defined in `public/index.html`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.120 (defined in `public/index.html`; master at f2dbe932). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -108,38 +108,26 @@ Not every response needs all five sections. Omit sections that don't apply. But 
 
 If Analyst determines action is required from Coach or Marc, a paste-ready instruction must be generated. Recommendations that require action should already be routed to the appropriate owner.
 
-**Owner heuristics:**
-- Code path needs tracing → Marc
-- Architecture decision or risk assessment → Coach
-- TODO entry or process change → Coach
-- Implementation or deployment → Marc
-- Runtime data or Firestore investigation → Marc
-- Design review or scope decision → Freddy (with Coach verification)
+### Lane Discipline — the ordering that prevents routing slips
 
-### Plan-and-Trace Routing: Coach Before Marc
+Three roles, one ordering rule:
 
-Anything that depends on the code goes to Coach for code-path verification BEFORE it goes to
-Marc for runtime or implementation. This includes:
-  - Implementation plans and fix designs (Detailed Plan precursor)
-  - Traces whose answer lives in the code (which stages exist, what a path feeds the model,
-    whether a mutation is reachable)
+- **FREDDY (analyst)** — manages and routes what Coach and Marc do. Decides, advises, directs the pipeline. Does not implement or analyze code itself; routes the work to whoever owns it.
+- **COACH** — reviews and analyzes PRIOR TO implementation. Architecture, code-path tracing, risk, verification, plans. Coach is the step BEFORE Marc — and the step that VERIFIES AFTER — but never the builder.
+- **MARC** — implements and deploys. Construction and runtime: building, porting, installing, wiring, deploying, running.
 
-Coach narrows the hypothesis space from the code, read-only. Marc then confirms or implements
-against the narrowed target. This is the dual-investigation protocol (code-path + runtime)
-ordered correctly: it prevents Marc spending a runtime pass on stages the code could have ruled
-out, and it stops Freddy designing a fix before the failing layer is proven.
+**THE RULE:** Coach is the step before Marc and the verifier after Marc, never the doer in between. If a task BUILDS or DEPLOYS anything — a fix, a script, a harness, a tool — it is MARC's, even when it's code-heavy and even when Coach scoped it. Coach's work is the verified plan and the post-build review; the building itself is Marc's.
 
-EXCEPTION — Marc-direct, no Coach precursor needed:
-  - Pure runtime/data questions: actual Firestore state, browser console output, whether a
-    deployed fix changed observed behavior, validation of a shipped change.
-  These have no code-path question to answer first.
+**QUICK TEST:** "Does this produce running/deployed code or a repo change?" → Marc. "Does this only read, trace, review, plan, or verify?" → Coach. A clever analysis is still Coach. A boring build is still Marc.
 
-HEURISTIC: "Can this be answered by reading the code?" -> Coach first.
-           "Does this require observing the running system?" -> Marc, and if a code-path
-           question precedes it, Coach scopes that part first.
+**Worked example — correct pattern (2026-06-15, #121 headless harness):**
+Coach analyzed the render path and produced options (C55 — read-only, pre-implementation). Marc built and ran the harness (node-canvas + pdfjs-dist, headless H5 render → CF extraction). Coach verified the gate result (C56). That is the pipeline working as designed: Coach analyzes → Marc builds → Coach verifies. The slip to avoid is routing the BUILD to Coach because it looks architectural — construction is Marc's even when Coach scoped it.
 
-Crown-jewel exception: raw model output / actual runtime values are Marc's alone — Coach cannot
-produce them. So a Coach-first scoping does not replace the Marc trace; it aims it.
+**EXCEPTION — Marc-direct, no Coach precursor needed:**
+- Pure runtime/data questions: actual Firestore state, browser console output, whether a deployed fix changed observed behavior, validation of a shipped change.
+- These have no code-path question to answer first.
+
+**HEURISTIC:** "Can this be answered by reading the code?" → Coach first. "Does this require observing the running system?" → Marc, and if a code-path question precedes it, Coach scopes that part first. Raw model output / actual runtime values are Marc's alone — Coach cannot produce them.
 
 ### Pending Response Rule
 
@@ -253,7 +241,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-16)
+## Recently Active Work (as of 2026-06-15)
 
 ### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
 The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
@@ -265,18 +253,30 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
 - **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
 
+### Shipped This Session (v1.20.114 → v1.20.120)
+- **#121 Region edge-padding (v1.20.114)** — RESOLVED. Pad the resolved BOM region `max(2% per edge, 14pt floor)` before H5 render. **Transferable principle:** a *fixed-size* failure (one clipped row) needs a *fixed-size* guard — proportional padding is weakest exactly where it's needed (proportional-only was 2.3pt = quarter-row on PRJ402119). Verified Coach C56 via the new `tests/extraction-baseline/h5-headless.js` headless gate.
+- **#117 Quote Payment Terms / Shipping Method (v1.20.115 Phase 1, v1.20.116 Phase 2)** — RESOLVED. Phase 1 unified both print paths through a non-mutating shared `ensureQuoteFieldsPopulated` + awaited persistence; Phase 2 added loud-on-failure (send HARD-BLOCKS on missing terms before emailing a customer; print shows unchecked checklist warnings). **MUST-READ for any future quote bug:** the *entire* QuoteTab editing surface — both the Generate PDF button AND the setQ field editor — is **UNREACHABLE** in the live UI (it renders only inside the hidden `autoPrint` QuoteView at `height:0`). The ONLY reachable quote path is `handlePrintQuote → autoPrint`. Do not re-derive a "Path A/B divergence"; there is no reachable Path B. Verified fixed on real production quote data (Jon). Impl detail: Coach C58–C64.
+- **#125 Silent BC token refresh (v1.20.117)** — RESOLVED (was OPEN [Next] at session start). One line atop `ensureQuoteFieldsPopulated` silently re-acquires after a 401 nulls the token — kills the ~hourly Phase 2 false-warning. Refresh-fails leaves the token null so Phase 2 still fires. Coach C65.
+- **#126 Drawing Reference band wrong/same row (v1.20.118)** — RESOLVED PARTIAL. Fixed the `parseInt(itemNo)||0` → row-0 collapse (Haiku now locates by part-number STRING, always present) and the tile-relative page-button coords. Coach C66.
+- **#128 H5 region-render preview (v1.20.120)** — TABLED. Region render + ny=1 zero-Haiku hot path + `getExtractionUnits` cropBounds forward-fix + a spinner-race fix all SHIPPED and STAY. Band placement still wrong but **intermittent**. **Transferable principle:** inconsistent misbehavior argues AGAINST a deterministic coordinate-math cause and TOWARD a stateful/race cause — *characterize when it's right vs wrong before theorizing a fix.* NOTE: **#126 and #128 are ONE Drawing-Reference thread** (preview band accuracy), not two unrelated items — #128 resumes where #126 left off. Coach C68 (now historical; the tabled resume note in TODO #128 supersedes it as the action item).
+
 ### Closed
 - **#113** (CropBox bitmap/scan proof) — superseded by H5. CropBox only narrowed the view; it never raised DPI. H5 renders at target DPI directly.
 - **#114** (Phase-2 majority voting) — killed. The 113b proof showed voting was *counterproductive* (it locks in consistent misreads); the real lever was resolution, which H5 supplies. Voting was solving the wrong problem.
 
 ### Parked Backlog (priority order)
-1. **#121** Region edge-padding — pad the resolved BOM region ~2% before rendering so a region whose edge clips a table row doesn't silently drop it (the new dominant H5 failure mode — resolution is no longer the limiter). ~5 lines. [priority]
-2. **#117** Quote Payment Terms / Shipping Method intermittently missing — root-caused (two print paths diverge), ~20 lines, ready to implement.
-3. **#115** Held-back-cross review UI — scaffolding exists, needs a per-row indicator.
-4. **#85** Internal Excel fast-quote — audited (`EXCEL-BOM-IMPORT-AUDIT.md`), needs a Brief.
-5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating.
-6. **#118** Batch extraction path missing region-learning context.
-7. **Item 16 / BC-fill cluster** — long-standing.
+1. **#133** Send Traveler BOM to Customer — **ELEVATED, NEXT.** Deliver the existing Matrix-generated traveler BOM (with the cross/difference column) to the customer for review/approval before PO. Needs a Brief — this is where next session opens.
+2. **#128** Drawing Reference band misposition residual — **TABLED.** Resume by instrumenting/characterizing the intermittency (which parts, which path, repeatable on the same part?) BEFORE theorizing a fix. Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235. Same thread as #126.
+3. **#127** Redundant extraction progress bar above the first line item — confirm redundancy, remove the duplicate.
+4. **#129** ARC Usage Telemetry — Tabled, needs a Brief. Append-only `arcUsage` collection (extraction / quote-generation / BC-populate events). Also the passive confirmation channel for #117 Phase 2 firing + #128 accuracy in production.
+5. **#130** Dead-code cleanup (`quoteSendModal` / `_doInlineQuoteSend` / the dead QuoteTab surface) — LOW, ~80 lines removable.
+6. **#131** Criterion-6 multi-panel hardening — optional, if multi-panel quoting becomes common.
+7. **#132** Post-extraction Engineering Questions suppression (render-gate) — deferred.
+8. **#115** Held-back-cross review UI — scaffolding exists, needs a per-row indicator.
+9. **#85** Internal Excel fast-quote — audited (`EXCEL-BOM-IMPORT-AUDIT.md`), needs a Brief.
+10. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating.
+11. **#118** Batch extraction path missing region-learning context.
+12. **Item 16 / BC-fill cluster** — long-standing.
 
 ### Record corrections logged this arc
 - **#122** — `docs/113-CROPBOX-SCAN-PROOF.md`'s PRJ402119 ground-truth key was wrong on items 1–2: correct values are **SCE-1412PCW** and **SCE-14P12AL** (not …1413 / 14P13). Confirmed independently by Marc (500 DPI), Coach (2400 DPI), and both H5 runs. The corrected key lives in `docs/H5-GENERALIZATION-PRJ402119.md`; use that, not #113.
@@ -410,84 +410,76 @@ This document should be updated when:
 
 Coach maintains this document. Marc can update it if Coach delegates.
 
+
 ---
 
 # Session State — 2026-06-15 MDT
 
 ## Version
-v1.20.113 (deployed 2026-06-10). H5 high-DPI region tiling + Opus 4.8 model bump. Stable.
+v1.20.120 (deployed 2026-06-15). Quote-populate trust work (#117 P1+P2), silent BC token refresh (#125), and the Drawing Reference band fixes (#126, #128). Stable.
 
 ## Deploy State
-- Master tip: 6ea797e4 ("H5: high-DPI region tiles + Opus 4.8 (functions side) + verification doc")
+- Master tip: f2dbe932 ("docs: session close-out — #117/#125/#126 resolved, #128 tabled, #133 queued")
 - Local master == origin/master (synced)
-- Latest tag: v1.20.113
-- No code changes since deploy — close-out commit adds only investigation artifacts and record updates
+- Latest tag: v1.20.120
+- No code changes since the v1.20.120 release — the close-out doc commit (f2dbe932) is documentation only
 
 ## Recent Commits (last 15)
-- 6ea797e4 H5: high-DPI region tiles + Opus 4.8 (functions side) + verification doc
-- 1465d2e0 Release v1.20.113
-- 003cb014 Release v1.20.112
-- 590d1ff4 Release v1.20.111
-- d7ff88a5 Release v1.20.110
-- c1c6f9c3 Release v1.20.109
-- 240081c5 Release v1.20.108
-- e420f538 Release v1.20.107
-- 0c03599c Release v1.20.106
-- 74748d7b Release v1.20.105
-- c84a4aa2 Release v1.20.104
-- dce38c77 Release v1.20.103
-- 345d7963 Release v1.20.102
-- cf05391b Add ARC Vision: Estimator's-Eye Cross-Check Workflow (#101)
-- d15faa97 Update handoff files for next session
+- f2dbe932 docs: session close-out — #117/#125/#126 resolved, #128 tabled, #133 queued
+- 4caddc71 Release v1.20.120
+- 4fabf9f2 #128 follow-up: await locateInDrawing fallback in locateInRegion
+- 11b57a71 Release v1.20.119
+- a3f040ba #128: H5 BOM-region render preview + cropBounds coord fix (C68)
+- 9a00ed02 Release v1.20.118
+- 641714b0 #126: fix Drawing Reference band landing on wrong/same row (two bugs, C66)
+- aa9c1bbd Release v1.20.117
+- 1e22b6df #125 (T-bcTokenRefresh): silent BC token refresh atop ensureQuoteFieldsPopulated
+- b4d6d0f3 Release v1.20.116
+- 5afa49e0 #117 Phase 2: loud-on-failure for quote populate (Fixes 3, 3c, 4)
+- c6f145cf Release v1.20.115
+- 0756e4b6 #117 Phase 1: unify quote-populate paths + persist (Fixes 1+2)
+- c6d6d252 Close-out records for #121: RESOLVED + Q3 watch-item (#124) + MCP T9
+- afcfb98b Release v1.20.114
 
-## Headline: Vision-Mode Resolution Problem SOLVED
+## Headline: Quote Trust Layer + Drawing-Reference Fixes Shipped
+This session closed the #117 quote-field reliability thread and the #126→#128 Drawing Reference preview thread, plus the #121 H5 follow-up.
 
-H5 (region-targeted high-DPI rendering) shipped and verified. 2-for-2 at 100% on worst-case drawings:
-- **PRJ402101:** 54/54 = 100% (up from ~36-65% baseline). 3×2 grid, ~440 DPI.
-- **PRJ402119:** 14/14 = 100% (up from 36-50% baseline). 2×1 grid, ~1079 DPI.
+## Shipped This Session (v1.20.113 → v1.20.120)
 
-Model: Claude Opus 4.8 (2576 px ceiling). v1.20.113 converted 6 Opus call sites to `thinking:{type:"adaptive"}`. All 8 Opus call sites verified clean (Coach C51). Text-layer pages completely unaffected.
+### #121 Region edge-padding (v1.20.114) — RESOLVED
+Pad the resolved BOM region before H5 render: `max(2% of region per edge, 14pt floor)`, clamped to page bounds. The absolute floor is load-bearing (Freddy analyst review, Coach C54) — a clipped row is a fixed height, so proportional-only (2.3pt on PRJ402119) was insufficient. Verified via headless harness (Coach C56): PRJ402119 14/14 PNs, zero phantoms. New standing tool: `tests/extraction-baseline/h5-headless.js`.
 
-## Shipped Since Last SESSION-STATE (v1.20.101 → v1.20.113)
+### #117 Quote Payment Terms / Shipping Method — RESOLVED (Phase 1 + Phase 2)
+- **Phase 1 (v1.20.115):** extracted `ensureQuoteFieldsPopulated(project,uid)→{project,warnings}` (non-mutating shared gate), unified both print paths, awaited all saves. Path B lifted to QuoteView (Option A) persisting the REAL project (#86 guard).
+- **Phase 2 (v1.20.116):** loud-on-failure — `bc-unavailable`/`missing-required-terms` warnings; QuoteSendModal HARD-BLOCKS on missing terms before emailing; print path shows unchecked checklist entries.
+- **Key finding:** the QuoteTab editing surface (Generate PDF button + setQ editor) is **unreachable** in the live UI (renders only in the hidden autoPrint QuoteView). The reachable path is handlePrintQuote→autoPrint. Verified fixed on real production quote data (Jon).
 
-### Required-BOM-Region Feature (#103-#112) — PHASE 1 COMPLETE
-- #103 Phase 0a/0b timeout fix (v1.20.108-area)
-- #104 Phase 1e 0-byte hardening (v1.20.102)
-- #105 Phase 1b input-tier classifier (v1.20.105)
-- #106 Phase 1a detection summary (v1.20.106)
-- #107 Phase 1c block-with-override gate (v1.20.107)
-- #108 B2 carry-forward + B1 send-gate (v1.20.108)
-- #109 F3 print warning + F2 toast (v1.20.109)
-- #110 F1/C5 noisy-PN guard + Mark Verified (v1.20.110)
-- #111 Phase 1d no-PDF handling (via 1c Case 5)
-- #112 Phase 1f region learning + L3 wire-up (v1.20.111)
-All verified by Coach (C31-C45).
+### #125 Silent BC token refresh (v1.20.117) — RESOLVED
+One line atop `ensureQuoteFieldsPopulated`: `if(!_bcToken)try{await acquireBcToken(false);}catch(e){}`. Kills the ~hourly Phase 2 false-warning by silently re-acquiring after a 401 nulls the token. Refresh-fails leaves `_bcToken` null → Phase 2 still fires (Coach C65).
 
-### Sales-Path Trust Layer — COMPLETE
-B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, Mark Verified action. Coach C40-C42.
+### #126 Drawing Reference band wrong/same row (v1.20.118) — RESOLVED
+Two bugs (Coach C66): `parseInt(itemNo)||0` collapsed every part to row 0 when itemNo blank/non-numeric; page buttons used tile-relative stored coords post-H5. Fix: Haiku locates by part-number STRING; page buttons always re-locate.
 
-### H5 High-DPI Rendering (#120) — RESOLVED
-v1.20.112 (H5 build) + v1.20.113 (Opus 4.8 thinking fix). Coach C51 verified.
+### #128 H5 region-render preview (v1.20.120) — TABLED
+Region render + ny=1 zero-Haiku hot path + getExtractionUnits cropBounds fix + spinner-race follow-up all SHIPPED and STAY. Band placement still wrong but **intermittent** — see TODO #128 for the corrected resume note (stateful/conditional, not deterministic coord-math; instrument-and-characterize first).
 
-### Closed
-- #113 CropBox bitmap proof — superseded by H5
-- #114 Phase 2 voting — killed (voting counterproductive; resolution was the lever)
-
-## No Open Threads Blocking
-The H5 generalization test came back positive. No in-flight work, no pending merges, no feature branches.
+## Top of Queue
+**#133 Send Traveler BOM** — opens next session after its Brief.
 
 ## Parked Backlog (priority order)
-1. **#121** Region edge-padding fix — pad resolved region ~2% before rendering to prevent edge-row clipping. ~5 lines. [Backlog]
-2. **#117** Quote Payment Terms / Shipping Method intermittent missing — root-caused (two print paths diverge), ~20 lines. [Decided]
-3. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator. [Backlog]
-4. **#85** Internal Excel fast-quote — audited (EXCEL-BOM-IMPORT-AUDIT.md), needs Brief. [Backlog]
-5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating. [Discovery]
-6. **#118** Batch extraction path missing region learning context. [Backlog]
-7. Item 16 / BC-fill cluster (long-standing)
+1. **#128** Drawing Reference band misposition residual — TABLED, resume per corrected note (characterize intermittency first). Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235.
+2. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator.
+3. **#85** Internal Excel fast-quote — audited, needs Brief.
+4. **#119** Legacy panels invisible to Phase 1 safety systems.
+5. **#118** Batch extraction path missing region learning context.
+6. Item 16 / BC-fill cluster (long-standing).
+
+## Known Tooling Gaps
+- **T9** Claude-in-Chrome MCP can't navigate to non-prod origins (test/channel) even at extension all-sites — connector-internal, origin-wide. Workaround: `tests/extraction-baseline/h5-headless.js` runs non-prod H5 gates from Node. Blocks agent-driven non-prod live tests; owner Jon to route.
 
 ## Open TODOs
-~68 OPEN findings in TODO.md (includes backlog items with activation triggers).
+~74 OPEN findings in TODO.md.
 
 ## Working Tree
-- Branch: master (up to date with origin/master)
-- Clean after close-out commit 3334488d + handoff file update
+- Branch: master (up to date with origin/master at f2dbe932)
+- Clean

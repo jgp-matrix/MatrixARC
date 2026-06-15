@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.113 (defined in `public/index.html`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.120 (defined in `public/index.html`; master at f2dbe932). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -241,7 +241,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-16)
+## Recently Active Work (as of 2026-06-15)
 
 ### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
 The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
@@ -253,18 +253,30 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
 - **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
 
+### Shipped This Session (v1.20.114 → v1.20.120)
+- **#121 Region edge-padding (v1.20.114)** — RESOLVED. Pad the resolved BOM region `max(2% per edge, 14pt floor)` before H5 render. **Transferable principle:** a *fixed-size* failure (one clipped row) needs a *fixed-size* guard — proportional padding is weakest exactly where it's needed (proportional-only was 2.3pt = quarter-row on PRJ402119). Verified Coach C56 via the new `tests/extraction-baseline/h5-headless.js` headless gate.
+- **#117 Quote Payment Terms / Shipping Method (v1.20.115 Phase 1, v1.20.116 Phase 2)** — RESOLVED. Phase 1 unified both print paths through a non-mutating shared `ensureQuoteFieldsPopulated` + awaited persistence; Phase 2 added loud-on-failure (send HARD-BLOCKS on missing terms before emailing a customer; print shows unchecked checklist warnings). **MUST-READ for any future quote bug:** the *entire* QuoteTab editing surface — both the Generate PDF button AND the setQ field editor — is **UNREACHABLE** in the live UI (it renders only inside the hidden `autoPrint` QuoteView at `height:0`). The ONLY reachable quote path is `handlePrintQuote → autoPrint`. Do not re-derive a "Path A/B divergence"; there is no reachable Path B. Verified fixed on real production quote data (Jon). Impl detail: Coach C58–C64.
+- **#125 Silent BC token refresh (v1.20.117)** — RESOLVED (was OPEN [Next] at session start). One line atop `ensureQuoteFieldsPopulated` silently re-acquires after a 401 nulls the token — kills the ~hourly Phase 2 false-warning. Refresh-fails leaves the token null so Phase 2 still fires. Coach C65.
+- **#126 Drawing Reference band wrong/same row (v1.20.118)** — RESOLVED PARTIAL. Fixed the `parseInt(itemNo)||0` → row-0 collapse (Haiku now locates by part-number STRING, always present) and the tile-relative page-button coords. Coach C66.
+- **#128 H5 region-render preview (v1.20.120)** — TABLED. Region render + ny=1 zero-Haiku hot path + `getExtractionUnits` cropBounds forward-fix + a spinner-race fix all SHIPPED and STAY. Band placement still wrong but **intermittent**. **Transferable principle:** inconsistent misbehavior argues AGAINST a deterministic coordinate-math cause and TOWARD a stateful/race cause — *characterize when it's right vs wrong before theorizing a fix.* NOTE: **#126 and #128 are ONE Drawing-Reference thread** (preview band accuracy), not two unrelated items — #128 resumes where #126 left off. Coach C68 (now historical; the tabled resume note in TODO #128 supersedes it as the action item).
+
 ### Closed
 - **#113** (CropBox bitmap/scan proof) — superseded by H5. CropBox only narrowed the view; it never raised DPI. H5 renders at target DPI directly.
 - **#114** (Phase-2 majority voting) — killed. The 113b proof showed voting was *counterproductive* (it locks in consistent misreads); the real lever was resolution, which H5 supplies. Voting was solving the wrong problem.
 
 ### Parked Backlog (priority order)
-1. **#121** Region edge-padding — pad the resolved BOM region ~2% before rendering so a region whose edge clips a table row doesn't silently drop it (the new dominant H5 failure mode — resolution is no longer the limiter). ~5 lines. [priority]
-2. **#117** Quote Payment Terms / Shipping Method intermittently missing — root-caused (two print paths diverge), ~20 lines, ready to implement.
-3. **#115** Held-back-cross review UI — scaffolding exists, needs a per-row indicator.
-4. **#85** Internal Excel fast-quote — audited (`EXCEL-BOM-IMPORT-AUDIT.md`), needs a Brief.
-5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating.
-6. **#118** Batch extraction path missing region-learning context.
-7. **Item 16 / BC-fill cluster** — long-standing.
+1. **#133** Send Traveler BOM to Customer — **ELEVATED, NEXT.** Deliver the existing Matrix-generated traveler BOM (with the cross/difference column) to the customer for review/approval before PO. Needs a Brief — this is where next session opens.
+2. **#128** Drawing Reference band misposition residual — **TABLED.** Resume by instrumenting/characterizing the intermittency (which parts, which path, repeatable on the same part?) BEFORE theorizing a fix. Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235. Same thread as #126.
+3. **#127** Redundant extraction progress bar above the first line item — confirm redundancy, remove the duplicate.
+4. **#129** ARC Usage Telemetry — Tabled, needs a Brief. Append-only `arcUsage` collection (extraction / quote-generation / BC-populate events). Also the passive confirmation channel for #117 Phase 2 firing + #128 accuracy in production.
+5. **#130** Dead-code cleanup (`quoteSendModal` / `_doInlineQuoteSend` / the dead QuoteTab surface) — LOW, ~80 lines removable.
+6. **#131** Criterion-6 multi-panel hardening — optional, if multi-panel quoting becomes common.
+7. **#132** Post-extraction Engineering Questions suppression (render-gate) — deferred.
+8. **#115** Held-back-cross review UI — scaffolding exists, needs a per-row indicator.
+9. **#85** Internal Excel fast-quote — audited (`EXCEL-BOM-IMPORT-AUDIT.md`), needs a Brief.
+10. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating.
+11. **#118** Batch extraction path missing region-learning context.
+12. **Item 16 / BC-fill cluster** — long-standing.
 
 ### Record corrections logged this arc
 - **#122** — `docs/113-CROPBOX-SCAN-PROOF.md`'s PRJ402119 ground-truth key was wrong on items 1–2: correct values are **SCE-1412PCW** and **SCE-14P12AL** (not …1413 / 14P13). Confirmed independently by Marc (500 DPI), Coach (2400 DPI), and both H5 runs. The corrected key lives in `docs/H5-GENERALIZATION-PRJ402119.md`; use that, not #113.
