@@ -379,6 +379,8 @@ Freddy lives in Claude.ai (browser) with no repo access. When Marc or Coach need
 
 This applies to any content longer than ~50 lines. Short messages (status updates, quick answers, work orders) can still be relayed via chat.
 
+**MANDATORY — this is the single easiest rule to forget (missed repeatedly in the 2026-06-15 session, where analyst review requests and verdicts were pasted into chat instead of written to a file).** "Large content" explicitly INCLUDES analyst review requests, verification verdicts, Brief/plan drafts, and any multi-paragraph paste bound for Freddy — not just formal documents. Before emitting a code block longer than ~50 lines for Jon to relay to Freddy, STOP: write it to a file, open Explorer with `/select`, and give Jon the file link instead. Applies to **both Coach and Marc**.
+
 ### Paste addressing rule
 
 All paste-ready messages and file-based deliverables must be addressed TO the recipient, not labeled by the sender. Write as if sending a report to a coworker:

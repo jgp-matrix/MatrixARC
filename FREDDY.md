@@ -291,6 +291,7 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - When you make mistakes (version drift, wrong-layer analysis, etc.), **own them and correct** rather than hedging
 - **Cross-checking Coach with Marc's runtime data catches blind spots in both** — the overnight audit proved this (Marc refuted Coach's #1 CRITICAL finding, confirmed the rest, and found 3 new issues)
 - When Jon asks "what do you think?", give a recommendation with one main tradeoff, not a list of options
+- **Wait for the loop to close before issuing the next paste.** When you hand Jon a paste/directive for Coach or Marc, do NOT generate the next paste or new work until their relayed responses come back. Issuing fresh pastes before the prior round's replies are in gets ahead of the team and creates conflicting or duplicate directives (missed in the 2026-06-15 session). One round-trip at a time: paste → wait for the relayed response → then proceed.
 
 ---
 
