@@ -7600,6 +7600,13 @@ async function generateQuotePdf(project){
 // and persistence. `warnings` is reserved for Phase 2 loud-on-failure signals (empty now).
 async function ensureQuoteFieldsPopulated(project,uid){
   const warnings=[];
+  // #125 (T-bcTokenRefresh): silently refresh an expired BC token before the populate
+  // gate. acquireBcToken(false) = acquireTokenSilent → ssoSilent → null (never a popup).
+  // The if(!_bcToken) guard short-circuits when the token is valid (no latency). If the
+  // silent refresh genuinely can't get a token, _bcToken stays null and the Phase 2
+  // loud-handling (bc-unavailable / missing-required-terms) still fires — the empty catch
+  // suppresses the nuisance, NOT a real outage. Matches verifyBcLineCount/bcFetchCompanyInfo.
+  if(!_bcToken)try{await acquireBcToken(false);}catch(e){}
   // Auto-populate quote fields from panel data and BC project card if empty
   const panels=project.panels||[];
   const q=project.quote||{};
