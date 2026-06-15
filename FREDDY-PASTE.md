@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-06-04
+**Last updated:** 2026-06-15
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.101 (defined in `public/index.html`)
+- **Current version:** v1.20.113 (defined in `public/index.html`)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -253,34 +253,30 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-03)
+## Recently Active Work (as of 2026-06-15)
 
-### Shipped
-- **Milestone D** (Archive & Restore) — Full ECO-aware restore with vendor/item/customer preflight, remap UI, phased restore with lock and rollback
-- **Milestone E Phases 1-2** (Copy to New Quote) — Archive copy with BC integration
-- **v1.20.80** — #77/#78 Pre-extraction page management
-- **v1.20.81** — F-1a.3 / TODO #79 BOM prompt duplicate-merge fix
-- **v1.20.82-87** — Extraction investigation arc (AbortController timeouts, scan quality alerts, PDF-native CropBox fix, reliable JPEG+P2 routing, PNG revert)
-- **TODO #86** — CRITICAL cross-project BOM contamination fix (PRJ402119→PRJ402111). Stale extraction callback + React component reuse wrote wrong BOM to wrong project. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
-- **v1.20.88-90** — #86 fix + background pricing on all extraction paths
-- **v1.20.91-92** — Startup/closeout procedure rewrite + shareable Dev Team skill pack (`/team-setup`, `/team-startup`, `/team-closeout`) with config-driven roles, guided mode, quick start doc
-- **v1.20.93** — #92-P1: Cache re-key — `_pendingPagesCache` and `_bgTasks` re-keyed from bare `panelId` to `projectId:panelId`, preventing cross-project cache collisions
-- **v1.20.94** — Noah BOM revert fix — `saveProjectPanel` now sets `updatedBy: uid`, closing the onSnapshot echo guard bypass that caused edits to revert
-- **v1.20.95** — #94 dataUrl-gating fix — `confirmAndExtract` and `runExtractionTask` filtered BOM pages on `&& p.dataUrl`, silently excluding storageUrl-only pages. Fix: `(p.dataUrl||p.storageUrl)` + `ensureDataUrl` hydration. Validated: PRJ402119 Line 1 now extracts items (was 0). CLAUDE.md dataUrl Ephemerality Rule added.
+### Major Shipped (v1.20.102 → v1.20.113)
 
-### Open Items
-- **#95 — PN fidelity on clean vector PDFs** (HIGH). PRJ402119 Line 1: 3 unambiguous errors (Items 8, 12, 13 — wholesale replacement), 5+ contested (digit-level disputes, ground truth itself in dispute). Next-session priority: authoritative PN list, confirm model input format, Item 8 (MPWS) end-to-end trace.
-- **#84** — Missing items on PRJ402119 — truncation + companion symptoms NOT REPRODUCED on post-#94 extraction; may have been artifacts of the prior image path
-- **#85** — Excel BOM cross-check — Brief + Supplement + Analyst Review done, Detailed Plan pending
-- **#87** — Panel ID uniqueness hardening (downgraded to LOW — cache re-key breaks collision independent of unique IDs)
-- **#88** — Async ownership audit across all long-running operations
-- **#92** — Background Task UI Ownership Audit — Phase 1 (H1+H2 cache re-key) DONE. Phases 2+ (H3-H5 foreground-seizing suppression) still open.
-- **F-1g.1** — Dedup message fix — Analyst Review + Detailed Plan approved, queued for Marc
-- **#82 RESOLVED** — Cloud Function deploy gap disproven (Coach C22). Functions ARE deployed; issue was missing audit trail only.
+- **H5: High-DPI Region Tiling (#120)** — v1.20.112 + v1.20.113. Vision-mode resolution problem SOLVED. Client-side pdf.js renders BOM region at high DPI as JPEG tiles, sent to API as image blocks. Model bumped to Opus 4.8 (2576 px ceiling). Results: PRJ402101 54/54 = 100% (up from ~36-65%), PRJ402119 14/14 = 100% (up from 36-50%). Text-layer pages completely unaffected. Verified Coach C51.
+- **Required-BOM-Region (#103-#112)** — PHASE 1 COMPLETE. Input-tier classifier, block-with-override gate, detection summary, 0-byte hardening, timeout fix, region learning + L3 wire-up. All verified by Coach (C31-C45).
+- **Sales-Path Trust Layer (#108-#110)** — manualVerifyRequired carry-forward, send-gate, print warning, BC-failure toast, noisy-PN guard, auto-cross freeze, Mark Verified action. Coach C40-C42.
+- **#113/#114 CLOSED** — CropBox bitmap proof superseded by H5; voting killed (resolution was the lever, voting was counterproductive).
 
-### Noah Production Bugs (FIX DEPLOYED — WATCH)
-- **BOM edits revert** — ROOT CAUSE FOUND: `saveProjectPanel` didn't set `updatedBy`, defeating onSnapshot echo guard. Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped. See `NOAH-BOM-REVERT-EVIDENCE.md`.
-- **Quotes randomly drop fields** — SEPARATE root cause from BOM revert (Freddy analysis). `saveProject` writes stale project arg missing fields (no read-before-write). NOT fixed by the `updatedBy` change. Needs own scope.
+### Previously Shipped (still current)
+- **Milestone D** (Archive & Restore), **Milestone E** (Copy to New Quote)
+- **v1.20.80-95** — Pre-extraction page management, BOM prompt fixes, extraction investigation arc, cross-project contamination fix (#86), cache re-key (#92-P1), Noah BOM revert fix (#94), dataUrl-gating fix (#94)
+
+### Parked Backlog (priority order)
+1. **#121** Region edge-padding fix — pad resolved region ~2% to prevent edge-row clipping. ~5 lines. [Backlog]
+2. **#117** Quote Payment Terms / Shipping Method intermittent missing — root-caused, ~20 lines. [Decided]
+3. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator. [Backlog]
+4. **#85** Internal Excel fast-quote — audited, needs Brief. [Backlog]
+5. **#119** Legacy panels invisible to Phase 1 safety systems. [Discovery]
+6. **#118** Batch extraction path missing region learning context. [Backlog]
+
+### Noah Production Bugs (WATCH)
+- **BOM edits revert** — Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped.
+- **Quotes randomly drop fields** — Separate root cause (#117 covers the print-path divergence). Needs own scope for the broader read-before-write fix.
 
 ---
 
@@ -412,53 +408,23 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# Session State — 2026-06-04 22:00 MDT
+# Session State — 2026-06-15 MDT
 
 ## Version
-v1.20.101 (deployed 2026-06-04). Completeness warning + ScanResultsBanner wired in.
+v1.20.113 (deployed 2026-06-10). H5 high-DPI region tiling + Opus 4.8. Stable.
 
-## Recent Commits (last 15)
-- 2420bdfb Session artifacts: Coach log + investigation docs for #95/#98
-- 86637744 Update FREDDY-PASTE.md session state for 2026-06-04 closeout
-- 488e56e6 Release v1.20.101
-- 42ff249a Release v1.20.100
-- 9d7eee48 Release v1.20.99
-- 4861a967 Release v1.20.98
-- 70e870ec Add Briefs-as-pastes convention to FREDDY.md
-- 5f3a0b21 Release v1.20.96
-- 3c440090 Add paste addressing rule to CLAUDE.md
-- 1390bcea Update paste formatting: address TO recipient, not labeled by sender
-- d1209c6d Add Plan-and-Trace Routing rule to FREDDY.md
-- 7941febc Add TODO #96: Windows facilitator app for three-role Claude workflow
-- a4495418 Update handoff files for next session
-- bf5aea4f Correct #95: ground truth in dispute, error scoring unsettled
-- 89075d95 #94 RESOLVED (v1.20.95) + #95 filed + #84 updated + C23 closure
+## Headline: Vision-Mode Resolution Problem SOLVED
 
-## Shipped This Session
-- [DONE] **#97 — Slash-split removed + positional-dedup reporting** (v1.20.96). Code bug: slash-split × positional-dedup destroyed main PN on compound part numbers. Proven on PRJ402119 Item 8.
-- [DONE] **#98 Step Zero — Raw model output + correction log** (v1.20.98-99). rawModelOutput captured on all paths, Stage J resolvedLog persisted, Stage R bcPricing logged to Debug Logs.
-- [DONE] **#57 — bomRegion on re-extraction batch** (v1.20.98). One-field fix brings re-extraction to parity with initial extraction.
-- [DONE] **#100 Interim — Completeness warning** (v1.20.100-101). extractionVerification wired on re-extract+feedback, missing-from-end detection, ScanResultsBanner wired into UI (was dead code).
-- [DONE] **#95 ground truth settled** — 7/13 correct (54%), 6/13 wrong. Drawing read by Marc via browser. Item 10 SECM25G confirmed correct.
-- [DONE] **FREDDY.md protocol updates** — Plan-and-Trace Routing, Briefs-as-pastes, paste addressing rule.
+H5 shipped and verified. 2-for-2 at 100% on worst-case drawings:
+- **PRJ402101:** 54/54 = 100% (up from ~36-65% baseline). 3×2 grid, ~440 DPI.
+- **PRJ402119:** 14/14 = 100% (up from 36-50% baseline). 2×1 grid, ~1079 DPI.
 
-## Headline Finding
-Model partial-read: PRJ402114 (good-bucket, 100% BC) returned only items 26-47 of 47. COMPLETENESS failure distinct from ACCURACY. BC match % can be 100% on half-missing BOM. ScanResultsBanner was dead code — never rendered since written.
+Model: Claude Opus 4.8 (2576 px ceiling). Required-BOM-Region feature (#103-#112) and Sales-trust layer all shipped + verified. No open threads blocking.
 
-## Two Live Investigations
-- **#98 ACCURACY** — Analyst Review with Coach. Blocked on ground-truth measurement. Next: Q3 text-layer measurement on D2 sample.
-- **#100 COMPLETENESS** — Interim shipped. Permanent fix = text-layer row counting (Pillar 1a) + L3 on all paths (Pillar 2).
-
-## Work Queue
-1. **Q3 text-layer measurement** on D2 sample (PRJ402113, 402100, 402101, 402076, 402092)
-2. #98 ground-truth experiment on PRJ402096 (ARC Cross safety-net or mirage)
-3. #100 permanent fix — architect after Q3 data
-4. #92 Phases 2+ (H3-H5 foreground-seizing suppression)
-5. #64 BC concurrency sweep
-
-## Working Tree
-- Branch: master (up to date with origin/master at 2420bdfb)
-- Clean: no uncommitted changes
+## Deploy State
+- Master tip: 3334488d (close-out commit on top of 6ea797e4 H5 deploy)
+- Local master == origin/master (synced)
+- Working tree: clean
 
 ## Open TODOs
-58 OPEN findings in TODO.md
+~68 OPEN findings in TODO.md (includes backlog items with activation triggers).

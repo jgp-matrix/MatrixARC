@@ -76,4 +76,4 @@ The H5 generalization test came back positive. No in-flight work, no pending mer
 
 ## Working Tree
 - Branch: master (up to date with origin/master)
-- Close-out commit pending: COACH.md, TODO.md, CLAUDE.md, SESSION-STATE.md, + 20 investigation docs
+- Clean after close-out commit 3334488d + handoff file update
