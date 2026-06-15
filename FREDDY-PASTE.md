@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-06-15
+**Last updated:** 2026-06-16
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.113 (defined in `public/index.html`)
+- **Current version:** v1.20.113 (defined in `public/index.html`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -253,30 +253,34 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-15)
+## Recently Active Work (as of 2026-06-16)
 
-### Major Shipped (v1.20.102 → v1.20.113)
+### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
+The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
 
-- **H5: High-DPI Region Tiling (#120)** — v1.20.112 + v1.20.113. Vision-mode resolution problem SOLVED. Client-side pdf.js renders BOM region at high DPI as JPEG tiles, sent to API as image blocks. Model bumped to Opus 4.8 (2576 px ceiling). Results: PRJ402101 54/54 = 100% (up from ~36-65%), PRJ402119 14/14 = 100% (up from 36-50%). Text-layer pages completely unaffected. Verified Coach C51.
-- **Required-BOM-Region (#103-#112)** — PHASE 1 COMPLETE. Input-tier classifier, block-with-override gate, detection summary, 0-byte hardening, timeout fix, region learning + L3 wire-up. All verified by Coach (C31-C45).
-- **Sales-Path Trust Layer (#108-#110)** — manualVerifyRequired carry-forward, send-gate, print warning, BC-failure toast, noisy-PN guard, auto-cross freeze, Mark Verified action. Coach C40-C42.
-- **#113/#114 CLOSED** — CropBox bitmap proof superseded by H5; voting killed (resolution was the lever, voting was counterproductive).
+> Strategic thread (how we got here): the goal evolved "get Sales using ARC" → "let Sales produce unsupervised drawing quotes" → built the **trust layer** (#103–#112, #108–#110) so bad extractions can't silently ship → "accuracy is still poor on image drawings" → **H5** traced it to render resolution. Jon's instinct — *"I can read these part numbers fine at high zoom, why can't ARC?"* — drove the resolution finding. The answer: ARC wasn't sending the model the resolution Jon was looking at.
 
-### Previously Shipped (still current)
-- **Milestone D** (Archive & Restore), **Milestone E** (Copy to New Quote)
-- **v1.20.80-95** — Pre-extraction page management, BOM prompt fixes, extraction investigation arc, cross-project contamination fix (#86), cache re-key (#92-P1), Noah BOM revert fix (#94), dataUrl-gating fix (#94)
+### Shipped + Verified (v1.20.102 → v1.20.113)
+- **Required-BOM-Region (#103–#112)** — PHASE 1 COMPLETE. Input-tier classifier (text-layer / vector-stroke / bitmap / scan), block-with-override extraction gate, detection summary after import, 0-byte PDF hardening, Cloud Function timeout fix, region-learning + L3 verification wire-up. All verified by Coach (C31–C45).
+- **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
+- **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
+
+### Closed
+- **#113** (CropBox bitmap/scan proof) — superseded by H5. CropBox only narrowed the view; it never raised DPI. H5 renders at target DPI directly.
+- **#114** (Phase-2 majority voting) — killed. The 113b proof showed voting was *counterproductive* (it locks in consistent misreads); the real lever was resolution, which H5 supplies. Voting was solving the wrong problem.
 
 ### Parked Backlog (priority order)
-1. **#121** Region edge-padding fix — pad resolved region ~2% to prevent edge-row clipping. ~5 lines. [Backlog]
-2. **#117** Quote Payment Terms / Shipping Method intermittent missing — root-caused, ~20 lines. [Decided]
-3. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator. [Backlog]
-4. **#85** Internal Excel fast-quote — audited, needs Brief. [Backlog]
-5. **#119** Legacy panels invisible to Phase 1 safety systems. [Discovery]
-6. **#118** Batch extraction path missing region learning context. [Backlog]
+1. **#121** Region edge-padding — pad the resolved BOM region ~2% before rendering so a region whose edge clips a table row doesn't silently drop it (the new dominant H5 failure mode — resolution is no longer the limiter). ~5 lines. [priority]
+2. **#117** Quote Payment Terms / Shipping Method intermittently missing — root-caused (two print paths diverge), ~20 lines, ready to implement.
+3. **#115** Held-back-cross review UI — scaffolding exists, needs a per-row indicator.
+4. **#85** Internal Excel fast-quote — audited (`EXCEL-BOM-IMPORT-AUDIT.md`), needs a Brief.
+5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating.
+6. **#118** Batch extraction path missing region-learning context.
+7. **Item 16 / BC-fill cluster** — long-standing.
 
-### Noah Production Bugs (WATCH)
-- **BOM edits revert** — Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped.
-- **Quotes randomly drop fields** — Separate root cause (#117 covers the print-path divergence). Needs own scope for the broader read-before-write fix.
+### Record corrections logged this arc
+- **#122** — `docs/113-CROPBOX-SCAN-PROOF.md`'s PRJ402119 ground-truth key was wrong on items 1–2: correct values are **SCE-1412PCW** and **SCE-14P12AL** (not …1413 / 14P13). Confirmed independently by Marc (500 DPI), Coach (2400 DPI), and both H5 runs. The corrected key lives in `docs/H5-GENERALIZATION-PRJ402119.md`; use that, not #113.
+- **#123** — PRJ402119 is a **vector PDF, not a fax scan**. #113's "168 DPI monochrome fax" was describing *ARC's own low-res render output*, not the source — the source renders crisp at high DPI. The 36→100 jump was send-resolution, not source quality.
 
 ---
 
@@ -411,20 +415,79 @@ Coach maintains this document. Marc can update it if Coach delegates.
 # Session State — 2026-06-15 MDT
 
 ## Version
-v1.20.113 (deployed 2026-06-10). H5 high-DPI region tiling + Opus 4.8. Stable.
+v1.20.113 (deployed 2026-06-10). H5 high-DPI region tiling + Opus 4.8 model bump. Stable.
+
+## Deploy State
+- Master tip: 6ea797e4 ("H5: high-DPI region tiles + Opus 4.8 (functions side) + verification doc")
+- Local master == origin/master (synced)
+- Latest tag: v1.20.113
+- No code changes since deploy — close-out commit adds only investigation artifacts and record updates
+
+## Recent Commits (last 15)
+- 6ea797e4 H5: high-DPI region tiles + Opus 4.8 (functions side) + verification doc
+- 1465d2e0 Release v1.20.113
+- 003cb014 Release v1.20.112
+- 590d1ff4 Release v1.20.111
+- d7ff88a5 Release v1.20.110
+- c1c6f9c3 Release v1.20.109
+- 240081c5 Release v1.20.108
+- e420f538 Release v1.20.107
+- 0c03599c Release v1.20.106
+- 74748d7b Release v1.20.105
+- c84a4aa2 Release v1.20.104
+- dce38c77 Release v1.20.103
+- 345d7963 Release v1.20.102
+- cf05391b Add ARC Vision: Estimator's-Eye Cross-Check Workflow (#101)
+- d15faa97 Update handoff files for next session
 
 ## Headline: Vision-Mode Resolution Problem SOLVED
 
-H5 shipped and verified. 2-for-2 at 100% on worst-case drawings:
+H5 (region-targeted high-DPI rendering) shipped and verified. 2-for-2 at 100% on worst-case drawings:
 - **PRJ402101:** 54/54 = 100% (up from ~36-65% baseline). 3×2 grid, ~440 DPI.
 - **PRJ402119:** 14/14 = 100% (up from 36-50% baseline). 2×1 grid, ~1079 DPI.
 
-Model: Claude Opus 4.8 (2576 px ceiling). Required-BOM-Region feature (#103-#112) and Sales-trust layer all shipped + verified. No open threads blocking.
+Model: Claude Opus 4.8 (2576 px ceiling). v1.20.113 converted 6 Opus call sites to `thinking:{type:"adaptive"}`. All 8 Opus call sites verified clean (Coach C51). Text-layer pages completely unaffected.
 
-## Deploy State
-- Master tip: 3334488d (close-out commit on top of 6ea797e4 H5 deploy)
-- Local master == origin/master (synced)
-- Working tree: clean
+## Shipped Since Last SESSION-STATE (v1.20.101 → v1.20.113)
+
+### Required-BOM-Region Feature (#103-#112) — PHASE 1 COMPLETE
+- #103 Phase 0a/0b timeout fix (v1.20.108-area)
+- #104 Phase 1e 0-byte hardening (v1.20.102)
+- #105 Phase 1b input-tier classifier (v1.20.105)
+- #106 Phase 1a detection summary (v1.20.106)
+- #107 Phase 1c block-with-override gate (v1.20.107)
+- #108 B2 carry-forward + B1 send-gate (v1.20.108)
+- #109 F3 print warning + F2 toast (v1.20.109)
+- #110 F1/C5 noisy-PN guard + Mark Verified (v1.20.110)
+- #111 Phase 1d no-PDF handling (via 1c Case 5)
+- #112 Phase 1f region learning + L3 wire-up (v1.20.111)
+All verified by Coach (C31-C45).
+
+### Sales-Path Trust Layer — COMPLETE
+B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, Mark Verified action. Coach C40-C42.
+
+### H5 High-DPI Rendering (#120) — RESOLVED
+v1.20.112 (H5 build) + v1.20.113 (Opus 4.8 thinking fix). Coach C51 verified.
+
+### Closed
+- #113 CropBox bitmap proof — superseded by H5
+- #114 Phase 2 voting — killed (voting counterproductive; resolution was the lever)
+
+## No Open Threads Blocking
+The H5 generalization test came back positive. No in-flight work, no pending merges, no feature branches.
+
+## Parked Backlog (priority order)
+1. **#121** Region edge-padding fix — pad resolved region ~2% before rendering to prevent edge-row clipping. ~5 lines. [Backlog]
+2. **#117** Quote Payment Terms / Shipping Method intermittent missing — root-caused (two print paths diverge), ~20 lines. [Decided]
+3. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator. [Backlog]
+4. **#85** Internal Excel fast-quote — audited (EXCEL-BOM-IMPORT-AUDIT.md), needs Brief. [Backlog]
+5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating. [Discovery]
+6. **#118** Batch extraction path missing region learning context. [Backlog]
+7. Item 16 / BC-fill cluster (long-standing)
 
 ## Open TODOs
 ~68 OPEN findings in TODO.md (includes backlog items with activation triggers).
+
+## Working Tree
+- Branch: master (up to date with origin/master)
+- Clean after close-out commit 3334488d + handoff file update

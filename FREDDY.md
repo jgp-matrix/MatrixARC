@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-06-04
+**Last updated:** 2026-06-16
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.101 (defined in `public/index.html`)
+- **Current version:** v1.20.113 (defined in `public/index.html`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -253,34 +253,34 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-03)
+## Recently Active Work (as of 2026-06-16)
 
-### Shipped
-- **Milestone D** (Archive & Restore) — Full ECO-aware restore with vendor/item/customer preflight, remap UI, phased restore with lock and rollback
-- **Milestone E Phases 1-2** (Copy to New Quote) — Archive copy with BC integration
-- **v1.20.80** — #77/#78 Pre-extraction page management
-- **v1.20.81** — F-1a.3 / TODO #79 BOM prompt duplicate-merge fix
-- **v1.20.82-87** — Extraction investigation arc (AbortController timeouts, scan quality alerts, PDF-native CropBox fix, reliable JPEG+P2 routing, PNG revert)
-- **TODO #86** — CRITICAL cross-project BOM contamination fix (PRJ402119→PRJ402111). Stale extraction callback + React component reuse wrote wrong BOM to wrong project. See `DIAGNOSTIC-CROSS-PROJECT-CONTAMINATION.md`
-- **v1.20.88-90** — #86 fix + background pricing on all extraction paths
-- **v1.20.91-92** — Startup/closeout procedure rewrite + shareable Dev Team skill pack (`/team-setup`, `/team-startup`, `/team-closeout`) with config-driven roles, guided mode, quick start doc
-- **v1.20.93** — #92-P1: Cache re-key — `_pendingPagesCache` and `_bgTasks` re-keyed from bare `panelId` to `projectId:panelId`, preventing cross-project cache collisions
-- **v1.20.94** — Noah BOM revert fix — `saveProjectPanel` now sets `updatedBy: uid`, closing the onSnapshot echo guard bypass that caused edits to revert
-- **v1.20.95** — #94 dataUrl-gating fix — `confirmAndExtract` and `runExtractionTask` filtered BOM pages on `&& p.dataUrl`, silently excluding storageUrl-only pages. Fix: `(p.dataUrl||p.storageUrl)` + `ensureDataUrl` hydration. Validated: PRJ402119 Line 1 now extracts items (was 0). CLAUDE.md dataUrl Ephemerality Rule added.
+### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
+The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
 
-### Open Items
-- **#95 — PN fidelity on clean vector PDFs** (HIGH). PRJ402119 Line 1: 3 unambiguous errors (Items 8, 12, 13 — wholesale replacement), 5+ contested (digit-level disputes, ground truth itself in dispute). Next-session priority: authoritative PN list, confirm model input format, Item 8 (MPWS) end-to-end trace.
-- **#84** — Missing items on PRJ402119 — truncation + companion symptoms NOT REPRODUCED on post-#94 extraction; may have been artifacts of the prior image path
-- **#85** — Excel BOM cross-check — Brief + Supplement + Analyst Review done, Detailed Plan pending
-- **#87** — Panel ID uniqueness hardening (downgraded to LOW — cache re-key breaks collision independent of unique IDs)
-- **#88** — Async ownership audit across all long-running operations
-- **#92** — Background Task UI Ownership Audit — Phase 1 (H1+H2 cache re-key) DONE. Phases 2+ (H3-H5 foreground-seizing suppression) still open.
-- **F-1g.1** — Dedup message fix — Analyst Review + Detailed Plan approved, queued for Marc
-- **#82 RESOLVED** — Cloud Function deploy gap disproven (Coach C22). Functions ARE deployed; issue was missing audit trail only.
+> Strategic thread (how we got here): the goal evolved "get Sales using ARC" → "let Sales produce unsupervised drawing quotes" → built the **trust layer** (#103–#112, #108–#110) so bad extractions can't silently ship → "accuracy is still poor on image drawings" → **H5** traced it to render resolution. Jon's instinct — *"I can read these part numbers fine at high zoom, why can't ARC?"* — drove the resolution finding. The answer: ARC wasn't sending the model the resolution Jon was looking at.
 
-### Noah Production Bugs (FIX DEPLOYED — WATCH)
-- **BOM edits revert** — ROOT CAUSE FOUND: `saveProjectPanel` didn't set `updatedBy`, defeating onSnapshot echo guard. Fix deployed v1.20.94. WATCH until Noah confirms reverts stopped. See `NOAH-BOM-REVERT-EVIDENCE.md`.
-- **Quotes randomly drop fields** — SEPARATE root cause from BOM revert (Freddy analysis). `saveProject` writes stale project arg missing fields (no read-before-write). NOT fixed by the `updatedBy` change. Needs own scope.
+### Shipped + Verified (v1.20.102 → v1.20.113)
+- **Required-BOM-Region (#103–#112)** — PHASE 1 COMPLETE. Input-tier classifier (text-layer / vector-stroke / bitmap / scan), block-with-override extraction gate, detection summary after import, 0-byte PDF hardening, Cloud Function timeout fix, region-learning + L3 verification wire-up. All verified by Coach (C31–C45).
+- **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
+- **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
+
+### Closed
+- **#113** (CropBox bitmap/scan proof) — superseded by H5. CropBox only narrowed the view; it never raised DPI. H5 renders at target DPI directly.
+- **#114** (Phase-2 majority voting) — killed. The 113b proof showed voting was *counterproductive* (it locks in consistent misreads); the real lever was resolution, which H5 supplies. Voting was solving the wrong problem.
+
+### Parked Backlog (priority order)
+1. **#121** Region edge-padding — pad the resolved BOM region ~2% before rendering so a region whose edge clips a table row doesn't silently drop it (the new dominant H5 failure mode — resolution is no longer the limiter). ~5 lines. [priority]
+2. **#117** Quote Payment Terms / Shipping Method intermittently missing — root-caused (two print paths diverge), ~20 lines, ready to implement.
+3. **#115** Held-back-cross review UI — scaffolding exists, needs a per-row indicator.
+4. **#85** Internal Excel fast-quote — audited (`EXCEL-BOM-IMPORT-AUDIT.md`), needs a Brief.
+5. **#119** Legacy panels invisible to Phase 1 safety systems — extractionReport gating.
+6. **#118** Batch extraction path missing region-learning context.
+7. **Item 16 / BC-fill cluster** — long-standing.
+
+### Record corrections logged this arc
+- **#122** — `docs/113-CROPBOX-SCAN-PROOF.md`'s PRJ402119 ground-truth key was wrong on items 1–2: correct values are **SCE-1412PCW** and **SCE-14P12AL** (not …1413 / 14P13). Confirmed independently by Marc (500 DPI), Coach (2400 DPI), and both H5 runs. The corrected key lives in `docs/H5-GENERALIZATION-PRJ402119.md`; use that, not #113.
+- **#123** — PRJ402119 is a **vector PDF, not a fax scan**. #113's "168 DPI monochrome fax" was describing *ARC's own low-res render output*, not the source — the source renders crisp at high DPI. The 36→100 jump was send-resolution, not source quality.
 
 ---
 
