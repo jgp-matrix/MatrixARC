@@ -21768,7 +21768,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           }
         }
       }
-    }catch(e){console.warn('locateInRegion:',e);locateInDrawing(idx);}
+    // await the fallback so setLocating stays true until it completes — otherwise the
+    // finally below clears the spinner mid-fallback, flashing "Row not found" then the band.
+    }catch(e){console.warn('locateInRegion:',e);await locateInDrawing(idx);}
     finally{setLocating(false);}
   }
 
