@@ -4,6 +4,10 @@
 
 Any design decision, analyst review, or scope change produced or relayed during a Coach session **must be committed to a repo file** before session end. Freddy's decisions live only in browser chat until Coach or Marc commits them — if a session ends without writing them down, the next Freddy has no way to recover them. When closing out, explicitly check: "Did Freddy produce anything this session that isn't in the repo yet?"
 
+## Freddy-Bound Delivery
+
+Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans, any >50-line content) ALWAYS go to a file + `Start-Process explorer.exe -ArgumentList "/select,<path>"` + a file link for Jon to drag — never pasted into chat. Missed 2026-06-15.
+
 ## Session Index
 
 - **2026-05-22 (Session 1)** — Initial onboarding. Read CLAUDE.md, TODO.md, git log. Assessed current architecture and risk posture.
