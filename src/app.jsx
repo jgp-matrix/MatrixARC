@@ -11707,7 +11707,7 @@ async function getExtractionUnits(pg){
       if(croppedBomDataUrl)console.log(`[BOM REGION] Cropped BOM area (${bomRegion.source}) — ${Math.round(bomRegion.w*100)}%×${Math.round(bomRegion.h*100)}% of page`);
     }catch(e){console.warn("[BOM REGION] crop failed, falling back to full page:",e.message);}
     const regionNote=(pg.regions||[]).find(r=>r.type==="bom")?.note||null;
-    return[{dataUrl:pg.dataUrl,croppedBomDataUrl,regionNote,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion}];
+    return[{dataUrl:pg.dataUrl,croppedBomDataUrl,regionNote,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion,cropBounds:bomRegion}];/* #128 (C68 Change 4): cropBounds=bomRegion so translateItemsToPageCoords produces page-relative coords for NEW extractions */
   }
   return[{dataUrl:pg.dataUrl,croppedBomDataUrl:null,regionNote:null,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion:null}];
 }
@@ -11820,6 +11820,45 @@ async function renderBomRegionHighDpi(storagePath,pageNumber,bomRegion){
     if(!tiles.length)throw new Error("H5 render produced no tiles");
     console.log(`[H5] rendered ${tiles.length} tile(s) ${grid.nx}×${grid.ny} @ ~${Math.round(renderDpi)} DPI — region ${regionWIn.toFixed(1)}"×${regionHIn.toFixed(1)}", model ceiling ${MODEL_MAX_PX}px`);
     return{tiles,grid,renderDpi};
+  }finally{try{pdf.destroy();}catch(_){}}
+}
+
+// #128 (C68): Single-canvas preview render of the SAME padded BOM region H5 extracted from.
+// Used by BCItemBrowserModal to show the actual extraction area at readable DPI instead of
+// estimating a row position on a downsized full-page thumbnail. CRITICAL: uses the identical
+// H5 padding (H5_REGION_PAD_FRAC/FLOOR) so stored item y_top/y_bottom (region-relative for
+// ny=1 grids) line up exactly on this preview. Returns the grid so the caller can branch
+// ny=1 (stored coords usable) vs ny>1 (tile-relative → Haiku-on-region fallback).
+async function renderBomRegionPreview(storagePath,pageNumber,bomRegion,previewDpi=200){
+  await window.pdfjsReady();
+  const pdfjs=window._pdfjs;
+  const url=await fbStorage.ref(storagePath).getDownloadURL();
+  const resp=await fetch(url);
+  if(!resp.ok)throw new Error("PDF fetch failed: "+resp.status);
+  const buf=await resp.arrayBuffer();
+  const pdf=await pdfjs.getDocument({data:buf}).promise;
+  try{
+    const pg=await pdf.getPage(pageNumber);
+    const baseVp=pg.getViewport({scale:1});
+    // Same padding as H5 extraction — required for coordinate alignment with stored coords.
+    const _floorFracX=H5_REGION_PAD_FLOOR_PTS/baseVp.width,_floorFracY=H5_REGION_PAD_FLOOR_PTS/baseVp.height;
+    const _padX=Math.max(bomRegion.w*H5_REGION_PAD_FRAC,_floorFracX),_padY=Math.max(bomRegion.h*H5_REGION_PAD_FRAC,_floorFracY);
+    const _rx=Math.max(0,bomRegion.x-_padX),_ry=Math.max(0,bomRegion.y-_padY);
+    const paddedRegion={x:_rx,y:_ry,
+      w:Math.min(1,bomRegion.x+bomRegion.w+_padX)-_rx,
+      h:Math.min(1,bomRegion.y+bomRegion.h+_padY)-_ry};
+    const regionWIn=paddedRegion.w*baseVp.width/72,regionHIn=paddedRegion.h*baseVp.height/72;
+    const grid=findOptimalGrid(regionWIn,regionHIn);
+    const vp=pg.getViewport({scale:previewDpi/72});
+    const rX=paddedRegion.x*vp.width,rY=paddedRegion.y*vp.height;
+    const cw=Math.round(paddedRegion.w*vp.width),ch=Math.round(paddedRegion.h*vp.height);
+    if(cw<10||ch<10)throw new Error("degenerate BOM region preview");
+    const canvas=document.createElement('canvas');
+    canvas.width=cw;canvas.height=ch;
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle='#fff';ctx.fillRect(0,0,cw,ch);
+    await pg.render({canvasContext:ctx,viewport:vp,transform:[1,0,0,1,-rX,-rY]}).promise;
+    return{dataUrl:canvas.toDataURL('image/jpeg',0.92),paddedRegion,grid};
   }finally{try{pdf.destroy();}catch(_){}}
 }
 
@@ -21538,7 +21577,7 @@ function _loadBcBrowserSize(){
 function _saveBcBrowserSize(w,h){
   try{localStorage.setItem(_BC_BROWSER_SIZE_KEY,JSON.stringify({w:Math.round(w),h:Math.round(h)}));}catch(e){}
 }
-function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError}){
+function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
   const [results,setResults]=useState([]);
@@ -21687,6 +21726,52 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     finally{setLocating(false);}
   }
 
+  // #128 (C68): for H5-vision pages, render the actual BOM region (same padding as extraction)
+  // and highlight from STORED coords when the grid is ny=1 (coords are region-relative → no
+  // Haiku call). For ny>1 (tile-relative) or missing coords, run Haiku ON THE REGION crop
+  // (200 DPI — far more accurate than the old full-page thumbnail). Any failure → locateInDrawing.
+  async function locateInRegion(pgIdx){
+    const idx=pgIdx!=null?pgIdx:drawingPageIdx;
+    const pg=bomPages[idx];
+    if(!pg?.originalPdfPath||!pg.pageNumber){locateInDrawing(idx);return;}
+    const bomRegion=resolveBomRegion(pg);
+    if(!bomRegion){locateInDrawing(idx);return;}
+    setLocating(true);setCroppedDataUrl(null);
+    try{
+      const preview=await renderBomRegionPreview(pg.originalPdfPath,pg.pageNumber,bomRegion);
+      if(preview.grid.ny===1&&targetRow?.y_top!=null&&targetRow?.y_bottom!=null&&(targetRow.y_bottom-targetRow.y_top)>0.001){
+        // ny=1: stored y_top/y_bottom are region-relative → directly usable, no API call.
+        const pnX=targetRow.x_left!=null?Math.min(0.60,Math.max(0.35,(targetRow.x_left+(targetRow.x_right||1))/2)):0.50;
+        await cropRowFromImage(preview.dataUrl,targetRow.y_top,targetRow.y_bottom,pnX);
+      }else{
+        // ny>1 or no stored coords: Haiku locate on the high-res region image.
+        const b64=preview.dataUrl.split(',')[1];
+        if(!b64){setLocating(false);return;}
+        const pn=(targetRow?.partNumber||initialQuery||'').trim();
+        const refLine=(targetRow?.itemNo||'').trim();
+        const resp=await fetch("https://api.anthropic.com/v1/messages",{
+          method:"POST",
+          headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+          body:JSON.stringify({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:150,messages:[{role:"user",content:[
+            {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+            {type:"text",text:`This is a BOM table region. Find the row whose part-number / catalog column contains "${pn}"${refLine?` (item #${refLine})`:''}. Return JSON: row_top, row_bottom (y fractions 0-1 of that row), pn_x (x fraction of part-number column center). If not found, set row_top and row_bottom to null.`}
+          ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
+        });
+        const data=await resp.json();
+        const text='{'+(data.content?.[0]?.text||'');
+        const m=text.match(/\{[\s\S]*?\}/);
+        if(m){
+          const r=JSON.parse(m[0]);
+          if(r.row_top!=null&&r.row_bottom!=null&&(r.row_bottom-r.row_top)>0.001){
+            const pnX=r.pn_x!=null?Math.min(0.60,Math.max(0.35,r.pn_x)):0.50;
+            await cropRowFromImage(preview.dataUrl,r.row_top,r.row_bottom,pnX);
+          }
+        }
+      }
+    }catch(e){console.warn('locateInRegion:',e);locateInDrawing(idx);}
+    finally{setLocating(false);}
+  }
+
   const _cropRowCenter=useRef({scrollToY:0,scrollToX:0});
   function cropRowFromImage(dataUrl,yTop,yBottom,pnX){
     return new Promise(resolve=>{
@@ -21725,8 +21810,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   useEffect(()=>{
     // Always use Haiku to locate the part number — it returns pn_x for accurate horizontal scroll
     if(bomPages.length&&_apiKey){
+      // #128 (C68): H5-vision pages → region render; text-layer pages → existing Haiku-on-full-page.
       const pgIdx=targetRow?.sourcePageIdx??0;
-      locateInDrawing(pgIdx);
+      const pg=bomPages[pgIdx];
+      if(pg&&(h5PageIds||[]).includes(pg.id))locateInRegion(pgIdx);
+      else locateInDrawing(pgIdx);
     } else {
       // Fallback: use stored coords if no API key
       const hasValidCoords=bomPages.length&&targetRow?.y_top!=null&&targetRow?.y_bottom!=null&&(targetRow.y_bottom-targetRow.y_top)>0.001;
@@ -22344,7 +22432,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                 <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
                   {/* #126 Bug 2 fix (C66 Option B): always re-locate via Haiku. Stored y_top/y_bottom are TILE-relative post-H5 (translateItemsToPageCoords no-ops without cropBounds) → wrong on the full-page image. */}
                   {bomPages.map((_,i)=>(
-                    <button key={i} onClick={()=>{setDrawingPageIdx(i);locateInDrawing(i);}}
+                    <button key={i} onClick={()=>{setDrawingPageIdx(i);const pg=bomPages[i];if(pg&&(h5PageIds||[]).includes(pg.id))locateInRegion(i);else locateInDrawing(i);}}
                       style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
                       Pg {i+1}
                     </button>
@@ -29043,6 +29131,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           targetRow={bcBrowserTarget?(panel.bom||[]).find(r=>r.id===bcBrowserTarget)||null:null}
           pages={_basePages(panel)}
           syncError={bcBrowserTarget?bcSyncErrors[bcBrowserTarget]||null:null}
+          h5PageIds={(panel.extractionReport?.perPageOutcomes||[]).filter(o=>o.extractionPath==='hi-dpi-tiles').map(o=>o.pageId)}
           onClose={()=>{setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");}}
           onSelect={item=>{
             if(bcBrowserTarget){
