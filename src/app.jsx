@@ -21650,9 +21650,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const resp=await fetch("https://api.anthropic.com/v1/messages",{
         method:"POST",
         headers:{"Content-Type":"application/json","x-api-key":_apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-        body:JSON.stringify({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:80,messages:[{role:"user",content:[
+        body:JSON.stringify({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:150,messages:[{role:"user",content:[
           {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
-          {type:"text",text:`This drawing has a BOM table. Return JSON with: table_top (y fraction where FIRST data row starts), table_bottom (y fraction where LAST data row ends), total_rows (count of data rows), pn_x (x fraction of center of part number/catalog column). All fractions of image dimensions 0.0-1.0.`}
+          {type:"text",text:`This drawing has a BOM table. Find the row whose part-number / catalog column contains "${pn}"${refLine?` (item #${refLine})`:''}. Return JSON with: row_top (y fraction of that row's TOP edge), row_bottom (y fraction of that row's BOTTOM edge), pn_x (x fraction of center of the part-number column). If you cannot find that part, instead set row_top and row_bottom to null and return table_top (y of FIRST data row), table_bottom (y of LAST data row), total_rows (count of data rows). All fractions of image dimensions 0.0-1.0.`}
         ]},{role:"assistant",content:[{type:"text",text:"{"}]}]})
       });
       const data=await resp.json();
@@ -21661,15 +21661,24 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
       const m=text.match(/\{[\s\S]*?\}/);
       if(m){
         const r=JSON.parse(m[0]);
-        const itemNum=parseInt(refLine)||0;
-        const totalRows=r.total_rows||1;
-        const tTop=r.table_top||0.1;
-        const tBot=r.table_bottom||0.9;
-        const rowHeight=(tBot-tTop)/totalRows;
-        // Item number maps directly to row index — nudge down half a row to center on the row
-        const rowIdx=Math.max(0,itemNum-0.5);
-        const y_top=tTop+(rowIdx*rowHeight);
-        const y_bottom=y_top+rowHeight;
+        // #126 Bug 1 fix (C66 Option A): prefer Haiku's direct location of THIS part's row
+        // (found by the part-number STRING, which is always present) over interpolating from
+        // itemNo — which degrades to 0 (band at table top, same row for every part) whenever
+        // itemNo is empty or non-numeric (BOMs with no item-number column).
+        let y_top,y_bottom;
+        if(r.row_top!=null&&r.row_bottom!=null&&(r.row_bottom-r.row_top)>0.001){
+          y_top=r.row_top;y_bottom=r.row_bottom;
+        }else{
+          // Fallback: legacy linear interpolation from item number + table geometry.
+          const itemNum=parseInt(refLine)||0;
+          const totalRows=r.total_rows||1;
+          const tTop=r.table_top||0.1;
+          const tBot=r.table_bottom||0.9;
+          const rowHeight=(tBot-tTop)/totalRows;
+          const rowIdx=Math.max(0,itemNum-0.5);
+          y_top=tTop+(rowIdx*rowHeight);
+          y_bottom=y_top+rowHeight;
+        }
         // Clamp pn_x — varies by customer; use AI value but cap range
         const pnX=r.pn_x!=null?Math.min(0.60,Math.max(0.35,r.pn_x)):0.50;
         await cropRowFromImage(dataUrl,y_top,y_bottom,pnX);
@@ -22333,8 +22342,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
               {!locating&&!croppedDataUrl&&_apiKey&&<span style={{fontSize:11,color:C.muted}}>Row not found in drawing</span>}
               {bomPages.length>1&&(
                 <div style={{display:"flex",gap:4,marginLeft:"auto"}}>
+                  {/* #126 Bug 2 fix (C66 Option B): always re-locate via Haiku. Stored y_top/y_bottom are TILE-relative post-H5 (translateItemsToPageCoords no-ops without cropBounds) → wrong on the full-page image. */}
                   {bomPages.map((_,i)=>(
-                    <button key={i} onClick={()=>{setDrawingPageIdx(i);const pg=bomPages[i];if(targetRow?.y_top!=null&&targetRow?.y_bottom!=null&&(targetRow.y_bottom-targetRow.y_top)>0.001&&pg){setLocating(true);const doLoad=async()=>{try{let du=pg.dataUrl;if(!du&&pg.storageUrl){const l=await ensureDataUrl(pg);du=l.dataUrl;}if(du)await cropRowFromImage(du,targetRow.y_top,targetRow.y_bottom,targetRow.pn_x);}catch(e){}finally{setLocating(false);}};doLoad();}else locateInDrawing(i);}}
+                    <button key={i} onClick={()=>{setDrawingPageIdx(i);locateInDrawing(i);}}
                       style={{background:drawingPageIdx===i?C.accentDim:"transparent",border:`1px solid ${drawingPageIdx===i?C.accent:C.border}`,color:drawingPageIdx===i?C.accent:C.muted,borderRadius:4,padding:"2px 8px",fontSize:11,cursor:"pointer"}}>
                       Pg {i+1}
                     </button>
