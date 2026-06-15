@@ -11528,6 +11528,16 @@ const H5_TILE_TARGET_DPI=600;   // C48: 300 DPI = borderline, 600 DPI = clean
 const H5_TILE_MAX_COUNT=6;      // >6 tiles degrades multi-image comprehension (C49)
 const H5_TILE_OVERLAP_FRAC=0.05;// 5% overlap on interior edges — rows/columns at a
                                 // tile boundary appear whole in at least one tile
+const H5_REGION_PAD_FRAC=0.02;  // #121: proportional pad — 2% of region size per edge.
+                                // Acts as a ceiling for very large regions.
+const H5_REGION_PAD_FLOOR_PTS=14;// #121 (Freddy analyst review): absolute pad floor in PDF
+                                // points (~one BOM row). A clipped row is a FIXED height, not
+                                // a fraction of region size — so the proportional term alone is
+                                // weakest on the tight regions that actually clip. The floor
+                                // dominates for every real region. Kept to ~1 row (not 2): the
+                                // Y-axis pad can reach a title block / revision table / 2nd parts
+                                // list and inject phantom rows — that's visible at review, whereas
+                                // the clip it fixes is silent, so we accept the trade. H5 WATCH-ITEM.
 
 // Pick the tile grid that maximizes effective DPI within the tile budget.
 // Returns early once TARGET_DPI is reached (prefers fewer tiles).
@@ -11564,8 +11574,21 @@ async function renderBomRegionHighDpi(storagePath,pageNumber,bomRegion){
     if(pageNumber>pdf.numPages)throw new Error(`page ${pageNumber} exceeds PDF page count (${pdf.numPages})`);
     const pg=await pdf.getPage(pageNumber);
     const baseVp=pg.getViewport({scale:1}); // 1 pdf unit = 1/72 inch
-    const regionWIn=bomRegion.w*baseVp.width/72;
-    const regionHIn=bomRegion.h*baseVp.height/72;
+    // #121: pad the resolved region on all edges so a tight user-drawn region
+    // doesn't silently clip its top/bottom rows or left/right columns. Pad is the
+    // GREATER of (a) a proportional term — 2% of region size, a ceiling for large
+    // regions — and (b) an absolute floor of ~one BOM row in page-fraction terms
+    // (baseVp.width/height are page dims in PDF points). The floor is load-bearing:
+    // a clipped row is a fixed height, so proportional-only is weakest on the tight
+    // regions that clip. Asymmetrically clamped to page bounds [0,1].
+    const _floorFracX=H5_REGION_PAD_FLOOR_PTS/baseVp.width,_floorFracY=H5_REGION_PAD_FLOOR_PTS/baseVp.height;
+    const _padX=Math.max(bomRegion.w*H5_REGION_PAD_FRAC,_floorFracX),_padY=Math.max(bomRegion.h*H5_REGION_PAD_FRAC,_floorFracY);
+    const _rx=Math.max(0,bomRegion.x-_padX),_ry=Math.max(0,bomRegion.y-_padY);
+    const region={x:_rx,y:_ry,
+      w:Math.min(1,bomRegion.x+bomRegion.w+_padX)-_rx,
+      h:Math.min(1,bomRegion.y+bomRegion.h+_padY)-_ry};
+    const regionWIn=region.w*baseVp.width/72;
+    const regionHIn=region.h*baseVp.height/72;
     if(regionWIn<=0.1||regionHIn<=0.1)throw new Error("degenerate BOM region — too small to render");
     const grid=findOptimalGrid(regionWIn,regionHIn);
     // Per-tile render DPI fills MODEL_MAX_PX on the tile's long edge (incl. overlap margin)
@@ -11575,8 +11598,8 @@ async function renderBomRegionHighDpi(storagePath,pageNumber,bomRegion){
     const tileHIn=regionHIn/grid.ny+2*ovHIn;
     const renderDpi=MODEL_MAX_PX/Math.max(tileWIn,tileHIn);
     const vp=pg.getViewport({scale:renderDpi/72});
-    const rX=bomRegion.x*vp.width,rY=bomRegion.y*vp.height;
-    const rW=bomRegion.w*vp.width,rH=bomRegion.h*vp.height;
+    const rX=region.x*vp.width,rY=region.y*vp.height;
+    const rW=region.w*vp.width,rH=region.h*vp.height;
     const ovWpx=ovWIn*renderDpi,ovHpx=ovHIn*renderDpi;
     const tiles=[];
     for(let j=0;j<grid.ny;j++){
