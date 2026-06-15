@@ -33,6 +33,13 @@ Any design decision, analyst review, or scope change produced or relayed during 
 - **2026-06-09 (Session 3, cont.)** — C47: #119 investigation (PRJ402119 silent zero-BOM). SYSTEMIC finding: every Phase 1 safety mechanism (ZeroBomBanner, amber chip, send gate, completeness warning) is gated on `panel.extractionReport` existing. Legacy projects extracted before v1.19.598 have NO extractionReport — all safety systems return null/undefined silently. PRJ402119 hit the C23 dataUrl gating bug, got 0 items, and was never re-extracted. The batch-path hypothesis (from #118) is NOT the primary cause — batch runs INSIDE runExtractionTask, which is called FROM confirmAndExtract AFTER the 1c gate. The real gap is that the warning UI has no fallback for legacy panels. Details below.
 - **2026-06-09 (Session 3, cont.)** — C48: High-DPI resolution test on PRJ402101. CONFIRMED: resolution is the root cause for Pattern A+B errors (32 of 38 wrong PNs). Rendered BOM page 10 at 150/300/600/1600 DPI, read each as ground truth + accuracy test. All three anchor PNs (SCE-90EL4820SSFSD, SCE-90P48F1, XT1SU3060AFF000XXX) read correctly at 600 DPI, unreadable at 150 DPI, borderline at 300 DPI. ARC's specific errors (dropped-S, 8→B, SU→US transposition) are all resolution-class failures that vanish with more pixels. Answer to Jon's question: YES — high-DPI region crop fixes it. H5 is the right fix. Details below.
 - **2026-06-09 (Session 3, cont.)** — C49: H5 scope — region-targeted high-DPI rendering. Buildable implementation plan. Core change: for vision-mode PDFs, stop sending native PDF → render BOM region to high-DPI image tiles client-side via pdf.js → send tiles as `type: "image"`. Critical finding: ARC uses `claude-opus-4-6` (1568 px model limit, NOT the 2576 of Opus 4.7+) — must tile to achieve usable DPI. Recommended 2×2 grid → 369 effective DPI (Opus 4.6), upgrading to 606 DPI when model bumped to 4.7+. ~143 lines, ~2 days dev + 1 day test. TODO #120. Details below.
+- **2026-06-15 (Session 4)** — C57-C62: #117 Phase 2 cycle. C57 re-confirmed root cause at v1.20.114. C58 detailed plan (Option 3). C59 amended Path B wiring per Marc's findings. C60 Phase 1 code review sign-off (+218/-165). C61 QuoteTab unreachability finding — _bcToken null is PRIMARY cause, Path C (QuoteSendModal) found. C62 Phase 2 detailed plan: Fixes 3/3c/4, ~36 lines, 10 test criteria.
+- **2026-06-15 (Session 4, cont.)** — C63: Deferred TODO logged — post-extraction Engineering Questions to be SUPPRESSED (render-gated), not deleted. C62 carve-outs confirmed with expanded priority (T-bcTokenRefresh IMMEDIATE, dead code LOW, Path B LOW/gated).
+- **2026-06-15 (Session 4, cont.)** — C64: Phase 2 static verification. Finding 1 CONFIRMED (`{...populated}` spread at line 31886, prevents stale closure overwrite). Finding 2 Jon ruling applied (Option b — send proceeds when fully populated, blocks only on missing terms). Tests 3 & 9 amended. T-bcTokenRefresh exact fix confirmed captured. Build verification-complete on static side.
+- **2026-06-15 (Session 4, cont.)** — C65: #117 marked RESOLVED in TODO.md. Queue landed: #125 T-bcTokenRefresh [NEXT], #126 BOM preview regression, #127 redundant progress bar, #128 visual PN verification, #129 ARC Usage Telemetry [Tabled], #130-132 cleanup/hardening/Engineering Questions. T-bcTokenRefresh 4-point confirmation: silent (false arg skips popup), covers both paths (one function), no latency when token valid (null check), empty catch doesn't mask real failures (_bcToken stays null → Phase 2 fires).
+- **2026-06-15 (Session 4, cont.)** — C66: #126 root cause report. NOT an H5 pipeline break or Haiku call break. Two independent bugs: (1) `parseInt(itemNo)||0` degrades to 0 when itemNo is empty/non-numeric → band at table top for all rows, (2) page buttons prefer stored y_top/y_bottom which are tile-relative post-H5 → wrong positions on full-page image. Fix: modify Haiku prompt to find the specific part row (~15-20 lines) + always call locateInDrawing in page buttons (~5 lines). Self-contained, no dependency on #128. ~20-25 lines, low risk.
+- **2026-06-15 (Session 4, cont.)** — C67: #128 feasibility trace. All data needed for region rendering IS persisted (bomRegion on pages, originalPdfPath, pageNumber). H5 tiles are transient but the BOM region is recomputable. Per-item y_top/y_bottom are stored but in tile/region-relative space (translateItemsToPageCoords no-op). For ny=1 grids (dominant case — landscape BOM tables), y_top IS region-relative → coord fix viable. For ny>1 (rare tall regions), y_top is tile-relative → coord fix broken. Brief direction: "render stored regions" (accurate, cheap) + companion coord fix (~15 lines). No "persist first" step. ~55-80 lines total.
+- **2026-06-15 (Session 4, cont.)** — C68: #128 detailed plan. Five discrete changes: (1) `renderBomRegionPreview` function (~25 lines, after line 11824), (2) `locateInRegion` function in BCItemBrowserModal (~30 lines), (3) mount useEffect + page button branching (~9 lines), (4) modal instantiation `h5PageIds` prop (~3 lines), (5) `getExtractionUnits` cropBounds fix (~3 lines). ny=1 → instant highlight from stored coords; ny>1 → Haiku-on-region fallback. Text-layer pages keep existing path. ~70 lines total. 8 test criteria incl. #126 regression cases. #133 (Customer BOM Approval) logged in TODO.md.
 
 ## Findings
 
@@ -4039,6 +4046,1304 @@ Specifically: extract PRJ402119 page 3 (the BOM page) with the padded build. Con
 
 ---
 
+## C57 — #117 Re-Confirmation at v1.20.114
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Read-only re-pin of C46 root cause against v1.20.114 code. No implementation.
+
+### Prior Finding (C46, v1.20.98-era)
+
+From C46, the recorded root cause:
+
+> Fields RANDOMLY show "---" on printed quotes. Two print paths diverge: Path A (`handlePrintQuote`, line 35735) runs BC auto-populate before generating PDF. Path B ("Generate PDF" button in QuoteView, line 19469) reads React state directly — no BC fetch. Additionally: quote field edits have NO auto-save, `saveProject` is fire-and-forget, and BC token expiry silently skips the entire fetch.
+
+### Re-Confirmation: C46 holds at v1.20.114. All four findings confirmed.
+
+#### Q1: WHICH two paths diverge?
+
+Not two rendering paths — **two data-population paths before the same renderer.**
+
+Both paths ultimately call the same function: `generateQuotePdf(project)` (line 7564) → `buildQuotePdfDoc(doc, project)` (line 6771) → renders `q.paymentTerms||"---"` at line 6827. The renderer is identical. The divergence is upstream:
+
+**Path A — "Print Client Quote" / "Just Print" / "Send Quote" → `handlePrintQuote()` (line 35906):**
+- Runs BC auto-populate (lines 35960-36113) which fetches `paymentTerms` and `shippingMethod` from BC project card
+- Merges into `proj.quote` (line 36115)
+- Saves to Firestore via `saveProject(uid, proj)` at line 36116 (fire-and-forget, not awaited)
+- Then triggers `generateQuotePdf(projectRef.current)` — `projectRef.current` now has the BC-populated terms
+
+**Path B — "🖨 Generate PDF" button in QuoteView (line 19636):**
+```javascript
+onClick={async()=>{await generateQuotePdf(project);...}}
+```
+- Calls `generateQuotePdf(project)` directly with the `project` from React state
+- **NO BC auto-populate**
+- **NO Firestore save**
+- If `project.quote.paymentTerms` was never populated (by a prior Path A run or manual entry) → PDF shows "---"
+
+#### Q2: WHAT diverges?
+
+The asymmetry is BC auto-populate, not rendering. Path A runs a BC fetch that populates `paymentTerms` and `shippingMethod` before the PDF is generated. Path B skips it entirely. Both paths render through the same `buildQuotePdfDoc` which shows "---" for any missing field.
+
+Line 36037-36038 (the actual BC fetch):
+```javascript
+let pmtTerms=bc.CCS_Payment_Terms_Code||bc.Payment_Terms_Code||"";
+let shipMethod=bc.CCS_Shipment_Method_Code||bc.Shipment_Method_Code||"";
+```
+
+Line 36062-36063 (merge into quote):
+```javascript
+if(pmtTerms)autoFields.paymentTerms=pmtTerms;
+if(shipMethod)autoFields.shippingMethod=shipMethod;
+```
+
+#### Q3: WHICH path fires WHEN?
+
+- **"Print Client Quote"** button in ProjectView → Path A (`handlePrintQuote`, line 35906). This is the primary workflow button.
+- **"Just Print"** from Send Quote modal → Path A (dispatches `arc-just-print` event at line 31799, caught at line 35854, calls `handlePrintQuote()`).
+- **"Send Quote"** flow → Path A (triggers `handlePrintQuote` → `autoPrint` → `generateQuotePdf`).
+- **"🖨 Generate PDF"** button in QuoteView (line 19636) → **Path B**. This is a secondary/convenience button inside the quote editor.
+
+The "randomness" is NOT random — it's which button the user clicks. A user who always uses "Print Client Quote" always gets BC auto-populate. A user who uses "Generate PDF" from the quote editor never gets it. If they PREVIOUSLY used Path A and the save succeeded, the terms are in Firestore and Path B reads them from saved state — appearing to work. If they haven't, or the save failed, "---".
+
+#### Q4: Data presence — is it ALSO a data problem?
+
+**Yes, partially. Three data-presence factors compound the path divergence:**
+
+1. **No auto-save on quote field edits (confirmed, still present at v1.20.114).** `setQ(updates)` at line 19614 calls `onUpdate({...project, quote:{...q, ...updates}})` → `update(p)` at line 35782 → sets React state only (`setProject`, `projectRef.current`, `onChange`). **No `saveProject` anywhere in this chain.** A user who manually types "Net 30 Days" into the Payment Terms field sees it rendered in the editor, but it's RAM-only. Navigate away → gone. Next session → "---".
+
+2. **Fire-and-forget save in `handlePrintQuote` (confirmed, still present at line 36116).** `saveProject(uid, proj)` is called without `await`. If Firestore write fails (network, quota, permissions), the terms exist in memory for the current print but aren't persisted. Next session → "---" again.
+
+3. **BC token gates the entire fetch (confirmed, still present at line 35972).** `if(proj.bcProjectNumber && _bcToken && needsBcFetch)` — if `_bcToken` is null (BC session expired, user hasn't authenticated), the ENTIRE BC fetch is skipped. This is the most common "intermittent" condition: whether BC auto-populate runs depends on whether the user has an active BC session at print time.
+
+4. **BC project card may not have terms (confirmed, still present at lines 36037-36038).** Both fields try CCS-prefixed then standard BC fields. If neither populated, falls back to customer card GUID resolution (lines 36040-36051). If customer card also empty → terms stay empty even when BC is connected.
+
+### Summary for Freddy
+
+| Component | Current line | Status at v1.20.114 |
+|-----------|:------------|:-------------------|
+| `handlePrintQuote` (Path A entry) | 35906 | Unchanged — runs BC auto-populate |
+| BC auto-populate block | 35960-36113 | Unchanged — fetches terms from BC |
+| `needsBcFetch` gate | 35971-35972 | Unchanged — skips if `_bcToken` null |
+| Fire-and-forget save | 36116 | Unchanged — `saveProject` not awaited |
+| "Generate PDF" button (Path B) | 19636 | Unchanged — no BC fetch, no save |
+| `setQ` (quote editor state) | 19614 | Unchanged — React state only, no auto-save |
+| `update(p)` in ProjectView | 35782 | Unchanged — no Firestore write |
+| `buildQuotePdfDoc` renderer | 6827-6828 | Unchanged — `q.paymentTerms\|\|"---"` |
+
+**Fix scope from C46 still holds at ~20 lines:**
+1. Debounced auto-save for quote edits (~5 lines) — same pattern as PanelCard's autoSaveTimer
+2. Await the save in `handlePrintQuote` (~3 lines) — change line 36116 to `await saveProject`
+3. BC auto-populate before `generateQuotePdf` on Path B (~10 lines) — extract the BC fetch into a shared helper, call it in QuoteView's Generate PDF handler
+4. (Defense) Console.warn when BC token gates the fetch (~2 lines)
+
+---
+
+## C58 — #117 Detailed Plan (Option 3, Full Scope)
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Detailed implementation plan for Marc. Coach verifies each phase before the next.
+**Principle:** Both populate paths converge on ONE pre-render gate: populate → persist → loud-on-failure. The renderer never prints a silent blank. Fixes the A/B divergence and all three silent-failure modes as one pattern.
+**Builds on:** C57 (re-confirmation at v1.20.114), C46 (original root cause)
+
+---
+
+### Feasibility Verification
+
+**Q1: Is the BC fetch callable from Path B's QuoteView context?**
+YES. `QuoteView({project, uid, onBack, onUpdate})` (line 34754) is a function component inside app.jsx. It has closure access to all module-scoped BC infrastructure:
+- `_bcToken` (line 394)
+- `bcDiscoverODataPages`, `bcGatedFetch`, `bcGetCompanyId` (module-scoped functions)
+- `BC_ODATA_BASE`, `BC_API_BASE` (module-scoped constants)
+- `saveProject` (line 8499, module-scoped async function)
+
+No prop threading or context wiring needed. A shared function at module scope is callable from both `handlePrintQuote` (ProjectView) and the Generate PDF handler (QuoteView).
+
+**Q2: Does Payment Terms have a legitimate default?**
+NO. Two distinct fields exist:
+- `q.termsText` — the narrative body copy ("Standard Payment Terms for Panel Builds..."). HAS a default at line 6835-6836: `q.termsText!=null ? q.termsText : defaultTerms`. This is the payment terms paragraph, not the header field.
+- `q.paymentTerms` — the one-line BC code ("Net 30 Days", "2% 10 Net 30"). NO default. Sourced from BC project card `CCS_Payment_Terms_Code` or `Payment_Terms_Code` (line 36037), or customer card `paymentTermsId` resolved via REST (line 36049-36051). Blank = error — means BC didn't have it or the fetch didn't run.
+
+`q.shippingMethod` — same: NO default. BC shipment method code ("FOB Destination", "WILL CALL"). Blank = error.
+
+**Ruling:** Blank paymentTerms or shippingMethod is always an error condition — flag it, never fall back to a default.
+
+**Q3: Can the ~160-line BC auto-populate block be cleanly extracted?**
+YES. Lines 35956-36117 are self-contained: they read `proj`, `proj.quote`, `proj.panels`, and `proj.bcProjectNumber`, then build an `autoFields` object and merge it. The only external dependency is `_bcToken` (module-scoped). The block returns the merged project. State updates (`setProject`, `projectRef.current`, `onChange`, `saveProject`) happen AFTER the merge at line 36116 — those stay with the caller.
+
+The salesperson resolution (lines 36064-36108) is also inside this block. It's not #117-specific but it's part of the same auto-populate and must move with it.
+
+---
+
+### Phase 1 — Kill the Divergence + Persist (Fixes 1 + 2)
+
+**Goal:** Both entry points call the same populate function before rendering, and the save is awaited.
+
+#### Fix 1: Extract `ensureQuoteFieldsPopulated(project, uid)`
+
+**What:** Extract lines 35956-36117 into a new module-scoped async function.
+
+**New function (insert near `generateQuotePdf` at ~line 7593):**
+```javascript
+async function ensureQuoteFieldsPopulated(project, uid) {
+  // ... lines 35956-36113 moved here, operating on `project` parameter ...
+  // Returns { project: mergedProject, warnings: string[] }
+}
+```
+
+**Signature:** `async function ensureQuoteFieldsPopulated(project, uid)` → `{ project, warnings }`
+- `project` — the input project, possibly with quote fields merged from BC
+- `warnings` — array of warning strings (empty if all succeeded). Prepares for Fix 3.
+- Does NOT do state updates or saves — callers handle that.
+
+**Change locations:**
+
+| What | Line | Change |
+|------|------|--------|
+| New function declaration | ~7593 (after `generateQuotePdf`) | +165 lines (extracted, not net-new) |
+| `handlePrintQuote` inline populate | 35956-36117 | Replace with: `const result = await ensureQuoteFieldsPopulated(proj, uid);` then `proj = result.project;` |
+| Path B "Generate PDF" button | 19636 | Add shared call before `generateQuotePdf` (see below) |
+
+**Path A caller change (handlePrintQuote, line ~36114-36116):**
+Before:
+```javascript
+if(Object.keys(autoFields).length){
+  proj={...proj,quote:{...q,...autoFields}};
+  setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
+}
+```
+After:
+```javascript
+const populateResult = await ensureQuoteFieldsPopulated(proj, uid);
+proj = populateResult.project;
+setProject(proj); projectRef.current = proj; onChange(proj);
+```
+(Save moves to Fix 2 below — awaited.)
+
+**Path B caller change (QuoteView "Generate PDF" button, line 19636):**
+Before:
+```javascript
+onClick={async()=>{await generateQuotePdf(project);const hash=...;onUpdate({...project,...});}}
+```
+After:
+```javascript
+onClick={async()=>{
+  const result = await ensureQuoteFieldsPopulated(project, uid);
+  const populated = result.project;
+  onUpdate(populated);
+  await saveProject(uid, populated);
+  await generateQuotePdf(populated);
+  const hash = computeBomHash(populated.panels);
+  onUpdate({...populated, lastPrintedBomHash: hash, lastQuotePrintedAt: Date.now(), quoteRevAtPrint: populated.quoteRev || 0});
+}}
+```
+`onUpdate` here is `update(p)` (line 35782) — sets React state + projectRef + onChange. Then `saveProject` persists (awaited, fixing Fix 2b for Path B). Then `generateQuotePdf` runs against populated data.
+
+**~170 lines moved, ~15 lines net-new at call sites.**
+
+#### Fix 2: Await saves (no more fire-and-forget)
+
+**2a — handlePrintQuote save (line 36116):**
+Before: `saveProject(uid, proj);` (fire-and-forget)
+After: `await saveProject(uid, proj);`
+One word change. The `catch` for save failure surfaces via Fix 3's warning pattern.
+
+**2b — autoPrint save (line 35820):**
+The `autoPrint` effect at line 35820 also fires `saveProject(uid, upd)` without await. Same fix:
+Before: `...onChange(upd);saveProject(uid,upd);setAutoPrint(false);...`
+After: `...onChange(upd);await saveProject(uid,upd);setAutoPrint(false);...`
+
+**2c — Path B save:** Already covered in Fix 1's Path B caller change above — `await saveProject(uid, populated)` before `generateQuotePdf`.
+
+**2d — Wrap saves with try/catch → arcAlert on failure:**
+```javascript
+try { await saveProject(uid, proj); }
+catch(e) { console.error("[QUOTE] Save before print failed:", e); arcAlert("Failed to save quote before printing. Your edits may not persist. Retry or check your connection."); }
+```
+Applied at all three save sites (handlePrintQuote, autoPrint, Path B).
+
+**~10 lines net-new.**
+
+#### Phase 1 Boundary
+
+After Phase 1:
+- Both paths populate from BC before rendering ✓
+- Both paths persist to Firestore (awaited) before rendering ✓
+- setQ edits that exist only in React state are flushed via `onUpdate` → `saveProject` ✓
+- The A/B divergence is dead ✓
+- Fire-and-forget is dead ✓
+
+**Phase 1 does NOT address:** BC token null (still silently skips), blank fields still render as "---" without warning.
+
+#### Phase 1 Test Criteria
+
+1. **Path B now populates from BC:** With BC connected, click "Generate PDF" in QuoteView on a project with blank paymentTerms. Verify: terms appear on the PDF (not "---"), AND the project is saved to Firestore with the terms.
+2. **Path A still works:** "Print Client Quote" still populates and prints correctly. Regression check.
+3. **RAM-only edits persist:** In QuoteView, manually type a payment term into the field (via setQ). Without clicking "Print Client Quote" first, click "Generate PDF." Verify the typed value appears on the PDF AND is saved to Firestore.
+4. **Save failure surfaces:** Disconnect network, click "Generate PDF." Verify `arcAlert` fires with the save-failure message.
+5. **autoPrint path:** "Print Client Quote" → checklist → "Proceed" → verify save completes before PDF generation.
+
+---
+
+### Phase 2 — Loud on Failure (Fixes 3 + 4)
+
+**Goal:** BC-token-null and blank fields are never silent. The user always knows when data is missing and can act.
+
+#### Fix 3: BC token null → visible warning
+
+**3a — In `ensureQuoteFieldsPopulated` (the shared function from Fix 1):**
+When `proj.bcProjectNumber && needsBcFetch && !_bcToken`, push a warning string:
+```javascript
+if (proj.bcProjectNumber && needsBcFetch && !_bcToken) {
+  warnings.push("bc-unavailable");
+}
+```
+
+**3b — Path A: Add pre-print checklist entry (line ~36167):**
+After the existing BC Sync check (line 36167), add:
+```javascript
+// Check: BC not connected but project needs quote field population
+const qNow = projectRef.current.quote || {};
+const needsFields = !qNow.paymentTerms || !qNow.shippingMethod;
+if (projectRef.current.bcProjectNumber && !_bcToken && needsFields) {
+  issues.push({
+    type: "bctoken",
+    label: "BC Unavailable",
+    detail: "Payment Terms / Shipping Method not populated — connect to BC or enter manually",
+    checked: false,  // unchecked = user must acknowledge
+  });
+}
+```
+This follows the existing checklist pattern. The issue is NOT auto-checked — the user must explicitly check it (acknowledging they'll proceed without terms) or cancel and fix.
+
+**3c — Path B: surface warning before proceeding:**
+In the Path B caller (from Fix 1), after `ensureQuoteFieldsPopulated` returns:
+```javascript
+if (result.warnings.includes("bc-unavailable")) {
+  const proceed = await arcConfirm(
+    "BC is not connected — Payment Terms and Shipping Method may be missing. Print anyway?",
+    { kind: "warning", okLabel: "Print Anyway" }
+  );
+  if (!proceed) return;
+}
+```
+
+**Carve-out:** Actual BC token refresh / re-auth is a SEPARATE backlog item. #117 only makes the null case visible. Marc logs it as a T-series TODO entry: "T-bcReauth: Implement BC token refresh flow when token expires mid-session."
+
+**~15 lines net-new.**
+
+#### Fix 4: Renderer backstop — no silent blanks
+
+**4a — Pre-print checklist entry for blank required fields (line ~36200):**
+After the existing Upload Drawings check:
+```javascript
+// Check: Required quote fields present
+const qCheck = projectRef.current.quote || {};
+const missingFields = [];
+if (!qCheck.paymentTerms) missingFields.push("Payment Terms");
+if (!qCheck.shippingMethod) missingFields.push("Shipping Method");
+if (missingFields.length > 0) {
+  issues.push({
+    type: "blankfields",
+    label: "Missing Quote Fields",
+    detail: missingFields.join(", ") + " — enter manually before printing",
+    checked: false,  // blocks proceed until user acknowledges
+  });
+}
+```
+
+**4b — Path B: same check after populate:**
+```javascript
+const qAfter = populated.quote || {};
+const missing = [];
+if (!qAfter.paymentTerms) missing.push("Payment Terms");
+if (!qAfter.shippingMethod) missing.push("Shipping Method");
+if (missing.length > 0) {
+  const proceed = await arcConfirm(
+    `Missing: ${missing.join(", ")}. The PDF will show "---" for these fields. Print anyway?`,
+    { kind: "warning", okLabel: "Print Anyway" }
+  );
+  if (!proceed) return;
+}
+```
+
+**4c — Ruling on defaults:**
+- `paymentTerms`: NO default. Blank = error. Always flag.
+- `shippingMethod`: NO default. Blank = error. Always flag.
+- `termsText`: HAS a default (line 6835-6836). NOT flagged — it gracefully falls back to the standard terms narrative.
+- Other fields (`company`, `contact`, `address`): Out of #117 scope. These have the same A/B problem but are lower severity — the user is more likely to notice a missing company name than missing payment terms code. Can be added to the backstop later.
+
+**~15 lines net-new.**
+
+#### Phase 2 Boundary
+
+After Phase 2:
+- BC token null shows a visible warning (checklist entry or arcConfirm) ✓
+- Blank paymentTerms/shippingMethod are flagged before print ✓
+- User can still proceed (acknowledged override) — this is a gate, not a block ✓
+- "---" on a printed quote is now always a deliberate user choice, never a silent default ✓
+
+#### Phase 2 Test Criteria
+
+1. **BC token null, Path A:** Disconnect BC (clear `_bcToken`). Click "Print Client Quote" on a project with blank terms. Verify: pre-print checklist shows "BC Unavailable" entry. Entry is unchecked by default.
+2. **BC token null, Path B:** Same setup. Click "Generate PDF." Verify: `arcConfirm` dialog appears warning about BC unavailability.
+3. **Blank fields, Path A:** Project with no paymentTerms (even after BC populate — e.g., BC card has no terms configured). Verify: checklist shows "Missing Quote Fields: Payment Terms" entry.
+4. **Blank fields, Path B:** Same project. Click "Generate PDF." Verify: `arcConfirm` dialog lists missing fields.
+5. **Override works:** User checks the "Missing Quote Fields" checklist entry and proceeds. Verify: PDF generates with "---" as before — the gate doesn't hard-block.
+6. **Clean path unaffected:** Project with all fields populated, BC connected. Verify: no new checklist entries appear. Print flow unchanged.
+
+---
+
+### Size Estimate
+
+| Fix | Description | Net-new lines | Moved lines |
+|-----|-------------|:------------:|:-----------:|
+| Fix 1 | Extract `ensureQuoteFieldsPopulated` + call from both paths | ~15 | ~160 |
+| Fix 2 | Await saves + try/catch | ~10 | 0 |
+| Fix 3 | BC token null warning (checklist + arcConfirm) | ~15 | 0 |
+| Fix 4 | Blank field backstop (checklist + arcConfirm) | ~15 | 0 |
+| **Total** | | **~55 net-new** | **~160 moved** |
+
+C46's ~20-line estimate was for the minimal "add BC fetch to Path B + await save" approach. The full Option 3 scope (shared function + loud-on-failure layer) is ~55 lines net-new. Confirmed within Jon's 40-60 estimate.
+
+### Sequence
+
+```
+Phase 1: Fix 1 + Fix 2 → Marc implements → Coach verifies test criteria → deploy
+Phase 2: Fix 3 + Fix 4 → Marc implements → Coach verifies test criteria → deploy
+```
+
+Phase 1 kills the data divergence. Phase 2 adds the noise layer. Splitting ensures the core fix lands and verifies before layering defense.
+
+### Risk Notes
+
+1. **Salesperson resolution inside the extracted function** (lines 36064-36108): This is ~45 lines of BC salesperson lookup that happens to live inside the auto-populate block. It must move with the extraction — it's not #117-specific, but orphaning it would break salesperson auto-fill. Marc should move it intact, not refactor it.
+
+2. **`handlePrintQuote` runs the pre-print checklist AFTER populate.** After Fix 1, the checklist runs against the already-populated project. This is correct — the checklist should reflect post-populate state (e.g., "Missing Quote Fields" should only fire if fields are STILL blank after BC populate succeeded).
+
+3. **Path B's `onUpdate` is React-state-only.** After `onUpdate(populated)`, the React state has the populated data but Firestore may not (until `await saveProject` completes). The order in the Fix 1 Path B change is: `onUpdate` (React) → `await saveProject` (Firestore) → `generateQuotePdf` (render). This is correct — React state updates synchronously for the next render, and the save completes before the PDF.
+
+4. **No debounced auto-save added.** C46 suggested a debounced auto-save for setQ edits. This plan deliberately OMITS it — the flush-before-action pattern (Fix 2c) is sufficient and avoids write spam. If Jon later wants save-on-idle for quote fields, that's a separate enhancement.
+
+---
+
+## C59 — C58 Phase 1 Amendment (Path B Wiring Correction)
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Amendment to C58 Phase 1, fixing three incorrect assumptions about Path B's component boundary. This finding supersedes C58's Phase 1 "Path B caller change" section only. All other C58 content (Phase 2, shared function extraction, Fix 2a/2b) remains valid.
+
+### What C58 Got Wrong
+
+C58 Q1 ("Is the BC fetch callable from Path B's QuoteView context?") answered YES based on closure access to module-scoped BC functions. That was correct for QuoteView but irrelevant — **the Generate PDF button is in QuoteTab, not QuoteView.**
+
+Three errors:
+
+| # | C58 assumption | Reality (v1.20.114) | Impact if built as-planned |
+|---|---------------|---------------------|---------------------------|
+| 1 | Path B button lives in QuoteView (has `uid` in scope) | Button at line 19636 is in `QuoteTab({project, onUpdate})` (line 19594) — no `uid` | `ReferenceError: uid is not defined` |
+| 2 | `project` in QuoteTab is the real project | QuoteTab receives `aggregated` (built at line 34800): `{...project, bom:allBom, pages:flatMap, laborData:null, _quoteLabor}` | `saveProject(uid, aggregated)` persists the synthetic merged shape → **flattens multi-panel BOM/pages into the project doc** (#86 failure class, silent data corruption) |
+| 3 | `onUpdate` in QuoteTab reaches ProjectView's unrestricted `update(p)` | `onUpdate` is `handleQuoteUpdate` (line 34809) which whitelists `quote/pricing/panels/budgetaryQuote` only, drops `bcSalespersonCode` | Salesperson code from BC populate lost in Path B |
+
+Marc caught all three before implementing. Correct call to hold.
+
+### Verified Component Hierarchy
+
+```
+ProjectView (line 34912)
+  ├─ project (real), uid, projectRef, setProject, onChange
+  ├─ update(p) — unrestricted state setter (line 35782)
+  │
+  └─ QuoteView({project, uid, onBack, onUpdate=update}) (line 34754, rendered at 36896)
+       ├─ uid ✓, project (real) ✓, onUpdate = update (unrestricted) ✓
+       ├─ aggregated = {...project, bom:allBom, pages:flatMap, ...} (line 34800)
+       ├─ handleQuoteUpdate(upd) — whitelists quote/pricing/panels/budgetaryQuote (line 34809)
+       │
+       └─ QuoteTab({project=aggregated, onUpdate=handleQuoteUpdate}) (line 19594, rendered at 34845)
+            ├─ uid ✗, project = aggregated (synthetic) ✗, onUpdate = whitelisted ✗
+            └─ Generate PDF button (line 19636) ← THIS IS PATH B
+```
+
+QuoteView is the correct level: it has `uid`, the real `project`, and unrestricted `onUpdate`.
+
+### Ruling: Option A — Lift the Action to QuoteView
+
+**Endorsed.** Option B (re-thread uid/bcSalespersonCode through QuoteTab's whitelist + split persist-real from render-aggregated) is strictly worse — same number of changes, adds coupling to the whitelist, and still requires the caller to know which object is "real" vs "aggregated."
+
+### Amended Phase 1 Path B Wiring
+
+**Step 1: Add `onGeneratePdf` prop to QuoteTab.**
+
+QuoteTab signature change (line 19594):
+```javascript
+// Before:
+function QuoteTab({project, onUpdate}){
+// After:
+function QuoteTab({project, onUpdate, onGeneratePdf}){
+```
+
+Generate PDF button change (line 19636):
+```javascript
+// Before:
+onClick={async()=>{await generateQuotePdf(project);const hash=computeBomHash(project.panels);onUpdate({...project,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:project.quoteRev||0});}}
+// After:
+onClick={onGeneratePdf}
+```
+
+The button becomes a pure callback — no logic, no `project`, no `uid`.
+
+**Step 2: Define `handleGeneratePdf` in QuoteView.**
+
+Inside QuoteView (after `handleQuoteUpdate` at line ~34813):
+```javascript
+async function handleGeneratePdf() {
+  // 1. Populate from BC on the REAL project (not aggregated)
+  const result = await ensureQuoteFieldsPopulated(project, uid);
+  const populated = result.project;
+
+  // 2. Update React state with populated real project (unrestricted update)
+  onUpdate(populated);
+
+  // 3. Persist REAL project to Firestore (awaited — Fix 2c)
+  try { await saveProject(uid, populated); }
+  catch(e) {
+    console.error("[QUOTE] Save before print failed:", e);
+    arcAlert("Failed to save quote before printing. Your edits may not persist.");
+  }
+
+  // 4. Build PDF from aggregated view with populated quote fields
+  //    aggregated has the merged BOM; populated has the fresh quote
+  await generateQuotePdf({...aggregated, quote: populated.quote});
+
+  // 5. Post-print metadata on the REAL project
+  const hash = computeBomHash(populated.panels);
+  onUpdate({
+    ...populated,
+    lastPrintedBomHash: hash,
+    lastQuotePrintedAt: Date.now(),
+    quoteRevAtPrint: populated.quoteRev || 0
+  });
+}
+```
+
+**Step 3: Pass prop through (line 34845).**
+```javascript
+// Before:
+<QuoteTab project={aggregated} onUpdate={handleQuoteUpdate}/>
+// After:
+<QuoteTab project={aggregated} onUpdate={handleQuoteUpdate} onGeneratePdf={handleGeneratePdf}/>
+```
+
+### Why This Works — Each Concern at the Right Level
+
+| Concern | Where | Object used |
+|---------|-------|-------------|
+| BC populate | QuoteView (`handleGeneratePdf`) | `project` (real) via `ensureQuoteFieldsPopulated` |
+| React state update | QuoteView | `onUpdate(populated)` = `update(p)` (unrestricted) |
+| Firestore persist | QuoteView | `saveProject(uid, populated)` — real project, not aggregated |
+| PDF rendering | QuoteView → `generateQuotePdf` | `{...aggregated, quote: populated.quote}` — merged BOM + fresh quote |
+| bcSalespersonCode | QuoteView | On `populated` → `onUpdate(populated)` → `update(p)` → `projectRef.current` ← no whitelist |
+| Post-print hash | QuoteView | `computeBomHash(populated.panels)` — real panels, not merged BOM |
+
+The aggregated object is used ONLY for the PDF (where the merged BOM view is correct). All persistence and state updates operate on the real project.
+
+### Shared Function Return Contract (Locked)
+
+```
+async function ensureQuoteFieldsPopulated(project, uid)
+  → { project: Project, warnings: string[] }
+```
+
+**Semantics:**
+- Returns a SHALLOW COPY of the input project. Does NOT mutate the input.
+- `.quote` is merged with autoFields (paymentTerms, shippingMethod, company, address, contact, phone, email, salesperson, salesEmail, salesPhone, drawingRev, description, projectNumber, taxAreaCode).
+- `.bcSalespersonCode` is set at the top level if resolved from BC project card (line 36068-36069 pattern: `if(spCode && !proj.bcSalespersonCode)` → set it).
+- `.warnings` contains string keys: `"bc-unavailable"` when `bcProjectNumber && needsBcFetch && !_bcToken`. (Phase 2 consumes these.)
+- Does NOT: call `saveProject`, call `setProject`/`projectRef.current`/`onChange`, or touch `aggregated`. Callers own state and persistence.
+
+**Both callers apply the returned copy identically:**
+
+Path A (`handlePrintQuote`):
+```javascript
+const result = await ensureQuoteFieldsPopulated(proj, uid);
+proj = result.project;
+setProject(proj); projectRef.current = proj; onChange(proj);
+await saveProject(uid, proj);  // Fix 2a: awaited
+```
+
+Path B (`handleGeneratePdf` in QuoteView):
+```javascript
+const result = await ensureQuoteFieldsPopulated(project, uid);
+const populated = result.project;
+onUpdate(populated);  // = update(p) → setProject + projectRef + onChange
+await saveProject(uid, populated);  // Fix 2c: awaited
+await generateQuotePdf({...aggregated, quote: populated.quote});
+```
+
+`bcSalespersonCode` propagates correctly in both: Path A sets it directly on `proj`/`projectRef.current`; Path B sets it via `onUpdate(populated)` → `update(p)` → `projectRef.current = p` (unrestricted, no whitelist).
+
+### Revised Phase 1 Size
+
+| Change | Lines |
+|--------|:-----:|
+| Extract `ensureQuoteFieldsPopulated` (function declaration + body moved) | ~165 moved, ~8 wrapper |
+| Path A caller refactor (replace inline with shared call + await save) | ~6 |
+| QuoteTab: add `onGeneratePdf` prop + swap button handler | ~3 |
+| QuoteView: `handleGeneratePdf` function | ~18 |
+| QuoteView: pass `onGeneratePdf` prop | ~1 |
+| Fix 2a: await save in handlePrintQuote | ~4 (try/catch wrap) |
+| Fix 2b: await save in autoPrint effect | ~4 (try/catch wrap) |
+| **Total** | **~44 net-new, ~165 moved** |
+
+Slightly larger than C58's ~25 estimate because the QuoteView handler has more structure (aggregated rebuild, hash on real panels).
+
+### Phase 1 Test Criteria (Amended)
+
+C58's five test criteria still apply. Two additions:
+
+6. **Aggregated shape NOT persisted:** After "Generate PDF" from QuoteView, read the Firestore project doc. Verify it has `panels` (array of panel objects), NOT a flat `bom` array at the project level. This confirms the aggregated shape was only used for PDF, not persisted.
+7. **bcSalespersonCode persists via Path B:** Project with a BC-linked salesperson. Click "Generate PDF." Verify `bcSalespersonCode` appears on the Firestore project doc after the save.
+
+### Verdict
+
+C58 Phase 1 is amended per this finding. Marc implements from C59's wiring. Phase 2 (Fix 3 + Fix 4) is unchanged — C58's Phase 2 section remains valid since it references the shared function's `warnings` return and the pre-print checklist, neither of which are affected by the Path B component boundary.
+
+Marc: implement Phase 1. Coach verifies test criteria before Phase 2.
+
+---
+
+## C60 — #117 Phase 1 Code Review Sign-Off
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Static verification of criteria 3, 6, 7 + quote-number redundancy check. Diff: +218/-165 in src/app.jsx, uncommitted on master.
+
+### Shared Function Contract Verification
+
+`ensureQuoteFieldsPopulated(project, uid)` at line 7601-7771:
+
+| Contract point | Spec (C59) | Implementation | Verdict |
+|---|---|---|---|
+| Non-mutating | Returns shallow copy, never mutates input | `let merged=project;` then conditionally `merged={...project}` at line 7766. Only spreads if autoFields populated or newSalespersonCode set. Input `project` never assigned to. | PASS |
+| bcSalespersonCode | Set on returned copy, not mutated in place | Old inline `proj={...proj,bcSalespersonCode:spCode}` (was line 36374) replaced with `newSalespersonCode=spCode` (line 7717) → merged at line 7767: `merged.bcSalespersonCode=newSalespersonCode`. Mutation is on the spread copy, not the input. | PASS |
+| Quote merge | autoFields merged into .quote on returned copy | Line 7768: `merged.quote={...q,...autoFields}` — only on the spread copy. | PASS |
+| Warnings | Returns `warnings: string[]`, empty in Phase 1 | Line 7602: `const warnings=[];` returned at line 7770. No pushes yet — Phase 2 hook point. | PASS |
+| No state updates | Does not call setProject/projectRef/onChange/saveProject | Grep confirmed: zero calls to setProject, projectRef, onChange, or saveProject inside lines 7601-7771. | PASS |
+
+### Criterion 3: All saves awaited — no fire-and-forget in print paths
+
+| Save site | Location | Awaited? | Error handling | Verdict |
+|---|---|---|---|---|
+| Path A populate save | Line 36166 | `await saveProject(uid,proj)` | try/catch → console.error + arcAlert | PASS |
+| Path A autoPrint save | Line 36022 | `try{await saveProject(uid,upd);}catch(e){...}` | console.error + arcAlert | PASS |
+| Path B pre-render save | Line 35005 | `await saveProject(uid,populated)` | Outer try/catch → console.error + arcAlert | PASS |
+| Path B post-print save | Line 35010 | `await saveProject(uid,printed)` | Same outer try/catch | PASS |
+
+**Note on Path B's two-save pattern:** C59 spec showed one save before PDF + onUpdate after. Marc added a second save after the post-print metadata update (`lastPrintedBomHash`, `lastQuotePrintedAt`, `quoteRevAtPrint`). This mirrors Path A's structure where autoPrint also saves post-print metadata. Correct improvement over C59's spec — post-print metadata should persist, not ride only on the next unrelated save.
+
+### Criterion 6: aggregated used ONLY for PDF — #86 corruption guard
+
+Tracing every reference to `aggregated` inside `handleGeneratePdf` (lines 35000-35015):
+
+| Line | Expression | Object used | Verdict |
+|---|---|---|---|
+| 35002 | `ensureQuoteFieldsPopulated(project,uid)` | `project` (QuoteView prop = real project from line 34754) | REAL |
+| 35004 | `onUpdate(populated)` | `populated` = copy of real project | REAL |
+| 35005 | `saveProject(uid,populated)` | `populated` = copy of real project | REAL |
+| **35006** | `generateQuotePdf({...aggregated,quote:populated.quote})` | `aggregated` with fresh quote spliced in | **AGGREGATED — PDF only** |
+| 35007 | `computeBomHash(populated.panels)` | `populated.panels` = real panels | REAL |
+| 35008-35009 | `{...populated,...metadata}` + `onUpdate(printed)` | `populated` = real project | REAL |
+| 35010 | `saveProject(uid,printed)` | `printed` = real project + metadata | REAL |
+
+`aggregated` appears exactly ONCE: the `generateQuotePdf` call at line 35006. Every `saveProject` and `onUpdate` targets the real project. **The #86 guard holds.** The aggregated shape (with merged `bom`, flattened `pages`, null `laborData`, synthetic `_quoteLabor`) never reaches Firestore.
+
+### Criterion 7: bcSalespersonCode via unrestricted onUpdate
+
+Trace:
+1. `ensureQuoteFieldsPopulated` returns `populated` with `bcSalespersonCode` set (line 7767 on the merged copy). PASS.
+2. `onUpdate(populated)` at line 35004 — QuoteView's `onUpdate` is `update` from ProjectView (line 36896: `<QuoteView ... onUpdate={update}/>`). `update(p)` at line 35782 does `setProject(p);projectRef.current=p;onChange(p)`. Unrestricted — no field whitelist. PASS.
+3. NOT `handleQuoteUpdate` (line 34989-34991), which whitelists `quote/pricing/panels/budgetaryQuote` only and would drop `bcSalespersonCode`. Confirmed: `handleGeneratePdf` uses `onUpdate` directly (which is `update`), not `handleQuoteUpdate`. PASS.
+
+### Quote-Number Save Redundancy Check
+
+Line 36151: `setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);`
+
+This is fire-and-forget. Marc claims it's REDUNDANT because the awaited save at line 36166 persists the same `proj`.
+
+**Verification:**
+1. Line 36150: `proj={...proj,quote:{...(proj.quote||{}),number:qNum}}` — `proj` now has `quote.number`.
+2. Line 36151: fire-and-forget `saveProject(uid,proj)` — saves `proj` including `quote.number`.
+3. Line 36163: `ensureQuoteFieldsPopulated(proj,uid)` receives `proj` (with `quote.number`).
+4. Inside the function: `q=project.quote||{}` picks up `number:qNum`. `autoFields` never touches `number`. Return: `{...project, quote:{...q,...autoFields}}` — `q` still has `number`.
+5. Line 36164: `proj=_pop.project` — still has `quote.number`.
+6. Line 36166: `await saveProject(uid,proj)` — awaited save includes `quote.number`.
+
+**Redundancy confirmed.** The quote number rides through `ensureQuoteFieldsPopulated` untouched (the function only merges `autoFields`, which does not include `number`). The awaited save at line 36166 persists the same project including the number.
+
+**Ruling: LEAVE IT.** The fire-and-forget is harmless — worst case it succeeds redundantly; the awaited save covers it. Awaiting it is scope creep into an already-working path. Agree with Marc's recommendation.
+
+### QuoteTab Button Wiring
+
+| Component | What changed | Verified |
+|---|---|---|
+| `QuoteTab` signature (line 19773) | Added `onGeneratePdf` to destructured props | PASS |
+| Generate PDF button (line 19815) | `onClick={onGeneratePdf}` — pure callback, no inline logic | PASS — button has no `project`, `uid`, or `saveProject` references |
+| `QuoteView` render (line 35047) | `<QuoteTab ... onGeneratePdf={handleGeneratePdf}/>` | PASS — prop wired |
+
+### Inline Block Deletion
+
+The old inline BC auto-populate block (was lines 35956-36117) is fully deleted from `handlePrintQuote`. No orphaned fragments remain. The replacement at lines 36158-36170 is the shared function call + awaited save. All DECISION comments from the old block are preserved in the extracted `ensureQuoteFieldsPopulated` (lines 7612-7617, 7625, 7631, 7656, 7682, 7712). No behavioral logic lost.
+
+### Sign-Off
+
+**Criteria 3, 6, 7: ALL PASS.**
+
+| # | Criterion | Status |
+|---|-----------|--------|
+| 3 | All saves awaited | PASS — four save sites, all awaited with try/catch |
+| 6 | aggregated never persisted | PASS — used exactly once, for generateQuotePdf only |
+| 7 | bcSalespersonCode via unrestricted path | PASS — onUpdate = update, not handleQuoteUpdate |
+| QN | Quote-number save redundancy | CONFIRMED redundant — leave as-is |
+
+**Phase 1 code is cleared for deploy.** Marc deploys → v1.20.115. Live criteria 1/2/4/5 run by Jon post-deploy against a test-copy project first (the #86 safety gate), then real quotes. Phase 2 holds until all 7 criteria are green.
+
+---
+
+## C61 — #117 Root Cause Re-Confirmation: Unreachable QuoteTab + True Intermittent Cause
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Independent verification of Marc's unreachability finding, amended root cause analysis, and Phase 2 reframing. Read-only — no implementation.
+**Amends:** C57 (root cause), C58 Phase 2 framing.
+
+---
+
+### Q1: Is the QuoteTab Editing Surface Unreachable?
+
+**CONFIRMED.** Every path into QuoteView is invisible.
+
+**Evidence:** All 10 `setView("quote")` call sites in ProjectView set `setAutoPrint(true)` immediately before:
+
+| # | Line | Context | autoPrint set? |
+|---|------|---------|:-:|
+| 1 | 36263 | handlePrintQuote — no checklist issues | YES |
+| 2 | 36279 | handlePrintQuote — no bcProjectNumber | YES |
+| 3 | 36284 | handlePrintQuote — no _bcToken, planning sync skip | YES |
+| 4 | 36299 | handlePrintQuote — no planning page found | YES |
+| 5 | 36344 | handlePrintQuote — no drawings to upload | YES |
+| 6 | 36348 | handlePrintQuote — after upload prompt, all uploaded | YES |
+| 7 | 37391 | Checklist modal — "Print Now — Skip All" | YES |
+| 8 | 37440 | Checklist modal — "Proceed" after processing | YES |
+| 9 | 37684 | BC upload prompt — "Upload & Print" | YES |
+| 10 | 37697 | BC upload prompt — "Skip" | YES |
+
+**10/10 paired with `setAutoPrint(true)`.** Zero standalone `setView("quote")` calls.
+
+The render branch at line 36947-36949:
+```jsx
+{view==="quote"?(
+  <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
+    <QuoteView .../>
+```
+
+When `autoPrint=true` (always, per above), QuoteView is rendered in `height:0, overflow:hidden`. The autoPrint useEffect (line 36021-36023) fires after 400ms, generates the PDF, then immediately calls `setAutoPrint(false); setView("panels")` — React batches both state updates into a single re-render (React 18 automatic batching), so the intermediate state `(autoPrint=false, view="quote")` never renders.
+
+**Result:** The Generate PDF button (line 19815), the setQ editor fields, and ALL of QuoteTab's interactive controls are mounted in the DOM but invisible and non-interactive. No user can reach them under any normal interaction. `view` initial state is `"panels"` (line 35303).
+
+**Unreachable controls:**
+- Generate PDF button (line 19815) — now calls `onGeneratePdf` from Phase 1, but is never clickable
+- All `setQ` fields (paymentTerms, shippingMethod, company, contact, address, etc.)
+- Quote terms editor, pricing fields
+- The entire Formal Quote tab
+
+### Q2: Is `_bcToken` Null the Intermittent Cause?
+
+**YES.** On the only reachable print path (`handlePrintQuote`), the BC auto-populate is gated at line 7620 (inside `ensureQuoteFieldsPopulated`, post-Phase 1):
+
+```javascript
+if(project.bcProjectNumber && _bcToken && needsBcFetch){
+```
+
+When `_bcToken` is null:
+1. The entire BC fetch block is skipped (lines 7621-7760)
+2. `autoFields` remains empty for BC-sourced fields
+3. `paymentTerms` and `shippingMethod` stay blank
+4. PDF renders `q.paymentTerms||"---"` at line 6827
+
+`_bcToken` (line 394) is module-scoped, set on BC connect, cleared on BC disconnect or token expiry. BC tokens expire periodically (varies by BC tenant configuration, typically ~1 hour). The "intermittent" pattern matches: print immediately after BC connect → terms populated; print after token expires → terms blank. From the user's perspective, this appears random because token expiry is invisible.
+
+### Q3: Is `needsBcFetch` a Second Candidate?
+
+**NO.** The gate is:
+```javascript
+const needsBcFetch = !q.company || !q.address || !q.salesperson || spLooksLikeCode || !q.paymentTerms || !q.shippingMethod;
+```
+
+This is an OR condition. If `paymentTerms` is blank, `needsBcFetch` is `true` regardless of other fields. The gate correctly triggers when terms are missing — it cannot cause a false skip.
+
+The only way `needsBcFetch` could mask a problem: if ALL fields (company, address, salesperson, paymentTerms, shippingMethod) are populated from a prior fetch, the gate returns `false` and the fetch is skipped. But that's correct behavior — terms are already present.
+
+### Q4: Phase 2 Reframing
+
+**YES — Fix 3 is now the PRIMARY fix for #117's user-facing symptom, not a backstop.**
+
+C57/C58 framed Fix 3 as a defensive layer — "make token-null loud" as a nice-to-have after fixing the A/B divergence. With Path B (QuoteTab's Generate PDF) confirmed unreachable, the root cause analysis inverts:
+
+| C57 root cause | Status after unreachability finding |
+|---|---|
+| A/B path divergence | IRRELEVANT — Path B is unreachable |
+| setQ edits lost (RAM-only) | IRRELEVANT — setQ editor is unreachable |
+| `_bcToken` null silent skip | **PRIMARY** — the only cause of user-visible "---" |
+| Fire-and-forget save | Addressed by Phase 1 (awaited saves), but was not the intermittent trigger |
+
+**Phase 2 should be reframed:**
+- **Fix 3 (loud on token null) is the lead fix.** This is what the user needs: when BC is unavailable and terms can't be populated, the pre-print checklist surfaces it. The user either reconnects or enters terms manually. The "intermittent ---" becomes impossible.
+- **Fix 4 (renderer backstop) is defense-in-depth.** Catches the case where BC is connected but BC itself has no terms configured, or a new edge we haven't identified.
+
+### NEW FINDING: Path C — QuoteSendModal (Reachable, No Populate)
+
+While verifying unreachability, I traced a **third PDF-building path** not covered in C57:
+
+**`QuoteSendModal.handleSend`** (line 31800 in `QuoteSendModal` component, line 31677):
+```javascript
+await buildQuotePdfDoc(pdfDoc, project);
+```
+
+This builds and emails the quote PDF directly from the `project` prop — **no `handlePrintQuote`, no `ensureQuoteFieldsPopulated`.**
+
+**Reachability:** The "Send Quote" button (line 34540 in PanelListView) opens `QuoteSendModal` directly via `setQuoteSendModalPLV({...})` (line 34580). The user clicks "Send" (not "Just Print") → `handleSend` builds the PDF → emails it. This path is fully reachable.
+
+**Impact:** If paymentTerms/shippingMethod were never populated by a prior `handlePrintQuote` run, the SENT PDF shows "---". The user may not notice because the emailed PDF isn't previewed — they'd only discover it when the customer responds.
+
+**Contrast with the unreachable Path B:** QuoteSendModal is NOT inside QuoteView. It's a separate component rendered in PanelListView (line 34698: `{quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid}.../>}`). It has `project` (real, not aggregated) and `uid`. It CAN call `ensureQuoteFieldsPopulated`.
+
+**Treatment for Phase 2:** `QuoteSendModal.handleSend` should call `ensureQuoteFieldsPopulated(project, uid)` before `buildQuotePdfDoc`. The populated project should be saved via `persistProject(upd)` (line 31678: `function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}`). This is ~5 lines. Add it to Phase 2 scope.
+
+### ALSO FOUND: Dead Code in ProjectView
+
+**`quoteSendModal` (ProjectView, line 35309):** Declared as state, rendered at line 37054 (`{quoteSendModal&&ReactDOM.createPortal(...)}`), but **never set to a non-null value**. All `setQuoteSendModal` calls are either `null` (close) or `prev=>({...prev,...})` (field update within an already-open modal that can never be opened). The entire inline send modal (lines 37054-37135) and its handler `_doInlineQuoteSend` (line 37081) are **dead code**.
+
+This is a separate cleanup item — not #117 scope. Log as a TODO candidate.
+
+### Summary
+
+| Finding | Status |
+|---|---|
+| QuoteTab unreachable (Generate PDF + setQ editor) | CONFIRMED — 10/10 paths pair with autoPrint, height:0 wrap |
+| `_bcToken` null = primary intermittent cause | CONFIRMED — only cause on the reachable print path |
+| `needsBcFetch` gate = second candidate | RULED OUT — OR condition correctly triggers on blank terms |
+| Fix 3 = primary fix (not backstop) | CONFIRMED — Phase 2 reframing needed |
+| Path C (QuoteSendModal.handleSend) = third PDF path, reachable, no populate | NEW FINDING — add to Phase 2 scope |
+| ProjectView inline send modal = dead code | NEW FINDING — cleanup candidate |
+| Phase 1 architectural value | RETAINED — fixes code correctness for if QuoteView is ever made visible |
+| Criterion 6 caveat (single-panel only verified) | LOGGED — multi-panel test optional follow-up |
+
+### Amended Phase 2 Scope
+
+Phase 2 should now include:
+1. **Fix 3 (LEAD):** Pre-print checklist entry for BC token null + equivalent arcConfirm in Path B (if ever made reachable) and Path C (QuoteSendModal).
+2. **Fix 3c (NEW):** `ensureQuoteFieldsPopulated` call in `QuoteSendModal.handleSend` before `buildQuotePdfDoc`. Path C is reachable and has the same #117 bug class.
+3. **Fix 4 (SUPPORT):** Blank-field renderer backstop in pre-print checklist.
+
+Estimated size increase: ~5 lines for Fix 3c. Total Phase 2: ~35-40 lines (was ~30).
+
+---
+
+## C65 — #117 Closure + Queue Landing + T-bcTokenRefresh Confirmation
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Type:** Housekeeping + read-only confirmation
+
+---
+
+### Part 1: #117 RESOLVED in TODO.md
+
+Marked #117 `**RESOLVED** [Verified]` with full closure basis:
+- Phase 1 (v1.20.115): populate unified, saves awaited, #86 guard verified.
+- Phase 2 (v1.20.116, +51/-2): Fix 3 (warnings), Fix 3c (Path C), Fix 4 (severity split), Finding 1 ({...populated}), Finding 2 (option b).
+- Live: test-1 no-regression confirmed, terms populate on real quote data.
+- Logic-confirmed: failure-mode cases per C62/C64 matrix. Live fixture testing retired by decision.
+- Note: full warning/block plumbing live-confirmation deferred to ARC Usage Telemetry (#129).
+
+Investigation trail logged: C46 → C57 → C58 → C59 → C60 → C61 → C62 → C64.
+
+---
+
+### Part 2: Queue Landed in TODO.md
+
+| # | Item | Priority | Status |
+|---|------|----------|--------|
+| 125 | T-bcTokenRefresh — proactive `acquireBcToken(false)` in `ensureQuoteFieldsPopulated` | HIGH, NEXT | [Next] — see Part 3 below |
+| 126 | BC Item Browser BOM preview regression (lead: H5 render-pipeline change) | Backlog | [Backlog] |
+| 127 | Redundant progress bar above first Line Item during extraction | Backlog | [Backlog] |
+| 128 | H5-powered visual PN verification in Item Browser (builds on #126) | Backlog, needs Brief | [Backlog, needs Brief] |
+| 129 | ARC Usage Telemetry (3 events → arcUsage collection → report modal) | Tabled, needs Brief | [Tabled, needs Brief] — after #128 |
+| 130 | Dead code cleanup (~80 lines: quoteSendModal, inline send, dead QuoteTab) | LOW | [Backlog, LOW] |
+| 131 | Criterion-6 multi-panel hardening | Optional | [Backlog, optional] |
+| 132 | Engineering Questions suppression (render-gate, C63 intent) | Deferred | [Deferred] — when Jon schedules |
+
+**Earlier carve-outs confirmed captured:**
+- Dead code cleanup → #130 (was C62 carve-out #2)
+- Criterion-6 multi-panel → #131
+- Engineering Questions → #132 (was C63)
+- Path B warning check (C62 carve-out #3) — NOT given a number (only relevant if QuoteView resurrected; logged in C62 carve-outs, not a standalone TODO)
+
+---
+
+### Part 3: T-bcTokenRefresh Read-Only Confirmation
+
+**Proposed fix (Coach C62 / C64, Marc-surfaced):**
+```javascript
+// Atop ensureQuoteFieldsPopulated, before line 7602 (const warnings=[]):
+if(!_bcToken) try { await acquireBcToken(false); } catch(e) {}
+```
+
+**Confirmation Point 1 — Silent / non-interactive: CONFIRMED.**
+
+`acquireBcToken` (line 1631) takes `interactive=true` as default. With `false`:
+- Line 1636-1648: `acquireTokenSilent` — uses MSAL in-memory + sessionStorage cache. If access token is expired but refresh token is valid, MSAL silently exchanges the refresh token for a new access token. **No user prompt.** No popup. No redirect.
+- Line 1651-1661: `ssoSilent` — uses the browser's Microsoft session cookie. **No user prompt.** Hidden iframe token exchange.
+- Line 1662: `if(!interactive) return null;` — **exits before popup.** The `acquireTokenPopup` path (line 1663) is never reached.
+- Both silent paths are fast no-ops when cache is empty (throw immediately, caught internally).
+
+**Confirmation Point 2 — Covers both reachable paths: CONFIRMED.**
+
+`ensureQuoteFieldsPopulated` is called by:
+- `handlePrintQuote` at line 36196 (Path A — print, reachable)
+- `QuoteSendModal.handleSend` at line 31807 (Path C — send, reachable)
+- `handleGeneratePdf` at line 35034 (Path B — unreachable, covered anyway)
+
+One insertion point → all paths covered.
+
+**Confirmation Point 3 — No added latency when token is valid: CONFIRMED.**
+
+The guard is `if(!_bcToken)`. When `_bcToken` is already set (non-null — token acquired earlier in the session), the entire block is skipped. Zero MSAL calls, zero network calls, zero latency. It's a single null check.
+
+When `_bcToken` IS null (the ~hourly case): `acquireTokenSilent` with a valid refresh token completes in one HTTP round-trip to Azure AD (~100-300ms). `ssoSilent` is a hidden iframe (~200-500ms). Both are comparable to the BC OData fetch that follows — not perceptible to the user.
+
+**Confirmation Point 4 — Empty catch doesn't mask real failures: CONFIRMED.**
+
+Trace through a genuinely failed refresh (no refresh token, no session cookie, network down):
+
+1. `acquireTokenSilent` throws (no accounts, or refresh token expired) → caught at line 1649, falls through.
+2. `ssoSilent` throws (no session cookie, or interaction_required) → caught at line 1661, falls through.
+3. Line 1662: `if(!interactive) return null;` → function returns `null`.
+4. `_bcToken` was **never set** (lines 1640/1654 only execute on success). `_bcToken` remains `null`.
+5. The outer `catch(e){}` in the proposed fix is defensive (catches unexpected throws, e.g. `ensureMsal()` failing). In the normal failure path, `acquireBcToken(false)` returns `null` without throwing.
+6. Post-fix, code continues to line 7620: `if(project.bcProjectNumber && _bcToken && needsBcFetch)` — `_bcToken` is null → **BC fetch skipped.**
+7. Line 7772: `if(project.bcProjectNumber && needsBcFetch && !_bcToken)` → **`bc-unavailable` warning pushed.**
+8. Phase 2 loud-handling fires: print shows "BC Not Connected" checklist entry, send hard-blocks.
+
+**The empty catch suppresses the NUISANCE (expired-but-refreshable token, ~90% of cases) without swallowing a REAL failure (genuinely unavailable BC, ~10% — Phase 2 warning still fires).**
+
+---
+
+### Marc's Build Scope
+
+- **One line** inserted atop `ensureQuoteFieldsPopulated` (before line 7602).
+- **Verify:** Force an expired-token state (wait >60 min or clear sessionStorage `msal.*` keys) → populate now succeeds silently (token refreshed, no warning). Force a genuinely failed refresh (clear ALL MSAL cache including refresh tokens) → Phase 2 warning still fires.
+
+---
+
+## C64 — #117 Phase 2 Static Verification + Test Amendment
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Build:** Marc, +51/-2 in src/app.jsx, JSX validates, scope-checker clean.
+**Scope:** Static verification of Finding 1 + Finding 2 ruling applied + test criteria amended.
+
+---
+
+### Finding 1: Post-Send Lock-Save Spread — CONFIRMED CORRECT
+
+**Location:** `QuoteSendModal.handleSend`, line 31886
+
+**Before (stale):** `const upd={...project, quoteSentAt:..., quoteLocked:true}`
+**After (Marc's fix):** `const upd={...populated, quoteSentAt:..., quoteLocked:true}`
+
+**Why this matters:** Fix 3c runs `ensureQuoteFieldsPopulated` at line 31807 and stores the result as `populated`. The BC-fetched terms (paymentTerms, shippingMethod, bcSalespersonCode) live on `populated`, not on the stale closure `project`. The post-send lock-save at line 31886 writes to Firestore — if it spread `project`, it would clobber the just-populated terms back to blank. One token change, strictly correct: the saved project must match what was sent in the PDF (which uses `populated` at line 31830).
+
+**Marc's comment (lines 31884-31885) is accurate:** documents exactly what changed and why.
+
+**Neutral on budgetary-flip closure staleness:** Other reads of the stale `project` closure remain in `handleSend` — `project.quote` at line 31860 (filename construction), `project.bcProjectNumber` at line 31876 (BC sync gate), `project.panels` at line 31877 (planning line sync). These are pre-existing closure patterns unrelated to #117. The budgetary-flip race (user changes budgetary status after modal opens, before send) is a known category — not introduced by this change, not made worse by it, not in scope.
+
+**Criterion 10 (Path C persist check): now passes.** The Firestore write at line 31886-31888 persists `populated` (with BC-populated terms), not the stale closure.
+
+---
+
+### Finding 2: Jon's Ruling — Option (b) Applied, No Code Change
+
+**Ruling:** The send path hard-blocks only when required terms are **MISSING** (Fix 3b `missing-required-terms`), NOT when BC is merely offline with terms present-and-correct.
+
+**Why the code is already correct:** The `bc-unavailable` warning (Fix 3a, line 7772) fires only when `needsBcFetch` is true AND `_bcToken` is null. `needsBcFetch` (line 7619) evaluates:
+
+```
+!q.company || !q.address || !q.salesperson || spLooksLikeCode || !q.paymentTerms || !q.shippingMethod
+```
+
+When a quote is fully populated (company, address, salesperson, paymentTerms, shippingMethod all present), `needsBcFetch` evaluates **false**. Result:
+- Line 7620: BC fetch skipped — nothing to populate.
+- Line 7772: `bc-unavailable` NOT pushed — `needsBcFetch` is false.
+- Line 7778: `missing-required-terms` NOT pushed — terms present.
+- Warnings array: **empty.**
+- Send gate (line 31811): `0 > 0` false, terms present → **send proceeds.**
+
+The `_pop.warnings.length > 0` condition in the send gate (line 31811) is NOT a bug — it correctly catches the case where BC is needed (some fields blank) but unavailable. A quote with blank company/address and BC offline is a genuinely incomplete quote that should not be emailed. The gate fires on incompleteness, not on BC connectivity per se.
+
+**Rationale (Jon):** #117's concern is silently shipping BLANK terms, not BC connectivity. Given ~hourly token expiry (TTL finding), blocking fully-populated sends for BC-offline would block legitimate complete quotes constantly for negligible benefit. Staleness is handled by T-bcTokenRefresh, not by blocking.
+
+---
+
+### Test Criteria Amendment (Tests 3 and 9)
+
+**Test 3 — AMENDED:**
+
+| # | Test | Expected (AMENDED) |
+|---|------|----------|
+| 3 | **Print, BC disconnected, quote fully populated:** Disconnect BC. paymentTerms, shippingMethod, company, address, salesperson all present (from prior BC populate or manual entry). Click "Print Client Quote." | `needsBcFetch` evaluates false — no `bc-unavailable` warning, no `missing-required-terms` warning. **No new checklist entries.** Print proceeds as normal. If only paymentTerms/shippingMethod are present but other quote fields (company/address) are blank, `needsBcFetch` is true → "BC Not Connected" checklist entry appears (unchecked, informational), but **no "Missing Quote Fields" entry.** User acknowledges and proceeds. |
+
+**Test 9 — AMENDED:**
+
+| # | Test | Expected (AMENDED) |
+|---|------|----------|
+| 9 | **Send, BC disconnected, quote fully populated:** Disconnect BC. paymentTerms, shippingMethod, company, address, salesperson all present. Click "Send." | `needsBcFetch` evaluates false — no warnings. **Send proceeds.** No block, no arcAlert. If only terms are present but other quote fields blank (needsBcFetch true), `bc-unavailable` fires and send blocks — but that's a genuinely incomplete quote, not the #117 scenario. |
+
+**All other tests (1, 2, 4-8, 10) remain unchanged.**
+
+---
+
+### T-bcTokenRefresh Exact Fix — CONFIRMED CAPTURED
+
+Marc surfaced the exact fix line, confirming the C62 carve-out and TTL finding:
+
+```javascript
+// At the top of ensureQuoteFieldsPopulated, before the needsBcFetch gate (line 7619):
+if(!_bcToken) try { await acquireBcToken(false); } catch(e) {}
+```
+
+- **Pattern match:** Identical to `verifyBcLineCount` (line 36278) and `bcFetchCompanyInfo` (line 4284). Established pattern in the codebase — not novel.
+- **Effect:** MSAL `acquireTokenSilent` uses the cached refresh token (90-day lifetime, sessionStorage) to silently get a new access token. Eliminates ~90% of `bc-unavailable` warnings (per TTL finding: token expires ~60-75 min, refresh token covers silent renewal).
+- **Priority:** HIGH → **IMMEDIATE** (Freddy's recommendation). Phase 2 loud-handling + this refresh together are the real fix. Without it, the Fix 3 warning fires ~hourly for long-session users.
+- **Size:** ~1 line. Small fix — no auth-flow rewrite needed.
+- **Sequence:** Ships as the next commit after Phase 2 deploys and live-verifies.
+
+---
+
+### Static Verification Summary
+
+| Check | Result |
+|-------|--------|
+| Fix 3a: `bc-unavailable` warning push (line 7773) | PASS — fires on `bcProjectNumber && needsBcFetch && !_bcToken` |
+| Fix 3b: `missing-required-terms` warning push (line 7779) | PASS — fires on blank paymentTerms or shippingMethod on final output |
+| Fix 3c: QuoteSendModal populate + persist + hard-block (lines 31803-31821) | PASS — populate before setSending, persist if changed, block on warnings or blank terms |
+| Fix 3c post-send spread: `{...populated,...}` (line 31886) | PASS — Finding 1 confirmed |
+| Fix 3c PDF uses `populated` (line 31830) | PASS — `buildQuotePdfDoc(pdfDoc, populated)` |
+| Fix 4 print: `_populateWarnings` lifted (line 36194) | PASS — visible at checklist construction |
+| Fix 4 print: `bc-unavailable` checklist entry (line 36296) | PASS — unchecked, informational |
+| Fix 4 print: `missing-required-terms` checklist entry (line 36304) | PASS — unchecked, shows which fields |
+| Fix 4 icons: bctoken + blankfields (lines 37427-37428) | PASS — renders in checklist modal |
+| Finding 2 gate behavior: fully-populated quote + BC offline | PASS — `needsBcFetch` false → no warnings → proceeds |
+
+**Build is verification-complete on the static side. Ready for deploy + live-verify.**
+
+---
+
+## C62 — #117 Phase 2 Detailed Plan (Rescoped per C61)
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Scope:** Detailed implementation plan for Marc. Loud-handling as the primary fix. Coach verifies before deploy.
+**Builds on:** C61 (root cause re-confirmation), C59/C60 (Phase 1 shipped as v1.20.115)
+**Principle:** Both reachable quote paths (print + send) populate via the shared function. No path emits blank Payment Terms / Shipping Method without the user being warned (print) or blocked (send). The `{project, warnings}` channel from Phase 1 is the signal carrier.
+
+---
+
+### Feasibility Verification
+
+**Warnings channel from Phase 1:** `ensureQuoteFieldsPopulated` returns `{project, warnings}` (line 7770). `warnings` is currently an empty array (Phase 1 hook point). Phase 2 pushes warnings into it. Both callers already destructure the return — `handlePrintQuote` at line 36163 (`_pop.warnings`) and `handleGeneratePdf` at line 35002. Adding pushes inside the function and reads at the callers is clean. No new plumbing.
+
+**QuoteSendModal scope for Fix 3c:** `QuoteSendModal({project, uid, ...})` at line 31677 has `project` (real, from PanelListView), `uid`, and `persistProject` (line 31678: `onUpdate(upd); return safeSave(uid, upd)`). `ensureQuoteFieldsPopulated` is module-scoped. All pieces available — no prop threading needed.
+
+**Checklist insertion for Fix 4:** The pre-print checklist construction (lines 36197-36264) builds an `issues` array with typed entries. Adding new entries follows the existing pattern. The `_pop.warnings` variable from the populate call (line 36163) is block-scoped inside a try/catch (lines 36162-36170); it needs to be lifted out so it's visible at the checklist construction (line ~36200). One `let` declaration.
+
+---
+
+### Fix 3: Warning Signals Inside `ensureQuoteFieldsPopulated`
+
+**Location:** `ensureQuoteFieldsPopulated` (lines 7601-7771)
+
+Two independent warning pushes, both at the end of the function before the return (insert between line 7769 and line 7770):
+
+**3a — BC unavailable (token null when terms needed):**
+```javascript
+if(project.bcProjectNumber && needsBcFetch && !_bcToken){
+  warnings.push("bc-unavailable");
+}
+```
+Fires when: the project is BC-linked, terms are needed, but `_bcToken` is null (line 394, cleared on disconnect/401). Does NOT fire when terms are already populated (needsBcFetch false) or when no BC project is linked.
+
+**3b — Required terms still blank after populate:**
+```javascript
+const finalQ = merged.quote || {};
+if(!finalQ.paymentTerms || !finalQ.shippingMethod){
+  warnings.push("missing-required-terms");
+}
+```
+Fires when: either field is blank on the final output, regardless of cause. Catches:
+- Token null → BC block skipped → terms blank
+- Token set but expired → BC returns 401 → `pr.ok` false → data not processed → terms blank
+- BC fetch succeeded but project card has no terms configured → terms blank
+- No BC project linked AND user never manually entered terms → terms blank
+
+The two warnings are independent and complementary:
+- `bc-unavailable` alone (no `missing-required-terms`): BC offline, but terms were manually entered. Print path: informational. Send path: blocks (BC fields might be stale).
+- `missing-required-terms` alone (no `bc-unavailable`): BC connected but card has no terms. Both paths: gate the user.
+- Both together: BC offline AND terms blank. Most actionable message.
+- Neither: terms populated, BC available (or unnecessary). No gate.
+
+**Change: +6 lines at line ~7769.**
+
+---
+
+### Fix 3c: Path C — QuoteSendModal Populate + Hard-Block
+
+**Location:** `QuoteSendModal.handleSend` (line 31737)
+
+Insert after email validation (line 31791) and before `setSending(true)` (line 31792):
+
+```javascript
+// #117 Fix 3c: Populate quote fields via shared gate before building PDF
+const _pop = await ensureQuoteFieldsPopulated(project, uid);
+const populated = _pop.project;
+if(populated !== project) await persistProject(populated);
+// #117 Fix 4 (send): Hard-block on blank required terms or BC unavailable
+const _sq = populated.quote || {};
+if(_pop.warnings.length > 0 || !_sq.paymentTerms || !_sq.shippingMethod){
+  const missing = [];
+  if(!_sq.paymentTerms) missing.push("Payment Terms");
+  if(!_sq.shippingMethod) missing.push("Shipping Method");
+  let msg = _pop.warnings.includes("bc-unavailable")
+    ? "BC is not connected — quote fields could not be auto-populated from the project card.\n\n" : "";
+  if(missing.length) msg += `Missing required fields: ${missing.join(", ")}. The sent quote would show "---".\n\n`;
+  msg += "Connect to BC or enter the fields manually before sending.";
+  arcAlert(msg);
+  return;
+}
+```
+
+**Key design points:**
+- Populate runs BEFORE `setSending(true)` — user sees no spinner while the BC fetch runs (matches existing modal UX: validation happens before commit).
+- `persistProject(populated)` uses QuoteSendModal's existing helper (line 31678): `onUpdate(upd); return safeSave(uid, upd)`. Persists the REAL project, not aggregated (QuoteSendModal receives the real project from PanelListView, confirmed C61).
+- `populated !== project` reference check: if nothing changed (no autoFields, no bcSalespersonCode), the function returns the input object (line 7764: `let merged=project` when no changes). Skip the save. If anything was merged, `merged={...project}` is a new object → save fires.
+- Hard-block: `return` after `arcAlert`. No override. Jon's instruction: "This path emails a CUSTOMER directly with no human glance — silently sending blank terms is the worst-case outcome."
+- The block gates on `_pop.warnings.length > 0` (ANY warning, including `bc-unavailable` even if terms are present) OR blank required terms. This is stricter than print — by design per Jon's severity split.
+
+**Also update `buildQuotePdfDoc` call at line 31800:**
+```javascript
+// Before (uses original project):
+await buildQuotePdfDoc(pdfDoc, project);
+// After (uses populated project):
+await buildQuotePdfDoc(pdfDoc, populated);
+```
+
+**Change: +13 lines, 1 line modified.**
+
+---
+
+### Fix 4: Print Path — Pre-Print Checklist Entries
+
+**Location:** `handlePrintQuote` in ProjectView
+
+**Step 1: Lift `_pop.warnings` out of the try block.**
+
+The populate call at line 36162-36170 scopes `_pop` inside the try block. The checklist at line 36200+ needs the warnings. Change:
+
+```javascript
+// Before (line 36162):
+try{
+  const _pop=await ensureQuoteFieldsPopulated(proj,uid);
+  proj=_pop.project;
+  ...
+
+// After:
+let _populateWarnings=[];
+try{
+  const _pop=await ensureQuoteFieldsPopulated(proj,uid);
+  proj=_pop.project;
+  _populateWarnings=_pop.warnings;
+  ...
+```
+
+**+1 line (the `let` declaration), 1 line modified (assign inside try).**
+
+**Step 2: Add checklist entries after "Upload drawings to BC" (line 36258).**
+
+Insert after line 36259 (the upload check's closing brace), before the "If no issues" check at line 36261:
+
+```javascript
+// #117 Fix 4: BC unavailable warning
+if(_populateWarnings.includes("bc-unavailable")){
+  issues.push({
+    type:"bctoken",
+    label:"BC Not Connected",
+    detail:"Payment Terms / Shipping Method not auto-populated — connect to BC or enter manually",
+    checked:false,
+  });
+}
+
+// #117 Fix 4: Missing required quote fields
+const _qCheck=projectRef.current.quote||{};
+const _missingFields=[];
+if(!_qCheck.paymentTerms)_missingFields.push("Payment Terms");
+if(!_qCheck.shippingMethod)_missingFields.push("Shipping Method");
+if(_missingFields.length>0){
+  issues.push({
+    type:"blankfields",
+    label:"Missing Quote Fields",
+    detail:_missingFields.join(", ")+" — enter manually before printing",
+    checked:false,
+  });
+}
+```
+
+**Key design points:**
+- `checked: false` — user must explicitly check to acknowledge. This matches Jon's instruction: "unchecked-by-default entry... user sees 'terms not populated,' acknowledges, may proceed."
+- Existing "Print Now — Skip All" button (line 37391) bypasses ALL checklist entries — the user can override even unchecked items. This is acceptable per Jon's PRINT severity: "A human sees the PDF before it leaves."
+- Both entries can appear simultaneously (BC unavailable AND terms blank). The user sees both, understands the cause and the effect.
+- Uses `projectRef.current.quote` (line 36215 pattern: reads current ref, not the closure `proj`). This is the POST-populate state since `proj` was already updated at line 36164-36165 (`setProject(proj); projectRef.current=proj`).
+
+**+14 lines.**
+
+**Step 3: Checklist rendering — add icons for new types.**
+
+The checklist modal renders type-specific icons (line 37322-37327). Add the new types to the existing pattern:
+
+```javascript
+// After the existing {issue.type==="upload"&&...} block (line 37326):
+{issue.type==="bctoken"&&<span style={{fontSize:16,flexShrink:0}}>🔌</span>}
+{issue.type==="blankfields"&&<span style={{fontSize:16,flexShrink:0}}>📋</span>}
+```
+
+**+2 lines.**
+
+---
+
+### Coverage Check: All `buildQuotePdfDoc` Call Sites
+
+| Line | Path | Protected by | Reachable? |
+|------|------|-------------|:----------:|
+| 7567 | `generateQuotePdf` → called by handlePrintQuote (Path A autoPrint) | Phase 1: `ensureQuoteFieldsPopulated` before call; Phase 2: checklist gate | YES |
+| 7567 | `generateQuotePdf` → called by `handleGeneratePdf` (Path B, QuoteView) | Phase 1: `ensureQuoteFieldsPopulated`; warning check not added (dead UI) | NO |
+| 31800 | `QuoteSendModal.handleSend` (Path C) | **Phase 2 Fix 3c:** populate + hard-block before call | YES |
+| 37101 | `_doInlineQuoteSend` (ProjectView inline send) | **Dead code** (C61: `quoteSendModal` never set to non-null) | NO |
+
+**All reachable paths are gated.** No path reaches `buildQuotePdfDoc` with blank terms without having passed either a warn (print) or block (send) gate.
+
+Path B (QuoteView `handleGeneratePdf`): warnings are returned but unchecked. If QuoteView is ever made visible, add an arcConfirm check (~3 lines). NOT Phase 2 scope — log as defense-in-depth for when the dead UI is resurrected.
+
+---
+
+### TTL Finding (Read-Only)
+
+**BC Token Lifecycle:**
+
+| Component | Lifetime | Source |
+|-----------|----------|--------|
+| Azure AD access token (`_bcToken`) | **60-75 minutes** (randomized per Azure AD default, not configurable by ARC) | Microsoft identity platform docs |
+| MSAL refresh token | **90 days** (default), stored in `sessionStorage` (line 1597) — lost on tab close | MSAL configuration |
+| Microsoft browser session cookie | **24 hours to weeks** (org policy dependent) | Azure AD tenant config |
+
+**Token acquisition flow** (`acquireBcToken`, line 1631):
+1. `acquireTokenSilent` — uses MSAL cache (sessionStorage). If access token expired but refresh token valid, silently gets a new access token. **This is the implicit refresh.**
+2. `ssoSilent` — uses browser session cookies. Works if Microsoft session is active.
+3. `acquireTokenPopup` (interactive only) — popup login. Requires user action.
+
+**The gap:** `ensureQuoteFieldsPopulated` (line 7620) checks `_bcToken` as a boolean gate but does NOT call `acquireBcToken(false)` to attempt a silent refresh. Many other BC call sites in the codebase DO:
+- `verifyBcLineCount` (line 36278): `if(!_bcToken) try{await acquireBcToken(false);}catch(e){}`
+- `bcFetchCompanyInfo` (line 4284): same pattern
+- Various pricing/sync paths: same pattern
+
+This means: if a user's last BC activity was >60 min ago, `_bcToken` holds an expired JWT. `ensureQuoteFieldsPopulated` uses it, gets a 401 from BC, silently fails. If `acquireBcToken(false)` were called first, MSAL would likely use the refresh token to silently get a fresh access token — the fix would be invisible to the user.
+
+**Priority recommendation for the carve-out:**
+- **HIGH.** Token expiry is ~hourly. Without proactive refresh in `ensureQuoteFieldsPopulated`, users who leave ARC open will hit the Fix 3 warning frequently — approximately every session where they don't happen to do a BC operation within the last hour before printing.
+- A single line addition — `if(!_bcToken) try{await acquireBcToken(false);}catch(e){}` at the top of `ensureQuoteFieldsPopulated` — would eliminate ~90% of warning occurrences (the remaining ~10% are true BC unavailability: no refresh token, network down, etc.).
+- This is the recommended immediate follow-up after Phase 2 ships.
+
+**Log as:** T-series TODO: "Add proactive `acquireBcToken(false)` call at the top of `ensureQuoteFieldsPopulated` to silently refresh expired BC tokens before the populate gate. HIGH priority — without it, the Fix 3 warning fires ~hourly for users with long sessions."
+
+---
+
+### Size Estimate
+
+| Fix | Description | Lines |
+|-----|-------------|:-----:|
+| Fix 3a | `bc-unavailable` warning push in shared function | +3 |
+| Fix 3b | `missing-required-terms` warning push in shared function | +3 |
+| Fix 3c | QuoteSendModal populate + persist + hard-block | +13, ~1 modified |
+| Fix 4 print | Lift warnings + 2 checklist entries | +15, ~1 modified |
+| Fix 4 icons | Checklist modal rendering for new types | +2 |
+| **Total** | | **~36 net-new, ~2 modified** |
+
+Within the ~35-40 estimate from C61.
+
+### Suggested Phasing
+
+**Single phase.** Unlike Phase 1 (which had the architectural extraction risk), Phase 2 is all additive — warning pushes in the shared function, reads at call sites. No structural refactoring, no component boundary changes. Ship as one commit.
+
+### Test Criteria
+
+| # | Test | Expected |
+|---|------|----------|
+| 1 | **Print, BC connected, terms populated:** "Print Client Quote" on a project with BC terms configured. | No new checklist entries. Print proceeds as before. |
+| 2 | **Print, BC disconnected (token null), terms blank:** Disconnect BC, click "Print Client Quote" on a project with no manually-entered terms. | Checklist shows "BC Not Connected" (unchecked) AND "Missing Quote Fields: Payment Terms, Shipping Method" (unchecked). |
+| 3 | **Print, BC disconnected, terms manually entered:** Disconnect BC, but paymentTerms/shippingMethod were populated by a prior print or manual entry. | Checklist shows "BC Not Connected" only (informational). No "Missing Quote Fields." User proceeds with existing terms. |
+| 4 | **Print, BC connected, BC card has no terms:** BC connected but project card has empty payment/shipping fields. | Checklist shows "Missing Quote Fields" only. No "BC Not Connected" (token was available, fetch ran, BC just didn't have terms). |
+| 5 | **Print, override via "Print Now — Skip All":** Same setup as #2. Click "Print Now — Skip All." | Print proceeds despite unchecked warnings. PDF shows "---". Accepted outcome — user explicitly overrode. |
+| 6 | **Send, BC disconnected, terms blank:** Disconnect BC. Open Send Quote modal, fill email, click "Send." | arcAlert blocks the send: "BC is not connected... Missing required fields: Payment Terms, Shipping Method..." Return to modal. Email NOT sent. |
+| 7 | **Send, BC connected, terms populated:** Normal send flow with terms present. | No block. Send proceeds as before. |
+| 8 | **Send, BC connected, BC card has no terms:** BC connected but terms empty. Click "Send." | arcAlert blocks: "Missing required fields: Payment Terms, Shipping Method..." Email NOT sent. |
+| 9 | **Send, BC disconnected, terms manually present:** Terms entered manually, BC offline. Click "Send." | arcAlert blocks: "BC is not connected..." Hard-block even with terms present — send severity is stricter per Jon's split. |
+| 10 | **Path C persist check:** After Fix 3c populate in QuoteSendModal, verify Firestore has the populated terms. | Terms persisted on the real project doc (not flattened, not missing). |
+
+### Carve-Outs (NOT Phase 2 — log only)
+
+1. **T-bcTokenRefresh — IMMEDIATE (after Phase 2 ships).** Add proactive `acquireBcToken(false)` at the top of `ensureQuoteFieldsPopulated` to silently refresh expired BC tokens before the populate gate. HIGH priority per TTL finding: Azure AD access tokens expire ~60-75 min; without this call, the Phase 2 loud-handling warning fires ~hourly for users with long sessions. Loud-handling + refresh together are the real fix at this expiry rate. Scoping question when activated: does adding `acquireBcToken(false)` before declaring the token null constitute a small fix (single line, matching the pattern already used by `verifyBcLineCount` at line 36278, `bcFetchCompanyInfo` at line 4284, and other BC call sites), or does it require a deeper auth-flow rewrite? Likely small — confirm. ~1 line.
+2. **Dead code cleanup — LOW.** `quoteSendModal` state (line 35309) + inline send modal handler `_doInlineQuoteSend` (lines 37054-37135) in ProjectView — never opened (C61 finding: `quoteSendModal` state is declared but never set to non-null). Also: unreachable QuoteTab interactive surface (dead branch behind autoPrint height:0 wrap). Candidate removal ~80 lines.
+3. **Path B warning check — LOW (gated on QuoteView resurrection).** If QuoteView is ever made visible (autoPrint decoupled from setView("quote")), add arcConfirm for `_pop.warnings` in `handleGeneratePdf` (line 35002). ~3 lines. Not relevant until that UI is resurrected.
+
+---
+
+## C63 — Deferred TODO: Post-Extraction Engineering Questions (SUPPRESS, Do Not Remove)
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Type:** Deferred TODO (intent log only — no build)
+
+### Intent
+
+The Engineering Questions that surface after an extraction completes are to be intentionally **SUPPRESSED** (UI hidden / render gated), **NOT deleted**. The underlying logic — question generation, answer processing, data flow — stays in place for future re-integration once further testing can be done.
+
+### Suppression Rules
+
+- **DO NOT strip the underlying logic.** The code that generates, presents, and processes Engineering Questions remains intact.
+- **Suppress via render gate only.** The UI surface (question display, answer inputs, submission) is hidden by a render-gate condition. The gate should be a single boolean check — easy to flip for re-enablement.
+- **When resurrecting:** Re-enable the render gate and re-test. Do not assume the dormant logic still works after surrounding code has evolved — verify integration points.
+
+### To Capture Before Implementing
+
+When Jon schedules this with Marc, the suppress edit itself is small (render-gate change). Before building, capture and document:
+
+1. **Trigger conditions:** What causes Engineering Questions to appear — which extraction completion path(s), what state, what timing.
+2. **Render location:** Where in the component hierarchy the questions are displayed (component name, mount point, conditional render).
+3. **What the questions feed:** What downstream processes consume the answers — do they affect BOM data, pricing, BC sync, quote fields, or extraction reports? Are there side effects if questions are suppressed but answers are expected downstream?
+
+These three items ensure the gate doesn't silently break a downstream consumer and that resurrection is a known-scope task, not an archaeology project.
+
+---
+
 ## C55 — H5 Render Path Headless Reachability Analysis
 
 **Date:** 2026-06-15
@@ -4181,5 +5486,618 @@ The "14/14" from C52's generalization test was 14 part numbers across 13 BOM row
 **DPI impact:** ~906 DPI (down from ~1079 unpadded). Still 1.5× the 600 DPI target. The DPI drop is larger than C54's theoretical estimate (~1010) because the floor pad dominates both axes on this tight region, producing 8.1% X growth and 23.8% Y growth (vs the proportional-only ~4%/axis from C53).
 
 ### Verdict: #121 regression gate PASSES. Ship it.
+
+---
+
+## C66 — #126 BC Item Browser BOM Preview Regression: Root Cause Report
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Type:** Read-only trace → root cause diagnosis
+**Work item:** #126
+
+---
+
+### Symptom
+
+The Drawing Reference yellow highlight band in the BC Item Browser modal shows the **SAME HIGH position** for different parts. Two parts with different correct positions (1SDA102947R1, 8106235 at the BOTTOM) both got the same band. The band does not recompute per new part lookup.
+
+---
+
+### Finding 1 (PRIMARY ROOT CAUSE): `parseInt(itemNo)` degrades to 0 for non-numeric or empty values
+
+**Location:** `locateInDrawing`, line 21664
+
+```javascript
+const refLine = (targetRow?.itemNo || '').trim();   // line 21648
+const itemNum = parseInt(refLine) || 0;              // line 21664
+const rowIdx = Math.max(0, itemNum - 0.5);           // line 21670
+const y_top = tTop + (rowIdx * rowHeight);           // line 21671
+```
+
+The Haiku prompt (line 21653-21655) asks only for **table geometry** — `table_top`, `table_bottom`, `total_rows`, `pn_x`. It does NOT identify any specific part's row. The Haiku response is **identical for every part on the same page**. Row differentiation comes entirely from `parseInt(itemNo)`.
+
+The BOM prompt (line 11398) defines `itemNo` as: "copy exact value printed. Use `""` if no item number column exists." When a BOM table has no item-number column, `itemNo` is `""` for all rows. `parseInt("") = NaN`, `NaN || 0 = 0`, `rowIdx = 0` → **band always at `tTop` (top of table)** regardless of the actual part.
+
+Even for numeric `itemNo`, the linear interpolation assumes uniform row spacing and 1-based sequential numbering — fragile for real-world BOMs with skipped numbers, variable row heights, or multi-line cells.
+
+**This explains the symptom exactly:** different parts with empty `itemNo` all compute to `itemNum = 0` → all get the same HIGH band at the table top.
+
+---
+
+### Finding 2 (SECONDARY): Page selector buttons use broken stored coordinates
+
+**Location:** Page button `onClick`, line 22337
+
+```javascript
+if (targetRow?.y_top != null && targetRow?.y_bottom != null
+    && (targetRow.y_bottom - targetRow.y_top) > 0.001 && pg) {
+  // USES STORED COORDS — skips locateInDrawing (Haiku)
+  cropRowFromImage(du, targetRow.y_top, targetRow.y_bottom, targetRow.pn_x);
+} else {
+  locateInDrawing(i);
+}
+```
+
+Page buttons **prioritize stored `targetRow.y_top / y_bottom`** over calling `locateInDrawing`. Post-H5, these coordinates are **tile-relative, not page-relative**:
+
+- `getExtractionUnits` (line 11710) creates units with `bomRegion` but **never sets `cropBounds`**
+- `translateItemsToPageCoords` (line 10940) checks `if(!cropBounds) return items;` → **no-op**
+- H5 tiles are region-targeted high-DPI crops — y_top/y_bottom returned by the Cloud Function are relative to the tile, not the full page
+- These tile-relative fractions are stored directly as page-level coordinates → wrong positions when applied to a full-page image
+
+**Result:** Clicking a page button renders the band at tile-relative positions on a full-page image — consistently wrong.
+
+---
+
+### Finding 3: Component DOES remount (not a React state bug)
+
+The modal is conditionally rendered at line 29031:
+```javascript
+{bcBrowserOpen && (<BCItemBrowserModal ...>)}
+```
+
+Close handler (line 29036) sets `setBcBrowserOpen(false)` → component unmounts. Next open → remounts fresh → `useState(null)` for `croppedDataUrl` → `useEffect([], [])` fires `locateInDrawing` fresh.
+
+The "stale band" appearance is **not state persistence**. It's that the Haiku path computes the same position for every part (when `itemNo` is empty/non-numeric), so remounting produces the identical band.
+
+---
+
+### Finding 4: `useEffect([], [])` is correct given conditional rendering
+
+The mount-only useEffect at line 21716-21741 is architecturally fine because:
+- The full-screen overlay (`zIndex:300`, `position:fixed`) prevents clicking other BOM rows while the modal is open
+- Each close→open cycle remounts the component, triggering the effect fresh
+- `targetRow` can't change without a remount because `bcBrowserTarget` only updates in the open handlers (which set `bcBrowserOpen(true)` from `false`)
+
+No fix needed here.
+
+---
+
+### Root Cause Summary
+
+| Path | Status | Mechanism |
+|------|--------|-----------|
+| PRIMARY (Haiku, on mount) | **BROKEN when itemNo empty/non-numeric** | `parseInt(refLine)\|\|0` → band at table top for all rows |
+| PAGE BUTTONS (stored coords) | **BROKEN post-H5** | Tile-relative y_top/y_bottom applied to full-page image |
+| FALLBACK (stored coords, no API key) | **BROKEN post-H5** | Same as page buttons — tile-relative coords |
+
+**Not an H5-pipeline break, not a Haiku-call break.** The Haiku call works — it returns correct table geometry. The bug is in **client-side row selection**: the code has no way to find a specific row without a valid numeric `itemNo`, and the stored-coordinate fallback is broken by the H5 tile-vs-page coordinate gap.
+
+---
+
+### Recommended Fix
+
+**Option A (PREFERRED): Make Haiku find the specific part**
+
+Modify the Haiku prompt at line 21653-21655 to include the target part number and ask for that row's Y-fraction directly:
+
+```
+Current: "Return JSON with: table_top, table_bottom, total_rows, pn_x"
+New:     "Find the row containing part number '{pn}' (item #{refLine}).
+          Return JSON with: row_top (y fraction of that row's top edge),
+          row_bottom (y fraction of that row's bottom edge),
+          pn_x (x fraction of center of part number column)"
+```
+
+Then use the returned `row_top`/`row_bottom` directly instead of computing from `itemNum`. Falls back to current linear interpolation if Haiku can't find the part.
+
+**Scope:** ~15-20 lines changed in `locateInDrawing`.
+
+**Option B: Fix page buttons (companion to A)**
+
+Always call `locateInDrawing(i)` in the page button handler instead of using stored coords. Delete the `targetRow?.y_top != null` branch.
+
+**Scope:** ~5 lines changed at line 22337.
+
+**Total fix scope: ~20-25 lines, low risk.**
+
+---
+
+### Merge vs. Contain (#128 relationship)
+
+The `translateItemsToPageCoords` gap (Finding 2) is shared surface with #128 (H5-powered visual PN verification). However:
+
+- **#126 fix is self-contained** — Option A+B avoids stored coords entirely by always using Haiku, no dependency on coordinate translation fix
+- **#128 would need the coordinate translation fixed** regardless (it wants accurate stored coords for hovering over any row)
+- Fixing #126 first with the Haiku approach is independent and doesn't block or conflict with #128
+
+**Recommendation:** Fix #126 independently with Option A+B. When #128 activates, it can fix `translateItemsToPageCoords` (requires `cropBounds` plumbing through `getExtractionUnits`) as part of its own scope.
+
+---
+
+### Scope Estimate
+
+- **Size:** ~20-25 lines net change
+- **Risk:** Low — changes are isolated to `BCItemBrowserModal` (presentation only, no data mutation)
+- **Test:** Open BC Item Browser for 3+ parts with different BOM positions, verify band moves to correct row. Test on a BOM without item-number column. Test page button switching.
+- **Deploy:** Standard hosting deploy
+
+---
+
+## C67 — #128 Feasibility Trace: H5 Region Data Persistence + Approach Comparison
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Type:** Read-only feasibility trace for #128 Brief
+**Context:** #126 closed PARTIAL (v1.20.118). Residual placement accuracy is the inherent ceiling of Haiku-locating on a downsized full-page preview image. #128 promoted to NEXT — rescoped as "render the H5 region directly." This trace answers whether the data exists to support that.
+
+---
+
+### Q1: Does ARC persist per-item H5 region coordinates at extraction time?
+
+**YES — per-item coordinates ARE stored. But in the WRONG coordinate space.**
+
+Each BOM item in `panel.bom[]` (Firestore) carries:
+
+| Field | Type | Value | Coordinate space |
+|-------|------|-------|-----------------|
+| `y_top` | number (0.0-1.0) | Top edge of row | **Tile/region-relative** (NOT page-relative) |
+| `y_bottom` | number (0.0-1.0) | Bottom edge of row | Same |
+| `x_left` | number (0.0-1.0) | Left edge of BOM table | **Tile-relative** |
+| `x_right` | number (0.0-1.0) | Right edge of BOM table | Same |
+| `sourcePageIdx` | number | Index into BOM pages (filtered list) | — |
+| `sourcePageId` | string | Actual page ID | — |
+| `itemNo` | string | Printed BOM row number | — |
+
+**NOT stored per item:** tile index, tile grid dimensions, render DPI, region bounds, extraction path.
+
+**Why the coords are wrong:** `translateItemsToPageCoords` (line 10940) is called after extraction at lines 14203, 24674, 24923 — but `unit.cropBounds` is **always undefined**. `getExtractionUnits` (line 11710) creates units with `bomRegion` but never sets `cropBounds`. The function hits `if(!cropBounds) return items;` at line 10941 → **no-op** → coords stored as-is.
+
+For H5 tiles: the AI returns coords relative to the tile images. For the old crop path: coords relative to the crop. For PDF-native with CropBox: coords relative to the CropBox view. In ALL cases where the AI sees a sub-page image, the translation never runs.
+
+---
+
+### Q2: Where are the BOM region coordinates? Are they reusable?
+
+**On the PAGE object (not per-item). Persisted in Firestore. Fully reusable.**
+
+| Source | Location | Format | Persists? |
+|--------|----------|--------|-----------|
+| User-drawn region | `pg.regions[].type === "bom"` | `{x, y, w, h}` normalized page-relative (0-1) | ✓ Yes (in `panel.pages[]`) |
+| AI-detected region | `pg.aiBomRegion` | `{x, y, w, h}` normalized page-relative (0-1) | ✓ Yes |
+| `resolveBomRegion(pg)` | Resolves user → AI fallback | Returns `{x, y, w, h, source}` | — |
+| Original PDF | `pg.originalPdfPath` | Firebase Storage path | ✓ Yes |
+| Page number | `pg.pageNumber` | Integer (1-based) | ✓ Yes |
+
+**The H5 padded region** (with `H5_REGION_PAD_FRAC` + `H5_REGION_PAD_FLOOR_PTS` padding) is NOT stored — it's computed dynamically from `bomRegion` + page dimensions via `renderBomRegionHighDpi`. Deterministically recomputable.
+
+**H5 tiles themselves** are transient — rendered on-demand by `renderBomRegionHighDpi`, sent to the Cloud Function, discarded. NOT stored in Firestore or Firebase Storage.
+
+**Conclusion: all data needed to re-render the BOM region on demand is already persisted.** No "persist regions first" step required.
+
+---
+
+### Q3: Can the preview re-render cheaply?
+
+**YES.** The existing `renderBomRegionHighDpi(storagePath, pageNumber, bomRegion)` function:
+1. Downloads PDF from Firebase Storage (~50-200 KB for a single-page slice)
+2. Opens with pdf.js
+3. Renders region to high-DPI canvas tiles
+
+For PREVIEW purposes (not extraction), a simpler single-canvas render at ~150-200 DPI is sufficient. The preview container is ~300px max height — a 6"×2" BOM region at 150 DPI = 900×300 px, well within browser canvas limits. No tiling needed for preview.
+
+**Cost per preview:** one Firebase Storage download + one pdf.js render. The download is the bottleneck (~200-500ms); the render is fast (~50-100ms). Comparable to the current Haiku API call (~300-800ms). Can be cached in component state (already done for `croppedDataUrl`).
+
+**Text-layer pages** already have good full-page images (text renders cleanly at any resolution). Their preview could continue using the existing full-page approach or render the region from PDF — either works.
+
+---
+
+### Q4: translateItemsToPageCoords fix — alternative or companion?
+
+**COMPANION, not alternative.** The coord fix is cheap and valuable, but doesn't replace region rendering for the preview.
+
+#### What fixing translateItemsToPageCoords would require
+
+Pass `cropBounds` to `getExtractionUnits` return value, then it flows to `translateItemsToPageCoords` naturally:
+
+- **For H5 tiles:** `cropBounds` = the **padded** region (computed from `bomRegion` + padding constants + page dimensions). The padded region is the actual area the tiles cover.
+- **For old crop path (`croppedBomDataUrl`):** `cropBounds` = `bomRegion` (the crop IS the region).
+- **For PDF-native with CropBox:** `cropBounds` = `bomRegion` (CropBox applied server-side at line 2449).
+
+**~15-20 lines:** compute padded region in `getExtractionUnits` when H5 conditions are met, add `cropBounds` to the returned unit object.
+
+#### Viability by grid configuration
+
+| Grid | ny | y_top/y_bottom space | Translation possible? |
+|------|-----|---------------------|----------------------|
+| 1×1 | 1 | Region-relative | ✓ Exact |
+| 2×1, 3×1, 4×1 | 1 | **Region-relative** (tiles split horizontally only) | ✓ Exact |
+| 2×2, 3×2 | 2 | **Tile-relative** (tiles split vertically) | ✗ Unknown tile origin |
+| 1×2 | 2 | **Tile-relative** | ✗ Unknown tile origin |
+
+**Critical insight:** `findOptimalGrid` (line 11741) with `MODEL_MAX_PX = 1568` and `H5_TILE_TARGET_DPI = 600`:
+
+- Typical D-size BOM region (~8.5"×2"): → 4×1 grid, **ny=1** ✓
+- PRJ402119 region (~5.2"×2.0"): → 2×1 grid, **ny=1** ✓
+- Tall region (7"×4"): → 3×2 grid, **ny=2** ✗
+
+**BOM tables are almost always landscape (wider than tall). ny=1 is the dominant case.** The coord fix works for the common case but breaks for tall regions.
+
+#### Comparison: coord fix vs region render
+
+| Aspect | Fix coords | Render region |
+|--------|-----------|---------------|
+| **Accuracy** | Good for ny=1 (dominant); broken for ny>1 (rare) | Accurate by construction — ALL cases |
+| **Retroactive** | **NO** — only fixes newly-extracted items; existing BOMs have wrong coords | **YES** — re-renders from stored PDF/region on demand |
+| **Runtime cost** | Zero (fix at extraction time) | PDF download + pdf.js render per preview (~200-500ms) |
+| **Preview quality** | Full-page image → BOM table is small, low-res in the preview | Region-only image → high resolution, user can read individual characters |
+| **Text-layer BOMs** | Also fixed (CropBox crop-relative → page-relative) | Needs separate path OR re-use full-page image (no H5 tiles) |
+| **Scope** | ~15-20 lines (add cropBounds to getExtractionUnits) | ~40-60 lines (render function, state, loading UX) |
+| **Side benefits** | Fixes positional dedup for cross-tile items, fixes Drawing Reference fallback path | Enables #128 visual PN verification (accurate region view) |
+
+**Recommendation: DO BOTH.** The coord fix is cheap (~15 lines) and improves positional dedup + fallback paths for new extractions. Region rendering is the #128 feature — it's the only path that's retroactive, accurate for all grids, and provides readable resolution.
+
+---
+
+### Q5: Text-layer (non-H5) BOMs
+
+Text-layer pages go through `pdf-native` extraction (line 12126: `tier === "text-layer"` → standard path). They never get H5 tiles.
+
+Their y_top/y_bottom are relative to the **CropBox view** when `bomRegion` is present (server applies CropBox at line 2449). Same translation gap as H5 — but text-layer pages render cleanly at any resolution, so the full-page preview approach (current) is adequate. The Haiku locate (v1.20.118 fix) also works well on text-layer pages since the text is crisp.
+
+For the #128 preview: text-layer pages can either:
+- Continue using the current full-page + Haiku approach (it works well for readable text)
+- Render the BOM region from PDF at preview quality (same mechanism as H5, slightly better resolution)
+
+Either path is fine. The v1.20.118 Haiku approach is already sufficient for text-layer. Focus #128 on H5 vision-mode pages where the full-page preview is inadequate.
+
+---
+
+### Summary for #128 Brief
+
+**Direction: "render stored regions" (accurate, cheap).** All required data is already persisted:
+- BOM region coords on `pg.aiBomRegion` or `pg.regions[]` ✓
+- Original PDF in Firebase Storage via `pg.originalPdfPath` ✓
+- Page number via `pg.pageNumber` ✓
+- Per-item y_top/y_bottom for row highlighting (region-relative for ny=1 grids — the dominant case) ✓
+
+**No "persist regions first" step needed.** The Brief is:
+1. **Region render** (~40-60 lines): In BCItemBrowserModal, for H5-extracted pages, render the BOM region from PDF at preview DPI (~150-200) as a single canvas. Use stored y_top/y_bottom (region-relative for ny=1) to highlight the target row. Fall back to Haiku locate for ny>1 or missing coords.
+2. **Coord fix** (~15-20 lines, companion): Add `cropBounds` to `getExtractionUnits` so `translateItemsToPageCoords` actually translates. Fixes new extractions; doesn't help existing data.
+3. **Text-layer pass-through**: Keep current full-page + Haiku approach for text-layer pages.
+
+**Total scope:** ~55-80 lines, medium complexity. Main risk: pdf.js loading/rendering latency in the preview UX (mitigated by loading spinner, already established pattern).
+
+---
+
+## C68 — #128 Detailed Plan: BOM Region Render Preview + Coord Fix
+
+**Date:** 2026-06-15
+**Role:** Coach (Sam Wize)
+**Type:** Detailed plan (Marc builds, Coach verifies)
+**Basis:** C67 feasibility trace, Brief approved by Jon
+**Prod:** v1.20.118
+
+---
+
+### Goal
+
+Replace the Haiku-locate-on-full-page preview in BCItemBrowserModal with an accurate, readable BOM region render. For H5-vision-extracted pages: render the actual BOM region (the area the part was extracted from) directly from the stored PDF, highlight the target row from stored coordinates. Text-layer pages keep the current Haiku path (already works well on crisp text).
+
+Eliminates #126's residual: 1SFL ~1 row low, 8106235 title-block miss. Those were the ceiling of "estimate row position on a downsized preview image." The region render shows the actual extraction area at readable DPI — accurate by construction.
+
+Two companion changes (per C67): (1) region render feature, (2) translateItemsToPageCoords fix.
+
+---
+
+### Key Insight: Stored coords are DIRECTLY usable on the region image
+
+For ny=1 grids (all typical landscape BOM tables — 2×1, 3×1, 4×1):
+- All tiles span the FULL HEIGHT of the padded region
+- y_top/y_bottom returned by the AI are fractions of the tile height = fractions of the padded region height
+- The preview renders that same padded region
+- **No coord translation needed** — `cropRowFromImage(regionDataUrl, item.y_top, item.y_bottom, ...)` works directly
+
+For ny>1 grids (rare tall BOM regions):
+- y_top/y_bottom are tile-relative (unknown tile) → wrong on the region image
+- Fallback to Haiku locate on the region image (much better quality than old full-page Haiku)
+
+---
+
+### Change 1: `renderBomRegionPreview` function (~15 lines)
+
+**Insert at:** after `renderBomRegionHighDpi` (after current line 11824), module scope
+
+**Pattern:** Simplified single-canvas render. Same PDF loading + padded region computation as `renderBomRegionHighDpi` (lines 11761-11786), but:
+- No tiling — one canvas at preview DPI (~200)
+- Returns `{dataUrl, paddedRegion, grid}` instead of `{tiles, grid, renderDpi}`
+
+```
+async function renderBomRegionPreview(storagePath, pageNumber, bomRegion, previewDpi=200) {
+  await window.pdfjsReady();
+  const pdfjs = window._pdfjs;
+  const url = await fbStorage.ref(storagePath).getDownloadURL();
+  const resp = await fetch(url);
+  if(!resp.ok) throw new Error("PDF fetch failed: " + resp.status);
+  const buf = await resp.arrayBuffer();
+  const pdf = await pdfjs.getDocument({data:buf}).promise;
+  try {
+    const pg = await pdf.getPage(pageNumber);
+    const baseVp = pg.getViewport({scale:1});
+    // Same padding as H5 extraction — CRITICAL for coord alignment
+    const _floorFracX = H5_REGION_PAD_FLOOR_PTS / baseVp.width;
+    const _floorFracY = H5_REGION_PAD_FLOOR_PTS / baseVp.height;
+    const _padX = Math.max(bomRegion.w * H5_REGION_PAD_FRAC, _floorFracX);
+    const _padY = Math.max(bomRegion.h * H5_REGION_PAD_FRAC, _floorFracY);
+    const _rx = Math.max(0, bomRegion.x - _padX);
+    const _ry = Math.max(0, bomRegion.y - _padY);
+    const paddedRegion = { x:_rx, y:_ry,
+      w: Math.min(1, bomRegion.x + bomRegion.w + _padX) - _rx,
+      h: Math.min(1, bomRegion.y + bomRegion.h + _padY) - _ry };
+    const regionWIn = paddedRegion.w * baseVp.width / 72;
+    const regionHIn = paddedRegion.h * baseVp.height / 72;
+    const grid = findOptimalGrid(regionWIn, regionHIn);
+    const vp = pg.getViewport({scale: previewDpi / 72});
+    const rX = paddedRegion.x * vp.width;
+    const rY = paddedRegion.y * vp.height;
+    const cw = Math.round(paddedRegion.w * vp.width);
+    const ch = Math.round(paddedRegion.h * vp.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = cw; canvas.height = ch;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+    await pg.render({canvasContext: ctx, viewport: vp, transform: [1,0,0,1,-rX,-rY]}).promise;
+    return { dataUrl: canvas.toDataURL('image/jpeg', 0.92), paddedRegion, grid };
+  } finally { try { pdf.destroy(); } catch(_) {} }
+}
+```
+
+**~25 lines.** Uses same H5 padding constants (lines 11728-11737) for exact coordinate alignment with stored item coords.
+
+---
+
+### Change 2: BCItemBrowserModal modifications (~20-30 lines)
+
+**2a. New prop: `h5PageIds`**
+
+At `BCItemBrowserModal` function signature (line 21541):
+
+```
+function BCItemBrowserModal({..., h5PageIds}) {
+```
+
+Receives an array of page IDs that used `hi-dpi-tiles` extraction path.
+
+**2b. New function: `locateInRegion(pgIdx)` (~15 lines)**
+
+Inside BCItemBrowserModal, alongside `locateInDrawing` (after line 21688):
+
+```
+async function locateInRegion(pgIdx) {
+  const idx = pgIdx != null ? pgIdx : drawingPageIdx;
+  const pg = bomPages[idx];
+  if (!pg?.originalPdfPath || !pg.pageNumber) { locateInDrawing(idx); return; }
+  const bomRegion = resolveBomRegion(pg);
+  if (!bomRegion) { locateInDrawing(idx); return; }
+  setLocating(true); setCroppedDataUrl(null);
+  try {
+    const preview = await renderBomRegionPreview(pg.originalPdfPath, pg.pageNumber, bomRegion);
+    if (preview.grid.ny === 1 && targetRow?.y_top != null && targetRow?.y_bottom != null
+        && (targetRow.y_bottom - targetRow.y_top) > 0.001) {
+      // ny=1: stored coords are region-relative → directly usable
+      const pnX = targetRow.x_left != null ? Math.min(0.60, Math.max(0.35,
+        (targetRow.x_left + (targetRow.x_right || 1)) / 2)) : 0.50;
+      await cropRowFromImage(preview.dataUrl, targetRow.y_top, targetRow.y_bottom, pnX);
+    } else {
+      // ny>1 or no stored coords: Haiku locate on the region image (high-res, accurate)
+      // ... (use same Haiku prompt pattern as locateInDrawing but on preview.dataUrl)
+      const b64 = preview.dataUrl.split(',')[1];
+      if (!b64) { setLocating(false); return; }
+      const pn = (targetRow?.partNumber || initialQuery || '').trim();
+      const refLine = (targetRow?.itemNo || '').trim();
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{"Content-Type":"application/json","x-api-key":_apiKey,
+                 "anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
+        body: JSON.stringify({model:ANTHROPIC_MODELS.HAIKU_DATED, max_tokens:150, messages:[
+          {role:"user",content:[
+            {type:"image",source:{type:"base64",media_type:"image/jpeg",data:b64}},
+            {type:"text",text:`This is a BOM table region. Find the row containing "${pn}"${refLine?` (item #${refLine})`:''}. Return JSON: row_top, row_bottom (y fractions 0-1), pn_x (x fraction of part-number column center). If not found, set row_top/row_bottom to null.`}
+          ]},{role:"assistant",content:[{type:"text",text:"{"}]}
+        ]})
+      });
+      const data = await resp.json();
+      const text = '{' + (data.content?.[0]?.text || '');
+      const m = text.match(/\{[\s\S]*?\}/);
+      if (m) {
+        const r = JSON.parse(m[0]);
+        if (r.row_top != null && r.row_bottom != null && (r.row_bottom - r.row_top) > 0.001) {
+          const pnX = r.pn_x != null ? Math.min(0.60, Math.max(0.35, r.pn_x)) : 0.50;
+          await cropRowFromImage(preview.dataUrl, r.row_top, r.row_bottom, pnX);
+        }
+      }
+    }
+  } catch(e) { console.warn('locateInRegion:', e); locateInDrawing(idx); }
+  finally { setLocating(false); }
+}
+```
+
+**Architecture:** `locateInRegion` renders the BOM region from PDF, then either:
+- **ny=1 + valid stored coords:** instant highlight from stored y_top/y_bottom (no API call)
+- **ny>1 or missing coords:** Haiku locate on the region image (API call, but on high-quality ~200 DPI image instead of the old low-res full-page thumbnail)
+- **Any failure:** falls back to existing `locateInDrawing` (Haiku on full page)
+
+**2c. Modified mount useEffect (line 21716-21741)**
+
+Replace the `if(bomPages.length && _apiKey)` branch:
+
+```
+if (bomPages.length && _apiKey) {
+  const pgIdx = targetRow?.sourcePageIdx ?? 0;
+  const pg = bomPages[pgIdx];
+  if (pg && (h5PageIds || []).includes(pg.id)) {
+    locateInRegion(pgIdx);
+  } else {
+    locateInDrawing(pgIdx);
+  }
+}
+```
+
+**~5 lines** changed (was 2, now 6).
+
+**2d. Modified page button handler (line 22345-22348)**
+
+Currently (v1.20.118): `onClick={()=>{setDrawingPageIdx(i);locateInDrawing(i);}}`
+
+Change to:
+```
+onClick={()=>{
+  setDrawingPageIdx(i);
+  const pg = bomPages[i];
+  if (pg && (h5PageIds || []).includes(pg.id)) locateInRegion(i);
+  else locateInDrawing(i);
+}}
+```
+
+**~4 lines** changed.
+
+---
+
+### Change 3: Modal instantiation prop (~3 lines)
+
+**At line 29041** (`<BCItemBrowserModal` instantiation):
+
+Add prop:
+```
+h5PageIds={(panel.extractionReport?.perPageOutcomes||[])
+  .filter(o=>o.extractionPath==='hi-dpi-tiles')
+  .map(o=>o.pageId)}
+```
+
+Data source: `panel.extractionReport.perPageOutcomes` stores `{pageId, extractionPath}` per page (verified at lines 14213-14248, 22499). `extractionPath === 'hi-dpi-tiles'` identifies H5-extracted pages.
+
+---
+
+### Change 4: `getExtractionUnits` cropBounds fix (~3 lines)
+
+**At line 11710:**
+
+Current:
+```
+return[{dataUrl:pg.dataUrl,croppedBomDataUrl,regionNote,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion}];
+```
+
+Change to:
+```
+return[{dataUrl:pg.dataUrl,croppedBomDataUrl,regionNote,originalPdfPath:pg.originalPdfPath||null,pageNumber:pg.pageNumber||null,bomRegion,cropBounds:bomRegion}];
+```
+
+**And line 11712** (no-region path): already has `bomRegion:null` → `cropBounds` stays undefined → `translateItemsToPageCoords` no-ops correctly.
+
+**Effect:** `translateItemsToPageCoords` (lines 14203, 24674, 24923) now receives the raw bomRegion as cropBounds. For:
+- **Old crop path:** EXACT translation (crop = bomRegion).
+- **PDF-native + CropBox:** EXACT translation (CropBox = bomRegion, applied server-side at functions/index.js line 2449).
+- **H5 ny=1:** APPROXIMATE translation (off by H5 padding ~2-4%, or ~0.004-0.008 page fraction). Well within positional dedup Y_TOL of 0.04.
+- **H5 ny>1:** y coords stay tile-relative within an approximate page-level range. Not ideal but better than current (no translation at all). Edge case — rare.
+
+**Only affects new extractions.** Existing BOM items retain their untranslated coords. The region render feature (Change 1) handles existing data retroactively.
+
+---
+
+### Text-layer Branch
+
+Text-layer pages are identified by absence from `h5PageIds`. They keep the current path:
+- Mount useEffect → `locateInDrawing(pgIdx)` (Haiku on full-page image)
+- Page buttons → `locateInDrawing(i)` (same)
+- Text at ~72-150 DPI on the full page is crisp enough for Haiku to locate accurately
+
+**No region render for text-layer.** The Haiku path already works well (v1.20.118 fix). Region rendering would work (the PDF/region data exists) but adds latency for no accuracy gain.
+
+---
+
+### ny>1 Handling (MUST — not assumed away)
+
+**Detection:** `renderBomRegionPreview` returns `grid` (from `findOptimalGrid`). Check `grid.ny`.
+
+**ny=1 (dominant — 2×1, 3×1, 4×1 grids):**
+- All tiles span full region height → stored y_top/y_bottom are region-relative
+- Highlight drawn directly from stored coords → instant, no API call
+- This is the hot path
+
+**ny>1 (rare — 3×2, 2×2, 1×2 grids for tall BOM regions):**
+- y_top/y_bottom are tile-relative (unknown tile) → wrong on region image
+- Fallback to **Haiku locate on the region image** (200 DPI, much better than old 72 DPI full-page)
+- Haiku finds the row by part number string → accurate regardless of coord issues
+- Cost: one Haiku API call (~$0.001). Same as the old path, but on better image.
+
+**No silent wrong highlight for ny>1.** The plan explicitly branches on `grid.ny` (see `locateInRegion` line: `if (preview.grid.ny === 1 && targetRow?.y_top != null ...)`).
+
+---
+
+### Sequencing
+
+| Step | What | Lines | Depends on |
+|------|------|-------|------------|
+| 1 | `renderBomRegionPreview` function | ~25 | — |
+| 2 | `locateInRegion` function in BCItemBrowserModal | ~30 | Step 1 |
+| 3 | Mount useEffect + page button branching | ~9 | Step 2 |
+| 4 | Modal instantiation `h5PageIds` prop | ~3 | Step 3 |
+| 5 | `getExtractionUnits` cropBounds fix | ~3 | — (independent) |
+
+Steps 1-4 are the region render feature. Step 5 is the independent coord fix. Can be committed together or separately.
+
+---
+
+### Scope Confirmation
+
+| Change | Lines | Risk |
+|--------|-------|------|
+| `renderBomRegionPreview` | ~25 | Low — isolated function, same PDF/canvas pattern as existing H5 |
+| `locateInRegion` | ~30 | Low — presentation only, falls back to `locateInDrawing` on any failure |
+| Mount useEffect + page buttons | ~9 | Low — adds branch, existing path preserved for non-H5 |
+| Modal instantiation prop | ~3 | Minimal — data derivation from existing panel data |
+| `getExtractionUnits` cropBounds | ~3 | Low — adds one field to unit object, existing callers already pass to translateItemsToPageCoords |
+
+**Total: ~70 lines net-new.** Within C67's 55-80 estimate.
+
+**Risk:** Low overall. `renderBomRegionPreview` is the only new async operation (PDF download + pdf.js render). Failure falls back to existing Haiku path. No data mutations, no extraction changes, no save-path changes.
+
+**Latency:** PDF download (~200-500ms) + pdf.js render (~50-100ms) vs current Haiku API call (~300-800ms). Comparable or slightly slower on first load. Region image can be cached in component state (`croppedDataUrl`) — subsequent views of the same part are instant.
+
+---
+
+### Test Criteria
+
+| # | Test | Expected | Pass if |
+|---|------|----------|---------|
+| T1 | 1SFL547002R1311 on H5-extracted BOM page | Region render shows BOM area at readable DPI, highlight band on correct row | Band covers the row containing 1SFL547002R1311 (was ~1 row low with Haiku) |
+| T2 | 1SDA102947R1 on same project | Region render, correct row highlighted | Band on correct row (was inconsistent with Haiku) |
+| T3 | 8106235 on same project | Region render, correct row at BOTTOM of BOM | Band at bottom rows (was landing on title block with Haiku) |
+| T4 | Text-layer BOM page (PDF-native extraction) | Falls through to `locateInDrawing` (Haiku on full page) | "✓ Row found" appears, region render NOT attempted |
+| T5 | Page button switching between H5 BOM pages | Each page renders its own BOM region | Switching pages shows different region images, highlight tracks the target row on each |
+| T6 | Legacy project (no `originalPdfPath`) | Falls through to `locateInDrawing` | Existing behavior preserved, no error |
+| T7 | Part with empty `itemNo` on H5 page | Region render with stored y_top/y_bottom (ny=1) | Highlight from stored coords, NOT from itemNo interpolation |
+| T8 | New extraction after cropBounds fix | `panel.bom[].y_top` values are page-relative | Compare y_top before/after: new extraction y_top should be offset by ~bomRegion.y |
+
+**T5-specific:** If a ny>1 BOM exists in the test project set, verify the Haiku-on-region fallback fires and highlights correctly. If none available, this is a structural code review check (verify the `grid.ny === 1` branch exists).
+
+---
+
+### Carve-outs
+
+1. **No caching of rendered regions across modal opens.** Each open re-renders. Acceptable — the modal remounts each time (conditional rendering at line 29040), so no cache would survive anyway.
+2. **No offline/cached PDF fallback.** If PDF download fails, falls back to Haiku on full-page image. This matches the existing behavior (full-page images are cached in dataUrl/storageUrl; PDFs are fetched on demand).
+3. **No retroactive coord fix for existing BOMs.** The translateItemsToPageCoords fix only applies to new extractions. Existing items keep tile-relative coords. The region render handles them retroactively (coords are directly usable on the region image for ny=1).
 
 ---

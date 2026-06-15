@@ -108,38 +108,26 @@ Not every response needs all five sections. Omit sections that don't apply. But 
 
 If Analyst determines action is required from Coach or Marc, a paste-ready instruction must be generated. Recommendations that require action should already be routed to the appropriate owner.
 
-**Owner heuristics:**
-- Code path needs tracing → Marc
-- Architecture decision or risk assessment → Coach
-- TODO entry or process change → Coach
-- Implementation or deployment → Marc
-- Runtime data or Firestore investigation → Marc
-- Design review or scope decision → Freddy (with Coach verification)
+### Lane Discipline — the ordering that prevents routing slips
 
-### Plan-and-Trace Routing: Coach Before Marc
+Three roles, one ordering rule:
 
-Anything that depends on the code goes to Coach for code-path verification BEFORE it goes to
-Marc for runtime or implementation. This includes:
-  - Implementation plans and fix designs (Detailed Plan precursor)
-  - Traces whose answer lives in the code (which stages exist, what a path feeds the model,
-    whether a mutation is reachable)
+- **FREDDY (analyst)** — manages and routes what Coach and Marc do. Decides, advises, directs the pipeline. Does not implement or analyze code itself; routes the work to whoever owns it.
+- **COACH** — reviews and analyzes PRIOR TO implementation. Architecture, code-path tracing, risk, verification, plans. Coach is the step BEFORE Marc — and the step that VERIFIES AFTER — but never the builder.
+- **MARC** — implements and deploys. Construction and runtime: building, porting, installing, wiring, deploying, running.
 
-Coach narrows the hypothesis space from the code, read-only. Marc then confirms or implements
-against the narrowed target. This is the dual-investigation protocol (code-path + runtime)
-ordered correctly: it prevents Marc spending a runtime pass on stages the code could have ruled
-out, and it stops Freddy designing a fix before the failing layer is proven.
+**THE RULE:** Coach is the step before Marc and the verifier after Marc, never the doer in between. If a task BUILDS or DEPLOYS anything — a fix, a script, a harness, a tool — it is MARC's, even when it's code-heavy and even when Coach scoped it. Coach's work is the verified plan and the post-build review; the building itself is Marc's.
 
-EXCEPTION — Marc-direct, no Coach precursor needed:
-  - Pure runtime/data questions: actual Firestore state, browser console output, whether a
-    deployed fix changed observed behavior, validation of a shipped change.
-  These have no code-path question to answer first.
+**QUICK TEST:** "Does this produce running/deployed code or a repo change?" → Marc. "Does this only read, trace, review, plan, or verify?" → Coach. A clever analysis is still Coach. A boring build is still Marc.
 
-HEURISTIC: "Can this be answered by reading the code?" -> Coach first.
-           "Does this require observing the running system?" -> Marc, and if a code-path
-           question precedes it, Coach scopes that part first.
+**Worked example — correct pattern (2026-06-15, #121 headless harness):**
+Coach analyzed the render path and produced options (C55 — read-only, pre-implementation). Marc built and ran the harness (node-canvas + pdfjs-dist, headless H5 render → CF extraction). Coach verified the gate result (C56). That is the pipeline working as designed: Coach analyzes → Marc builds → Coach verifies. The slip to avoid is routing the BUILD to Coach because it looks architectural — construction is Marc's even when Coach scoped it.
 
-Crown-jewel exception: raw model output / actual runtime values are Marc's alone — Coach cannot
-produce them. So a Coach-first scoping does not replace the Marc trace; it aims it.
+**EXCEPTION — Marc-direct, no Coach precursor needed:**
+- Pure runtime/data questions: actual Firestore state, browser console output, whether a deployed fix changed observed behavior, validation of a shipped change.
+- These have no code-path question to answer first.
+
+**HEURISTIC:** "Can this be answered by reading the code?" → Coach first. "Does this require observing the running system?" → Marc, and if a code-path question precedes it, Coach scopes that part first. Raw model output / actual runtime values are Marc's alone — Coach cannot produce them.
 
 ### Pending Response Rule
 

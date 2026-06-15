@@ -1970,15 +1970,27 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## Quote & Pricing Issues (2026-06-09)
 
-117. **OPEN** [Decided] — Payment Terms / Shipping Method missing from quote (intermittent).
-     Root cause: two print paths diverge. Path A (handlePrintQuote, line 35735) runs BC
-     auto-populate before generating PDF. Path B ("Generate PDF" button in QuoteView, line
-     19469) reads React state directly — no BC fetch. Additionally: quote field edits have
-     NO auto-save (edits live in React state only), saveProject at line 35945 is fire-and-forget,
-     and BC token expiry silently skips the entire fetch. Fix: (1) debounced auto-save for
-     quote edits (~5 lines), (2) await the save in handlePrintQuote (~3 lines), (3) BC
-     auto-populate before direct PDF generation (~10 lines). ~20 lines total.
-     Investigation: Coach C46 (2026-06-09). Discovered: 2026-06-09 (user report).
+117. **RESOLVED** [Verified] — Payment Terms / Shipping Method missing from quote (intermittent).
+     Root cause (superseded C46, confirmed C61): `_bcToken` null silently gates the BC fetch
+     inside `ensureQuoteFieldsPopulated`. Azure AD access tokens expire ~60-75 min; token expiry
+     → fetch skipped → terms blank → "---" on printed/sent quote. QuoteTab (Path B) is entirely
+     unreachable (all setView("quote") paired with autoPrint, height:0 wrap). Path C
+     (QuoteSendModal.handleSend) found reachable with no populate.
+     Phase 1 (v1.20.115): unified populate into `ensureQuoteFieldsPopulated`, awaited saves,
+     #86 guard verified (aggregated never persisted), bcSalespersonCode via unrestricted path.
+     Phase 2 (v1.20.116, +51/-2): Fix 3 (bc-unavailable + missing-required-terms warnings in
+     shared function), Fix 3c (Path C populate + persist + hard-block in QuoteSendModal),
+     Fix 4 (print: unchecked checklist entries; send: arcAlert block). Finding-1 fix
+     ({...populated} post-send save). Finding-2 resolved as option (b) — send blocks on MISSING
+     terms only, proceeds when fully populated with BC offline.
+     Verification: test-1 no-regression confirmed LIVE; terms populate correctly on real quote
+     data (user-facing symptom confirmed resolved). Failure-mode cases (2/3/6/9) logic-confirmed
+     per Coach C62/C64 matrix — live fixture testing retired by decision (BC can't be toggled
+     off, token expiry can't be forced). Full live confirmation of warning/block plumbing
+     deferred to ARC Usage Telemetry item.
+     Investigation: Coach C46 (initial), C57 (re-confirmation), C58 (plan), C59 (amendment),
+     C60 (Phase 1 review), C61 (unreachability + true root cause), C62 (Phase 2 plan),
+     C64 (Phase 2 verification). Discovered: 2026-06-09 (user report).
 
 ## Phase 1f Follow-ups (2026-06-09)
 
@@ -2072,3 +2084,100 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      Mitigation in place: floor kept to ~1 row (not 2) to limit reach; phantom injection is
      visible at review whereas the clip it fixes is silent (accepted trade).
      Raised: Freddy analyst review (Q3), 2026-06-15.
+
+## BC Token Refresh (2026-06-15)
+
+125. **RESOLVED** [Shipped, v1.20.117] — T-bcTokenRefresh: proactive `acquireBcToken(false)` in `ensureQuoteFieldsPopulated`.
+     Add `if(!_bcToken) try{await acquireBcToken(false);}catch(e){}` atop `ensureQuoteFieldsPopulated`
+     (before the `needsBcFetch` gate at line 7619). Matches the `verifyBcLineCount` (line 36278) and
+     `bcFetchCompanyInfo` (line 4284) pattern. Eliminates ~90% of Phase 2 `bc-unavailable` warnings
+     — Azure AD access tokens expire ~60-75 min but MSAL `acquireTokenSilent` can silently refresh
+     via the cached refresh token (90-day, sessionStorage). Without this, the Phase 2 warning fires
+     ~hourly for users with long sessions. ~1 line. HIGH priority — IMMEDIATE next item after #117.
+     Coach confirmation: C65 (4 points verified). Discovered: Coach C62 TTL finding (2026-06-15).
+
+## BC Item Browser Fixes (2026-06-15)
+
+126. **RESOLVED** [Partial, v1.20.118] — BC Item Browser BOM preview regression.
+     Root cause (C66): two bugs — (1) `parseInt(itemNo)||0` fallback placed band at table top
+     for all empty/non-numeric itemNo, (2) page buttons used tile-relative stored coords.
+     Fix shipped v1.20.118: Haiku prompt now locates the specific part by PN string, page
+     buttons always call locateInDrawing. Residual placement accuracy (~1 row off for some
+     parts) is the inherent ceiling of Haiku-locating on a downsized preview image — NOT being
+     patched further per Jon's decision. Residual addressed by #128 (region render).
+     Discovered: 2026-06-15. Resolved: 2026-06-15.
+
+127. **OPEN** [Backlog] — Redundant progress bar above the first Line Item during extraction.
+     A duplicate of the in-line extraction progress bar appears above the first BOM item.
+     Confirm redundancy (same data source, same progress), then remove the duplicate.
+     Discovered: 2026-06-15 (user report).
+
+128. **TABLED** [v1.20.120 shipped, band still mispositioned] — BC Item Browser BOM region render preview.
+     #128 TABLED v1.20.120. Region render + ny=1 hot path + spinner-race fix shipped and STAY.
+     Band placement is wrong but INTERMITTENT — not a fixed offset, not the same miss every time.
+     The inconsistency is the key signal: it argues AGAINST a deterministic coordinate-math error
+     and TOWARD something stateful/conditional — candidates: a render/coord-resolve race (a spinner-
+     race was already found on this surface), branch divergence (ny=1 instant vs ny>1/Haiku fallback
+     taking different paths for the same lookup), or stale state between lookups. RESUME STEP: do NOT
+     theorize a fix first — instrument and CHARACTERIZE when the band is right vs wrong (which parts,
+     which path, repeatable on the same part or varying across attempts) before any change.
+     Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235.
+     **What shipped and STAYS (real value, not reverted):**
+     - itemNum=0 collapse fix + tile-relative page-button fix (#126, v1.20.118)
+     - ny=1 zero-Haiku hot path + getExtractionUnits cropBounds fix (forward coord fix)
+     - Spinner-race fix (v1.20.120)
+     Preview is improved vs. original broken state — accuracy residual is what's tabled.
+     History: C66 root cause, C67 feasibility, C68 detailed plan.
+     Discovered: 2026-06-15. Shipped: v1.20.120. Tabled: 2026-06-15.
+
+## ARC Usage Telemetry (2026-06-15)
+
+129. **OPEN** [Tabled, needs Brief] — ARC Usage Telemetry. Three event types: extraction,
+     quote-generation, BC-populate. Append-only Firestore collection (`arcUsage`) via a shared
+     `logEvent` helper. Report modal with date-range aggregates + per-user breakdown.
+     Absorbs #117 live-confirmation (retroactively confirms Phase 2 warning/block firing in
+     production) and quantifies token-null frequency. DISTINCT from TRAQS (Max/Treysen's
+     product) — NOT wired to ccdHook. Needs a Brief when it activates.
+     Activation: after #128.
+     Discovered: 2026-06-15.
+
+## Cleanup & Hardening Candidates (2026-06-15)
+
+130. **OPEN** [Backlog, LOW] — Dead code cleanup: `quoteSendModal` state (line 35309, never set to
+     non-null) + inline send handler `_doInlineQuoteSend` (lines 37054-37135, unreachable) +
+     dead QuoteTab interactive surface (behind autoPrint height:0 wrap). ~80 lines removable.
+     Discovered: Coach C61 (2026-06-15).
+
+131. **OPEN** [Backlog, optional] — Criterion-6 multi-panel hardening. Pre-print checklist
+     criterion 6 (quote-field population) currently covers single-panel projects. Multi-panel
+     projects with mixed BC/non-BC panels are untested. Harden if multi-panel quoting becomes
+     active. Activation: when a multi-panel project hits the quote flow in production.
+
+132. **OPEN** [Deferred] — Post-extraction Engineering Questions suppression (render-gate).
+     Engineering Questions that surface after extraction completes are to be SUPPRESSED (UI
+     hidden via render gate), NOT deleted — underlying logic stays in place for future
+     re-integration. Before implementing: capture trigger conditions, render location, and
+     what downstream processes consume the answers. See Coach C63 for full intent log.
+     Activation: when Jon schedules with Marc.
+     Logged: Coach C63 (2026-06-15).
+
+## Send Traveler BOM to Customer (2026-06-15)
+
+133. **OPEN** [ELEVATED, NEXT, needs Brief] — Send Traveler BOM to Customer.
+     Deliver the EXISTING Matrix-generated traveler BOM (the production document with the
+     cross column showing BOM differences) to the customer for review/approval before PO.
+     NOT a new document — the exact same traveler BOM already generated. BOM only, NOT the
+     schematic.
+     **Two delivery modes:**
+     1. STANDALONE — a separate send action, BOM-only, independent of any quote.
+     2. BUNDLED — an option in the Send Quote flow to include the traveler BOM as an
+        attachment alongside the quote PDF in one send.
+     **Reuses:** existing traveler BOM render + Send Quote send path (Path C, #117).
+     **New work:** standalone send trigger + include-toggle in the Send Quote modal.
+     **Open scoping (Brief time):**
+     - Bundled-mode toggle default: on or off?
+     - Whether both modes inherit #117's populate/loud-on-failure guardrails (both email
+       a customer — they should).
+     - Any record that the approval email went out vs. send-and-reply.
+     **Priority:** ELEVATED — gates PO acceptance, customer-facing. Above #127/#129.
+     Discovered: 2026-06-15.
