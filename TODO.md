@@ -847,6 +847,18 @@ T8. **OPEN** [Backlog] — Qty inflation (Issue A2): Noah's screenshot of PRJ402
     inaccurate, or (iii) a client-side rendering bug displayed wrong quantities from correct
     data. Need Noah's actual screenshot to cross-reference visible part numbers.
     Discovered: 2026-05-21 diagnostic session.
+T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origins (test/channel)
+    even with the extension set to all-sites. The restriction is connector-internal and
+    origin-wide: the agent can drive only origins established in-session (prod, opened at
+    startup). `navigate`, `screenshot`, and all actions on `matrix-arc-test.web.app` and
+    `matrix-arc--*.web.app` preview channels return "Navigation/Permission denied for this
+    domain" — prod navigates on the same tab in the same instant, confirming per-origin scope.
+    Not an extension setting and not an on-disk allowlist (searched .claude.json,
+    settings.local.json, ~/.claude, packaged AppData — none found). Blocks agent-driven non-prod
+    gates. WORKAROUND NOW EXISTS: headless harness `tests/extraction-baseline/h5-headless.js`
+    runs non-prod H5 gates from Node, no browser (`--project`, `--no-pad`, `--pad-floor N`,
+    `--save-tiles`). Connector-level fix still wanted long-term but no longer blocking.
+    Owner: Jon to route out-of-band. Discovered: 2026-06-15 (#121 gate).
 
 ## Round 15 (diagnostic session fixes, 2026-05-21)
 
@@ -2011,14 +2023,23 @@ T8. **OPEN** [Backlog] — Qty inflation (Issue A2): Noah's screenshot of PRJ402
 
 ## H5 Close-Out Findings (2026-06-10 → 2026-06-15)
 
-121. **OPEN** [Backlog] — Region edge-padding to prevent edge-row clipping.
-     H5 renders the resolved BOM region at high DPI, but an over-tight region silently clips
-     edge rows. Marc hit this on PRJ402119 — tight user-drawn region cut bottom rows until
-     padded. Fix: pad the resolved region ~2% on all edges before rendering. Cheap insurance
-     against edge-clip, negligible DPI cost (~5-10 DPI reduction on typical regions).
+121. **RESOLVED** [Verified] — `afcfb98b` (v1.20.114, deployed 2026-06-15) — Region edge-padding
+     to prevent edge-row clipping. H5 renders the resolved BOM region at high DPI; an over-tight
+     user-drawn region silently clips its edge rows (Marc hit this on PRJ402119 — bottom rows cut
+     until hand-padded). Fix in `renderBomRegionHighDpi`: before computing render dimensions, pad
+     the region on each edge by `max(region_dim * H5_REGION_PAD_FRAC, floor)`, where the floor is
+     `H5_REGION_PAD_FLOOR_PTS` converted to a page-fraction via baseVp.width/height; the result is
+     asymmetrically clamped to page bounds [0,1] (a region at a page edge pads only inward).
+     The absolute FLOOR is the load-bearing term (Freddy analyst review, Coach C54): a clipped row
+     is a FIXED height (~one BOM row), so the proportional term alone is weakest on exactly the
+     tight regions that clip — on PRJ402119 the proportional-only pad was 2.3pt (a quarter-row),
+     insufficient. `H5_REGION_PAD_FLOOR_PTS = 14` (~one BOM row in PDF points); `H5_REGION_PAD_FRAC
+     = 0.02` stays as a ceiling for very large regions. Verified by the headless harness re-run
+     (Coach C56, tests/extraction-baseline/h5-headless.js): PRJ402119 page 3 → 13/13 rows, 14/14
+     PNs exact-match to C52 ground truth, zero phantom rows, ~906 DPI; Y-axis region grew 23.8%
+     with no title-block / revision-table bleed. Vertical-pad pollution remains a watch-item — #124.
      Supersedes the bare "region tightly" wording in Phase 1c — guidance is "tight AND complete."
-     Estimated: ~5 lines in renderBomRegionHighDpi. Activation: next extraction reliability pass.
-     Discovered: Coach PRJ402119 generalization test (2026-06-10).
+     Discovered: Coach PRJ402119 generalization test (2026-06-10). Implemented: Marc (2026-06-15).
 
 122. **RESOLVED** [Record correction] — #113 ground-truth items 1-2 wrong in answer key.
      #113's answer key (from 95-ITEM8-TRACE-RESULTS.md) listed item 1 as SCE-1413PCW and
@@ -2040,3 +2061,14 @@ T8. **OPEN** [Backlog] — Qty inflation (Issue A2): Noah's screenshot of PRJ402
      #113 was based on a misclassified page. The 36→100% accuracy delta on PRJ402119 was
      entirely send-resolution (same class of fix as PRJ402101), not a scan quality ceiling.
      Discovered: Coach PRJ402119 generalization test (2026-06-10).
+
+124. **OPEN** [Watch-item] — H5 vertical-pad pollution risk (from #121). The #121 Y-axis pad that
+     recovers a clipped bottom row can also reach a title block, revision table, or a second
+     parts list below the BOM and inject phantom rows. One clean datapoint: PRJ402119 page 3 grew
+     Y 23.8% under the 14pt floor and did NOT reach the title block / revision table (Coach C56).
+     NOT yet stress-tested against a drawing with a deliberately tight neighbor directly below the
+     BOM. Do NOT mark verified-clean — it's one geometry, not a stress test. Retire when a
+     tight-neighbor drawing confirms clean, or sooner if one surfaces clean in production.
+     Mitigation in place: floor kept to ~1 row (not 2) to limit reach; phantom injection is
+     visible at review whereas the clip it fixes is silent (accepted trade).
+     Raised: Freddy analyst review (Q3), 2026-06-15.
