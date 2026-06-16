@@ -57,6 +57,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C79: #139 Detailed Plan — Option C implementation spec for Marc. 2 changes (seed condition + comment), 5 acceptance tests (T1-T5). Verified line anchors against tip 57cad787.
 - **2026-06-16 (Session 5, cont.)** — C80: #139 post-deploy code-path verification (v1.20.125). All items PASS. Seed condition expanded, bump path untouched, comment revised, #138 render unaffected. T1-T5 code-path confirmed.
 - **2026-06-16 (Session 5, cont.)** — C81: #141 Confidence dot relocation + "C" glyph analysis. Co-locate dot next to BC pills (move from left-of-PN to right-of-PN). Add centered "C" inside dot. Legibility confirmed (amber/red dot vs blue pill). No logic change.
+- **2026-06-16 (Session 5, cont.)** — C82: #141 AMENDMENT — match BC pill dimensions exactly. BC pills are 10px/700/borderRadius:10/padding 1px 7px/lineHeight 1.4. Confidence pill respec'd to identical dimensions with "C" text. Supersedes C81 §3 sizing only.
 
 ## Findings
 
@@ -7232,5 +7233,138 @@ One optional enhancement if Jon wants extra separation: use a slightly different
 | Estimated change | ~5 lines moved + restyled (cut from 28075, paste after 28200, adjust style) |
 
 **No open decisions.** Marc builds from this.
+
+---
+
+### C82 — #141 AMENDMENT: Match BC Pill Dimensions Exactly (2026-06-16)
+
+**Type:** Amended spec (supersedes C81 §3 sizing only)  
+**Status:** COMPLETE — ready for Marc  
+**TODO assignment:** #141  
+**What changed:** Size/glyph spec replaced. Relocation + independence unchanged from C81.
+
+---
+
+#### 1. BC Pill Actual Rendered Values
+
+Both BC pills ("+ BC" at line 28197 and "? BC" at line 28211) use identical dimensions:
+
+```js
+style={{
+  fontSize: 10,
+  fontWeight: 700,
+  padding: "1px 7px",
+  borderRadius: 10,
+  border: "none",
+  lineHeight: 1.4,
+  marginLeft: 6,
+  whiteSpace: "nowrap",
+  cursor: "pointer"
+}}
+```
+
+**Per-variant colors:**
+- `not-in-bc`: `background:"#dc2626"` (red), `color:"#fff"` (white text)
+- `fuzzy`: `background:"#fcd34d"` (yellow), `color:"#000"` (black text)
+
+**Rendered dimensions at these values:**
+- Height: `fontSize(10) × lineHeight(1.4) + padding-top(1) + padding-bottom(1)` = `14 + 2` = **~16px**
+- Width: varies by text content ("+ BC" ~30px, "? BC" ~28px)
+- Shape: `borderRadius:10` on a ~16px-tall element = fully rounded ends (pill shape)
+- The text ("+ BC" / "? BC") is naturally centered by the padding
+
+---
+
+#### 2. Confidence Pill — Re-Spec'd to Match
+
+The confidence indicator becomes a pill matching the BC pill dimensions exactly, with text content "C":
+
+```jsx
+<span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
+  style={{
+    fontSize: 10,
+    fontWeight: 700,
+    padding: "1px 7px",
+    borderRadius: 10,
+    border: "none",
+    lineHeight: 1.4,
+    marginLeft: 6,
+    whiteSpace: "nowrap",
+    cursor: "help",
+    background: row.confidence === "low" ? "#ef4444" : "#f59e0b",
+    color: "#000"
+  }}>C</span>
+```
+
+**Every dimensional property mirrors the BC pill:**
+
+| Property | BC pill | Confidence pill | Match? |
+|----------|---------|-----------------|--------|
+| `fontSize` | 10 | 10 | ✓ |
+| `fontWeight` | 700 | 700 | ✓ |
+| `padding` | "1px 7px" | "1px 7px" | ✓ |
+| `borderRadius` | 10 | 10 | ✓ |
+| `border` | "none" | "none" | ✓ |
+| `lineHeight` | 1.4 | 1.4 | ✓ |
+| `marginLeft` | 6 | 6 | ✓ |
+
+**Differences (intentional):**
+
+| Property | BC pill | Confidence pill | Why |
+|----------|---------|-----------------|-----|
+| Element | `<button>` | `<span>` | BC pill is clickable (opens BC Browser); confidence pill is informational (tooltip only) |
+| `cursor` | "pointer" | "help" | Signals interactive vs informational |
+| `background` | `#dc2626` (red) / `#fcd34d` (yellow) | `#ef4444` (red) / `#f59e0b` (amber) | Confidence uses its existing colors from current dot |
+| `color` | `#fff` (red) / `#000` (yellow) | `#000` (both) | Black "C" on both amber and red — high contrast on both |
+| Text | "+ BC" / "? BC" | "C" | Different indicator type |
+| `onClick` | Opens BC Browser | none | Not interactive |
+
+**Note on `color:"#000"` for low-confidence (red background):** The BC pill uses white text on red (`#dc2626`). For the confidence pill on red (`#ef4444`), black also works — `#ef4444` is a lighter red than `#dc2626`, so black on `#ef4444` has sufficient contrast. However, if Marc or Jon find black-on-red less legible in practice, switching to `color:"#fff"` for the low case only is a one-property change. I'd start with black on both for visual consistency (same "C" appearance regardless of severity).
+
+---
+
+#### 3. Legibility — Now a Non-Issue
+
+With matched dimensions, the two indicators are **identical twins distinguished by letter and color:**
+
+```
+[+ BC]  [C]      ← red BC pill (white "+" BC) + red confidence pill (black "C")
+[? BC]  [C]      ← yellow BC pill (black "?" BC) + amber confidence pill (black "C")
+        [C]      ← confidence pill alone (no BC issue on this row)
+[+ BC]           ← BC pill alone (high confidence on this row)
+```
+
+**Why it reads clearly:**
+1. **Letter content.** "BC" (two letters with prefix symbol) vs "C" (one letter). Unambiguous at any reading speed.
+2. **Color.** BC pills use `#dc2626`/`#fcd34d`. Confidence pills use `#ef4444`/`#f59e0b`. Similar hues but not identical — the pair reads as "related but distinct."
+3. **6px gap.** `marginLeft:6` on both means whitespace separates them — they don't fuse.
+4. **Interaction.** BC pill shows pointer cursor + clicks to open BC Browser. Confidence pill shows help cursor + tooltip only. Hover behavior immediately distinguishes them.
+
+**Matched sizing actually improves legibility** over C81's approach (8→14px circle): two same-sized pills read as a cohesive indicator cluster, not a big pill next to a small dot.
+
+---
+
+#### 4. What Stays From C81 (Unchanged)
+
+- **Relocation:** Cut lines 28075-28078, paste after line 28200. Confidence pill moves from left-of-PN to right-of-PN, adjacent to BC pills.
+- **"C" on both colors:** Same letter on amber (medium) and red (low). Color carries severity, not the glyph.
+- **Independence:** `row.confidence` clears on PN edit (line 25525). `row.bcVerify.status` clears on pricing/BC browser match. Different fields, different code paths, unaffected by the move.
+- **No logic change:** Placement + styling only.
+
+---
+
+#### Summary (amended, supersedes C81 §3)
+
+| Item | C81 (superseded) | C82 (current) |
+|------|-------------------|---------------|
+| Dot size | 8px → 14px circle | Match BC pill: `padding:"1px 7px"`, `borderRadius:10` (~16px tall pill) |
+| Font | 8px weight 800 | 10px weight 700 (matches BC pill exactly) |
+| Shape | Circle | Pill (same as BC) |
+| Line height | (not specified) | 1.4 (matches BC pill) |
+| Relocation | After line 28200 | **Same** |
+| Glyph | "C" centered | **Same** |
+| Independence | No logic change | **Same** |
+
+**No open decisions.** Marc builds from C81 (relocation + independence) + C82 (sizing).
 
 ---
