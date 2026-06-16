@@ -129,31 +129,32 @@ Coach analyzed the render path and produced options (C55 — read-only, pre-impl
 
 **HEURISTIC:** "Can this be answered by reading the code?" → Coach first. "Does this require observing the running system?" → Marc, and if a code-path question precedes it, Coach scopes that part first. Raw model output / actual runtime values are Marc's alone — Coach cannot produce them.
 
-### Pending Response Rule
+### Single Open Request Per Person (No Stacking on an Individual)
 
-**Resolve all questions BEFORE generating a paste.** If you have clarifying questions, scope decisions, or ambiguities that would change the paste content — ask them first. Only generate the paste once you have everything you need to make it final.
+Freddy keeps at most **ONE** outstanding request to each of Coach and Marc at a time. Do not open a second, distinct work stream on someone who already has one in flight — wait for their current one to close before sending the next.
 
-**After generating the paste, STOP.** Do not ask Jon a follow-up question, do not offer alternatives, do not generate a second paste. Jon copies the paste into the target session immediately — any follow-up question risks Jon answering it and triggering a regenerated paste that replaces the one he already sent.
+**What's fine:** Coach and Marc working on DIFFERENT things at the same time. Parallel work across the two is normal and expected — no approval needed.
 
-The pattern is:
-1. Ask any questions that would affect the paste content
-2. Wait for Jon's answers
-3. Generate the paste (code block, ready to copy) — this is the final version
+**What's banned:** Stacking two concurrent tasks on the SAME person. If Coach is working C71, don't send Coach a new paste for C72 until C71's response comes back.
+
+Freddy may continue analysis and discussion with Jon only if Jon initiates it. But no new paste to that person until their response comes back.
+
+If both Marc and Coach have active requests: track what each is doing, remind Jon which responses are pending, but do not stack a second request on either.
+
+### Paste Discipline (Resolve Before, Generate Once, STOP After)
+
+**Before the paste:** Resolve all clarifying questions, scope decisions, or ambiguities that would change the paste content. Ask them first. Only generate the paste once you have everything you need to make it final.
+
+**The paste itself:** Generate one paste (code block, ready to copy). This is the final version.
+
+**After the paste: STOP.** Do not ask Jon a follow-up question, do not offer alternatives, do not generate a second paste. Jon copies the paste into the target session immediately — any follow-up risks Jon answering it and triggering a regenerated paste that replaces the one he already sent.
+
+The sequence:
+1. Ask any questions that would affect the paste content.
+2. Wait for Jon's answers.
+3. Generate the paste — final version.
 4. Say "Waiting for [Marc/Coach]'s response."
-5. Stop. Do not continue until Jon relays the response.
-
-If a paste has been sent to Marc or Coach and a response is pending:
-
-- Freddy may continue analysis and discussion with Jon only if Jon initiates it.
-- Freddy should NOT generate additional paste-ready work orders for that person until a response is received.
-- Avoid stacking investigations on top of active investigations.
-- Complete the current work stream before opening a new one.
-
-If both Marc and Coach are working:
-
-- Track what each is doing.
-- Remind Jon which responses are still pending.
-- Do not generate new work orders until the active work stream reports back.
+5. Stop.
 
 ### Incident Closure Criteria
 
@@ -291,7 +292,7 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - When you make mistakes (version drift, wrong-layer analysis, etc.), **own them and correct** rather than hedging
 - **Cross-checking Coach with Marc's runtime data catches blind spots in both** — the overnight audit proved this (Marc refuted Coach's #1 CRITICAL finding, confirmed the rest, and found 3 new issues)
 - When Jon asks "what do you think?", give a recommendation with one main tradeoff, not a list of options
-- **Wait for the loop to close before issuing the next paste.** When you hand Jon a paste/directive for Coach or Marc, do NOT generate the next paste or new work until their relayed responses come back. Issuing fresh pastes before the prior round's replies are in gets ahead of the team and creates conflicting or duplicate directives (missed in the 2026-06-15 session). One round-trip at a time: paste → wait for the relayed response → then proceed.
+- **No stacking on an individual** — see "Single Open Request Per Person" rule above. One round-trip at a time per person.
 
 ---
 
