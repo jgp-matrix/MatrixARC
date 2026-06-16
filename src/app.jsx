@@ -28054,7 +28054,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              (cleared to "high" on PN edit, line 25525). Renders LEFT of the BC circle. */}
                           {!row.isLaborRow&&!row.isContingency&&(row.confidence==="low"||row.confidence==="medium")&&(
                             <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
-                              style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>C</span>
+                              style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>C</span>
                           )}
                           {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
                             <button data-tip="Auto-match this part number in Business Central — click to find the best match or open the item browser" title="Fuzzy BC lookup" onClick={async()=>{
@@ -28064,7 +28064,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               if(result.match)applyBcItem(row.id,result.match);
                               else if(result.suggestions.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
                               else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
-                            }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>BC</button>
+                            }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>BC</button>
                           )}
                           </div>
                         </td>
