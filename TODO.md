@@ -2352,7 +2352,7 @@ reset that surfaced the ground-truth state.
      prevents the orphan state in the first place.
      Logged: 2026-06-16.
 
-145. **OPEN** [Infra — ALL transactional email down] — SendGrid API key rejected (401). Pulled
+145. **RESOLVED** [Verified 2026-06-16 — account reactivation, no code change] — SendGrid API key rejected (401). Pulled
      `sendInviteEmail` logs: at 2026-06-16T20:29:34Z the function was reached (callable auth
      VALID, `SENDGRID_KEY` present so the `:594` guard passed), called `sgMail.send()` (`:596`),
      and SendGrid returned **HTTP 401 Unauthorized** → function threw → status 500. The
@@ -2364,4 +2364,12 @@ reset that surfaced the ground-truth state.
      (+ verify the `sales@matrixpci.com` sender is still authenticated in SendGrid), redeploy
      functions. Workaround used for Ryan: hand-delivered the `?join=` invite link (works without
      email since the invite doc carries the token).
+     RESOLUTION (2026-06-16): SendGrid account reactivated (Essentials 50K paid). The
+     existing "MatrixARC" key was unchanged and authenticates again — the 401 was purely
+     the expired-account state, not a bad key. Confirmed read-only: `GET /v3/scopes` → 200,
+     sender `sales@matrixpci.com` verified. Live end-to-end: deployed `sendInviteEmail` →
+     `{success:true}` (status 200, was 500/401); SendGrid Email Activity shows the test
+     message to jon@matrixpci.com `status:"delivered"` (opened + clicked), 0 bounces/blocks.
+     NO key change, NO redeploy required. All other email paths share the same key so they
+     recover too.
      Logged: 2026-06-16.
