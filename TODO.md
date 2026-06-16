@@ -2167,7 +2167,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## Send Traveler BOM to Customer (2026-06-15)
 
-133. **OPEN** [ELEVATED, NEXT, needs Brief] — Send Traveler BOM to Customer.
+133. **RESOLVED** [Shipped, v1.20.122] — Send Traveler BOM to Customer (shipped customer-facing as "Send Quoted BOM" — renamed per C73).
      Deliver the EXISTING Matrix-generated traveler BOM (the production document with the
      cross column showing BOM differences) to the customer for review/approval before PO.
      NOT a new document — the exact same traveler BOM already generated. BOM only, NOT the
@@ -2185,6 +2185,11 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      - Any record that the approval email went out vs. send-and-reply.
      **Priority:** ELEVATED — gates PO acceptance, customer-facing. Above #127/#129.
      Discovered: 2026-06-15.
+     **RESOLVED (2026-06-16):** Shipped standalone + bundled send (Changes 0,1,2,3,4a; 4b
+     dropped — targets the dead ProjectView inline modal #130). Customer-facing name renamed
+     "Traveler BOM" → "Quoted BOM" (C73). v1.20.122, commit 2c53008b. Verified live on a
+     rendered doc (Jon). #130 carries the forward-note to inherit the "Include Quoted BOM"
+     toggle if that inline modal is ever revived (confirmed present).
 
 ## Part # confidence dots — what are they? (2026-06-16)
 
@@ -2203,16 +2208,24 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## Cover-page BOM table enhancements (2026-06-16)
 
-135. **OPEN** [Queued] — Yellow highlight on crossed-row PN cells in cover-page BOM table.
+135. **RESOLVED** [Shipped, v1.20.124] — Yellow highlight on crossed-row PN cells in cover-page BOM table.
      Fill Part # and Original Part # cells with yellow on crossed rows so substitutions are
      scannable at a glance. Shared between production traveler and Quoted BOM (both use
      buildCoverPage). Additive to existing bold/italic styling. Analysis: Coach C75.
      Logged: 2026-06-16.
+     **RESOLVED (2026-06-16):** Two PN cells — Part # (always) + Original Part # (only when a
+     real differing original) — filled yellow [255,243,176] on crossed rows via the existing
+     didParseCell hook; additive to bold/italic. Shared (both docs). v1.20.124, commit 7bb7a608.
+     Verified live (Jon).
 
-136. **OPEN** [Queued] — Hide Supplier column in customer-facing Quoted BOM.
+136. **RESOLVED** [Shipped, v1.20.124] — Hide Supplier column in customer-facing Quoted BOM.
      Production traveler keeps Supplier (shop needs it); customer Quoted BOM drops it via
      `opts.hideSupplierColumn` (same opts decoupling as C73 title rename). Analysis: Coach C75.
      Logged: 2026-06-16.
+     **RESOLVED (2026-06-16):** Supplier column dropped from the customer Quoted BOM via
+     `opts.hideSupplierColumn` (set only by generateTravelerBomPdf); production traveler keeps it
+     byte-for-byte. R2 — `tableWidth:"wrap"`, no column redistribution (gap closes on right).
+     v1.20.124, commit 7bb7a608. Verified live (Jon).
 
 ## Customer Portal — Quoted BOM Approval Workflow (2026-06-16)
 
@@ -2231,9 +2244,33 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## Cover-page data box: Dv.# + Qv.# split (2026-06-16)
 
-138. **OPEN** [Queued] — Split "REV" data box into Dv.# (Drawing Version) + Qv.# (Quote Version).
+138. **RESOLVED** [Shipped, v1.20.123] — Split "REV" data box into Dv.# (Drawing Version) + Qv.# (Quote Version).
      Replace the single REV box in the cover-page info grid with two half-width boxes showing
      `panel.bomVersion` (Dv.#) and `project.quoteRev` (Qv.#, via opts). Customer drawing rev
      stays in the title block (line 7877) — NOT lost. Shared between production traveler and
      Quoted BOM (no decoupling). ~20 new lines. Analysis: Coach C76.
      Logged: 2026-06-16.
+     **RESOLVED (2026-06-16):** REV box split into Dv.# (`panel.bomVersion`) | Qv.#
+     (`project.quoteRev` via `opts.quoteRev` from both callers). Customer drawing rev stays in
+     the title block. Shared (both docs). Code-path C77. v1.20.123, commit 5c776a49. RENDER
+     verified live (Jon).
+     **Scope note — does NOT close the Dv.# data issue:** the RENDER is resolved; the Dv.#
+     DATA seed-gap is NOT. A panel with no qualifying BOM change since the bomVersion feature
+     (v1.19.743) has no `bomVersion` and renders "—" (correct graceful fallback). Tracked
+     separately as OPEN **#139** (PRJ402096 panel 3).
+
+## bomVersion seed gap — legacy / never-bumped panels (2026-06-16)
+
+139. **OPEN** [Investigation — Coach] — Dv.# renders "—" on panels missing `bomVersion`.
+     `panel.bomVersion` is only written by `_bumpBomVersionIfChanged` (`app.jsx:8661`): seeds 1
+     on the first 0→N extraction (when `bomVersion==null`), +1 on BOM-hash / redline change. A
+     panel whose BOM was populated BEFORE the feature (v1.19.743) and has had no qualifying
+     change since never gets the field, so the #138 Dv.# box renders "—". This is the #119
+     legacy-panel class at panel granularity (can occur in active projects for stable panels).
+     **Evidence (runtime trace, Marc 2026-06-16):** PRJ402096 (3 panels) — panel-1 bomVersion=3,
+     panel-2=5 (render fine); panel-3 has NO `bomVersion` key (undefined) and renders "—". The
+     #138 render is correct/graceful — this is a DATA gap, not a render bug.
+     **Likely fix (Freddy + Jon decide):** backfill on load — seed `bomVersion=1` for any panel
+     with bom rows but no `bomVersion` (loadProjects / save-merge), fixing all consumers at once.
+     Render-side default is the smaller alternative but was explicitly avoided.
+     Forward-ref from: #138. Tie-in: #119. Owner: Coach. Logged: 2026-06-16.
