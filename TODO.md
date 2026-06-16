@@ -2282,12 +2282,17 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      watch confirms whether first-extraction reliability has a real gap.
      Priority: low. Tie-in: #119 (legacy-panel class). Logged: 2026-06-16.
 
-141. **OPEN** [Enhancement] — Relocate confidence dots + add "C" glyph on BOM rows.
-     Move the per-row AI confidence dot (amber=medium, red=low) from left-of-PN to right-of-PN,
-     adjacent to the BC status pills ("+ BC", "? BC"). Add a centered "C" letter inside both
-     dot colors. Indicators remain independent (confidence clears on PN edit per #134; BC
-     clears on pricing/BC browser match). Placement + glyph only, no logic change.
-     Analysis: Coach C81. Logged: 2026-06-16.
+141. **RESOLVED** [Shipped, v1.20.130] — Relocate confidence dots + add "C" glyph on BOM rows.
+     Shipped v1.20.130 (commit e4d287a1), supersedes wrong-element build v1.20.127.
+     Moved per-row AI confidence dot (amber=medium, red=low) into the `_bc` column as a 24×24
+     circle matching the blue "BC" circle exactly. Centered "C" letter, color carries severity.
+     Column widened 32→56px, right-justified (flex-end) so BC stays at its original position.
+     `flexShrink:0` keeps circles round under the 52px-in-56px exact fit.
+     Indicators remain independent (confidence clears on PN edit per #134; BC clears on
+     pricing/BC browser match). Placement + glyph only, no logic change.
+     Chain: C81 (initial analysis) → C82 (wrong element) → C84 (re-spec to blue circle) →
+     C85 (code-path verify) → C86 (right-anchor fix). Live-verified by Jon.
+     Logged: 2026-06-16.
 
 ## Red "+BC" pill redundancy review (2026-06-16)
 
