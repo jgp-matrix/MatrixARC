@@ -47,6 +47,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5)** — C69: #133 Supplement — verified Brief assumptions A1-A5 against codebase. Committed Brief + Supplement to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
 - **2026-06-16 (Session 5, cont.)** — C70: #134 Yellow circle investigation. Per-row AI confidence dot (v1.20.15, TODO #49f). Not trust-layer/F1 — it's extraction quality feedback. Live and wired correctly.
 - **2026-06-16 (Session 5, cont.)** — C71: #133 Detailed Plan — implementation spec for Marc. 6 changes (~155 lines), sequenced, with 7 acceptance tests. Committed to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
+- **2026-06-16 (Session 5, cont.)** — C72: #133 post-deploy code-path verification (v1.20.121). All 7 items PASS. Marc's 3 deviations correct. Change 4b (inline send toggle) omitted — non-blocking, forward-note for #130.
 
 ## Findings
 
@@ -6262,5 +6263,67 @@ Built from Freddy's Analyst Review with all decisions locked (D1-D3) and Supplem
 **Test criteria:** 7 acceptance checks (T1-T7) covering standalone clean/blocked, bundled off/on, three-attachment combo, inline send, and D3 immutability.
 
 **Risk flag:** Graph API 4MB cap — Marc should extend the existing size warning (line 31963) to sum all attachments including traveler. One-line change.
+
+---
+
+### C72 — #133 Post-Deploy Code-Path Verification (2026-06-16)
+
+**Type:** Post-deploy review  
+**Version:** v1.20.121 (commit 3621754a, base impl d561b203 + follow-ups a0906442, 0cb3fe1a)  
+**Status:** PASS with one deviation note (4b omitted — not a defect)
+
+#### Verification results
+
+**T2 — Standalone `handleBomSend` verification gate:** PASS  
+Line 32493: `findIncompleteQuoteItems(project).filter(i=>i.isVerificationBlock)` — filters to `isVerificationBlock` only, skips pricing completeness. On block: `arcAlert` with panel list (line 32495-32497), early return at 32498. No `sendGraphEmail` call, no D3 write. `setBomSending` is never set to `true` on this path (guard is before the `setBomSending(true)` at line 32509).
+
+**T3 — Bundled toggle default OFF:** PASS  
+Line 31836: `useState(false)` — default unchecked. The `if(includeTravelerBom)` guards at lines 31991 and 32038 are both gated on this state. When OFF: no `generateTravelerBomPdf` call, no `extraAttachments.push`, no `bomApprovalRequests` write.
+
+**T7 — D3 immutability (append-only, no reads/mutations/deletes):** PASS  
+Only two references to `bomApprovalRequests` in the entire codebase:
+- Line 32043: bundled path — `upd.bomApprovalRequests=[...(upd.bomApprovalRequests||[]),req]`
+- Line 32529: standalone path — `{...project,bomApprovalRequests:[...(project.bomApprovalRequests||[]),req]}`
+Both are spread-append. `status:"sent"` is a literal in both `req` objects (lines 32042, 32528). No code anywhere reads, updates, or deletes records from this array.
+
+**D3 FIX 1 — `"bar_"` prefix at both write sites:** PASS  
+- Standalone (line 32525): `id:"bar_"+Date.now().toString(36)+Math.random()...`
+- Bundled (line 32039): `id:"bar_"+Date.now().toString(36)+Math.random()...`
+
+**D3 FIX 2 — `panels = p.id` (stable IDs) at both sites:** PASS  
+- Standalone (line 32527): `panels:(project.panels||[]).map(p=>p.id)`
+- Bundled (line 32041): `panels:(project.panels||[]).map(p=>p.id)`
+
+**Size warning — sums all attachments:** PASS  
+Line 32002: `approxBytes=Math.floor(((pdfBase64?.length||0)+extraAttachments.reduce((s,a)=>s+(a.pdfBase64?.length||0),0))*0.75)` — sums quote PDF base64 length + all `extraAttachments` base64 lengths, then applies the 0.75 base64→bytes factor. This covers quote + BOM Report + traveler BOM in a three-attachment send (T5). Warning message at line 32005 updated to say "email attachments total" (not "quote PDF").
+
+**Change 0 — `generateTravelerBomPdf` calls `buildCoverPage` (cross column):** PASS  
+Line 7582: `await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4)` — calls the per-panel traveler builder (line 7812), NOT `buildBomReportPdfDoc`. The `hasCrosses` logic at line 7956 in `buildCoverPage` renders the "Original Part #" cross column. All panels iterated in a single combined PDF (`doc.addPage` at line 7581 for i>0). No `opts` → quoting mode (not production). Correct.
+
+#### Marc's 3 deviations — verified correct
+
+**Owner-priority gate on standalone send:** CORRECT  
+Two layers: (1) the button at line 34847 uses `onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{...setBomSendModal(...)}}` + `disabled={_hasVerify||ownerPriorityActive}` at line 34863 — matches the quote send button pattern at line 34797-34843. (2) the handler at line 32490 has `if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}` as the first line — matches `handleSend` at line 31889. Both use the same module-scope `_fireOwnerPriorityAlert` (line 15540). No other path's behavior altered.
+
+**`bomSending` double-send guard:** CORRECT  
+- Set `true` at line 32509 (before `acquireGraphToken` + `generateTravelerBomPdf` awaits)
+- Cleared on every exit: graph-token fail (line 32511), no-panels fail (line 32515), send-fail catch (line 32519), save-fail catch (line 32534), success (line 32536)
+- Guard checked at line 32492: `if(!m||bomSending)return;` — early return if already in flight
+- Button `disabled={bomSending}` at line 35007 + Cancel `disabled={bomSending}` at line 35006 — UI also locked during send
+
+**Separated save try/catch:** CORRECT  
+`sendGraphEmail` is in its own try/catch (line 32517-32519) — failure reports "Send failed" and returns. The D3 record save is in a SEPARATE try/catch (line 32524-32535) — failure reports "Traveler BOM was sent to X, but the send-record failed to save" (line 32533). This mirrors the #117 Fix 3c pattern on the quote path (line 32030-32033, 32045-32049). The user knows "email went out, only the audit record is missing" — not a false "Send failed".
+
+#### Deviation note: Change 4b (ProjectView inline send toggle) omitted
+
+The inline send modal at lines 37382-37465 has NO traveler BOM toggle, no `generateTravelerBomPdf` call, and no D3 record write. This was specified in the Detailed Plan (C71) as Change 4b (~18 lines).
+
+**Assessment: NOT A DEFECT.** The inline send path is a secondary/simpler send surface (no reply-to-thread, no thread search). Marc may have intentionally omitted it to keep the inline path minimal, or it may be a scope decision. Either way: the PRIMARY path (QuoteSendModal, Change 4a) has the toggle and works correctly. The inline path still sends quotes with BOM Report as before — it just can't bundle the traveler. This is a **FORWARD-NOTE for #130** (dead-code cleanup TODO already tracks this inline path as a simplification candidate). No action needed for #133 closure.
+
+#### Summary
+
+All 7 code-path verification items PASS. Marc's 3 deviations from the plan are all correct and well-implemented. Change 4b omission is noted but non-blocking. The code-path half of #133 closure is clear.
+
+Remaining for full closure: Jon's live-send tests (T1, T4, T5) + the #130 forward-note.
 
 ---
