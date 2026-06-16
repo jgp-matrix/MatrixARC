@@ -55,6 +55,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C77: #138 post-deploy code-path + rendered-PDF fit verification (v1.20.123). All 6 code-path items PASS. Half-box math confirms fit at all page sizes. Title block untouched.
 - **2026-06-16 (Session 5, cont.)** — C78: PRJ402096 Dv.# blank trace — code-verified Jon's runtime findings. Missing bomVersion on Panel 3 caused by seed-condition gap in `_bumpBomVersionIfChanged`. Fix recommendation: expand seed condition (Option C) over load-backfill.
 - **2026-06-16 (Session 5, cont.)** — C79: #139 Detailed Plan — Option C implementation spec for Marc. 2 changes (seed condition + comment), 5 acceptance tests (T1-T5). Verified line anchors against tip 57cad787.
+- **2026-06-16 (Session 5, cont.)** — C80: #139 post-deploy code-path verification (v1.20.125). All items PASS. Seed condition expanded, bump path untouched, comment revised, #138 render unaffected. T1-T5 code-path confirmed.
 
 ## Findings
 
@@ -7015,5 +7016,78 @@ Add a new panel to any project (0 BOM rows). Save the project. Verify the new pa
 | 5 | T1-T5 verification against PRJ402096 | 4 |
 
 Changes 1 and 2 are independent of each other (different locations in the file) and can be made in either order.
+
+---
+
+### C80 — #139 Post-Deploy Code-Path Verification (2026-06-16)
+
+**Type:** Post-deploy review  
+**Version:** v1.20.125 (commit cfe81579)  
+**Status:** PASS — all items verified
+
+#### Change 1 — Seed condition expanded: PASS
+
+Line 8665 (shipped):
+```js
+if(newCount>0&&newPanel.bomVersion==null){  // #139: seed legacy panels ...
+```
+`oldCount===0&&` removed. Condition now fires for any panel with ≥1 non-labor row and no `bomVersion`. Marc added inline comment citing #139 — accurate and helpful. Body unchanged (`return{...newPanel,bomVersion:1}` at line 8666).
+
+#### Bump path untouched: PASS
+
+Lines 8668-8676 (shipped): identical to pre-fix. `shouldBump` logic (hash comparison at 8670, redline comparison at 8672), version increment at 8674 (`(existingPanel?.bomVersion??newPanel.bomVersion??1)+1`) — all unchanged. The `oldCount` variable is still computed at line 8664 and still consumed by the bump gate at line 8669 (`if(oldCount>0)`).
+
+#### Change 2 — Comment revised: PASS
+
+Lines 9148-9153 (shipped):
+```js
+// DECISION(v1.19.743, revised v1.20.125/#139): Drawing Version bump. Compares the BOM
+// hash of the incoming panel against the Firestore copy and bumps `bomVersion` when they
+// differ. First-ever BOM extraction sets v.1. Legacy panels (rows but no bomVersion,
+// populated pre-v1.19.743) are now seeded to v.1 on next save — no backfill needed,
+// saveProject's all-panel loop handles it. Re-saves with no BOM change leave the field
+// untouched.
+```
+Matches C79 spec exactly. The stale "leave existing panels as-is" language is gone. Version attribution (`revised v1.20.125/#139`) accurately documents the reversal. The `saveProject` all-panel loop explanation is present — future readers will understand why no separate backfill exists.
+
+#### T1 — Legacy panel seeds to 1: PASS (code-path)
+
+The expanded condition at line 8665: for Panel 3 (`newCount=10`, `bomVersion==null`), `10>0 && null==null` → TRUE → returns `{...newPanel, bomVersion:1}`. Jon confirmed live: Panel 3 now has `bomVersion:1`, Dv.# box shows "1".
+
+#### T2 — Self-heal via `saveProject` all-panel iteration: PASS (code-path)
+
+`saveProject` loop at lines 8856-8859 iterates `for(let i=0;i<newPanels.length;i++)` and calls `_bumpBomVersionIfChanged(np,cp)` for every panel. Editing Panel 1 and saving the project runs Panel 3 through the expanded seed condition. Structure unchanged from C79 verification.
+
+#### T3 — Seed fires ONCE (no phantom bump): PASS (code-path)
+
+After seeding, Panel 3 has `bomVersion:1`. On next save: seed check `10>0 && 1==null` → FALSE (1 is not null) → falls through. Bump check: hash unchanged → `shouldBump=false` → returns unchanged. Version stays at 1.
+
+#### T4 — Already-versioned panels unaffected / bump correctly: PASS (code-path)
+
+Panel 1 (`bomVersion:3`): seed check `55>0 && 3==null` → FALSE → falls through. No-content save: bump check hash unchanged → stays at 3. Content-change save: hash differs → `shouldBump=true` → `next=(3??3??1)+1=4`. Bump path logic at lines 8668-8676 is untouched.
+
+#### T5 — Empty panel not seeded: PASS (code-path)
+
+New panel with 0 rows: `newCount=0`, seed check `0>0` → FALSE → falls through. No version written. The `newCount>0` gate prevents seeding empty panels.
+
+#### #138 render unaffected: PASS
+
+Both fields arrays (lines 7895, 7908) and the half-box render (lines 7925-7942) are identical to C77 verification. Pure reads of `panel.bomVersion` — no writes. The fix only changes when `bomVersion` is written in the save path. Structurally separated.
+
+#### Summary
+
+| Check | Result |
+|-------|--------|
+| Seed condition expanded (line 8665)? | PASS — `oldCount===0` removed |
+| Bump path untouched (8668-8676)? | PASS — identical |
+| Comment revised (9148-9153)? | PASS — matches C79 spec |
+| T1: legacy panel seeds to 1? | PASS — live-confirmed on PRJ402096 Panel 3 |
+| T2: saveProject all-panel heal? | PASS — loop at 8856-8859 unchanged |
+| T3: seed fires once? | PASS — `bomVersion==null` false after seed |
+| T4: versioned panels unaffected? | PASS — seed gate rejects, bump path intact |
+| T5: empty panel not seeded? | PASS — `newCount>0` gate |
+| #138 render unaffected? | PASS — pure reads, untouched |
+
+All code-path items PASS. Combined with Jon's live confirmation (Panel 3 seeded, Dv.# shows "1"), #139 is clear to close.
 
 ---
