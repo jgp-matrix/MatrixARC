@@ -2261,16 +2261,23 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## bomVersion seed gap — legacy / never-bumped panels (2026-06-16)
 
-139. **OPEN** [Investigation — Coach] — Dv.# renders "—" on panels missing `bomVersion`.
-     `panel.bomVersion` is only written by `_bumpBomVersionIfChanged` (`app.jsx:8661`): seeds 1
-     on the first 0→N extraction (when `bomVersion==null`), +1 on BOM-hash / redline change. A
-     panel whose BOM was populated BEFORE the feature (v1.19.743) and has had no qualifying
-     change since never gets the field, so the #138 Dv.# box renders "—". This is the #119
-     legacy-panel class at panel granularity (can occur in active projects for stable panels).
-     **Evidence (runtime trace, Marc 2026-06-16):** PRJ402096 (3 panels) — panel-1 bomVersion=3,
-     panel-2=5 (render fine); panel-3 has NO `bomVersion` key (undefined) and renders "—". The
-     #138 render is correct/graceful — this is a DATA gap, not a render bug.
-     **Likely fix (Freddy + Jon decide):** backfill on load — seed `bomVersion=1` for any panel
-     with bom rows but no `bomVersion` (loadProjects / save-merge), fixing all consumers at once.
-     Render-side default is the smaller alternative but was explicitly avoided.
-     Forward-ref from: #138. Tie-in: #119. Owner: Coach. Logged: 2026-06-16.
+139. **RESOLVED** [Verified] — Dv.# renders "—" on panels missing `bomVersion`.
+     Shipped v1.20.125 (commit cfe81579). Fix: Option C — expanded seed condition in
+     `_bumpBomVersionIfChanged` (app.jsx:8665), removed `oldCount===0` gate so legacy panels
+     (rows but no `bomVersion`, populated pre-v1.19.743) are seeded to v.1 on next save.
+     `saveProject` all-panel loop heals non-edited panels organically. Bump path untouched.
+     Stale comment at line 9148 revised to document reversed behavior.
+     Live-verified: PRJ402096 panel-3 seeded to bomVersion:1 after save, Dv.# now shows "1".
+     Analysis: Coach C78. Plan: Coach C79. Verification: Coach C80.
+     Forward-ref from: #138. Tie-in: #119. Logged: 2026-06-16.
+
+140. **OPEN** [Watch] — WATCH (post-#139): first-extraction bomVersion seed reliability.
+     PRJ402096's 3 panels were extracted same-batch (~1 wk ago, post-v1.19.743) yet panel-3
+     was NOT seeded at first extraction while panels 1 & 2 were. #139 self-heals this on
+     save, but does NOT explain why first extraction skipped panel-3 in a multi-panel batch.
+     **Action:** On the next multi-DRAWING project extraction, verify EVERY panel gets
+     `bomVersion` seeded at first extraction. If any panel is skipped, THAT is the live case
+     to trace the batch seed path (active-panel-only seeding? oldCount!==0 at seed-check
+     from placeholder rows? persist/async gap?). #139 masks the symptom via self-heal; this
+     watch confirms whether first-extraction reliability has a real gap.
+     Priority: low. Tie-in: #119 (legacy-panel class). Logged: 2026-06-16.
