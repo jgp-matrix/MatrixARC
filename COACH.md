@@ -53,6 +53,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C75: #135/#136 cover-page BOM table analysis. #135 yellow PN-cell highlight (shared, ~5 lines); #136 hide Supplier column (customer-only via opts, ~8 lines). Two open decisions flagged for Jon.
 - **2026-06-16 (Session 5, cont.)** — C76: #138 split REV data box into Dv.# + Qv.#. Both fields exist (panel.bomVersion, project.quoteRev). quoteRev needs opts pass-through. ~20 lines, shared, no open decisions.
 - **2026-06-16 (Session 5, cont.)** — C77: #138 post-deploy code-path + rendered-PDF fit verification (v1.20.123). All 6 code-path items PASS. Half-box math confirms fit at all page sizes. Title block untouched.
+- **2026-06-16 (Session 5, cont.)** — C78: PRJ402096 Dv.# blank trace — code-verified Jon's runtime findings. Missing bomVersion on Panel 3 caused by seed-condition gap in `_bumpBomVersionIfChanged`. Fix recommendation: expand seed condition (Option C) over load-backfill.
 
 ## Findings
 
@@ -6810,5 +6811,76 @@ Coach has no runtime/browser access. The fit check is performed via dimensional 
 | Labels/values fit at half width? | PASS — <17% utilization at standard size |
 
 All code-path and dimensional checks pass. #138 is verified at the code level. Jon's live-generated PDF confirmation (visual spot-check of actual rendered output) is the remaining closure step — Coach's math says it will fit, but the human eye-check on a real document is Jon's lane.
+
+---
+
+### C78 — PRJ402096 Dv.# Blank: Code-Verified Runtime Trace (2026-06-16)
+
+**Type:** Data/runtime trace verification  
+**Status:** CONFIRMED — root cause is a seed-condition gap, not a render bug  
+**Related:** #138 (Dv.#/Qv.# split), #119 (legacy panel class)
+
+#### Jon's runtime trace — code-verified
+
+Jon pulled live in-memory state from PRJ402096 (3 panels, authenticated). Coach independently verified each claim against the source:
+
+| Panel | `bomVersion` | Non-labor rows | Dv.# renders | Code-verified? |
+|-------|-------------|----------------|-------------|----------------|
+| panel-1 | `3` (number) | 55 | "3" | YES |
+| panel-2 | `5` (number) | 73 | "5" | YES |
+| panel-3 | `undefined` (key absent) | 10 | "—" | YES |
+
+`project.quoteRev = 1` — present, which is why Qv.# renders correctly on all three pages (confirmed: both fields arrays at lines 7895/7908 use `qvRev!=null?String(qvRev).padStart(2,"0"):"—"`, and `qvRev` comes from `opts.quoteRev` which traces back to `project.quoteRev`).
+
+#### Root cause: seed-condition gap in `_bumpBomVersionIfChanged`
+
+`_bumpBomVersionIfChanged` (line 8661) has two paths to set `bomVersion`:
+
+**Seed path (line 8665):**
+```js
+if(oldCount===0 && newCount>0 && newPanel.bomVersion==null){
+  return{...newPanel, bomVersion:1};
+}
+```
+Only fires on the transition from 0 → N rows. Panel 3 already has 10 rows (populated pre-v1.19.743), so `oldCount` is always >0 on subsequent saves → seed path never fires.
+
+**Bump path (lines 8668-8676):**
+Only fires when `oldCount>0` AND either the BOM hash changes (`_computeDvBomHash`) or redline count changes. Panel 3 has had no BOM content changes since v1.19.743 → bump never fires.
+
+**Result:** Panel 3 falls through both paths and returns unchanged — `bomVersion` is never written. The comment at line 9152 confirms this was by design: *"Existing pre-v1.19.743 panels with no version stay un-versioned until their first mutation under the new code (per user spec — 'leave existing panels as-is')."*
+
+This is the #119 legacy-panel class, but at **panel granularity** — not a whole-project issue. Panels 1 & 2 in the same project were re-extracted/edited after v1.19.743 and got seeded+bumped; Panel 3 was left untouched.
+
+#### Render behavior — confirmed graceful
+
+The render path at line 7895/7908:
+```js
+panel.bomVersion!=null ? String(panel.bomVersion) : "—"
+```
+`undefined != null` → `false` → renders `"—"`. Not blank, not "Dv.undefined", not broken. The UI chip (line 27139) gates on `bomVersion!=null` and hides entirely — also correct and consistent.
+
+**The render is NOT the problem.** #138's code is working exactly as specified in C76.
+
+#### Fix options — Coach recommendation
+
+**Option A — Backfill on load** (~10 lines in `loadProjects`): Seed `bomVersion:1` for any panel with `bom.length > 0` but no `bomVersion`. Fixes the data once for all consumers. Ties directly to #119's optional backfill scope (TODO line 2017). Downside: Dv.1 implies "one version tracked" when really "never tracked, backfilled" — minor semantic inaccuracy. Also writes to Firestore on next save for every legacy panel, which is a fire-once cost.
+
+**Option B — Render-side default** (~1 line): Change the ternary to default to `"1"` instead of `"—"`. Cosmetic lie — no version was tracked, but the box shows "1". Doesn't fix the UI chip or any other consumer. Smallest change, worst semantics.
+
+**Option C — Expand the seed condition** (~2 lines in `_bumpBomVersionIfChanged`): Add a case before the bump logic:
+```js
+if(newCount>0 && newPanel.bomVersion==null){
+  return{...newPanel, bomVersion:1};
+}
+```
+This removes the `oldCount===0` gate — any panel with BOM rows but no version gets seeded to 1 on its next save (any save, not just extraction). Works within the existing mechanism, fires organically on next user interaction, fixes all consumers (PDF box, UI chip, future portal). No load-time write burst. The version is semantically correct: "this is the baseline version we started tracking from."
+
+**Recommendation: Option C.** It's the smallest code change (expanding an existing condition), works within the proven bump mechanism, doesn't require a separate backfill path, and fires organically rather than on load. The `oldCount===0` gate was defensive against false-seeding empty panels, but the `newCount>0` check alone is sufficient — a panel with >0 non-labor rows and no `bomVersion` is by definition a legacy panel that needs seeding.
+
+Option A is the fallback if Jon/Freddy want immediate fix for all legacy panels on next load rather than waiting for user-triggered saves.
+
+#### Connection to #119
+
+This is a concrete manifestation of #119 (legacy panels invisible to Phase 1 safety systems). The `bomVersion` gap is lower-severity than #119's `extractionReport` gap (safety systems silently skipping), but it's the same root class: features gated on fields that were never written to pre-feature panels. Option C fixes the `bomVersion` gap. #119's broader scope (extractionReport backfill, ZeroBomBanner fallback, 1c gate on re-extract) remains open.
 
 ---
