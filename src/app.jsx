@@ -28043,9 +28043,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       )}
                     </td>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:12,color:row.itemNo?C.accent:C.muted,userSelect:"none"}}>{row.itemNo||"—"}</td>
-                    {[["qty",56],["partNumber",0,"fit"],["_bc",32],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(
+                    {[["qty",56],["partNumber",0,"fit"],["_bc",56],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(  /* #141 (C84): _bc widened 32→56 to hold the "C" + "BC" circle pair */
                       f==="_bc"?(
-                        <td key="_bc" style={{padding:"3px 2px",width:32,textAlign:"center"}}>
+                        <td key="_bc" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
+                          <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                          {/* #141 (C84): confidence "C" circle — mirrors the blue BC circle EXACTLY
+                             (24×24, borderRadius 50%, fontSize 9, weight 800, padding 0). Color carries
+                             severity (amber=medium, red=low); "C" carries type. <span>/cursor:help —
+                             informational, not clickable. Independent of BC: reads row.confidence
+                             (cleared to "high" on PN edit, line 25525). Renders LEFT of the BC circle. */}
+                          {!row.isLaborRow&&!row.isContingency&&(row.confidence==="low"||row.confidence==="medium")&&(
+                            <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
+                              style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>C</span>
+                          )}
                           {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
                             <button data-tip="Auto-match this part number in Business Central — click to find the best match or open the item browser" title="Fuzzy BC lookup" onClick={async()=>{
                               const pn=(row.partNumber||"").trim();
@@ -28056,6 +28066,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
                             }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>BC</button>
                           )}
+                          </div>
                         </td>
                       ):f==="_supplier"?(
                         <td key="_supplier" title={row.bcVendorName||""} style={{padding:"3px 5px",fontSize:11}}>
@@ -28072,7 +28083,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
                           )}
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
-                            {/* #141 (C81): confidence indicator moved out of this input wrapper to after the BC pills below. */}
+                            {/* #141 (C84): confidence indicator moved out of this input wrapper to the _bc column (next to the blue BC circle). */}
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
                             <input value={row[f]||""} readOnly={readOnly||row.isLaborRow||_baseLockedInEco}
                               title={_baseLockedInEco?"Use the BC Item Browser (🔍) to change "+f+" — base BOM is preserved; an ECO modify row will be created":undefined}
@@ -28209,15 +28220,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               ? BC
                             </button>
                           )}
-                          {/* #141 (C81/C82): confidence indicator — relocated here (was left of the PN
-                             input) and restyled as a pill matching the BC pills exactly (matched pair).
-                             Color carries severity (amber=medium, red=low); "C" carries type. Independent
-                             of BC: reads row.confidence (set by extraction, cleared to "high" on PN edit
-                             at line 25525) — separate field, separate code path from row.bcVerify. */}
-                          {f==="partNumber"&&(row.confidence==="low"||row.confidence==="medium")&&!row.isLaborRow&&!row.isContingency&&(
-                            <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
-                              style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:row.confidence==="low"?"#ef4444":"#f59e0b",color:"#000"}}>C</span>
-                          )}
+                          {/* #141 (C84): confidence "C" indicator now lives in the _bc column next to the blue BC circle — reverted the v1.20.127 pill that was here. */}
                           {/* DECISION(v1.19.638): Suspect qty flag — row description implies single
                              assembly (enclosure, window kit, etc.) but qty is large. Almost always
                              a column-alignment error where qty was grabbed from a different row. */}
