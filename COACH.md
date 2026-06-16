@@ -58,6 +58,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C80: #139 post-deploy code-path verification (v1.20.125). All items PASS. Seed condition expanded, bump path untouched, comment revised, #138 render unaffected. T1-T5 code-path confirmed.
 - **2026-06-16 (Session 5, cont.)** — C81: #141 Confidence dot relocation + "C" glyph analysis. Co-locate dot next to BC pills (move from left-of-PN to right-of-PN). Add centered "C" inside dot. Legibility confirmed (amber/red dot vs blue pill). No logic change.
 - **2026-06-16 (Session 5, cont.)** — C82: #141 AMENDMENT — match BC pill dimensions exactly. BC pills are 10px/700/borderRadius:10/padding 1px 7px/lineHeight 1.4. Confidence pill respec'd to identical dimensions with "C" text. Supersedes C81 §3 sizing only.
+- **2026-06-16 (Session 5, cont.)** — C83: Email yellow-highlight note verification (v1.20.126). Note appears exactly twice: standalone unconditional (32558), bundled gated on includeTravelerBom (32009). Absent from inline ProjectView path (37471). All PASS.
 
 ## Findings
 
@@ -7366,5 +7367,45 @@ With matched dimensions, the two indicators are **identical twins distinguished 
 | Independence | No logic change | **Same** |
 
 **No open decisions.** Marc builds from C81 (relocation + independence) + C82 (sizing).
+
+---
+
+### C83 — Email Yellow-Highlight Note Verification (2026-06-16)
+
+**Type:** Post-deploy review  
+**Version:** v1.20.126 (commit 0c558ea7)  
+**Status:** PASS — all items verified
+
+#### Verification
+
+**Note text:** `"Any deviation from the customer-supplied BOM is shown in yellow highlight. Please verify these items are acceptable and we will finalize the quote."`
+
+**Grep: exactly 2 occurrences in codebase.** PASS.
+
+**Standalone Quoted BOM send (`handleBomSend`) — ALWAYS:** PASS  
+Line 32558: `const bomNote=\`<p style="margin-top:12px">Any deviation...\`;` — unconditional assignment. No ternary, no guard. Every standalone BOM send includes the note. The comment at line 32557 confirms intent: *"Standalone Quoted BOM ALWAYS carries it."*
+
+**Bundled send (`QuoteSendModal`) — ONLY when `includeTravelerBom` is true:** PASS  
+Line 32009: `const bomNote=includeTravelerBom?\`<p...>\`:"";` — ternary gated on `includeTravelerBom`. When toggle is ON, `bomNote` contains the full note. When OFF, `bomNote` is empty string `""`. Both paths inject `bomNote` into the `html` template at line 32010 via `${bomNote}`. Empty string = absent from email.
+
+**Bundled send, toggle OFF — ABSENT:** PASS  
+Same line 32009: `includeTravelerBom` false → `bomNote=""` → the `${bomNote}` interpolation at line 32010 contributes nothing to the HTML. Note is absent.
+
+**Inline ProjectView send path — ABSENT:** PASS  
+Line 37471: `const html=\`...\${m.message...}...\`` — the template contains message + signature only. No `bomNote` variable, no "deviation" text, no "yellow highlight" text. The inline send path (`_doInlineQuoteSend` at line 37455) has no awareness of the Quoted BOM or the highlight note. Confirmed absent.
+
+**JSX valid:** Confirmed — both occurrences are template literals inside async handlers (lines 32009 and 32558), not JSX elements. No syntax risk.
+
+#### Summary
+
+| Check | Result |
+|-------|--------|
+| Standalone send (handleBomSend) — always? | PASS — unconditional at line 32558 |
+| Bundled send (QuoteSendModal) — gated on toggle? | PASS — ternary at line 32009 |
+| Bundled send, toggle OFF — absent? | PASS — empty string |
+| Inline ProjectView path — absent? | PASS — no bomNote, no deviation text (line 37471) |
+| Exactly 2 occurrences? | PASS — grep confirms 2 |
+
+Email-line thread is closed.
 
 ---
