@@ -46,6 +46,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-15 (Session 4, cont.)** — C68: #128 detailed plan. Five discrete changes: (1) `renderBomRegionPreview` function (~25 lines, after line 11824), (2) `locateInRegion` function in BCItemBrowserModal (~30 lines), (3) mount useEffect + page button branching (~9 lines), (4) modal instantiation `h5PageIds` prop (~3 lines), (5) `getExtractionUnits` cropBounds fix (~3 lines). ny=1 → instant highlight from stored coords; ny>1 → Haiku-on-region fallback. Text-layer pages keep existing path. ~70 lines total. 8 test criteria incl. #126 regression cases. #133 (Customer BOM Approval) logged in TODO.md.
 - **2026-06-16 (Session 5)** — C69: #133 Supplement — verified Brief assumptions A1-A5 against codebase. Committed Brief + Supplement to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
 - **2026-06-16 (Session 5, cont.)** — C70: #134 Yellow circle investigation. Per-row AI confidence dot (v1.20.15, TODO #49f). Not trust-layer/F1 — it's extraction quality feedback. Live and wired correctly.
+- **2026-06-16 (Session 5, cont.)** — C71: #133 Detailed Plan — implementation spec for Marc. 6 changes (~155 lines), sequenced, with 7 acceptance tests. Committed to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
 
 ## Findings
 
@@ -6237,5 +6238,29 @@ The dots work alongside a **toolbar badge** (line 27578-27597) that summarizes c
 - **"Mark BOM Verified" button** (line 27539-27549): clears `manualVerifyRequired` on the panel — a panel-level flag, not per-row.
 
 The yellow dots are purely extraction-quality feedback from the AI confidence system (v1.20.15, #49f).
+
+---
+
+### C71 — #133 Detailed Plan (2026-06-16)
+
+**Type:** Implementation spec  
+**Status:** COMPLETE  
+**Artifact:** `docs/133-BRIEF-AND-SUPPLEMENT.md` (appended after Analyst Review carve-outs)
+
+Built from Freddy's Analyst Review with all decisions locked (D1-D3) and Supplement (C69) verified.
+
+**Summary:** 6 changes, ~155 new lines, single session scope:
+- **Change 0:** `generateTravelerBomPdf(project)` — wrapper after line 7562 that iterates all panels through `buildCoverPage` into one combined PDF. ~22 lines.
+- **Change 1:** Standalone BOM send handler + state in PanelListView. Gates on `isVerificationBlock` only (skips pricing, skips `ensureQuoteFieldsPopulated`). Writes D3 `bomApprovalRequests[]` record. ~40 lines.
+- **Change 2:** Standalone "Send Traveler BOM" button in PanelListView after Send/Print Quote button (line 34726). Purple accent. ~25 lines.
+- **Change 3:** Standalone send modal (portal, minimal — no reply-to-thread). ~30 lines.
+- **Change 4a:** Bundled toggle in QuoteSendModal — checkbox after signature div (line 32091), default OFF. When ON, builds traveler and pushes to `extraAttachments[]`. D3 record on send. ~20 lines.
+- **Change 4b:** Same bundled toggle in ProjectView inline send modal (line 37227). ~18 lines.
+
+**D3 record shape:** `bomApprovalRequests[]` — array-append only, `status:"sent"` write-once, never mutated by #133 paths.
+
+**Test criteria:** 7 acceptance checks (T1-T7) covering standalone clean/blocked, bundled off/on, three-attachment combo, inline send, and D3 immutability.
+
+**Risk flag:** Graph API 4MB cap — Marc should extend the existing size warning (line 31963) to sum all attachments including traveler. One-line change.
 
 ---
