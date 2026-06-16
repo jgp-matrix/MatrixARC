@@ -28046,7 +28046,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {[["qty",56],["partNumber",0,"fit"],["_bc",56],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(  /* #141 (C84): _bc widened 32→56 to hold the "C" + "BC" circle pair */
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
-                          <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>  {/* #141 (C86): fill the _bc cell + right-anchor the pair — BC keeps its pre-#141 right edge, "C" extends leftward into the widened column */}
                           {/* #141 (C84): confidence "C" circle — mirrors the blue BC circle EXACTLY
                              (24×24, borderRadius 50%, fontSize 9, weight 800, padding 0). Color carries
                              severity (amber=medium, red=low); "C" carries type. <span>/cursor:help —
