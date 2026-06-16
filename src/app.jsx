@@ -8662,7 +8662,7 @@ function _bumpBomVersionIfChanged(newPanel,existingPanel){
   if(!newPanel)return newPanel;
   const newCount=(newPanel.bom||[]).filter(r=>!r.isLaborRow).length;
   const oldCount=existingPanel?(existingPanel.bom||[]).filter(r=>!r.isLaborRow).length:0;
-  if(oldCount===0&&newCount>0&&newPanel.bomVersion==null){
+  if(newCount>0&&newPanel.bomVersion==null){  // #139: seed legacy panels (rows but no bomVersion) to v.1 on next save — was gated on oldCount===0 (first-extraction only)
     return{...newPanel,bomVersion:1};
   }
   let shouldBump=false;
@@ -9145,13 +9145,12 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
         safeUpdated={...safeUpdated,pages:mergedPages};
       }
     }
-    // DECISION(v1.19.743): Drawing Version bump. Compares the BOM hash of the incoming
-    // panel against the Firestore copy and assigns a fresh `bomVersion` when they differ.
-    // First-ever BOM extraction sets v.1; any subsequent BOM mutation (manual edit, re-
-    // extract with new output, supplier-apply, scraper-apply) bumps. Re-saves with no BOM
-    // change leave the field untouched. Existing pre-v1.19.743 panels with no version stay
-    // un-versioned until their first mutation under the new code (per user spec — "leave
-    // existing panels as-is").
+    // DECISION(v1.19.743, revised v1.20.125/#139): Drawing Version bump. Compares the BOM
+    // hash of the incoming panel against the Firestore copy and bumps `bomVersion` when they
+    // differ. First-ever BOM extraction sets v.1. Legacy panels (rows but no bomVersion,
+    // populated pre-v1.19.743) are now seeded to v.1 on next save — no backfill needed,
+    // saveProject's all-panel loop handles it. Re-saves with no BOM change leave the field
+    // untouched.
     safeUpdated=_bumpBomVersionIfChanged(safeUpdated,existingTarget);
     // PRJ402109: Defensive dedup — resolve any duplicate BOM row IDs before writing
     if(safeUpdated.bom)safeUpdated={...safeUpdated,bom:_dedupBomRowIds(safeUpdated.bom)};
