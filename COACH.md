@@ -48,6 +48,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C70: #134 Yellow circle investigation. Per-row AI confidence dot (v1.20.15, TODO #49f). Not trust-layer/F1 — it's extraction quality feedback. Live and wired correctly.
 - **2026-06-16 (Session 5, cont.)** — C71: #133 Detailed Plan — implementation spec for Marc. 6 changes (~155 lines), sequenced, with 7 acceptance tests. Committed to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
 - **2026-06-16 (Session 5, cont.)** — C72: #133 post-deploy code-path verification (v1.20.121). All 7 items PASS. Marc's 3 deviations correct. Change 4b (inline send toggle) omitted — non-blocking, forward-note for #130.
+- **2026-06-16 (Session 5, cont.)** — C73: #133 "Traveler"→"Quoted BOM" rename analysis. `opts.documentTitle` decoupling, 2 call sites proven safe, 15 rename surfaces enumerated. Open question: filename prefix change?
 
 ## Findings
 
@@ -6325,5 +6326,88 @@ The inline send modal at lines 37382-37465 has NO traveler BOM toggle, no `gener
 All 7 code-path verification items PASS. Marc's 3 deviations from the plan are all correct and well-implemented. Change 4b omission is noted but non-blocking. The code-path half of #133 closure is clear.
 
 Remaining for full closure: Jon's live-send tests (T1, T4, T5) + the #130 forward-note.
+
+---
+
+### C73 — #133 "Traveler" → "Quoted BOM" Rename: Decoupling Analysis (2026-06-16)
+
+**Type:** Pre-implementation analysis (Coach lane — shared-function decoupling)  
+**Status:** COMPLETE — ready for Marc
+
+#### 1. In-PDF title: conditional mechanism
+
+**Line 7868** is the single render point:
+```js
+doc.text(isProduction?"APPROVED TO PRODUCE":"PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
+```
+
+`isProduction` comes from `opts.mode==="production"` (line 7856). The existing `opts` bag already supports arbitrary fields — `mode`, `poNumber`, `dueDate`, `poReceivedDate` are the four used today (lines 7856-7859).
+
+**Cleanest option: add `opts.documentTitle` override.** One-line change inside `buildCoverPage`:
+```js
+// Line 7868 becomes:
+doc.text(isProduction?"APPROVED TO PRODUCE":(opts.documentTitle||"PANEL PRODUCTION TRAVELER"),W-margin,m(16),{align:"right"});
+```
+
+Then in `generateTravelerBomPdf` (line 7582), pass the title:
+```js
+await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM"});
+```
+
+**Why `documentTitle` over a new mode:** A third mode would require a three-way branch on lines 7868 AND 7887 (the info-grid fields array). `documentTitle` only changes the title string — the info grid correctly uses the quoting-mode fields (no PO#, no due date), which is exactly right for a customer-facing quoted BOM. No new mode needed.
+
+#### 2. Production traveler: byte-for-byte unaffected — PROVEN
+
+**All `buildCoverPage` call sites enumerated:**
+
+| # | Line | Caller | opts passed | Title rendered | Affected? |
+|---|------|--------|-------------|----------------|-----------|
+| 1 | 7582 | `generateTravelerBomPdf` (#133) | `{}` today → `{documentTitle:"QUOTED BOM"}` after rename | Changes from "PANEL PRODUCTION TRAVELER" → "QUOTED BOM" | YES — this is the target |
+| 2 | 24241 | `buildAndAttachPdf` (BC upload) | `uploadOpts` pass-through | When `mode:"production"` → "APPROVED TO PRODUCE"; else → "PANEL PRODUCTION TRAVELER" | NO — `documentTitle` not in `uploadOpts`, falls through to existing conditional |
+
+**There are exactly 2 call sites.** Call site #2 is the production/BC path. It passes `uploadOpts` which comes from:
+- `buildAndAttachPdf()` with no args → `uploadOpts={}` → `isProduction=false`, no `documentTitle` → "PANEL PRODUCTION TRAVELER" (unchanged)
+- `buildAndAttachPdf({mode:"production", poNumber, dueDate, poReceivedDate})` (line 38070) → `isProduction=true` → "APPROVED TO PRODUCE" (unchanged, hits the `isProduction` branch first)
+- `buildAndAttachPdf({stampMode:"quote_ready",...})` / `"ready_to_produce"` / `"customer_reviewed"` (lines 33180, 33431, 33472) → no `mode`, no `documentTitle` → "PANEL PRODUCTION TRAVELER" (unchanged)
+
+**The `documentTitle` fallback (`||"PANEL PRODUCTION TRAVELER"`) guarantees zero change for any caller that doesn't explicitly set it.** Only the #133 wrapper passes it.
+
+#### 3. #133-only rename surfaces — complete list for Marc
+
+All are in `src/app.jsx`. None are shared with the production/BC path.
+
+| Surface | Line | Current text | New text | Shared with production? |
+|---------|------|-------------|----------|------------------------|
+| **In-PDF title** | 7868 (via opts) | "PANEL PRODUCTION TRAVELER" | "QUOTED BOM" | NO — only #133 wrapper passes `documentTitle` |
+| **Filename prefix** | 7588 | `TRAVELER_BOM-[...]` | **⚠ OPEN QUESTION — see below** | NO — only in `generateTravelerBomPdf` |
+| **Button label** | 34866 | "Send Traveler BOM for Approval" / "Send Traveler BOM (blocked…)" | "Send Quoted BOM for Approval" / "Send Quoted BOM (blocked…)" | NO |
+| **Button tooltip** | 34864 | "Email the traveler BOM (BOM-only, cross column)…" | "Email the quoted BOM…" | NO |
+| **Modal title** | 34986 | "📋 Send Traveler BOM" | "📋 Send Quoted BOM" | NO |
+| **Modal subtitle** | 34987 | "BOM-only (per-panel cover pages with cross column)…" | update "traveler" wording | NO |
+| **Modal send button** | 35007 | "Send Traveler BOM" / "Sending…" | "Send Quoted BOM" / "Sending…" | NO |
+| **Modal send tooltip** | 35007 | "Email the traveler BOM to the customer…" | "Email the quoted BOM…" | NO |
+| **Toggle label** | 32149 | "Include Traveler BOM (per-panel cover pages with cross column)" | "Include Quoted BOM…" | NO |
+| **Email subject** | 34859 | `Traveler BOM — ${...}` | `Quoted BOM — ${...}` | NO |
+| **Email body** | 34860 | "…attached traveler BOM…" | "…attached quoted BOM…" | NO |
+| **No-panels alert** | 32515 | "No panels — cannot generate traveler BOM." | "…quoted BOM." | NO |
+| **Send confirmation** | 32538 | "Traveler BOM sent to…" | "Quoted BOM sent to…" | NO |
+| **Save-fail alert** | 32533 | "⚠ Traveler BOM was sent to…" | "⚠ Quoted BOM was sent to…" | NO |
+| **Size warning** | 32005 | "…drop the BOM Report / Traveler BOM attachment…" | "…Quoted BOM attachment…" | NO |
+
+**15 surfaces total.** All are #133-only code added in `d561b203`/`a0906442`/`0cb3fe1a`. Zero overlap with the production traveler, BC upload, or any pre-#133 path.
+
+**Code comments** (lines 7565, 31835, 31989, 32000, 32035, 32142, 32483, 34844, 34980) reference "Traveler BOM" — Marc should update these too for grep consistency, but they have no runtime effect.
+
+#### Open question for Jon
+
+**Should the FILENAME prefix change too?**
+
+Current: `TRAVELER_BOM-[QTE-1234 Rev 01] - Customer - Project.pdf`  
+Option A: `QUOTED_BOM-[QTE-1234 Rev 01] - Customer - Project.pdf`  
+Option B: Keep `TRAVELER_BOM-…` filename, only rename visible title/UI
+
+The filename is what the customer sees in their email attachment list and downloads folder. If "Quoted BOM" is the customer-facing name, Option A is consistent. If "Traveler BOM" is fine as a behind-the-scenes filename, Option B avoids renaming a file pattern that may already be in customers' inboxes.
+
+**Jon decides.** Marc implements whichever.
 
 ---
