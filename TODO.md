@@ -2200,3 +2200,31 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      are advisory per-row; that flag is the hard panel-level gate.
      Source: Coach C70. Freddy's trust-layer lead ruled out.
      Logged: 2026-06-16.
+
+## Cover-page BOM table enhancements (2026-06-16)
+
+135. **OPEN** [Queued] — Yellow highlight on crossed-row PN cells in cover-page BOM table.
+     Fill Part # and Original Part # cells with yellow on crossed rows so substitutions are
+     scannable at a glance. Shared between production traveler and Quoted BOM (both use
+     buildCoverPage). Additive to existing bold/italic styling. Analysis: Coach C75.
+     Logged: 2026-06-16.
+
+136. **OPEN** [Queued] — Hide Supplier column in customer-facing Quoted BOM.
+     Production traveler keeps Supplier (shop needs it); customer Quoted BOM drops it via
+     `opts.hideSupplierColumn` (same opts decoupling as C73 title rename). Analysis: Coach C75.
+     Logged: 2026-06-16.
+
+## Customer Portal — Quoted BOM Approval Workflow (2026-06-16)
+
+137. **OPEN** [Backlog, needs Brief] — Customer Portal: digital Quoted BOM approval with
+     change-request workflow. When the customer portal is built, Quoted BOM approvals (#133)
+     route through it instead of email-only. Customers can review the BOM digitally, enter
+     any items they wish to change or substitute, and submit changes back to ARC. Matrix
+     engineers review and approve/reject the requested changes, then update the quote
+     accordingly. Replaces the current out-of-band email approval loop with a structured
+     digital workflow — faster turnaround, auditable change trail, no ambiguity about what
+     the customer approved vs. requested to change. Builds on the `bomApprovalRequests[]`
+     D3 record (#133) as the persistence layer; the `status:"sent"` field becomes a state
+     machine (sent → reviewed → approved/changed). Prerequisite: customer portal
+     infrastructure (no portal exists today — Brief §2/§8).
+     Logged: 2026-06-16.
