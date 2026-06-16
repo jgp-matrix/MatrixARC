@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.120 (defined in `public/index.html`; master at f2dbe932). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.130 (defined in `public/index.html`; master at f59b1fb7). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -242,7 +242,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-15)
+## Recently Active Work (as of 2026-06-16)
 
 ### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
 The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
@@ -254,7 +254,17 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
 - **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
 
-### Shipped This Session (v1.20.114 → v1.20.120)
+### Shipped This Session (v1.20.121 → v1.20.130)
+- **#133 Send Quoted BOM to Customer (v1.20.121–122 + follow-ups)** — RESOLVED. Standalone + bundled send of the existing traveler cover-page BOM (cross column) to the customer for review/approval before PO. Standalone `handleBomSend` (gates on `manualVerifyRequired`, skips quote-field populate, double-send guard); bundled = "Include Quoted BOM" toggle (default OFF). D3 `bomApprovalRequests[]` record (status write-once "sent") is the forward-hook for a future customer portal (#137). Customer-facing renamed **"Traveler BOM" → "Quoted BOM"** via `opts.documentTitle` (C73); production traveler unchanged. Yellow-highlight email explainer line (v1.20.126). Change 4b dropped (dead inline modal #130).
+- **#134 Confidence dots explainer** — RESOLVED (no code). Yellow circles by PNs = AI extraction confidence (amber=medium, red=low; clears on PN edit). Coach C70.
+- **#135 Yellow crossed-PN highlight (v1.20.124)** — RESOLVED. Part # + Original Part # cells filled yellow on crossed rows. SHARED (both docs). C75.
+- **#136 Hide Supplier column on Quoted BOM (v1.20.124)** — RESOLVED. `opts.hideSupplierColumn` (customer doc only); production keeps it. C75.
+- **#138 Cover-page REV → Dv.# | Qv.# split (v1.20.123)** — RESOLVED. Dv.# = `panel.bomVersion`, Qv.# = `project.quoteRev` (via opts). Customer drawing rev stays in the title block. SHARED. C76/C77.
+- **#139 bomVersion seed-gap fix (v1.20.125)** — RESOLVED. Removed the `oldCount===0` gate so legacy panels (rows but no `bomVersion`, pre-v1.19.743) seed to 1 on next save. Root cause: PRJ402096 panel 3 rendered Dv.# "—". Coach C78/C79. **Live confirmation on PRJ402096 panel 3 still OUTSTANDING** (needs a save to that project).
+- **#141 Confidence "C" indicator relocation (v1.20.127–130)** — RESOLVED. Four iterations. **Transferable lessons:** (1) v1.20.127 matched the WRONG element (the +BC verify pill, not the blue BC circle) — *confirm exactly which on-screen element a "match this" request points at before styling.* (2) The final defect was the C+BC circle pair rendering as OVALS at a 52px-in-56px exact fit — `display:flex` let the children shrink; `flexShrink:0` fixed it. *An exact-fit flex layout has zero tolerance; pin child dimensions.* Live-verified by Jon. Coach C81/C82/C84/C85/C86.
+- **#140 (OPEN, Watch)** / **#142 (TABLED)** — see Open Threads below.
+
+### Shipped Prior Session (v1.20.114 → v1.20.120)
 - **#121 Region edge-padding (v1.20.114)** — RESOLVED. Pad the resolved BOM region `max(2% per edge, 14pt floor)` before H5 render. **Transferable principle:** a *fixed-size* failure (one clipped row) needs a *fixed-size* guard — proportional padding is weakest exactly where it's needed (proportional-only was 2.3pt = quarter-row on PRJ402119). Verified Coach C56 via the new `tests/extraction-baseline/h5-headless.js` headless gate.
 - **#117 Quote Payment Terms / Shipping Method (v1.20.115 Phase 1, v1.20.116 Phase 2)** — RESOLVED. Phase 1 unified both print paths through a non-mutating shared `ensureQuoteFieldsPopulated` + awaited persistence; Phase 2 added loud-on-failure (send HARD-BLOCKS on missing terms before emailing a customer; print shows unchecked checklist warnings). **MUST-READ for any future quote bug:** the *entire* QuoteTab editing surface — both the Generate PDF button AND the setQ field editor — is **UNREACHABLE** in the live UI (it renders only inside the hidden `autoPrint` QuoteView at `height:0`). The ONLY reachable quote path is `handlePrintQuote → autoPrint`. Do not re-derive a "Path A/B divergence"; there is no reachable Path B. Verified fixed on real production quote data (Jon). Impl detail: Coach C58–C64.
 - **#125 Silent BC token refresh (v1.20.117)** — RESOLVED (was OPEN [Next] at session start). One line atop `ensureQuoteFieldsPopulated` silently re-acquires after a 401 nulls the token — kills the ~hourly Phase 2 false-warning. Refresh-fails leaves the token null so Phase 2 still fires. Coach C65.
@@ -266,7 +276,7 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - **#114** (Phase-2 majority voting) — killed. The 113b proof showed voting was *counterproductive* (it locks in consistent misreads); the real lever was resolution, which H5 supplies. Voting was solving the wrong problem.
 
 ### Parked Backlog (priority order)
-1. **#133** Send Traveler BOM to Customer — **ELEVATED, NEXT.** Deliver the existing Matrix-generated traveler BOM (with the cross/difference column) to the customer for review/approval before PO. Needs a Brief — this is where next session opens.
+1. **NEW OPEN THREADS (this session's output):** **#142** red "+BC" pill redundancy review (TABLED, Coach — audit vs the blue "BC" circle / amber "?BC" pill; couples with #141 layout if "+BC" is removed); **#137** Customer Portal for digital Quoted BOM approval/change-request (builds on #133's `bomApprovalRequests[]` D3 record, needs a Brief); **#140** watch first-extraction bomVersion seed reliability (post-#139). **#139 live-confirm OUTSTANDING** — trigger a save to PRJ402096 → confirm panel 3 stamps Dv.1 ("—" → "1"); fix is deployed. *(#133 Send Quoted BOM SHIPPED this session — v1.20.121–130.)*
 2. **#128** Drawing Reference band misposition residual — **TABLED.** Resume by instrumenting/characterizing the intermittency (which parts, which path, repeatable on the same part?) BEFORE theorizing a fix. Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235. Same thread as #126.
 3. **#127** Redundant extraction progress bar above the first line item — confirm redundancy, remove the duplicate.
 4. **#129** ARC Usage Telemetry — Tabled, needs a Brief. Append-only `arcUsage` collection (extraction / quote-generation / BC-populate events). Also the passive confirmation channel for #117 Phase 2 firing + #128 accuracy in production.

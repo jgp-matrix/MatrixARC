@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.120 (defined in `public/index.html`; master at f2dbe932). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.130 (defined in `public/index.html`; master at f59b1fb7). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -129,31 +129,32 @@ Coach analyzed the render path and produced options (C55 — read-only, pre-impl
 
 **HEURISTIC:** "Can this be answered by reading the code?" → Coach first. "Does this require observing the running system?" → Marc, and if a code-path question precedes it, Coach scopes that part first. Raw model output / actual runtime values are Marc's alone — Coach cannot produce them.
 
-### Pending Response Rule
+### Single Open Request Per Person (No Stacking on an Individual)
 
-**Resolve all questions BEFORE generating a paste.** If you have clarifying questions, scope decisions, or ambiguities that would change the paste content — ask them first. Only generate the paste once you have everything you need to make it final.
+Freddy keeps at most **ONE** outstanding request to each of Coach and Marc at a time. Do not open a second, distinct work stream on someone who already has one in flight — wait for their current one to close before sending the next.
 
-**After generating the paste, STOP.** Do not ask Jon a follow-up question, do not offer alternatives, do not generate a second paste. Jon copies the paste into the target session immediately — any follow-up question risks Jon answering it and triggering a regenerated paste that replaces the one he already sent.
+**What's fine:** Coach and Marc working on DIFFERENT things at the same time. Parallel work across the two is normal and expected — no approval needed.
 
-The pattern is:
-1. Ask any questions that would affect the paste content
-2. Wait for Jon's answers
-3. Generate the paste (code block, ready to copy) — this is the final version
+**What's banned:** Stacking two concurrent tasks on the SAME person. If Coach is working C71, don't send Coach a new paste for C72 until C71's response comes back.
+
+Freddy may continue analysis and discussion with Jon only if Jon initiates it. But no new paste to that person until their response comes back.
+
+If both Marc and Coach have active requests: track what each is doing, remind Jon which responses are pending, but do not stack a second request on either.
+
+### Paste Discipline (Resolve Before, Generate Once, STOP After)
+
+**Before the paste:** Resolve all clarifying questions, scope decisions, or ambiguities that would change the paste content. Ask them first. Only generate the paste once you have everything you need to make it final.
+
+**The paste itself:** Generate one paste (code block, ready to copy). This is the final version.
+
+**After the paste: STOP.** Do not ask Jon a follow-up question, do not offer alternatives, do not generate a second paste. Jon copies the paste into the target session immediately — any follow-up risks Jon answering it and triggering a regenerated paste that replaces the one he already sent.
+
+The sequence:
+1. Ask any questions that would affect the paste content.
+2. Wait for Jon's answers.
+3. Generate the paste — final version.
 4. Say "Waiting for [Marc/Coach]'s response."
-5. Stop. Do not continue until Jon relays the response.
-
-If a paste has been sent to Marc or Coach and a response is pending:
-
-- Freddy may continue analysis and discussion with Jon only if Jon initiates it.
-- Freddy should NOT generate additional paste-ready work orders for that person until a response is received.
-- Avoid stacking investigations on top of active investigations.
-- Complete the current work stream before opening a new one.
-
-If both Marc and Coach are working:
-
-- Track what each is doing.
-- Remind Jon which responses are still pending.
-- Do not generate new work orders until the active work stream reports back.
+5. Stop.
 
 ### Incident Closure Criteria
 
@@ -241,7 +242,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-15)
+## Recently Active Work (as of 2026-06-16)
 
 ### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
 The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
@@ -253,7 +254,17 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
 - **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
 
-### Shipped This Session (v1.20.114 → v1.20.120)
+### Shipped This Session (v1.20.121 → v1.20.130)
+- **#133 Send Quoted BOM to Customer (v1.20.121–122 + follow-ups)** — RESOLVED. Standalone + bundled send of the existing traveler cover-page BOM (cross column) to the customer for review/approval before PO. Standalone `handleBomSend` (gates on `manualVerifyRequired`, skips quote-field populate, double-send guard); bundled = "Include Quoted BOM" toggle (default OFF). D3 `bomApprovalRequests[]` record (status write-once "sent") is the forward-hook for a future customer portal (#137). Customer-facing renamed **"Traveler BOM" → "Quoted BOM"** via `opts.documentTitle` (C73); production traveler unchanged. Yellow-highlight email explainer line (v1.20.126). Change 4b dropped (dead inline modal #130).
+- **#134 Confidence dots explainer** — RESOLVED (no code). Yellow circles by PNs = AI extraction confidence (amber=medium, red=low; clears on PN edit). Coach C70.
+- **#135 Yellow crossed-PN highlight (v1.20.124)** — RESOLVED. Part # + Original Part # cells filled yellow on crossed rows. SHARED (both docs). C75.
+- **#136 Hide Supplier column on Quoted BOM (v1.20.124)** — RESOLVED. `opts.hideSupplierColumn` (customer doc only); production keeps it. C75.
+- **#138 Cover-page REV → Dv.# | Qv.# split (v1.20.123)** — RESOLVED. Dv.# = `panel.bomVersion`, Qv.# = `project.quoteRev` (via opts). Customer drawing rev stays in the title block. SHARED. C76/C77.
+- **#139 bomVersion seed-gap fix (v1.20.125)** — RESOLVED. Removed the `oldCount===0` gate so legacy panels (rows but no `bomVersion`, pre-v1.19.743) seed to 1 on next save. Root cause: PRJ402096 panel 3 rendered Dv.# "—". Coach C78/C79. **Live confirmation on PRJ402096 panel 3 still OUTSTANDING** (needs a save to that project).
+- **#141 Confidence "C" indicator relocation (v1.20.127–130)** — RESOLVED. Four iterations. **Transferable lessons:** (1) v1.20.127 matched the WRONG element (the +BC verify pill, not the blue BC circle) — *confirm exactly which on-screen element a "match this" request points at before styling.* (2) The final defect was the C+BC circle pair rendering as OVALS at a 52px-in-56px exact fit — `display:flex` let the children shrink; `flexShrink:0` fixed it. *An exact-fit flex layout has zero tolerance; pin child dimensions.* Live-verified by Jon. Coach C81/C82/C84/C85/C86.
+- **#140 (OPEN, Watch)** / **#142 (TABLED)** — see Open Threads below.
+
+### Shipped Prior Session (v1.20.114 → v1.20.120)
 - **#121 Region edge-padding (v1.20.114)** — RESOLVED. Pad the resolved BOM region `max(2% per edge, 14pt floor)` before H5 render. **Transferable principle:** a *fixed-size* failure (one clipped row) needs a *fixed-size* guard — proportional padding is weakest exactly where it's needed (proportional-only was 2.3pt = quarter-row on PRJ402119). Verified Coach C56 via the new `tests/extraction-baseline/h5-headless.js` headless gate.
 - **#117 Quote Payment Terms / Shipping Method (v1.20.115 Phase 1, v1.20.116 Phase 2)** — RESOLVED. Phase 1 unified both print paths through a non-mutating shared `ensureQuoteFieldsPopulated` + awaited persistence; Phase 2 added loud-on-failure (send HARD-BLOCKS on missing terms before emailing a customer; print shows unchecked checklist warnings). **MUST-READ for any future quote bug:** the *entire* QuoteTab editing surface — both the Generate PDF button AND the setQ field editor — is **UNREACHABLE** in the live UI (it renders only inside the hidden `autoPrint` QuoteView at `height:0`). The ONLY reachable quote path is `handlePrintQuote → autoPrint`. Do not re-derive a "Path A/B divergence"; there is no reachable Path B. Verified fixed on real production quote data (Jon). Impl detail: Coach C58–C64.
 - **#125 Silent BC token refresh (v1.20.117)** — RESOLVED (was OPEN [Next] at session start). One line atop `ensureQuoteFieldsPopulated` silently re-acquires after a 401 nulls the token — kills the ~hourly Phase 2 false-warning. Refresh-fails leaves the token null so Phase 2 still fires. Coach C65.
@@ -265,7 +276,7 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - **#114** (Phase-2 majority voting) — killed. The 113b proof showed voting was *counterproductive* (it locks in consistent misreads); the real lever was resolution, which H5 supplies. Voting was solving the wrong problem.
 
 ### Parked Backlog (priority order)
-1. **#133** Send Traveler BOM to Customer — **ELEVATED, NEXT.** Deliver the existing Matrix-generated traveler BOM (with the cross/difference column) to the customer for review/approval before PO. Needs a Brief — this is where next session opens.
+1. **NEW OPEN THREADS (this session's output):** **#142** red "+BC" pill redundancy review (TABLED, Coach — audit vs the blue "BC" circle / amber "?BC" pill; couples with #141 layout if "+BC" is removed); **#137** Customer Portal for digital Quoted BOM approval/change-request (builds on #133's `bomApprovalRequests[]` D3 record, needs a Brief); **#140** watch first-extraction bomVersion seed reliability (post-#139). **#139 live-confirm OUTSTANDING** — trigger a save to PRJ402096 → confirm panel 3 stamps Dv.1 ("—" → "1"); fix is deployed. *(#133 Send Quoted BOM SHIPPED this session — v1.20.121–130.)*
 2. **#128** Drawing Reference band misposition residual — **TABLED.** Resume by instrumenting/characterizing the intermittency (which parts, which path, repeatable on the same part?) BEFORE theorizing a fix. Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235. Same thread as #126.
 3. **#127** Redundant extraction progress bar above the first line item — confirm redundancy, remove the duplicate.
 4. **#129** ARC Usage Telemetry — Tabled, needs a Brief. Append-only `arcUsage` collection (extraction / quote-generation / BC-populate events). Also the passive confirmation channel for #117 Phase 2 firing + #128 accuracy in production.
@@ -291,7 +302,7 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 - When you make mistakes (version drift, wrong-layer analysis, etc.), **own them and correct** rather than hedging
 - **Cross-checking Coach with Marc's runtime data catches blind spots in both** — the overnight audit proved this (Marc refuted Coach's #1 CRITICAL finding, confirmed the rest, and found 3 new issues)
 - When Jon asks "what do you think?", give a recommendation with one main tradeoff, not a list of options
-- **Wait for the loop to close before issuing the next paste.** When you hand Jon a paste/directive for Coach or Marc, do NOT generate the next paste or new work until their relayed responses come back. Issuing fresh pastes before the prior round's replies are in gets ahead of the team and creates conflicting or duplicate directives (missed in the 2026-06-15 session). One round-trip at a time: paste → wait for the relayed response → then proceed.
+- **No stacking on an individual** — see "Single Open Request Per Person" rule above. One round-trip at a time per person.
 
 ---
 
@@ -411,76 +422,81 @@ This document should be updated when:
 
 Coach maintains this document. Marc can update it if Coach delegates.
 
-
 ---
 
-# Session State — 2026-06-15 MDT
+# Session State — 2026-06-16 MDT
 
 ## Version
-v1.20.120 (deployed 2026-06-15). Quote-populate trust work (#117 P1+P2), silent BC token refresh (#125), and the Drawing Reference band fixes (#126, #128). Stable.
+v1.20.130 (deployed 2026-06-16). Quoted BOM customer-send feature + cover-page BOM enhancements + bomVersion seed fix + confidence-indicator relocation. Stable, live-verified.
 
 ## Deploy State
-- Master tip: f2dbe932 ("docs: session close-out — #117/#125/#126 resolved, #128 tabled, #133 queued")
+- Master tip: f59b1fb7 ("TODO close-out polish: #133 follow-ups noted; #138 ref to #139 marked RESOLVED")
 - Local master == origin/master (synced)
-- Latest tag: v1.20.120
-- No code changes since the v1.20.120 release — the close-out doc commit (f2dbe932) is documentation only
+- Latest tag: v1.20.130
+- No code changes since the v1.20.130 release — the C78 doc commit (73910dfa) and TODO close-out commits are documentation only.
 
 ## Recent Commits (last 15)
-- f2dbe932 docs: session close-out — #117/#125/#126 resolved, #128 tabled, #133 queued
-- 4caddc71 Release v1.20.120
-- 4fabf9f2 #128 follow-up: await locateInDrawing fallback in locateInRegion
-- 11b57a71 Release v1.20.119
-- a3f040ba #128: H5 BOM-region render preview + cropBounds coord fix (C68)
-- 9a00ed02 Release v1.20.118
-- 641714b0 #126: fix Drawing Reference band landing on wrong/same row (two bugs, C66)
-- aa9c1bbd Release v1.20.117
-- 1e22b6df #125 (T-bcTokenRefresh): silent BC token refresh atop ensureQuoteFieldsPopulated
-- b4d6d0f3 Release v1.20.116
-- 5afa49e0 #117 Phase 2: loud-on-failure for quote populate (Fixes 3, 3c, 4)
-- c6f145cf Release v1.20.115
-- 0756e4b6 #117 Phase 1: unify quote-populate paths + persist (Fixes 1+2)
-- c6d6d252 Close-out records for #121: RESOLVED + Q3 watch-item (#124) + MCP T9
-- afcfb98b Release v1.20.114
+- f59b1fb7 TODO close-out polish: #133 follow-ups noted; #138 ref to #139 marked RESOLVED
+- 73910dfa docs: add Coach C78 — PRJ402096 Dv.# seed-gap trace + fix analysis (#139)
+- 2170e15a TODO: #141 RESOLVED (v1.20.130, commit e4d287a1)
+- e4d287a1 Release v1.20.130
+- 761e85b0 #141 layout fix 2: flexShrink:0 on C + BC circles so they stay round
+- 3c414cff Release v1.20.129
+- 5efa5b8a #141 layout fix (C86): right-anchor the _bc circle pair so BC clears Description
+- 85c74866 C86: #141 layout fix — right-justify circle pair in _bc column
+- 3b04741d C85: #141 post-deploy code-path verification (v1.20.128) — all PASS
+- ee7d6b7b Release v1.20.128
+- db55d5a9 #141 REBUILD (C84): match the blue BC circle, not the +BC pill
+- e01e06ed C84: #141 re-spec — match blue BC circle (24x24, borderRadius 50%, fontSize 9)
+- c10c9b31 TODO #142 (TABLED): red +BC pill redundancy review (Coach investigation)
+- 73a65b6a Release v1.20.127
+- 4363063c #141: relocate confidence indicator next to BC + restyle as matched 'C' pill (C81/C82)
 
-## Headline: Quote Trust Layer + Drawing-Reference Fixes Shipped
-This session closed the #117 quote-field reliability thread and the #126→#128 Drawing Reference preview thread, plus the #121 H5 follow-up.
+## Headline: Quoted BOM Customer-Send + Cover-Page BOM Enhancements Shipped
+Built the customer-facing Quoted BOM send feature end-to-end, plus a cluster of cover-page BOM improvements, the bomVersion seed-gap fix, and the confidence-indicator relocation. 50 commits, 10 releases (v1.20.121 → v1.20.130).
 
-## Shipped This Session (v1.20.113 → v1.20.120)
+## Shipped This Session (v1.20.121 → v1.20.130)
 
-### #121 Region edge-padding (v1.20.114) — RESOLVED
-Pad the resolved BOM region before H5 render: `max(2% of region per edge, 14pt floor)`, clamped to page bounds. The absolute floor is load-bearing (Freddy analyst review, Coach C54) — a clipped row is a fixed height, so proportional-only (2.3pt on PRJ402119) was insufficient. Verified via headless harness (Coach C56): PRJ402119 14/14 PNs, zero phantoms. New standing tool: `tests/extraction-baseline/h5-headless.js`.
+### #133 Send Quoted BOM to Customer (v1.20.121–122, +follow-ups) — RESOLVED
+Standalone + bundled send of the existing traveler cover-page BOM (cross column) to the customer for review/approval before PO. Standalone `handleBomSend` in PanelListView (gates on `manualVerifyRequired`, skips `ensureQuoteFieldsPopulated`, owner-priority gated, double-send guard + separated save try/catch). Bundled = "Include Quoted BOM" toggle (default OFF) in QuoteSendModal. D3 `bomApprovalRequests[]` record (id `bar_`-prefixed, panels = stable IDs, status write-once "sent"). Graph size-warning sums all attachments. Change 4b (ProjectView inline modal) DROPPED — dead code (#130). Customer-facing renamed "Traveler BOM" → "Quoted BOM" via `opts.documentTitle` (C73, v1.20.122); production traveler unchanged. Yellow-highlight email explainer line added (v1.20.126) — standalone always, bundled only when toggle ON. New fn: `generateTravelerBomPdf` (internal name retained).
 
-### #117 Quote Payment Terms / Shipping Method — RESOLVED (Phase 1 + Phase 2)
-- **Phase 1 (v1.20.115):** extracted `ensureQuoteFieldsPopulated(project,uid)→{project,warnings}` (non-mutating shared gate), unified both print paths, awaited all saves. Path B lifted to QuoteView (Option A) persisting the REAL project (#86 guard).
-- **Phase 2 (v1.20.116):** loud-on-failure — `bc-unavailable`/`missing-required-terms` warnings; QuoteSendModal HARD-BLOCKS on missing terms before emailing; print path shows unchecked checklist entries.
-- **Key finding:** the QuoteTab editing surface (Generate PDF button + setQ editor) is **unreachable** in the live UI (renders only in the hidden autoPrint QuoteView). The reachable path is handlePrintQuote→autoPrint. Verified fixed on real production quote data (Jon).
+### #134 Confidence dots explainer (no code) — RESOLVED
+Yellow circles next to PNs = AI extraction confidence (amber=medium, red=low; clears on PN edit). Distinct from `manualVerifyRequired`. Coach C70.
 
-### #125 Silent BC token refresh (v1.20.117) — RESOLVED
-One line atop `ensureQuoteFieldsPopulated`: `if(!_bcToken)try{await acquireBcToken(false);}catch(e){}`. Kills the ~hourly Phase 2 false-warning by silently re-acquiring after a 401 nulls the token. Refresh-fails leaves `_bcToken` null → Phase 2 still fires (Coach C65).
+### #135 Yellow crossed-PN highlight (v1.20.124) — RESOLVED
+Two PN cells (Part # always, Original Part # when populated) filled yellow `[255,243,176]` on crossed rows via `didParseCell`. Additive to bold/italic. SHARED — both production traveler and Quoted BOM. C75.
 
-### #126 Drawing Reference band wrong/same row (v1.20.118) — RESOLVED
-Two bugs (Coach C66): `parseInt(itemNo)||0` collapsed every part to row 0 when itemNo blank/non-numeric; page buttons used tile-relative stored coords post-H5. Fix: Haiku locates by part-number STRING; page buttons always re-locate.
+### #136 Hide Supplier column on Quoted BOM (v1.20.124) — RESOLVED
+`opts.hideSupplierColumn` (set only by `generateTravelerBomPdf`) drops Supplier from the customer doc; production keeps it byte-for-byte. R2: `tableWidth:"wrap"`, no redistribution. C75.
 
-### #128 H5 region-render preview (v1.20.120) — TABLED
-Region render + ny=1 zero-Haiku hot path + getExtractionUnits cropBounds fix + spinner-race follow-up all SHIPPED and STAY. Band placement still wrong but **intermittent** — see TODO #128 for the corrected resume note (stateful/conditional, not deterministic coord-math; instrument-and-characterize first).
+### #138 Cover-page REV box → Dv.# | Qv.# split (v1.20.123) — RESOLVED
+Single REV box (redundant `panel.drawingRev`) replaced with two half-boxes: Dv.# (`panel.bomVersion`) | Qv.# (`project.quoteRev` via `opts.quoteRev` from both callers). Customer rev stays in the title block. SHARED. C76/C77.
+
+### #139 bomVersion seed-gap fix (v1.20.125) — RESOLVED
+Removed `oldCount===0` gate from the seed condition in `_bumpBomVersionIfChanged` → legacy panels (BOM rows but no `bomVersion`, populated pre-v1.19.743) seed to 1 on next save via `saveProject`'s all-panel loop. Bump path untouched. Root cause: PRJ402096 panel 3 (undefined bomVersion → Dv.# rendered "—"). Coach C78/C79. **Live confirmation on PRJ402096 panel 3 NOT yet triggered** (needs a save to that project — see Open Items).
+
+### #141 Confidence "C" indicator relocation (v1.20.127–130) — RESOLVED
+Four iterations: v1.20.127 matched the WRONG element (+BC pill); C84 rebuild matched the blue BC circle (24×24 circle in the `_bc` column); C86 right-anchored the pair so BC clears Description; final `flexShrink:0` keeps both circles round under the 52px-in-56px exact fit. Result: "C" (amber/red, black glyph) left of the blue "BC" circle, matched round pair. Live-verified by Jon.
 
 ## Top of Queue
-**#133 Send Traveler BOM** — opens next session after its Brief.
+**#142 Red "+BC" pill redundancy review** (TABLED — Coach investigation) OR **#137 Customer Portal Quoted BOM approval** (backlog, needs Brief). Jon to pick.
+
+## Open Items / Watch
+1. **#139 live confirmation OUTSTANDING** — trigger a save to PRJ402096 → confirm panel 3 stamps `bomVersion:1` and Dv.# shows "1" (was "—"). Fix is deployed; just needs the live save + re-check.
+2. **#140** WATCH (post-#139): first-extraction bomVersion seed reliability after the seed-condition change.
+3. **#142** TABLED: red "+BC" pill possible redundancy vs blue "BC" circle / amber "?BC" pill (Coach read-only audit). Couples with #141 layout if "+BC" is removed.
 
 ## Parked Backlog (priority order)
-1. **#128** Drawing Reference band misposition residual — TABLED, resume per corrected note (characterize intermittency first). Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235.
-2. **#115** Held-back-cross review UI — scaffolding exists, needs per-row indicator.
-3. **#85** Internal Excel fast-quote — audited, needs Brief.
-4. **#119** Legacy panels invisible to Phase 1 safety systems.
-5. **#118** Batch extraction path missing region learning context.
-6. Item 16 / BC-fill cluster (long-standing).
+1. **#137** Customer Portal — digital Quoted BOM approval/change-request workflow (builds on #133 `bomApprovalRequests[]`). Needs Brief.
+2. **#128** Drawing Reference band misposition residual — TABLED (characterize intermittency first). Test parts: 1SFL547002R1311 / 1SDA102947R1 / 8106235.
+3. **#115** Held-back-cross review UI. **#85** Internal Excel fast-quote. **#119** Legacy panels invisible to Phase 1 safety systems. **#118** Batch extraction region learning. Item 16 / BC-fill cluster.
 
 ## Known Tooling Gaps
-- **T9** Claude-in-Chrome MCP can't navigate to non-prod origins (test/channel) even at extension all-sites — connector-internal, origin-wide. Workaround: `tests/extraction-baseline/h5-headless.js` runs non-prod H5 gates from Node. Blocks agent-driven non-prod live tests; owner Jon to route.
+- **T9** Claude-in-Chrome MCP can't navigate to non-prod origins. Workaround: `tests/extraction-baseline/h5-headless.js` runs non-prod gates from Node.
 
 ## Open TODOs
-~74 OPEN findings in TODO.md.
+~75 OPEN findings in TODO.md.
 
 ## Working Tree
-- Branch: master (up to date with origin/master at f2dbe932)
+- Branch: master (up to date with origin/master at f59b1fb7)
 - Clean
