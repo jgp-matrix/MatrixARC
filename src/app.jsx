@@ -7582,7 +7582,7 @@ async function generateTravelerBomPdf(project){
   const q=project.quote||{};
   for(let i=0;i<panels.length;i++){
     if(i>0)doc.addPage([431.8,279.4],"landscape");
-    await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM",quoteRev:project.quoteRev||0});  // #133 (C73): customer-facing title; #138 (C76): Qv.# source
+    await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM",quoteRev:project.quoteRev||0,hideSupplierColumn:true});  // #133 (C73): title; #138 (C76): Qv.#; #136 (C75): customer doc hides Supplier
   }
   const base64=doc.output("datauristring").split(",")[1];
   const rev=project.quoteRev||0;
@@ -8023,6 +8023,12 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   // "Original Part #" column) aren't truncated with an ellipsis. Minimum widths keep
   // narrow columns (#, Qty) compact; the rest expand to fit the widest value on each.
   // Text that still exceeds will wrap via overflow:"linebreak" rather than truncate.
+  // #136 (C75): customer-facing Quoted BOM hides the Supplier column (set only by
+  // generateTravelerBomPdf via opts; production/BC path never sets it, so it stays
+  // byte-for-byte). Supplier is the LAST column in both layouts, so dropping it
+  // leaves Part#(2) / Original#(3) indices unchanged — the #135 highlight targets
+  // stay correct without conditional index logic.
+  const hideSupplier=!!opts.hideSupplierColumn;
   const colStyles=hasCrosses?{
     0:{cellWidth:m(7),halign:"center"},           // #
     1:{cellWidth:m(11),halign:"center"},          // Qty
@@ -8039,19 +8045,20 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     4:{cellWidth:'auto',minCellWidth:m(28)},      // MFR
     5:{cellWidth:'auto',minCellWidth:m(30)},      // Supplier
   };
+  if(hideSupplier)delete colStyles[hasCrosses?6:5];  // #136: drop Supplier col styles
   const head=hasCrosses
-    ?[["#","Qty","Part #","Original Part #","Description","MFR","Supplier"]]
-    :[["#","Qty","Part #","Description","MFR","Supplier"]];
+    ?[["#","Qty","Part #","Original Part #","Description","MFR",...(hideSupplier?[]:["Supplier"])]]
+    :[["#","Qty","Part #","Description","MFR",...(hideSupplier?[]:["Supplier"])]];
   const body=bom.map((r,i)=>hasCrosses
-    ?[i+1,r.qty||1,r.partNumber||"—",r.isCrossed?(r.crossedFrom||"—"):"",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]
-    :[i+1,r.qty||1,r.partNumber||"—",r.description||"—",r.manufacturer||"—",r.bcVendorName||"—"]
+    ?[i+1,r.qty||1,r.partNumber||"—",r.isCrossed?(r.crossedFrom||"—"):"",r.description||"—",r.manufacturer||"—",...(hideSupplier?[]:[r.bcVendorName||"—"])]
+    :[i+1,r.qty||1,r.partNumber||"—",r.description||"—",r.manufacturer||"—",...(hideSupplier?[]:[r.bcVendorName||"—"])]
   );
 
   let coverPageCount=0;
   doc.autoTable({
     startY:tableStart,
     margin:{left:margin,right:margin,bottom:m(12)},
-    tableWidth:"auto",
+    tableWidth:hideSupplier?"wrap":"auto",  // #136 (C75): R2 — no redistribution; table shrinks by Supplier's width, gap on right. Other columns keep their widths.
     headStyles:{fillColor:[220,220,220],textColor:[0,0,0],fontStyle:"bold",fontSize:fontSize+m(0.5),cellPadding:cellPad,lineWidth:m(0.2),lineColor:[0,0,0]},
     bodyStyles:{fontSize,cellPadding:cellPad,lineWidth:m(0.1),lineColor:[180,180,180],textColor:[0,0,0]},
     alternateRowStyles:{fillColor:[245,245,245]},
@@ -8065,6 +8072,15 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
         if(row&&row.isCrossed){
           data.cell.styles.fontStyle="bold";
           if(data.column.index===3){data.cell.styles.fontStyle="bolditalic";}
+          // #135 (C75): yellow fill on the two PN cells of crossed rows — additive to
+          // the bold/italic (C69). Part # (col 2) always; Original Part # (col 3) ONLY
+          // when it carries a real, differing original — never on a blank original cell.
+          // Cols 2/3 precede the (last) Supplier column, so indices hold whether or not
+          // #136 drops Supplier on the customer doc.
+          if(data.column.index===2)data.cell.styles.fillColor=[255,243,176];
+          if(data.column.index===3&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)){
+            data.cell.styles.fillColor=[255,243,176];
+          }
         }
       }
     },
