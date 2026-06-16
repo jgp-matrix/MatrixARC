@@ -7582,7 +7582,7 @@ async function generateTravelerBomPdf(project){
   const q=project.quote||{};
   for(let i=0;i<panels.length;i++){
     if(i>0)doc.addPage([431.8,279.4],"landscape");
-    await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM"});  // #133 (C73): customer-facing title; quoting mode (not production)
+    await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM",quoteRev:project.quoteRev||0});  // #133 (C73): customer-facing title; #138 (C76): Qv.# source
   }
   const base64=doc.output("datauristring").split(",")[1];
   const rev=project.quoteRev||0;
@@ -7860,6 +7860,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   const poNumber=opts.poNumber||"";
   const dueDate=opts.dueDate||"";
   const poReceivedDate=opts.poReceivedDate||generated;
+  const qvRev=opts.quoteRev!=null?opts.quoteRev:null;  // #138 (C76): project.quoteRev passed via opts (it lives on project, not quoteData)
 
   // ── Header bar — black border box ──
   const hdrH=m(24);
@@ -7891,7 +7892,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     ["MATRIX PROJECT #",bcProjectNumber||"—"],
     ["QUOTE LINE #","Line "+(lineIdx+1)+" ("+lineSuffix+")"],
     ["DWG #",panel.drawingNo||"—"],
-    ["REV",panel.drawingRev||"—"],
+    ["__DV_QV__",[panel.bomVersion!=null?String(panel.bomVersion):"—",qvRev!=null?String(qvRev).padStart(2,"0"):"—"]],  // #138 (C76): Dv.# | Qv.# replaces redundant REV (customer rev stays in title block)
     ["PO #",poNumber||"—"],
     ["PO RECEIVED",poReceivedDate],
     ["DUE DATE",dueDate||panel.requestedShipDate||"—"],
@@ -7904,7 +7905,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     ["MATRIX PROJECT #",bcProjectNumber||"—"],
     ["QUOTE LINE #","Line "+(lineIdx+1)+" ("+lineSuffix+")"],
     ["DWG #",panel.drawingNo||"—"],
-    ["REV",panel.drawingRev||"—"],
+    ["__DV_QV__",[panel.bomVersion!=null?String(panel.bomVersion):"—",qvRev!=null?String(qvRev).padStart(2,"0"):"—"]],  // #138 (C76): Dv.# | Qv.# replaces redundant REV (customer rev stays in title block)
     ["REQUESTED SHIP DATE",panel.requestedShipDate||q.requestedShipDate||"—"],
     ["SALESPERSON",q.salesperson||"—"],
     ["GENERATED",generated],
@@ -7918,6 +7919,28 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
     const row=Math.floor(i/cols);
     const x=margin+col*cellW;
     const y=infoY+row*rowH;
+    // #138 (C76): split the REV slot into two half-width boxes — Dv.# (panel BOM
+    // version) | Qv.# (project quote rev). Two halves sum to the same cellW-m(1)
+    // footprint as one box, so surrounding boxes are undisturbed.
+    if(lbl==="__DV_QV__"){
+      const halfW=(cellW-m(1))/2;
+      const bH=rowH-m(1);
+      doc.setDrawColor(...black);doc.setLineWidth(m(0.3));
+      // Left half — Dv.#
+      doc.rect(x,y-m(4),halfW,bH);
+      doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      doc.text("Dv.#",x+m(2),y);
+      doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...black);
+      doc.text(String(val[0]),x+m(2),y+m(6));
+      // Right half — Qv.#
+      const x2=x+halfW;
+      doc.rect(x2,y-m(4),halfW,bH);
+      doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+      doc.text("Qv.#",x2+m(2),y);
+      doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...black);
+      doc.text(String(val[1]),x2+m(2),y+m(6));
+      return;  // skip standard single-box render
+    }
     doc.setDrawColor(...black);doc.setLineWidth(m(0.3));
     doc.rect(x,y-m(4),cellW-m(1),rowH-m(1));
     doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
@@ -24241,7 +24264,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const coverOrient=coverMm.mmW>=coverMm.mmH?"landscape":"portrait";
       const doc=new JsPDF({unit:"mm",format:[coverMm.mmW,coverMm.mmH],orientation:coverOrient,compress:true});
       setAttachPdfMsg("Building cover page…");
-      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,uploadOpts);
+      await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,{...uploadOpts,quoteRev:quoteRev});  // #138 (C76): pass project quote rev for the Qv.# data box
       // DECISION(v1.19.320): These vars MUST be declared BEFORE the stamp loop below.
       // Previously they were declared AFTER the loop — Babel hoisted const→var as undefined,
       // so stamps burned with wrong values and filenames were malformed (e.g. "500 - PRJ402065").
