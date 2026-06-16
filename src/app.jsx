@@ -28072,10 +28072,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
                           )}
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
-                            {f==="partNumber"&&(row.confidence==="low"||row.confidence==="medium")&&!row.isLaborRow&&!row.isContingency&&(
-                              <span title={`AI confidence: ${row.confidence} \u2014 verify this part number against the source drawing`}
-                                style={{display:"inline-block",width:8,height:8,borderRadius:"50%",background:row.confidence==="low"?"#ef4444":"#f59e0b",marginRight:3,flexShrink:0}}/>
-                            )}
+                            {/* #141 (C81): confidence indicator moved out of this input wrapper to after the BC pills below. */}
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
                             <input value={row[f]||""} readOnly={readOnly||row.isLaborRow||_baseLockedInEco}
                               title={_baseLockedInEco?"Use the BC Item Browser (🔍) to change "+f+" — base BOM is preserved; an ECO modify row will be created":undefined}
@@ -28211,6 +28208,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               style={{fontSize:10,color:"#000",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"pointer",background:"#fcd34d",padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4}}>
                               ? BC
                             </button>
+                          )}
+                          {/* #141 (C81/C82): confidence indicator — relocated here (was left of the PN
+                             input) and restyled as a pill matching the BC pills exactly (matched pair).
+                             Color carries severity (amber=medium, red=low); "C" carries type. Independent
+                             of BC: reads row.confidence (set by extraction, cleared to "high" on PN edit
+                             at line 25525) — separate field, separate code path from row.bcVerify. */}
+                          {f==="partNumber"&&(row.confidence==="low"||row.confidence==="medium")&&!row.isLaborRow&&!row.isContingency&&(
+                            <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
+                              style={{fontSize:10,fontWeight:700,padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4,marginLeft:6,whiteSpace:"nowrap",cursor:"help",background:row.confidence==="low"?"#ef4444":"#f59e0b",color:"#000"}}>C</span>
                           )}
                           {/* DECISION(v1.19.638): Suspect qty flag — row description implies single
                              assembly (enclosure, window kit, etc.) but qty is large. Almost always
