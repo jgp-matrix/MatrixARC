@@ -2190,6 +2190,10 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      "Traveler BOM" → "Quoted BOM" (C73). v1.20.122, commit 2c53008b. Verified live on a
      rendered doc (Jon). #130 carries the forward-note to inherit the "Include Quoted BOM"
      toggle if that inline modal is ever revived (confirmed present).
+     **Follow-ups (post-RESOLVED):** double-send guard + separated save try/catch on the
+     standalone path (v1.20.121, a0906442/0cb3fe1a); rename to "Quoted BOM" (v1.20.122);
+     yellow-highlight explainer line added to the Quoted BOM email body — standalone always,
+     bundled only when the toggle is ON (v1.20.126, commit 47b7f715).
 
 ## Part # confidence dots — what are they? (2026-06-16)
 
@@ -2257,7 +2261,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      **Scope note — does NOT close the Dv.# data issue:** the RENDER is resolved; the Dv.#
      DATA seed-gap is NOT. A panel with no qualifying BOM change since the bomVersion feature
      (v1.19.743) has no `bomVersion` and renders "—" (correct graceful fallback). Tracked
-     separately as OPEN **#139** (PRJ402096 panel 3).
+     separately as **#139** (PRJ402096 panel 3) — now RESOLVED (seed fix shipped v1.20.125).
 
 ## bomVersion seed gap — legacy / never-bumped panels (2026-06-16)
 
