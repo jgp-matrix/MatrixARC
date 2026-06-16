@@ -2147,6 +2147,10 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      non-null) + inline send handler `_doInlineQuoteSend` (lines 37054-37135, unreachable) +
      dead QuoteTab interactive surface (behind autoPrint height:0 wrap). ~80 lines removable.
      Discovered: Coach C61 (2026-06-15).
+     **#133 forward-note (2026-06-16):** If the ProjectView inline send modal is ever
+     revived, it should inherit the "Include Quoted BOM" toggle (#133 Change 4a) to match
+     QuoteSendModal. The toggle was deliberately NOT added during #133 (Change 4b dropped)
+     since the modal is unreachable — see #133 / Coach C73.
 
 131. **OPEN** [Backlog, optional] — Criterion-6 multi-panel hardening. Pre-print checklist
      criterion 6 (quote-field population) currently covers single-panel projects. Multi-panel
