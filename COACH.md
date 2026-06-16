@@ -61,6 +61,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C83: Email yellow-highlight note verification (v1.20.126). Note appears exactly twice: standalone unconditional (32558), bundled gated on includeTravelerBom (32009). Absent from inline ProjectView path (37471). All PASS.
 - **2026-06-16 (Session 5, cont.)** — C84: #141 RE-SPEC — match BLUE "BC" circle (line 28057), not the red/amber pills. Blue circle: 24×24px, borderRadius 50%, fontSize 9, fontWeight 800, blue #2563eb. Lives in dedicated `_bc` column (32px). Placement option: widen `_bc` to 56px for side-by-side. Supersedes C82 sizing+placement; C81 independence unchanged.
 - **2026-06-16 (Session 5, cont.)** — C85: #141 post-deploy code-path verification (v1.20.128). All items PASS. "C" circle matches blue "BC" circle exactly (24×24, 50%, fs 9, fw 800). In `_bc` column widened to 56px. Old dot removed, C82 pill reverted. Verify pills untouched. Independence intact.
+- **2026-06-16 (Session 5, cont.)** — C86: #141 layout fix — right-justify circle pair. Change flex wrapper from `inline-flex`/`center` to `flex`/`flex-end` so BC anchors right (original position) and "C" extends leftward into the extra column width.
 
 ## Findings
 
@@ -7686,5 +7687,76 @@ Coach cannot render the actual layout — **the visual layout check (dense BOM, 
 | Layout — 56px column safe? | PASS (math) — visual check is Jon's lane |
 
 All code-path items PASS. Jon's visual check on a live BOM (circle pair rendering, layout on dense BOM) is the remaining closure step for #141.
+
+---
+
+### C86 — #141 Layout Fix: Right-Justify Circle Pair (2026-06-16)
+
+**Type:** Layout fix spec  
+**Status:** COMPLETE — ready for Marc  
+**TODO assignment:** #141 (continuation)
+
+---
+
+#### Problem
+
+Jon's screenshot (v1.20.128) shows the blue "BC" circle overlapping the Description column text. The flex wrapper at line 28049 uses `display:"inline-flex"` + `justifyContent:"center"`, which centers the pair. When "C" is added to BC's left, the entire group shifts rightward, pushing BC past the column boundary.
+
+---
+
+#### Fix: One Line Change
+
+**Line 28049, current:**
+```js
+<div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4}}>
+```
+
+**Line 28049, after fix:**
+```js
+<div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
+```
+
+Two property changes on the same line:
+1. `display:"inline-flex"` → `display:"flex"` — makes the div fill the `<td>` width (56px) instead of shrinking to content size.
+2. `justifyContent:"center"` → `justifyContent:"flex-end"` — right-aligns the circle group within the full cell width.
+
+**Why both changes are needed:** `inline-flex` shrinks the div to content width (24px or 52px), then `textAlign:"center"` on the `<td>` (line 28048) centers that shrunken div — making `justifyContent` irrelevant since the div exactly fits its content. Switching to `display:"flex"` forces the div to fill the `<td>`, giving `justifyContent:"flex-end"` actual space to right-anchor.
+
+---
+
+#### BC Position — Anchored at Original Location
+
+**Pre-#141 (v1.20.127 and earlier):** `_bc` column was 32px, `padding:"3px 2px"`. BC (24px) was centered: `2px(pad) + 3px(margin) + 24px(circle) + 3px(margin) + 2px(pad) = ~32px`. BC's right edge was `~2px` from the cell's right border.
+
+**Post-fix with `flex-end`:** `_bc` column is 56px, `padding:"3px 2px"`. The flex div fills 56px, right-aligns its content. BC (24px) sits at the right edge of the flex area. BC's right edge is `~2px(padding)` from the cell's right border — **same position as pre-#141.**
+
+When "C" is present: C(24) + gap(4) + BC(24) = 52px, right-aligned in 56px of flex space. "C" sits at position 0-24px from flex-start (toward partNumber), BC sits at position 28-52px. BC hasn't moved.
+
+When "C" is absent (high confidence): BC alone (24px), right-aligned. BC sits at position 28-52px — **identical to the paired case.** BC's position is stable regardless of whether "C" is visible.
+
+---
+
+#### Containment Check
+
+**Right side (BC → Description boundary):** BC's right edge at 2px from cell right border. The `<td>` has `padding:"3px 2px"` — the 2px right padding provides clearance. Description column starts at the next `<td>` boundary. No overflow.
+
+**Left side (C → partNumber boundary):** When both circles present, "C" starts at `56 - 2(pad) - 52(content) = 2px` from the cell's left border. With 2px left padding, "C" sits at 2+2=4px from cell left edge. No clipping, no crowding into partNumber.
+
+**Cell dimensions:** 56px width holds C(24) + gap(4) + BC(24) = 52px of content + 2px padding each side = 56px. Exact fit.
+
+---
+
+#### Summary
+
+| Item | Detail |
+|------|--------|
+| Change | Line 28049: `inline-flex`→`flex`, `center`→`flex-end` |
+| BC position stable? | YES — right edge at ~2px from cell right border, same as pre-#141 |
+| "C" extends which direction? | LEFT (toward partNumber), into the widened column space |
+| Content fits in 56px? | YES — 52px content + 4px padding = 56px exactly |
+| No overflow into Description? | YES — BC right-anchored with padding clearance |
+| No clipping of "C" on left? | YES — 4px clearance from cell left edge |
+
+One-line change, no new elements, no width adjustment. Marc applies directly.
 
 ---
