@@ -44,6 +44,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-15 (Session 4, cont.)** — C66: #126 root cause report. NOT an H5 pipeline break or Haiku call break. Two independent bugs: (1) `parseInt(itemNo)||0` degrades to 0 when itemNo is empty/non-numeric → band at table top for all rows, (2) page buttons prefer stored y_top/y_bottom which are tile-relative post-H5 → wrong positions on full-page image. Fix: modify Haiku prompt to find the specific part row (~15-20 lines) + always call locateInDrawing in page buttons (~5 lines). Self-contained, no dependency on #128. ~20-25 lines, low risk.
 - **2026-06-15 (Session 4, cont.)** — C67: #128 feasibility trace. All data needed for region rendering IS persisted (bomRegion on pages, originalPdfPath, pageNumber). H5 tiles are transient but the BOM region is recomputable. Per-item y_top/y_bottom are stored but in tile/region-relative space (translateItemsToPageCoords no-op). For ny=1 grids (dominant case — landscape BOM tables), y_top IS region-relative → coord fix viable. For ny>1 (rare tall regions), y_top is tile-relative → coord fix broken. Brief direction: "render stored regions" (accurate, cheap) + companion coord fix (~15 lines). No "persist first" step. ~55-80 lines total.
 - **2026-06-15 (Session 4, cont.)** — C68: #128 detailed plan. Five discrete changes: (1) `renderBomRegionPreview` function (~25 lines, after line 11824), (2) `locateInRegion` function in BCItemBrowserModal (~30 lines), (3) mount useEffect + page button branching (~9 lines), (4) modal instantiation `h5PageIds` prop (~3 lines), (5) `getExtractionUnits` cropBounds fix (~3 lines). ny=1 → instant highlight from stored coords; ny>1 → Haiku-on-region fallback. Text-layer pages keep existing path. ~70 lines total. 8 test criteria incl. #126 regression cases. #133 (Customer BOM Approval) logged in TODO.md.
+- **2026-06-16 (Session 5)** — C69: #133 Supplement — verified Brief assumptions A1-A5 against codebase. Committed Brief + Supplement to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
 
 ## Findings
 
@@ -6103,5 +6104,62 @@ Steps 1-4 are the region render feature. Step 5 is the independent coord fix. Ca
 1. **No caching of rendered regions across modal opens.** Each open re-renders. Acceptable — the modal remounts each time (conditional rendering at line 29040), so no cache would survive anyway.
 2. **No offline/cached PDF fallback.** If PDF download fails, falls back to Haiku on full-page image. This matches the existing behavior (full-page images are cached in dataUrl/storageUrl; PDFs are fetched on demand).
 3. **No retroactive coord fix for existing BOMs.** The translateItemsToPageCoords fix only applies to new extractions. Existing items keep tile-relative coords. The region render handles them retroactively (coords are directly usable on the region image for ny=1).
+
+---
+
+## C69 — #133 Supplement: Send Traveler BOM to Customer
+
+**Date:** 2026-06-16
+**Role:** Coach (Sam Wize)
+**Type:** Supplement (assumption verification + feasibility + D3 record shape)
+**Basis:** Freddy Brief #133 (LOCKED), committed as `docs/133-BRIEF-AND-SUPPLEMENT.md`
+**Prod:** v1.20.120
+
+---
+
+### Summary
+
+All five Brief assumptions verified. No blockers, no refactors needed.
+
+### A1 — Traveler BOM: Render-on-Demand ✓
+
+The "traveler BOM" is `buildCoverPage()` (app.jsx:7812) — the per-panel cover sheet stamped "PANEL PRODUCTION TRAVELER" with labor summary, BOM table, and crossed-part "Original Part #" column. It is NOT the `buildBomReportPdfDoc` (spreadsheet-style BOM Report used by "Send w/BOM").
+
+No pre-rendered artifact exists. `buildCoverPage` is a stateless function at module scope — takes `(doc, panel, bcProjectNumber, quoteData, lineIdx, W, H, opts)`, writes to a jsPDF doc object, no component refs or hooks. A ~15 line wrapper iterating `project.panels` produces a single multi-panel PDF.
+
+### A2 — Path C Send: Refactor-Free ✓
+
+Both `sendGraphEmail` (line 8103) and `graphReplyToMessage` (line 8213) already accept `extraAttachments` (array of `{pdfBase64, pdfFilename}`). Added in v1.19.931 for the existing "Send w/BOM" feature. The primary PDF arg is optional (`if(pdfBase64)` at line 8114).
+
+- **Standalone:** Traveler as primary attachment, no quote PDF. Works as-is.
+- **Bundled:** Traveler pushed into `extraAttachments` alongside existing attachments. Works as-is.
+
+Both send paths in `QuoteSendModal.handleSend` (lines 31974, 31976) and the inline ProjectView send (line 37272) already pass `extraAttachments`.
+
+### A3 — D2 Trust Gate ✓
+
+`findIncompleteQuoteItems(project)` (line 15541) returns `isVerificationBlock: true` entries for panels with `extractionReport.manualVerifyRequired`. Used by all three send surfaces.
+
+**Gate for standalone BOM send:** Filter to `isVerificationBlock` only — skip pricing completeness checks (irrelevant for BOM-only send). Skip `ensureQuoteFieldsPopulated` (BC payment terms not needed for BOM-only).
+
+### A4 — UI Placement ✓
+
+**Standalone button:** PanelListView action area (around line 34726), below the existing Send/Print Quote button. Same vertical stack pattern.
+
+**Bundled toggle:** QuoteSendModal body (below message textarea, above footer buttons), checkbox "Include Traveler BOM". Same pattern for inline ProjectView send.
+
+### A5 — D3 Record Shape ✓
+
+`bomApprovalRequests[]` array on the project document. Fields: `id`, `sentAt`, `sentTo`, `sentBy`, `mode` (standalone/bundled), `panels[]`, `quoteRev`, `status` ("sent" now; "approved"/"rejected"/"commented" RESERVED). Array field — no subcollection, no new Firestore rules, no new listener.
+
+### Risk Assessment
+
+No blocking risks found. `buildCoverPage` is decoupled from PanelCard. Multi-attachment size is well under Graph API 4MB cap. D3 array cardinality is negligible (1-5 entries per project).
+
+### Scope
+
+~130-150 lines, single session. No H-item discipline needed (no extraction/save-path/pricing changes).
+
+**Verdict:** Brief APPROVED for implementation. Marc can proceed.
 
 ---
