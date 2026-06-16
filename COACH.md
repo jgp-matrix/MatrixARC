@@ -52,6 +52,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C74: #133 rename spot-check (v1.20.122). All 5 items PASS. Zero customer-facing "traveler" strings. #130 forward-note present. Last code-path step for #133 closure.
 - **2026-06-16 (Session 5, cont.)** — C75: #135/#136 cover-page BOM table analysis. #135 yellow PN-cell highlight (shared, ~5 lines); #136 hide Supplier column (customer-only via opts, ~8 lines). Two open decisions flagged for Jon.
 - **2026-06-16 (Session 5, cont.)** — C76: #138 split REV data box into Dv.# + Qv.#. Both fields exist (panel.bomVersion, project.quoteRev). quoteRev needs opts pass-through. ~20 lines, shared, no open decisions.
+- **2026-06-16 (Session 5, cont.)** — C77: #138 post-deploy code-path + rendered-PDF fit verification (v1.20.123). All 6 code-path items PASS. Half-box math confirms fit at all page sizes. Title block untouched.
 
 ## Findings
 
@@ -6739,5 +6740,75 @@ No other grid boxes are affected — the sentinel detection (`lbl==="__DV_QV__"`
 | Estimated new lines | ~20 (sentinel render block + fields array edits + opts.quoteRev in both callers) |
 
 **No open decisions.** Both data fields exist and are live. Marc builds from this.
+
+---
+
+### C77 — #138 Post-Deploy Code-Path + Rendered-PDF Fit Verification (2026-06-16)
+
+**Type:** Post-deploy review  
+**Version:** v1.20.123 (commit 5c776a49)  
+**Status:** PASS — all items verified
+
+#### Code-path verification
+
+**1. `__DV_QV__` sentinel in BOTH fields arrays:** PASS  
+- Production fields array (line 7895): `["__DV_QV__",[panel.bomVersion!=null?String(panel.bomVersion):"—",qvRev!=null?String(qvRev).padStart(2,"0"):"—"]]`
+- Quoting fields array (line 7908): identical entry
+Both arrays carry the sentinel at the same position (slot 4, replacing the old `["REV",...]`).
+
+**2. `qvRev` declaration from `opts.quoteRev`:** PASS  
+Line 7863: `const qvRev=opts.quoteRev!=null?opts.quoteRev:null;` — null-safe check, defaults to `null` (not `undefined`). When `null`, the value renders as `"—"` via the ternary in the fields array.
+
+**3. Both callers pass `quoteRev`:** PASS  
+- `generateTravelerBomPdf` (line 7585): `{documentTitle:"QUOTED BOM", quoteRev:project.quoteRev||0}` — passes project-level quote rev, falls back to 0 if unset.
+- `buildAndAttachPdf` (line 24267): `{...uploadOpts, quoteRev:quoteRev}` — `quoteRev` is destructured from the caller's scope (project-level field).
+
+**4. Half-box render logic:** PASS  
+Lines 7925-7942: sentinel check `if(lbl==="__DV_QV__")` triggers the split path. Two `doc.rect()` calls of width `halfW=(cellW-m(1))/2` each, starting at `x` and `x+halfW`. Labels ("Dv.#", "Qv.#") at `fs(7)`, values at `fs(11)` bold. Explicit `return;` at line 7942 skips the standard single-box render.
+
+**5. Title block untouched:** PASS  
+Line 7877: `dwgTitle=[panel.drawingNo, panel.drawingRev?"Rev "+panel.drawingRev:""]` — customer drawing rev remains in the header title block, completely independent of the info grid. No #138 changes anywhere near this line.
+
+**6. Width invariance:** PASS  
+Standard single-box render (line 7945): `doc.rect(x,y-m(4),cellW-m(1),rowH-m(1))`. Split-box: two rects of `halfW=(cellW-m(1))/2` each = `cellW-m(1)` total. Width sum is identical — surrounding boxes undisturbed.
+
+#### Rendered-PDF fit analysis (mathematical)
+
+Coach has no runtime/browser access. The fit check is performed via dimensional math on the jsPDF coordinate system.
+
+**At standard 11×17 landscape (W=431.8mm):**
+- `sc = min(431.8/431.8, 279.4/279.4) = 1.0` (identity scaling)
+- `margin = m(12) = 12mm`
+- `cellW = (431.8 - 24) / 4 = 101.95mm`
+- `halfW = (101.95 - 1) / 2 = 50.475mm`
+- Label "Dv.#" at `fs(7)` = 7pt Helvetica normal: ~4 chars × ~2mm = ~8mm
+- Value (e.g. "3") at `fs(11)` = 11pt Helvetica bold: 1-2 chars × ~3mm = ~3-6mm
+- Text starts at `x+m(2)` = 2mm inset → available width = 50.475 - 2 = **48.5mm**
+- Maximum content width ~8mm — uses **<17%** of available space
+
+**At smallest plausible page (8.5×11 portrait, W=215.9mm):**
+- `sc = min(215.9/431.8, 279.4/279.4) = 0.5`
+- `cellW = (215.9 - 6) / 4 = 52.475mm`
+- `halfW = (52.475 - 0.5) / 2 = 25.99mm`
+- Label at `fs(3.5)` → clamped to min `fs(4)`: ~4 chars × ~1mm = ~4mm
+- Value at `fs(5.5)`: 1-2 chars × ~1.5mm = ~1.5-3mm
+- Available width = 25.99 - 1 = **25mm**
+- Maximum content width ~4mm — uses **<16%** of available space
+
+**Verdict: NO CLIPPING, NO WRAP, NO OVERLAP risk at any standard page size.** The half-box width provides 5-6× the space needed for the label+value content. The `padStart(2,"0")` on Qv.# values guarantees a max of 2 characters for typical quote revisions (even 3-digit revisions would fit comfortably).
+
+#### Summary
+
+| Check | Result |
+|-------|--------|
+| `__DV_QV__` sentinel in both fields arrays? | PASS — lines 7895, 7908 |
+| `qvRev` from `opts.quoteRev`? | PASS — line 7863, null-safe |
+| Both callers pass `quoteRev`? | PASS — lines 7585, 24267 |
+| Half-box render logic correct? | PASS — lines 7925-7942 |
+| Title block untouched? | PASS — line 7877 |
+| Width invariance? | PASS — two halves = one whole |
+| Labels/values fit at half width? | PASS — <17% utilization at standard size |
+
+All code-path and dimensional checks pass. #138 is verified at the code level. Jon's live-generated PDF confirmation (visual spot-check of actual rendered output) is the remaining closure step — Coach's math says it will fit, but the human eye-check on a real document is Jon's lane.
 
 ---
