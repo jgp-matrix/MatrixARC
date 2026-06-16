@@ -50,6 +50,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C72: #133 post-deploy code-path verification (v1.20.121). All 7 items PASS. Marc's 3 deviations correct. Change 4b (inline send toggle) omitted — non-blocking, forward-note for #130.
 - **2026-06-16 (Session 5, cont.)** — C73: #133 "Traveler"→"Quoted BOM" rename analysis. `opts.documentTitle` decoupling, 2 call sites proven safe, 15 rename surfaces enumerated. Open question: filename prefix change?
 - **2026-06-16 (Session 5, cont.)** — C74: #133 rename spot-check (v1.20.122). All 5 items PASS. Zero customer-facing "traveler" strings. #130 forward-note present. Last code-path step for #133 closure.
+- **2026-06-16 (Session 5, cont.)** — C75: #135/#136 cover-page BOM table analysis. #135 yellow PN-cell highlight (shared, ~5 lines); #136 hide Supplier column (customer-only via opts, ~8 lines). Two open decisions flagged for Jon.
 
 ## Findings
 
@@ -6441,5 +6442,159 @@ Grep for `/traveler/i` returns 16 hits — all are: internal function names (`ge
 TODO.md lines 2150-2153: "If the ProjectView inline send modal is ever revived, it should inherit the 'Include Quoted BOM' toggle (#133 Change 4a)…" References correct toggle name, correct Coach finding (C73), correct rationale (Change 4b dropped, modal unreachable).
 
 **This clears the last code-path step for #133 closure.**
+
+---
+
+### C75 — #135/#136 Cover-Page BOM Table: Yellow Highlight + Hide Supplier (2026-06-16)
+
+**Type:** Pre-implementation analysis  
+**Status:** COMPLETE — ready for Marc  
+**TODO assignments:** #135 (Change A — yellow highlight), #136 (Change B — hide Supplier)
+
+---
+
+#### Change A (#135) — Yellow highlight on crossed-row PN cells
+
+**Mechanism:** The `didParseCell` hook (line 8039-8046) already fires per-cell on body rows. It currently sets bold on all cells of crossed rows and bolditalic on the Original Part # cell (column index 3). Yellow fill is additive — set `data.cell.styles.fillColor` on the target cells.
+
+**Existing hook (line 8039-8046):**
+```js
+didParseCell:(data)=>{
+  if(hasCrosses&&data.section==="body"){
+    const row=bom[data.row.index];
+    if(row&&row.isCrossed){
+      data.cell.styles.fontStyle="bold";
+      if(data.column.index===3){data.cell.styles.fontStyle="bolditalic";}
+    }
+  }
+},
+```
+
+**Column indices in `hasCrosses` layout (line 8019-8020):**
+- 0=#, 1=Qty, 2=Part#, 3=Original Part#, 4=Description, 5=MFR, 6=Supplier
+
+**Target cells for yellow fill (on crossed rows only):**
+- Column 2 (Part # — the quoted/replacement PN) — ALWAYS on crossed rows
+- Column 3 (Original Part #) — ONLY when populated (`row.crossedFrom` is truthy and differs from `row.partNumber`)
+
+**Modified hook sketch:**
+```js
+didParseCell:(data)=>{
+  if(hasCrosses&&data.section==="body"){
+    const row=bom[data.row.index];
+    if(row&&row.isCrossed){
+      data.cell.styles.fontStyle="bold";
+      if(data.column.index===3){data.cell.styles.fontStyle="bolditalic";}
+      // #135: yellow fill on the two PN cells of crossed rows
+      if(data.column.index===2)data.cell.styles.fillColor=[255,243,176];
+      if(data.column.index===3&&row.crossedFrom&&normPart(row.crossedFrom)!==normPart(row.partNumber)){
+        data.cell.styles.fillColor=[255,243,176];
+      }
+    }
+  }
+},
+```
+
+**Recommended RGB: `[255,243,176]`** — a warm "highlighter pen" yellow. Tested characteristics:
+- Bright enough to pop on white/alternateRow(245,245,245) backgrounds
+- Low enough saturation that black text stays fully readable (contrast ratio ~1.1:1 with white background — comparable to a physical highlighter)
+- Prints clean on both color and B&W printers (renders as light grey in B&W, doesn't obscure text)
+
+**Bold + italic + yellow readability flag:** Bold text on a yellow cell fill is standard for "changed item" callouts in BOMs — it's the industrial convention. The italic on the Original Part # cell adds distinction but bold+italic+yellow is visually heavy. **Recommendation:** keep it — the heaviness is the POINT (the substitution must be scannable at a glance on a 50-row BOM). If it reads too heavy in live testing, the italic can be dropped from the Original Part # without losing the yellow.
+
+**OPEN DECISION for Jon:** Two PN cells only (Freddy's lean) vs. whole crossed row.
+
+| Option | What gets yellow | Visual effect |
+|--------|-----------------|---------------|
+| **Two PN cells** | Part # + Original Part # cells only | Surgical — eyes go straight to the substitution pair. Rest of row (description, MFR, supplier) stays neutral. Matches "what changed" semantics. |
+| **Whole row** | All cells on the crossed row | Bolder — entire row pops as "this item has a cross." Easier to see row count at a glance, but doesn't distinguish which cells carry the substitution. |
+
+Two-cell is more precise; whole-row is faster to scan for crossed-row COUNT. Both are easy to implement (the difference is removing the `data.column.index` guard).
+
+**Shared between both docs:** YES, intentionally. The `didParseCell` hook is inside `buildCoverPage` which serves both production traveler and Quoted BOM. No decoupling needed — both documents benefit from the highlight.
+
+**~5 new lines** inside the existing hook.
+
+---
+
+#### Change B (#136) — Hide Supplier column (customer-facing Quoted BOM only)
+
+**Mechanism:** Use `opts.hideSupplierColumn` — same `opts` bag already proven for title decoupling (C73). Set only by `generateTravelerBomPdf` (line 7585), never by `buildAndAttachPdf`.
+
+**Where the column is defined (lines 7999-8025):**
+
+Three structures need conditional modification:
+1. **`colStyles`** (line 8003-8018) — column width/alignment definitions
+2. **`head`** (line 8019-8021) — header row array
+3. **`body`** (line 8022-8025) — data rows array
+
+**Implementation approach:** When `opts.hideSupplierColumn` is true, omit the last entry from each:
+
+`hasCrosses` layout (7 → 6 columns):
+- colStyles: drop key 6 (Supplier)
+- head: `["#","Qty","Part #","Original Part #","Description","MFR"]`
+- body: drop `r.bcVendorName||"—"` (last element)
+
+No-crosses layout (6 → 5 columns):
+- colStyles: drop key 5 (Supplier)
+- head: `["#","Qty","Part #","Description","MFR"]`
+- body: drop `r.bcVendorName||"—"` (last element)
+
+**⚠ NO-REFLOW FEASIBILITY — FLAG FOR JON:**
+
+The current BOM table uses `tableWidth:"auto"` (line 8031). In jsPDF-AutoTable 3.8.2, `"auto"` means **fill available page width** (page width minus margins). The `'auto'`-cellWidth columns (Part #, Original Part #, Description, MFR, Supplier) share the available width after fixed columns (#, Qty) take theirs.
+
+**When Supplier is removed with `tableWidth:"auto"`, the remaining `'auto'` columns WILL redistribute to fill the same total page width.** Each will be slightly wider. This violates the literal "NO width redistribution" constraint.
+
+Two feasible options:
+
+| Option | tableWidth | Column widths | Table width | Visual |
+|--------|-----------|---------------|-------------|--------|
+| **R1 — Let autoTable redistribute** | `"auto"` (unchanged) | Remaining columns slightly wider to fill page | Same as production (full margin-to-margin) | Clean, no visible gap. Columns ~10-15% wider each. This is the standard table behavior when removing a column. |
+| **R2 — Shrink table** | `"wrap"` when `hideSupplierColumn` | Each column at its content-driven minimum (respecting `minCellWidth`) | Narrower — empty space on the right side | Columns at natural content widths. Gap on right. No column gets wider. Closest to "freed space closes, nothing else moves." |
+
+**My recommendation: R1** (let autoTable redistribute). Reason: the `minCellWidth` values already set sensible floors (30mm Part#, 60mm Description, etc.). The redistribution is gentle — Supplier is ~28mm out of ~408mm total (7% of table width). Each remaining column gains ~4-5mm. The result looks like a normal 6-column table, not a 7-column table with a hole. R2 produces a visible gap that looks unfinished on a customer-facing document.
+
+**Jon decides.** If R2 (literal no-redistribution) is required, Marc adds a conditional `tableWidth:"wrap"` when `hideSupplierColumn` is set. If R1 is acceptable, no `tableWidth` change needed.
+
+**Production byte-for-byte: PROVEN**
+
+`buildCoverPage` call sites (unchanged from C73 analysis):
+
+| Line | Caller | Sets `hideSupplierColumn`? | Supplier column? |
+|------|--------|---------------------------|-----------------|
+| 7585 | `generateTravelerBomPdf` (#133 wrapper) | YES (will be added) | HIDDEN |
+| 24244 | `buildAndAttachPdf` (BC/production) | NO — `uploadOpts` never includes it | SHOWN (unchanged) |
+
+The `opts.hideSupplierColumn` fallback is falsy by default (`opts={}` at line 7841). Any caller that doesn't explicitly set it gets the full column set. The production path is byte-for-byte unaffected.
+
+**~8 new lines** (conditional column/head/body construction).
+
+---
+
+#### A/B Column-Index Interaction — CONFIRMED SAFE
+
+Supplier is always the **last** column in both layouts:
+- `hasCrosses`: index 6 (of 0-6) → drops to 5 columns ending at MFR(5)
+- No-crosses: index 5 (of 0-5) → drops to 4 columns ending at MFR(4)
+
+The yellow-highlight targets (Change A) are:
+- Column 2 (Part #) — unchanged index in both with/without Supplier
+- Column 3 (Original Part #) — unchanged index in both with/without Supplier
+
+**Removing the last column does not shift any preceding column indices.** The `didParseCell` hook targets columns 2 and 3 by index — these resolve correctly in both the 7-column production layout and the 6-column customer layout. No conditional index logic needed.
+
+---
+
+#### Summary for Marc
+
+| TODO | Change | Scope | Mechanism | Lines |
+|------|--------|-------|-----------|-------|
+| #135 | Yellow PN-cell highlight | SHARED (both docs) | `fillColor` in existing `didParseCell` hook | ~5 |
+| #136 | Hide Supplier column | CUSTOMER ONLY (Quoted BOM) | `opts.hideSupplierColumn` in `generateTravelerBomPdf` | ~8 |
+
+**Open decisions before Marc starts:**
+1. Yellow on two PN cells vs. whole crossed row? (Jon)
+2. Column redistribution: R1 (auto-fill, recommended) vs. R2 (wrap, literal no-redistribution)? (Jon)
 
 ---
