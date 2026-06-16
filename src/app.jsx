@@ -7561,11 +7561,14 @@ async function generateBomReportPdf(project){
 }
 if(typeof window!=="undefined"){window._buildBomReportPdfDoc=buildBomReportPdfDoc;window._generateBomReportPdf=generateBomReportPdf;}
 
-// ── TRAVELER BOM PDF BUILDER (#133) ──
-// DECISION(#133, Change 0): Customer-facing traveler BOM for review/approval
-// before PO. Reuses the EXISTING per-panel cover-page builder (buildCoverPage,
-// the "PANEL PRODUCTION TRAVELER" document with the cross column showing BOM
-// differences) — NOT the spreadsheet BOM Report (buildBomReportPdfDoc). Iterates
+// ── QUOTED BOM PDF BUILDER (#133) ──
+// DECISION(#133, Change 0): Customer-facing quoted BOM for review/approval
+// before PO. Reuses the EXISTING per-panel cover-page builder (buildCoverPage —
+// the same cover-page BOM normally titled "PANEL PRODUCTION TRAVELER" in
+// production, retitled "QUOTED BOM" here via opts.documentTitle (C73); carries
+// the cross column showing BOM differences) — NOT the spreadsheet BOM Report
+// (buildBomReportPdfDoc). The function/state identifiers keep the "Traveler"
+// name (internal-only, not customer-facing). Iterates
 // all panels into a single combined PDF (matches the BC upload flow's per-panel
 // approach). Render-on-demand — no stored artifact. Returns {pdfBase64,pdfFilename}
 // so callers (standalone send + bundled toggle) don't repeat the doc-build.
@@ -7579,13 +7582,13 @@ async function generateTravelerBomPdf(project){
   const q=project.quote||{};
   for(let i=0;i<panels.length;i++){
     if(i>0)doc.addPage([431.8,279.4],"landscape");
-    await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4);  // no opts → quoting mode (not production)
+    await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM"});  // #133 (C73): customer-facing title; quoting mode (not production)
   }
   const base64=doc.output("datauristring").split(",")[1];
   const rev=project.quoteRev||0;
   const co=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
   const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-  const filename=`TRAVELER_BOM-[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
+  const filename=`QUOTED_BOM-[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
   return{pdfBase64:base64,pdfFilename:filename};
 }
 if(typeof window!=="undefined"){window._generateTravelerBomPdf=generateTravelerBomPdf;}
@@ -7865,7 +7868,7 @@ async function buildCoverPage(doc,panel,bcProjectNumber,quoteData,lineIdx,W,H,op
   doc.setFontSize(fs(17));doc.setFont("helvetica","bold");doc.setTextColor(...black);
   doc.text("Matrix Systems, Inc.",margin,m(16));
   doc.setFontSize(fs(12));doc.setFont("helvetica","bold");doc.setTextColor(...mid);
-  doc.text(isProduction?"APPROVED TO PRODUCE":"PANEL PRODUCTION TRAVELER",W-margin,m(16),{align:"right"});
+  doc.text(isProduction?"APPROVED TO PRODUCE":(opts.documentTitle||"PANEL PRODUCTION TRAVELER"),W-margin,m(16),{align:"right"});  // #133 (C73): opts.documentTitle override — additive; production/BC path never sets it, falls through to default
 
   // ── Title block ──
   const projectNum=q.projectNumber||bcProjectNumber||"—";
@@ -31832,7 +31835,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   const [sending,setSending]=useState(false);
   const [previewEmail,setPreviewEmail]=useState(null); // {subject,from,date,bodyHtml} or null
   const [previewLoading,setPreviewLoading]=useState(false);
-  // #133 Change 4a (D1): bundled "Include Traveler BOM" toggle. Default OFF (opt-in).
+  // #133 Change 4a (D1): bundled "Include Quoted BOM" toggle. Default OFF (opt-in).
   const [includeTravelerBom,setIncludeTravelerBom]=useState(false);
 
   const searchDebounceRef=useRef(null);
@@ -31986,8 +31989,8 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         const bomFilename=`BOM_REPORT-[${_q2.number||"Quote"} Rev ${String(_rev2).padStart(2,"0")}] - ${_company2} - ${_proj2}.pdf`;
         extraAttachments.push({pdfBase64:bomBase64,pdfFilename:bomFilename});
       }
-      // #133 Change 4a: when "Include Traveler BOM" is checked, build the per-panel
-      // traveler cover pages (with cross column) and ride them alongside the quote.
+      // #133 Change 4a: when "Include Quoted BOM" is checked, build the per-panel
+      // quoted BOM cover pages (with cross column) and ride them alongside the quote.
       if(includeTravelerBom){
         const trav=await generateTravelerBomPdf(project);
         if(trav)extraAttachments.push({pdfBase64:trav.pdfBase64,pdfFilename:trav.pdfFilename});
@@ -31997,12 +32000,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // need to use LargeFileUploadTask which we don't implement. Warn at 3MB so sales has
       // time to reduce before hitting a hard fail.
       // #133 risk flag (Coach C69): SUM all attachments (quote PDF + BOM Report +
-      // traveler BOM) — a multi-panel traveler can push a multi-attachment send toward
+      // quoted BOM) — a multi-panel quoted BOM can push a multi-attachment send toward
       // the cap, not just the quote PDF alone.
       const approxBytes=Math.floor(((pdfBase64?.length||0)+extraAttachments.reduce((s,a)=>s+(a.pdfBase64?.length||0),0))*0.75);
       if(approxBytes>3*1024*1024){
         const mb=(approxBytes/(1024*1024)).toFixed(1);
-        const cont=await arcConfirm(`Warning: the email attachments total ${mb} MB. Microsoft 365 sendMail inline attachments are limited to ~4 MB. Sending may fail.\n\nCancel to reduce the attachments (remove drawing pages, drop the BOM Report / Traveler BOM attachment, or contact engineering to compress images).`,{kind:"warning",okLabel:"Send Anyway"});
+        const cont=await arcConfirm(`Warning: the email attachments total ${mb} MB. Microsoft 365 sendMail inline attachments are limited to ~4 MB. Sending may fail.\n\nCancel to reduce the attachments (remove drawing pages, drop the BOM Report / Quoted BOM attachment, or contact engineering to compress images).`,{kind:"warning",okLabel:"Send Anyway"});
         if(!cont){setSending(false);return;}
       }
       const q=project.quote||{};
@@ -32032,7 +32035,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // #117 Fix 3c: spread `populated` (not the stale closure `project`) so the post-send
       // lock-save preserves the BC-populated terms — otherwise it would clobber them blank.
       const upd={...populated,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
-      // #133 Change 4a (D3): first-class approval-request record when the traveler BOM
+      // #133 Change 4a (D3): first-class approval-request record when the quoted BOM
       // rode along. id "bar_"-prefixed (future portal write-back key); panels = stable
       // panel IDs; status write-once "sent" — never mutated by #133 code.
       if(includeTravelerBom){
@@ -32139,14 +32142,14 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <textarea value={modalData.message} onChange={e=>setModalData(prev=>({...prev,message:e.target.value}))} rows={4} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
         </div>
         <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
-        {/* #133 Change 4a (D1): Include Traveler BOM toggle — default OFF. Rides as an
+        {/* #133 Change 4a (D1): Include Quoted BOM toggle — default OFF. Rides as an
             extra attachment on either Send or Send w/BOM. */}
         <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>
           <input type="checkbox" id="inc-trav-bom" checked={includeTravelerBom}
             onChange={e=>setIncludeTravelerBom(e.target.checked)}
             style={{accentColor:"#c084fc",cursor:"pointer"}}/>
           <label htmlFor="inc-trav-bom" style={{fontSize:12,color:C.text,cursor:"pointer"}}>
-            Include Traveler BOM (per-panel cover pages with cross column)
+            Include Quoted BOM (per-panel cover pages with cross column)
           </label>
         </div>
         </div>
@@ -32480,7 +32483,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     return()=>clearInterval(iv);
   },[]);
   const [quoteSendModalPLV,setQuoteSendModalPLV]=useState(null);
-  // #133 Change 1: standalone Traveler BOM send (BOM-only, independent of any quote).
+  // #133 Change 1: standalone Quoted BOM send (BOM-only, independent of any quote).
   // Gates on manualVerifyRequired (D2) but NOT pricing completeness, and skips
   // ensureQuoteFieldsPopulated — BC payment terms / shipping are quote fields,
   // irrelevant to a BOM-only customer-review send.
@@ -32512,8 +32515,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
     const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
     const trav=await generateTravelerBomPdf(project);
-    if(!trav){arcAlert("No panels — cannot generate traveler BOM.");setBomSending(false);return;}
-    // Traveler is the PRIMARY (and only) attachment — no quote PDF, no extras.
+    if(!trav){arcAlert("No panels — cannot generate quoted BOM.");setBomSending(false);return;}
+    // Quoted BOM is the PRIMARY (and only) attachment — no quote PDF, no extras.
     try{
       await sendGraphEmail(graphToken,m.to,m.subject,html,trav.pdfBase64,trav.pdfFilename,[]);
     }catch(e){arcAlert("Send failed: "+e.message);setBomSending(false);return;}
@@ -32530,12 +32533,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
       await persistProject(upd);
     }catch(saveErr){
       console.error("[BOM SEND] approval-record save failed after email succeeded:",saveErr);
-      arcAlert(`⚠ Traveler BOM was sent to ${m.to}, but the send-record failed to save (${saveErr.message}). The email went out — only the audit record is missing.`);
+      arcAlert(`⚠ Quoted BOM was sent to ${m.to}, but the send-record failed to save (${saveErr.message}). The email went out — only the audit record is missing.`);
       setBomSending(false);setBomSendModal(null);return;
     }
     setBomSending(false);
     setBomSendModal(null);
-    arcAlert("Traveler BOM sent to "+m.to);
+    arcAlert("Quoted BOM sent to "+m.to);
   }
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
@@ -34841,7 +34844,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
                 }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_incompleteItems.length>0?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Qv."+String(project.quoteRev||0).padStart(2,"0"))}</button>
-                {/* #133 Change 2: standalone Send Traveler BOM (BOM-only, cross column)
+                {/* #133 Change 2: standalone Send Quoted BOM (BOM-only, cross column)
                     for customer review/approval before PO. Disabled when a panel still
                     needs manual verification (D2) or owner-priority is active. */}
                 <button onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
@@ -34856,14 +34859,14 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   const spPhone=spCached?.Phone_No||q.salesPhone||"";
                   setBomSendModal({
                     to:toEmail,
-                    subject:`Traveler BOM — ${project.bcProjectNumber||""} ${project.name||"Project"}`.trim(),
-                    message:`${custFirst?custFirst+",\n\n":""}Please find the attached traveler BOM for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review and approval.\n\nIf you have any questions, please don't hesitate to reach out.`,
+                    subject:`Quoted BOM — ${project.bcProjectNumber||""} ${project.name||"Project"}`.trim(),
+                    message:`${custFirst?custFirst+",\n\n":""}Please find the attached quoted BOM for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review and approval.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
                 }} disabled={_hasVerify||ownerPriorityActive}
-                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_hasVerify?"BOM verification required before sending to the customer":"Email the traveler BOM (BOM-only, cross column) to the customer for review/approval")}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_hasVerify?"BOM verification required before sending to the customer":"Email the quoted BOM (BOM-only, cross column) to the customer for review/approval")}
                   style={btn("#1a0c33","#c084fc",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #c084fc44",fontWeight:700,opacity:(_hasVerify||ownerPriorityActive)?0.45:1,cursor:(_hasVerify||ownerPriorityActive)?"not-allowed":"pointer"})}>
-                  📋 {_hasVerify?"Send Traveler BOM (blocked — verify BOM)":"Send Traveler BOM for Approval"}
+                  📋 {_hasVerify?"Send Quoted BOM (blocked — verify BOM)":"Send Quoted BOM for Approval"}
                 </button>
                   </>);
                 })()}
@@ -34977,13 +34980,13 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
     {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
-    {/* #133 Change 3: standalone Send Traveler BOM modal. Lighter than QuoteSendModal —
+    {/* #133 Change 3: standalone Send Quoted BOM modal. Lighter than QuoteSendModal —
         no reply-to-thread, no BOM toggle, no print. Purple accent distinguishes it
         from the blue quote send. */}
     {bomSendModal&&ReactDOM.createPortal(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
         <div style={{background:"#0d0d1a",border:"1px solid #c084fc66",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(192,132,252,0.5),0 8px 40px rgba(0,0,0,0.7)"}}>
-          <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>📋 Send Traveler BOM</div>
+          <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>📋 Send Quoted BOM</div>
           <div style={{fontSize:11,color:C.muted,marginBottom:12}}>BOM-only (per-panel cover pages with cross column) — for customer review / approval before PO.</div>
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             <div>
@@ -35004,7 +35007,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
             <button onClick={()=>setBomSendModal(null)} disabled={bomSending} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`,opacity:bomSending?0.5:1})}>Cancel</button>
-            <button onClick={handleBomSend} disabled={bomSending} title="Email the traveler BOM to the customer for review/approval" style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:bomSending?0.5:1,cursor:bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":"Send Traveler BOM"}</button>
+            <button onClick={handleBomSend} disabled={bomSending} title="Email the quoted BOM to the customer for review/approval" style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:bomSending?0.5:1,cursor:bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":"Send Quoted BOM"}</button>
           </div>
         </div>
       </div>
