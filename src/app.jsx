@@ -32485,10 +32485,11 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   // ensureQuoteFieldsPopulated — BC payment terms / shipping are quote fields,
   // irrelevant to a BOM-only customer-review send.
   const [bomSendModal,setBomSendModal]=useState(null); // {to,subject,message,signature} or null
+  const [bomSending,setBomSending]=useState(false);     // in-flight guard — prevents double-send
   async function handleBomSend(){
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
     const m=bomSendModal;
-    if(!m)return;
+    if(!m||bomSending)return;
     const verifyBlocks=findIncompleteQuoteItems(project).filter(i=>i.isVerificationBlock);
     if(verifyBlocks.length){
       arcAlert("BOM send blocked — "+verifyBlocks.length+" panel"+(verifyBlocks.length>1?"s":"")
@@ -32508,20 +32509,30 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
     const trav=await generateTravelerBomPdf(project);
     if(!trav){arcAlert("No panels — cannot generate traveler BOM.");return;}
+    setBomSending(true);
+    // Traveler is the PRIMARY (and only) attachment — no quote PDF, no extras.
     try{
-      // Traveler is the PRIMARY (and only) attachment — no quote PDF, no extras.
       await sendGraphEmail(graphToken,m.to,m.subject,html,trav.pdfBase64,trav.pdfFilename,[]);
-      // #133 Change 1 (D3): approval-request record. id "bar_"-prefixed (future portal
-      // write-back key); panels = stable panel IDs; status write-once "sent".
+    }catch(e){arcAlert("Send failed: "+e.message);setBomSending(false);return;}
+    // Email confirmed sent. Save the D3 record in a SEPARATE try so a save failure
+    // isn't reported as a send failure (mirrors #117 Fix 3c on the quote path).
+    // #133 Change 1 (D3): approval-request record. id "bar_"-prefixed (future portal
+    // write-back key); panels = stable panel IDs; status write-once "sent".
+    try{
       const req={id:"bar_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
         sentAt:Date.now(),sentTo:m.to,sentBy:fbAuth.currentUser?.email||uid,
         mode:"standalone",panels:(project.panels||[]).map(p=>p.id),
         quoteRev:project.quoteRev||0,status:"sent"};
       const upd={...project,bomApprovalRequests:[...(project.bomApprovalRequests||[]),req]};
-      persistProject(upd);
-      setBomSendModal(null);
-      arcAlert("Traveler BOM sent to "+m.to);
-    }catch(e){arcAlert("Send failed: "+e.message);}
+      await persistProject(upd);
+    }catch(saveErr){
+      console.error("[BOM SEND] approval-record save failed after email succeeded:",saveErr);
+      arcAlert(`⚠ Traveler BOM was sent to ${m.to}, but the send-record failed to save (${saveErr.message}). The email went out — only the audit record is missing.`);
+      setBomSending(false);setBomSendModal(null);return;
+    }
+    setBomSending(false);
+    setBomSendModal(null);
+    arcAlert("Traveler BOM sent to "+m.to);
   }
   const customerLogo=useCustomerLogo(project.bcCustomerName||null);
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
@@ -34989,8 +35000,8 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             </div>
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
-            <button onClick={()=>setBomSendModal(null)} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-            <button onClick={handleBomSend} title="Email the traveler BOM to the customer for review/approval" style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc"})}>📋 Send Traveler BOM</button>
+            <button onClick={()=>setBomSendModal(null)} disabled={bomSending} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`,opacity:bomSending?0.5:1})}>Cancel</button>
+            <button onClick={handleBomSend} disabled={bomSending} title="Email the traveler BOM to the customer for review/approval" style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:bomSending?0.5:1,cursor:bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":"Send Traveler BOM"}</button>
           </div>
         </div>
       </div>
