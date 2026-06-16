@@ -32004,7 +32004,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const graphToken=await acquireGraphToken();
       if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setSending(false);return;}
       const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
-      const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+      // #139 follow-up: explain the yellow highlight ONLY when the Quoted BOM is attached
+      // (toggle ON). A plain quote with no BOM carries no highlight to explain.
+      const bomNote=includeTravelerBom?`<p style="margin-top:12px">Any deviation from the customer-supplied BOM is shown in yellow highlight. Please verify these items are acceptable and we will finalize the quote.</p>`:"";
+      const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}${bomNote}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
       const jsPDF=await ensureJsPDF();
       const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
       await buildQuotePdfDoc(pdfDoc,populated);
@@ -32551,7 +32554,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const graphToken=await acquireGraphToken();
     if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setBomSending(false);return;}
     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
-    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+    // #139 follow-up: explain the yellow highlight. Standalone Quoted BOM ALWAYS carries it.
+    const bomNote=`<p style="margin-top:12px">Any deviation from the customer-supplied BOM is shown in yellow highlight. Please verify these items are acceptable and we will finalize the quote.</p>`;
+    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}${bomNote}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
     const trav=await generateTravelerBomPdf(project);
     if(!trav){arcAlert("No panels — cannot generate quoted BOM.");setBomSending(false);return;}
     // Quoted BOM is the PRIMARY (and only) attachment — no quote PDF, no extras.
