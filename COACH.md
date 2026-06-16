@@ -59,6 +59,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C81: #141 Confidence dot relocation + "C" glyph analysis. Co-locate dot next to BC pills (move from left-of-PN to right-of-PN). Add centered "C" inside dot. Legibility confirmed (amber/red dot vs blue pill). No logic change.
 - **2026-06-16 (Session 5, cont.)** — C82: #141 AMENDMENT — match BC pill dimensions exactly. BC pills are 10px/700/borderRadius:10/padding 1px 7px/lineHeight 1.4. Confidence pill respec'd to identical dimensions with "C" text. Supersedes C81 §3 sizing only.
 - **2026-06-16 (Session 5, cont.)** — C83: Email yellow-highlight note verification (v1.20.126). Note appears exactly twice: standalone unconditional (32558), bundled gated on includeTravelerBom (32009). Absent from inline ProjectView path (37471). All PASS.
+- **2026-06-16 (Session 5, cont.)** — C84: #141 RE-SPEC — match BLUE "BC" circle (line 28057), not the red/amber pills. Blue circle: 24×24px, borderRadius 50%, fontSize 9, fontWeight 800, blue #2563eb. Lives in dedicated `_bc` column (32px). Placement option: widen `_bc` to 56px for side-by-side. Supersedes C82 sizing+placement; C81 independence unchanged.
 
 ## Findings
 
@@ -7407,5 +7408,193 @@ Line 37471: `const html=\`...\${m.message...}...\`` — the template contains me
 | Exactly 2 occurrences? | PASS — grep confirms 2 |
 
 Email-line thread is closed.
+
+---
+
+### C84 — #141 RE-SPEC: Match Blue "BC" Circle, Not Red/Amber Pills (2026-06-16)
+
+**Type:** Corrected spec (supersedes C82 sizing+placement; C81 independence unchanged)  
+**Status:** COMPLETE — ready for Marc after Jon reviews  
+**TODO assignment:** #141
+
+---
+
+#### What went wrong in C82
+
+C82 pulled style from the red `+ BC` pill (line 28197) and amber `? BC` pill (line 28211). These are verification badges inside the partNumber cell. The element Jon wants matched is the **blue "BC" circle** — a separate, dedicated element in its own `_bc` column. Different element, different cell, different shape.
+
+---
+
+#### 1. Blue "BC" Circle — Exact Rendered Values
+
+**Element:** `<button>` at line 28057, inside the `_bc` column (`<td key="_bc">` at line 28048).
+
+```js
+style={{
+  background: "#2563eb",       // blue
+  border: "none",
+  color: "#fff",               // white text
+  cursor: "pointer",
+  fontSize: 9,
+  fontWeight: 800,
+  borderRadius: "50%",         // perfect circle
+  width: 24,
+  height: 24,
+  lineHeight: 1,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 0
+}}
+```
+
+**Text content:** `BC` (two letters centered inside the circle).
+
+**Key dimensions:**
+- **Size:** 24×24px explicit (`width:24, height:24`)
+- **Shape:** perfect circle (`borderRadius:"50%"`)
+- **Font:** 9px, weight 800, white `#fff` on blue `#2563eb`
+- **Centering:** `inline-flex` + `alignItems:"center"` + `justifyContent:"center"` + `padding:0`
+
+**Visibility gate (line 28049):** Shows when `!readOnly && _bcToken && row.priceSource!=="bc" && row.priceSource!=="manual"` — i.e., unmatched parts that need BC lookup.
+
+**Column:** The `_bc` column is a dedicated 32px-wide `<td>` (line 28048: `style={{padding:"3px 2px",width:32,textAlign:"center"}}`). Column order in the row array (line 28046): `qty` → `partNumber` → `_bc` → `description` → `manufacturer` → `_supplier`.
+
+---
+
+#### 2. Where to Place the "C" Circle
+
+The "C" confidence circle must sit **next to** the blue "BC" circle. Both the blue "BC" circle and the "C" circle live in the `_bc` column.
+
+**Layout challenge:** The `_bc` column is currently 32px wide. The blue "BC" circle is 24px. A second 24px circle plus a gap won't fit in 32px.
+
+**Solution: widen the `_bc` column to 56px** and render both circles side-by-side with a 4px gap using a flex wrapper.
+
+- Current: `width:32` → one 24px circle centered, 4px padding each side
+- New: `width:56` → two 24px circles + 4px gap + 2px padding each side = `2 + 24 + 4 + 24 + 2 = 56px`
+
+The `_bc` column sits between `partNumber` (flexible-width) and `description` (220px). Widening by 24px compresses `partNumber` and `description` slightly — both use `overflow:hidden` + `textOverflow:ellipsis`, so they absorb the squeeze gracefully. At typical BOM table widths (~1200px+ on a 1080p+ screen), 24px is negligible.
+
+**Implementation in the `_bc` cell:**
+
+```jsx
+<td key="_bc" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
+  <div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4}}>
+    {/* Confidence "C" circle — shows for low/medium confidence */}
+    {!row.isLaborRow&&!row.isContingency&&(row.confidence==="low"||row.confidence==="medium")&&(
+      <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
+        style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",
+          border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,
+          borderRadius:"50%",width:24,height:24,lineHeight:1,
+          display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}>C</span>
+    )}
+    {/* Blue "BC" circle — unchanged */}
+    {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
+      <button ... existing code unchanged ...>BC</button>
+    )}
+  </div>
+</td>
+```
+
+The "C" circle renders FIRST (left), the "BC" circle renders SECOND (right). When only one is present, the flex container centers it. When both are present, they sit side by side with a 4px gap.
+
+**Remove the old confidence dot from the partNumber cell** — cut lines 28075-28078 (the current 8×8px dot inside the input wrapper).
+
+---
+
+#### 3. Confidence "C" Circle — Spec'd to Mirror Blue "BC" Circle
+
+Every dimensional property matches the blue "BC" circle exactly:
+
+| Property | Blue "BC" circle | Confidence "C" circle | Match? |
+|----------|-----------------|----------------------|--------|
+| `width` | 24 | 24 | ✓ |
+| `height` | 24 | 24 | ✓ |
+| `borderRadius` | "50%" | "50%" | ✓ |
+| `fontSize` | 9 | 9 | ✓ |
+| `fontWeight` | 800 | 800 | ✓ |
+| `lineHeight` | 1 | 1 | ✓ |
+| `display` | "inline-flex" | "inline-flex" | ✓ |
+| `alignItems` | "center" | "center" | ✓ |
+| `justifyContent` | "center" | "center" | ✓ |
+| `padding` | 0 | 0 | ✓ |
+| `border` | "none" | "none" | ✓ |
+
+**Intentional differences:**
+
+| Property | Blue "BC" circle | Confidence "C" circle | Why |
+|----------|-----------------|----------------------|-----|
+| Element | `<button>` | `<span>` | BC is clickable (triggers fuzzy lookup); confidence is informational |
+| `cursor` | "pointer" | "help" | Interactive vs informational |
+| `background` | `#2563eb` (blue) | `#ef4444` (red) / `#f59e0b` (amber) | Color carries severity |
+| `color` | `#fff` (white) | `#000` (black) | Black "C" on amber/red for contrast |
+| Text | "BC" | "C" | Different indicator type |
+
+**Note on `color:"#000"` vs `"#fff"`:** The blue "BC" circle uses white text on blue. For "C", black on amber (`#f59e0b`) is high contrast. Black on red (`#ef4444`) also works — `#ef4444` is a bright enough red that black remains legible. If Jon or Marc find black-on-red marginal in practice, switching to `color:"#fff"` for the low case is a one-property change. Starting with black on both for consistency.
+
+---
+
+#### 4. Co-Existence — "C" + "BC" + Verify Pills on Same Row
+
+A row can show all three indicator types simultaneously:
+- **"C" circle** (amber/red) — in the `_bc` column, left position
+- **"BC" circle** (blue) — in the `_bc` column, right position
+- **Red `+ BC` pill** — in the partNumber cell, right of PN text (line 28194)
+- **Amber `? BC` pill** — in the partNumber cell, right of PN text (line 28201)
+
+The "C" and "BC" circles are in a **different column** from the verify pills. They are physically separated by the column border — no overlap, no crowding. The worst case (all three present) renders:
+
+```
+| ... PN text [+ BC pill] | [C] [BC] | description ...
+```
+
+The `_bc` column at 56px comfortably holds two 24px circles + 4px gap. The partNumber cell's verify pills are unaffected — they stay in their existing position after the input text.
+
+**Visibility combinations in the `_bc` cell:**
+
+| Confidence | BC status | Renders |
+|-----------|-----------|---------|
+| high (or labor/contingency) | matched (bc/manual) | Empty cell |
+| high | unmatched | `[BC]` alone, centered |
+| low/medium | matched | `[C]` alone, centered |
+| low/medium | unmatched | `[C] [BC]` side by side |
+
+Flex `justifyContent:"center"` ensures single circles center in the 56px cell rather than sitting at the left edge.
+
+---
+
+#### 5. Independence — Unchanged from C81
+
+- **Confidence clears on PN edit:** Line 25525: `if(field==="partNumber"){next.confidence="high";...}` — sets to "high", which hides the "C" circle (render guard: `row.confidence==="low"||row.confidence==="medium"`).
+- **BC circle clears on match:** When `applyBcItem` sets `priceSource:"bc"`, the BC circle's visibility guard (`row.priceSource!=="bc"&&row.priceSource!=="manual"`) hides it.
+- **No coupling:** The "C" circle reads `row.confidence`. The "BC" circle reads `row.priceSource`. Different fields, different code paths, different clear triggers. Moving them into the same cell doesn't create any data coupling.
+
+---
+
+#### Summary of Changes for Marc
+
+| Step | What | Location |
+|------|------|----------|
+| 1 | Remove old confidence dot | Cut lines 28075-28078 (8×8px dot in partNumber cell) |
+| 2 | Widen `_bc` column | Line 28048: `width:32` → `width:56` |
+| 3 | Wrap `_bc` cell contents in flex div | New `<div style={{display:"inline-flex",...gap:4}}>` inside the `<td>` |
+| 4 | Add "C" circle inside the flex wrapper | Before the existing BC button, gated on `row.confidence==="low"\|\|"medium"` |
+| 5 | Revert C82's pill-styled element | Remove the pill-shaped "C" that Marc built from C82 |
+
+**Also revert from C82 (Marc's v1.20.127 build):** The pill-shaped "C" element that Marc added next to the red/amber verify pills should be removed entirely — it was built from the wrong spec.
+
+**Estimated net change:** ~8 lines (remove old dot, add new circle, widen column, flex wrapper).
+
+---
+
+#### What C84 supersedes
+
+| Spec | Status |
+|------|--------|
+| C81 §2 (relocation to after line 28200, partNumber cell) | **SUPERSEDED** — "C" now goes in `_bc` column, not partNumber cell |
+| C81 §3 (8→14px circle sizing) | **SUPERSEDED** by C82, now superseded again by C84 |
+| C82 (pill sizing matching red/amber pills) | **SUPERSEDED** — wrong element identified |
+| C81 §4 (legibility) | **SUPERSEDED** — different adjacency context |
+| C81 §5 (independence / no logic change) | **UNCHANGED** — still applies |
 
 ---
