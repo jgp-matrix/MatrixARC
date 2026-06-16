@@ -54,6 +54,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C76: #138 split REV data box into Dv.# + Qv.#. Both fields exist (panel.bomVersion, project.quoteRev). quoteRev needs opts pass-through. ~20 lines, shared, no open decisions.
 - **2026-06-16 (Session 5, cont.)** — C77: #138 post-deploy code-path + rendered-PDF fit verification (v1.20.123). All 6 code-path items PASS. Half-box math confirms fit at all page sizes. Title block untouched.
 - **2026-06-16 (Session 5, cont.)** — C78: PRJ402096 Dv.# blank trace — code-verified Jon's runtime findings. Missing bomVersion on Panel 3 caused by seed-condition gap in `_bumpBomVersionIfChanged`. Fix recommendation: expand seed condition (Option C) over load-backfill.
+- **2026-06-16 (Session 5, cont.)** — C79: #139 Detailed Plan — Option C implementation spec for Marc. 2 changes (seed condition + comment), 5 acceptance tests (T1-T5). Verified line anchors against tip 57cad787.
 
 ## Findings
 
@@ -6882,5 +6883,137 @@ Option A is the fallback if Jon/Freddy want immediate fix for all legacy panels 
 #### Connection to #119
 
 This is a concrete manifestation of #119 (legacy panels invisible to Phase 1 safety systems). The `bomVersion` gap is lower-severity than #119's `extractionReport` gap (safety systems silently skipping), but it's the same root class: features gated on fields that were never written to pre-feature panels. Option C fixes the `bomVersion` gap. #119's broader scope (extractionReport backfill, ZeroBomBanner fallback, 1c gate on re-extract) remains open.
+
+---
+
+### C79 — #139 Detailed Plan: bomVersion Seed-Gap Fix (2026-06-16)
+
+**Type:** Implementation spec (Detailed Plan)  
+**Status:** AWAITING JON APPROVAL  
+**TODO assignment:** #139  
+**Approved fix:** Option C (expand seed condition) — Jon-approved 2026-06-16  
+**Tip at time of writing:** 57cad787 (line anchors verified)
+
+---
+
+#### Overview
+
+Two changes to `src/app.jsx`. Both in the save path — **sensitive file, implementation-exact plan required.**
+
+The fix removes the `oldCount===0` gate from the seed condition in `_bumpBomVersionIfChanged`, so legacy panels with BOM rows but no `bomVersion` (populated before v1.19.743) are seeded to `1` on next save. The bump path is untouched. A stale comment in `saveProjectPanel` is revised to document the new behavior.
+
+**Estimated size:** ~3 net lines changed (1 condition edit + 4-line comment replacement).
+
+---
+
+#### Change 1: Expand seed condition in `_bumpBomVersionIfChanged`
+
+**File:** `src/app.jsx`  
+**Location:** Line 8665 (inside `_bumpBomVersionIfChanged`, declared at line 8661)
+
+**BEFORE (line 8665):**
+```js
+  if(oldCount===0&&newCount>0&&newPanel.bomVersion==null){
+```
+
+**AFTER:**
+```js
+  if(newCount>0&&newPanel.bomVersion==null){
+```
+
+Remove `oldCount===0&&` from the condition. Everything else on this line stays identical. The body (`return{...newPanel,bomVersion:1};` at line 8666) is unchanged. The bump path (lines 8668-8676) is **UNTOUCHED**.
+
+**What this does:** Any panel with ≥1 non-labor BOM row and no `bomVersion` field gets seeded to `1` on next save. Previously, this only fired when the panel was transitioning from 0→N rows (first extraction). Now it also fires for legacy panels that already have rows but were never versioned.
+
+**What this does NOT do:** It does not change the bump path. Panels that already have `bomVersion` (any value including `1`) never enter the seed path because `bomVersion==null` is false. The `oldCount` variable is still computed at line 8664 and still used by the bump path's hash-comparison gate at line 8669 (`if(oldCount>0)`).
+
+---
+
+#### Change 2: Revise stale comment in `saveProjectPanel`
+
+**File:** `src/app.jsx`  
+**Location:** Lines 9148-9154 (comment block above the `_bumpBomVersionIfChanged` call in `saveProjectPanel`)
+
+**BEFORE (lines 9148-9154):**
+```js
+    // DECISION(v1.19.743): Drawing Version bump. Compares the BOM hash of the incoming
+    // panel against the Firestore copy and assigns a fresh `bomVersion` when they differ.
+    // First-ever BOM extraction sets v.1; any subsequent BOM mutation (manual edit, re-
+    // extract with new output, supplier-apply, scraper-apply) bumps. Re-saves with no BOM
+    // change leave the field untouched. Existing pre-v1.19.743 panels with no version stay
+    // un-versioned until their first mutation under the new code (per user spec — "leave
+    // existing panels as-is").
+```
+
+**AFTER:**
+```js
+    // DECISION(v1.19.743, revised v1.20.125/#139): Drawing Version bump. Compares the BOM
+    // hash of the incoming panel against the Firestore copy and bumps `bomVersion` when they
+    // differ. First-ever BOM extraction sets v.1. Legacy panels (rows but no bomVersion,
+    // populated pre-v1.19.743) are now seeded to v.1 on next save — no backfill needed,
+    // saveProject's all-panel loop handles it. Re-saves with no BOM change leave the field
+    // untouched.
+```
+
+**Why:** The old comment ("leave existing panels as-is, per user spec") documents a design decision Jon has now reversed. Leaving it contradicts the new behavior and misleads future readers. The revised comment accurately reflects the current intent: legacy panels are seeded, the save-path architecture handles backfill organically.
+
+Note: the `saveProject` call site (line 8855) has a terse comment (`// (2) bomVersion bump`) that doesn't mention legacy behavior — no update needed there.
+
+---
+
+#### What is NOT changed
+
+- **Bump path (lines 8668-8676):** Entirely untouched. Hash comparison, redline comparison, version increment logic — all identical.
+- **`_computeDvBomHash` (line 8646):** Untouched.
+- **`_countRedlines` (line 8653):** Untouched.
+- **`saveProject` all-panel loop (lines 8856-8860):** Untouched — this is the mechanism that heals legacy panels on any project-level save.
+- **`saveProjectPanel` call (line 9155):** Untouched — only the comment above it changes.
+- **#138 render (lines 7895, 7908, 7925-7942):** Untouched. The `__DV_QV__` sentinel, half-box render, and `bomVersion!=null` ternary all read `bomVersion` — they don't write it. This fix changes when `bomVersion` is written; the render just displays whatever value is present.
+- **UI chip (line 27139):** Untouched — gates on `bomVersion!=null`, will start showing for legacy panels once they're seeded.
+
+---
+
+#### #138 render interaction — confirmed NONE
+
+The #138 render (C76/C77) reads `panel.bomVersion` at two points:
+- Fields array (lines 7895/7908): `panel.bomVersion!=null?String(panel.bomVersion):"—"`
+- Half-box render (line 7934): `doc.text(String(val[0]),...)` where `val[0]` comes from the fields array
+
+Both are pure reads. This fix only changes when `bomVersion` is written (in `_bumpBomVersionIfChanged`). The two systems are structurally separated — write happens in the save path, read happens in the PDF render path. No interaction.
+
+After the fix: Panel 3 will have `bomVersion:1` on next save → the render reads `1` → displays "Dv.1" instead of "Dv.—". The render code doesn't change at all.
+
+---
+
+#### Acceptance Tests
+
+**T1 — Legacy panel seeds to 1 (live target: PRJ402096 Panel 3)**  
+Open PRJ402096. Panel 3 currently has `bomVersion:undefined` (10 non-labor rows, key absent). After deploying the fix, trigger any save to the project. Verify Panel 3 now has `bomVersion:1`. On the cover page (production traveler or Quoted BOM), the Dv.# box for Panel 3 should show "1" instead of "—".
+
+**T2 — Self-heal via `saveProject` all-panel iteration**  
+Using PRJ402096: edit Panel 1 (e.g., change a BOM row quantity), save. Without touching Panel 3 directly, verify Panel 3's `bomVersion` is now `1`. This confirms the `saveProject` all-panel loop (line 8856) processes Panel 3 through the expanded seed condition even though Panel 3 was not the panel being edited.
+
+**T3 — Seed fires ONCE (no phantom bump)**  
+After T1/T2 has seeded Panel 3 to `bomVersion:1`, save the project again with no content changes to any panel. Verify Panel 3's `bomVersion` is still `1` — not `2`, not re-seeded. The seed condition (`bomVersion==null`) is false after the first seed, so it falls through to the bump path, which finds no hash/redline change and returns unchanged.
+
+**T4 — Already-versioned panels unchanged / bump correctly**  
+Panel 1 (`bomVersion:3`) and Panel 2 (`bomVersion:5`) in PRJ402096: verify they remain at their current values after a no-content-change save. Then make a content change to Panel 1 (add or remove a BOM row) and save — verify it bumps to `4`. This confirms the expanded seed condition doesn't interfere with already-versioned panels.
+
+**T5 — Empty panel not seeded**  
+Add a new panel to any project (0 BOM rows). Save the project. Verify the new panel does NOT have `bomVersion` set (key should remain absent). The seed condition's `newCount>0` gate prevents seeding empty panels.
+
+---
+
+#### Sequencing
+
+| Step | Action | Depends on |
+|------|--------|-----------|
+| 1 | Change 1: edit line 8665 (remove `oldCount===0&&`) | — |
+| 2 | Change 2: revise comment at lines 9148-9154 | — |
+| 3 | `node validate_jsx.js` | 1, 2 |
+| 4 | Deploy (`bash deploy.sh`) | 3 |
+| 5 | T1-T5 verification against PRJ402096 | 4 |
+
+Changes 1 and 2 are independent of each other (different locations in the file) and can be made in either order.
 
 ---
