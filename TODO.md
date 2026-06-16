@@ -2281,3 +2281,10 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      from placeholder rows? persist/async gap?). #139 masks the symptom via self-heal; this
      watch confirms whether first-extraction reliability has a real gap.
      Priority: low. Tie-in: #119 (legacy-panel class). Logged: 2026-06-16.
+
+141. **OPEN** [Enhancement] — Relocate confidence dots + add "C" glyph on BOM rows.
+     Move the per-row AI confidence dot (amber=medium, red=low) from left-of-PN to right-of-PN,
+     adjacent to the BC status pills ("+ BC", "? BC"). Add a centered "C" letter inside both
+     dot colors. Indicators remain independent (confidence clears on PN edit per #134; BC
+     clears on pricing/BC browser match). Placement + glyph only, no logic change.
+     Analysis: Coach C81. Logged: 2026-06-16.

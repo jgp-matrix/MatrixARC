@@ -56,6 +56,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C78: PRJ402096 Dv.# blank trace — code-verified Jon's runtime findings. Missing bomVersion on Panel 3 caused by seed-condition gap in `_bumpBomVersionIfChanged`. Fix recommendation: expand seed condition (Option C) over load-backfill.
 - **2026-06-16 (Session 5, cont.)** — C79: #139 Detailed Plan — Option C implementation spec for Marc. 2 changes (seed condition + comment), 5 acceptance tests (T1-T5). Verified line anchors against tip 57cad787.
 - **2026-06-16 (Session 5, cont.)** — C80: #139 post-deploy code-path verification (v1.20.125). All items PASS. Seed condition expanded, bump path untouched, comment revised, #138 render unaffected. T1-T5 code-path confirmed.
+- **2026-06-16 (Session 5, cont.)** — C81: #141 Confidence dot relocation + "C" glyph analysis. Co-locate dot next to BC pills (move from left-of-PN to right-of-PN). Add centered "C" inside dot. Legibility confirmed (amber/red dot vs blue pill). No logic change.
 
 ## Findings
 
@@ -7089,5 +7090,147 @@ Both fields arrays (lines 7895, 7908) and the half-box render (lines 7925-7942) 
 | #138 render unaffected? | PASS — pure reads, untouched |
 
 All code-path items PASS. Combined with Jon's live confirmation (Panel 3 seeded, Dv.# shows "1"), #139 is clear to close.
+
+---
+
+### C81 — #141 Confidence Dot Relocation + "C" Glyph Analysis (2026-06-16)
+
+**Type:** Pre-implementation analysis  
+**Status:** COMPLETE — ready for Marc  
+**TODO assignment:** #141  
+**Scope:** BOM row indicators — placement + glyph only, no logic change
+
+---
+
+#### 1. Current Layout — Where Each Indicator Renders
+
+The BOM row's partNumber cell (`f==="partNumber"`) contains several inline indicators. The two relevant ones:
+
+**Confidence dot** (line 28075-28077):
+```
+<div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
+  {/* confidence dot — LEFT of the PN text, 8×8px circle, marginRight:3 */}
+  <span ... style={{display:"inline-block",width:8,height:8,borderRadius:"50%",
+    background:row.confidence==="low"?"#ef4444":"#f59e0b",marginRight:3,flexShrink:0}}/>
+  {/* invisible sizer span */}
+  {/* input field */}
+</div>
+```
+Renders **before** the input, left-of-PN. The 8×8px dot with `borderRadius:"50%"` (circle), red (`#ef4444`) for low, amber (`#f59e0b`) for medium. Only shows when `row.confidence==="low"||row.confidence==="medium"`.
+
+**BC status pills** (lines 28194-28213):
+```
+{/* "not-in-bc" → red "+ BC" pill */}
+<button ... style={{fontSize:10, color:"#fff", background:"#dc2626",
+  padding:"1px 7px", borderRadius:10, marginLeft:6}}>+ BC</button>
+
+{/* "fuzzy" → yellow "? BC" pill */}
+<button ... style={{fontSize:10, color:"#000", background:"#fcd34d",
+  padding:"1px 7px", borderRadius:10, marginLeft:6}}>? BC</button>
+```
+Render **after** the input, right-of-PN. Pill-shaped buttons with `marginLeft:6`.
+
+**Current visual order in the cell (left to right):**
+```
+[🔍 BC Browser] [● conf dot] [PN text input] [? PN / ~ PN verif badge] [+ BC / ? BC pill] [⚠ qty] [✓ Fix] [⚠ SKIPPED]
+```
+
+The confidence dot and BC pills are on **opposite sides** of the PN text. Jon wants them co-located.
+
+---
+
+#### 2. Co-Location Mechanism
+
+**Move the confidence dot from line 28075-28077 to after line 28200** (right after the `+ BC` / `? BC` pills). Change `marginRight:3` to `marginLeft:6` to match the pill spacing convention.
+
+The new visual order:
+```
+[🔍 BC Browser] [PN text input] [? PN / ~ PN verif badge] [+ BC / ? BC pill] [C dot] [⚠ qty] [✓ Fix] [⚠ SKIPPED]
+```
+
+The confidence dot now sits immediately after the BC pills — same cluster, one visual sweep. The `[? PN / ~ PN]` verification badges (lines 28175-28186) stay between the input and the BC cluster; these are part-number-pattern badges from `bomVerification`, not the confidence or BC systems, and their current position is fine.
+
+**Implementation:** Cut lines 28075-28078. Paste after line 28200 (after the `+ BC` button's closing `)}` and before the `? BC` fuzzy button block). Adjust `marginRight:3` → `marginLeft:6`. The `flexShrink:0` stays.
+
+**One subtlety:** The confidence dot currently lives INSIDE the `<div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>` wrapper (line 28074) that contains the input. Moving it outside this wrapper means it joins the outer `<div style={{display:"flex",alignItems:"center"}}>` (line 28068) where the BC pills live. This is correct — the pills are already in that outer flex container.
+
+---
+
+#### 3. "C" Glyph — Mechanism + Sizing
+
+The current dot is an empty `<span>` styled as an 8×8px circle. To add a centered "C":
+
+**Option:** Change from empty `<span>` to a `<span>` with text content "C", sized to contain the letter:
+
+```jsx
+<span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
+  style={{display:"inline-flex",alignItems:"center",justifyContent:"center",
+    width:14,height:14,borderRadius:"50%",
+    background:row.confidence==="low"?"#ef4444":"#f59e0b",
+    color:"#000",fontSize:8,fontWeight:800,lineHeight:1,
+    marginLeft:6,flexShrink:0,cursor:"help"}}>C</span>
+```
+
+Key sizing decisions:
+- **Dot size: 8→14px.** An 8px circle can't legibly contain a letter. 14px is the minimum for an 8pt bold "C" to read clearly. This matches the scale of the BC pills (which are ~14px tall from `padding:"1px 7px"` + 10px font).
+- **Font: 8px, weight 800, color #000.** Black on amber/red is high contrast. Weight 800 ensures the glyph is visible at small size.
+- **`inline-flex` + `alignItems/justifyContent:center`** — centers the "C" both horizontally and vertically inside the circle.
+- **Same "C" on both colors** — no variation by severity. Color carries severity (amber vs red), letter carries type.
+
+---
+
+#### 4. Legibility Check — "C" Dot Adjacent to "BC" Pill
+
+After relocation, the cluster looks like:
+```
+[+ BC]  [C]      ← red "not-in-bc" pill + red confidence dot (worst case: both red)
+[? BC]  [C]      ← yellow fuzzy pill + amber confidence dot (both yellow/amber)
+        [C]      ← confidence dot alone (no BC issue)
+[+ BC]           ← BC pill alone (high confidence)
+```
+
+**Worst case: both indicators present and same-hue.** A red `+ BC` pill next to a red `C` dot, or a yellow `? BC` pill next to an amber `C` dot.
+
+**Why it still reads clearly:**
+1. **Shape difference.** The BC indicator is a pill (wide rectangle, ~40px wide with text). The confidence indicator is a circle (14px). Different shapes at a glance.
+2. **Content difference.** "BC" (two letters, sometimes with prefix `+` or `?`) vs "C" (one letter). Distinct text.
+3. **Gap.** Both use `marginLeft:6` — 6px of whitespace separates them. Not fused.
+4. **Interaction difference.** The BC pill is a `<button>` (clickable, cursor:pointer, opens BC Browser). The confidence dot is a `<span>` (cursor:help, tooltip only). Hover behavior differs.
+
+**Assessment: LEGIBLE.** The shape, content, and size differences prevent blurring even at same hue. The most common case (one indicator present, not both) has no adjacency concern at all. When both appear simultaneously, the pill vs circle shape is the primary differentiator — same principle as traffic-sign shape coding.
+
+One optional enhancement if Jon wants extra separation: use a slightly different shade on the confidence dot (e.g., `#f97316` orange instead of `#f59e0b` amber for medium). But I don't think this is needed — the shape difference is sufficient.
+
+---
+
+#### 5. No Logic Change — Confirmed
+
+**Confidence dot clear behavior (unchanged):**
+- Line 25525: `if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;...}` — editing the PN sets confidence to "high", which hides the dot (the render guard at line 28075 only shows for "low"/"medium").
+- The confidence field is set by the AI extraction prompt (Layer 1) and by BC-cross/alternate paths that force "high".
+- Moving the dot's render position does not touch this logic.
+
+**BC pill clear behavior (unchanged):**
+- `bcVerify` is stamped during `runPricingOnPanel` (line 14970-14975) and on BC Item Browser match (line 25776).
+- The "not-in-bc" and "fuzzy" pills render based on `row.bcVerify.status` — moving the confidence dot does not affect `bcVerify` at all.
+
+**No coupling:** The two indicators read different fields (`row.confidence` vs `row.bcVerify.status`), are set by different code paths (extraction vs pricing), and clear independently. The relocation is purely visual — same JSX, different position in the render tree.
+
+---
+
+#### Summary
+
+| Item | Detail |
+|------|--------|
+| Current confidence dot location | Left of PN text (line 28075-28077), inside the input wrapper div |
+| New location | Right of PN text, after BC pills (after line 28200), in the outer flex container |
+| Dot size | 8px → 14px (minimum for legible glyph) |
+| Glyph | "C", 8px font, weight 800, black on amber/red background |
+| Spacing | `marginLeft:6` (matches BC pill convention) |
+| Legibility | Clear — pill vs circle shape difference, "BC" vs "C" content, 6px gap |
+| Logic change | NONE — confidence clears on PN edit (#134), BC clears on pricing match, independently |
+| Estimated change | ~5 lines moved + restyled (cut from 28075, paste after 28200, adjust style) |
+
+**No open decisions.** Marc builds from this.
 
 ---
