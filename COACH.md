@@ -49,6 +49,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C71: #133 Detailed Plan — implementation spec for Marc. 6 changes (~155 lines), sequenced, with 7 acceptance tests. Committed to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
 - **2026-06-16 (Session 5, cont.)** — C72: #133 post-deploy code-path verification (v1.20.121). All 7 items PASS. Marc's 3 deviations correct. Change 4b (inline send toggle) omitted — non-blocking, forward-note for #130.
 - **2026-06-16 (Session 5, cont.)** — C73: #133 "Traveler"→"Quoted BOM" rename analysis. `opts.documentTitle` decoupling, 2 call sites proven safe, 15 rename surfaces enumerated. Open question: filename prefix change?
+- **2026-06-16 (Session 5, cont.)** — C74: #133 rename spot-check (v1.20.122). All 5 items PASS. Zero customer-facing "traveler" strings. #130 forward-note present. Last code-path step for #133 closure.
 
 ## Findings
 
@@ -6409,5 +6410,36 @@ Option B: Keep `TRAVELER_BOM-…` filename, only rename visible title/UI
 The filename is what the customer sees in their email attachment list and downloads folder. If "Quoted BOM" is the customer-facing name, Option A is consistent. If "Traveler BOM" is fine as a behind-the-scenes filename, Option B avoids renaming a file pattern that may already be in customers' inboxes.
 
 **Jon decides.** Marc implements whichever.
+
+---
+
+### C74 — #133 Rename Spot-Check (v1.20.122) (2026-06-16)
+
+**Type:** Post-deploy review  
+**Version:** v1.20.122 (commit 2c53008b, impl 7440469c, #130 note ad530f35)  
+**Status:** PASS — all 5 items green
+
+**Title decoupling:** PASS  
+Line 7871: `doc.text(isProduction?"APPROVED TO PRODUCE":(opts.documentTitle||"PANEL PRODUCTION TRAVELER"),...)`. The `opts.documentTitle` fallback chain is correct — `isProduction` branch fires first for production callers; non-production callers without `documentTitle` get the default "PANEL PRODUCTION TRAVELER".
+
+**#133 wrapper passes title:** PASS  
+Line 7585: `await buildCoverPage(doc,panels[i],bcNum,q,i,431.8,279.4,{documentTitle:"QUOTED BOM"})`.
+
+**Production byte-for-byte:** PASS  
+Line 24244: `await buildCoverPage(doc,panel,bcProjectNumber,quoteData,idx,coverMm.mmW,coverMm.mmH,uploadOpts)` — `uploadOpts` comes from `buildAndAttachPdf(uploadOpts={})`. No caller ever sets `documentTitle` in `uploadOpts`. The three code paths:
+- No args → `{}` → no `documentTitle`, `isProduction=false` → "PANEL PRODUCTION TRAVELER" (unchanged)
+- `{mode:"production",...}` (line 38070) → `isProduction=true` → "APPROVED TO PRODUCE" (unchanged, hits first branch)
+- `{stampMode:"..."}` variants → no `mode`, no `documentTitle` → "PANEL PRODUCTION TRAVELER" (unchanged)
+
+**Filename:** PASS  
+Line 7591: `QUOTED_BOM-[${q.number||"Quote"} Rev ${...}] - ${co} - ${pn}.pdf`. Prefix changed from `TRAVELER_BOM` to `QUOTED_BOM`, rest of pattern intact.
+
+**Zero customer-facing "traveler":** PASS  
+Grep for `/traveler/i` returns 16 hits — all are: internal function names (`generateTravelerBomPdf`, `includeTravelerBom`), code comments, the production-path default string, or pre-#133 shared-infra comments. Every customer-facing surface (button labels, modal title/subtitle, toggle label, email subject/body, alerts, tooltips, filename, in-PDF title, size warning) now reads "Quoted BOM". Marc's grep result confirmed.
+
+**#130 forward-note:** PASS  
+TODO.md lines 2150-2153: "If the ProjectView inline send modal is ever revived, it should inherit the 'Include Quoted BOM' toggle (#133 Change 4a)…" References correct toggle name, correct Coach finding (C73), correct rationale (Change 4b dropped, modal unreachable).
+
+**This clears the last code-path step for #133 closure.**
 
 ---
