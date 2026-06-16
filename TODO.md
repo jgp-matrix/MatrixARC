@@ -2315,3 +2315,53 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      blue BC circle. If "+BC" is later removed, the row's indicator layout changes, so #141's
      "C" placement must be re-checked against the changed row.
      Logged: 2026-06-16.
+
+## Account provisioning + boot resilience (2026-06-16, from RYAN spin-trap incident)
+
+Origin: ryan@matrixpci.com hit an eternal "Loading Projects" spinner on home load.
+Root cause (confirmed live + via code/rules): his `users/{uid}/config/profile` carried
+`{companyId, role:"edit"}` but he had NO `companies/{cid}/members/{uid}` member doc, so the
+boot-time projects read was permission-denied. Resolved for Ryan via the legitimate invite
+link → `acceptTeamInvite` (member doc created before load). The incident exposed three
+durable defects below. See `tools/reset-user.js` (committed) for a dry-run-gated single-user
+reset that surfaced the ground-truth state.
+
+143. **OPEN** [HIGH — Marc build, Brief first — TOP OF QUEUE] — Boot fragility: un-try/caught
+     company-scoped reads hang the home load forever. In the app boot IIFE, `loadProjects`
+     (`app.jsx:9209` reads `_appCtx.projectsPath`; called un-guarded at `:45681`) and the
+     config `Promise.all` (`:45657`) have NO try/catch. Any permission-denied on a
+     company-scoped read at boot → `setLoading(false)` (`:45682`) never runs → permanent
+     spinner, with NO error surfaced, NO fallback, and NO debug-log trace (the debugLogs
+     create rule itself requires `isMember()` — `firestore.rules:432` — so a non-member's
+     failure can't even be logged). This is WHY a misprovisioned account bricks instead of
+     degrading. Proposed fix (needs a Brief before build): wrap the boot reads, always clear
+     the loading flag, and branch on error code — `permission-denied` → "No access to this
+     workspace, contact your admin" modal; anything else → "Couldn't load projects" + Retry.
+     Owner: Marc (do NOT route to Coach as active work — his diagnostic role here is done).
+     Logged: 2026-06-16.
+
+144. **OPEN** [Bug — provisioning asymmetry] — `removeTeamMember` orphans the user profile.
+     `removeTeamMember` (`functions/index.js:531`) deletes `companies/{cid}/members/{targetUid}`
+     but never clears `users/{targetUid}/config/profile`. The profile retains `{companyId, role}`,
+     so on the user's next login the app scopes them to a company they're no longer a member of
+     → boot-time permission-denied → the #143 spin trap. Confirmed live by Ryan's history
+     (member doc absent, profile intact with invite-derived `role:"edit"`; `acceptTeamInvite`
+     is atomic so the orphan can only arise from a post-accept member-doc deletion). Candidate
+     fix: in `removeTeamMember`, also delete `users/{uid}/config/profile` (or null its
+     `companyId`/`role`). Pairs with #143 — fixing #143 makes the symptom graceful; fixing #144
+     prevents the orphan state in the first place.
+     Logged: 2026-06-16.
+
+145. **OPEN** [Infra — ALL transactional email down] — SendGrid API key rejected (401). Pulled
+     `sendInviteEmail` logs: at 2026-06-16T20:29:34Z the function was reached (callable auth
+     VALID, `SENDGRID_KEY` present so the `:594` guard passed), called `sgMail.send()` (`:596`),
+     and SendGrid returned **HTTP 401 Unauthorized** → function threw → status 500. The
+     configured `SENDGRID_API_KEY` is present but invalid/revoked/expired. SCOPE: every email
+     path shares this one key (`functions/index.js:43`) — invites (`:596`), supplier-quote
+     notifications (`:226`), engineer questions (`:918`), review emails, issue reports (`:882`),
+     BC attachments (`:2916`). So ALL transactional email is currently failing, not just invites.
+     Candidate fix: rotate the SendGrid key and re-set `SENDGRID_API_KEY` in `functions/.env`
+     (+ verify the `sales@matrixpci.com` sender is still authenticated in SendGrid), redeploy
+     functions. Workaround used for Ryan: hand-delivered the `?join=` invite link (works without
+     email since the invite doc carries the token).
+     Logged: 2026-06-16.
