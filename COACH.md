@@ -60,6 +60,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C82: #141 AMENDMENT — match BC pill dimensions exactly. BC pills are 10px/700/borderRadius:10/padding 1px 7px/lineHeight 1.4. Confidence pill respec'd to identical dimensions with "C" text. Supersedes C81 §3 sizing only.
 - **2026-06-16 (Session 5, cont.)** — C83: Email yellow-highlight note verification (v1.20.126). Note appears exactly twice: standalone unconditional (32558), bundled gated on includeTravelerBom (32009). Absent from inline ProjectView path (37471). All PASS.
 - **2026-06-16 (Session 5, cont.)** — C84: #141 RE-SPEC — match BLUE "BC" circle (line 28057), not the red/amber pills. Blue circle: 24×24px, borderRadius 50%, fontSize 9, fontWeight 800, blue #2563eb. Lives in dedicated `_bc` column (32px). Placement option: widen `_bc` to 56px for side-by-side. Supersedes C82 sizing+placement; C81 independence unchanged.
+- **2026-06-16 (Session 5, cont.)** — C85: #141 post-deploy code-path verification (v1.20.128). All items PASS. "C" circle matches blue "BC" circle exactly (24×24, 50%, fs 9, fw 800). In `_bc` column widened to 56px. Old dot removed, C82 pill reverted. Verify pills untouched. Independence intact.
 
 ## Findings
 
@@ -7596,5 +7597,94 @@ Flex `justifyContent:"center"` ensures single circles center in the 56px cell ra
 | C82 (pill sizing matching red/amber pills) | **SUPERSEDED** — wrong element identified |
 | C81 §4 (legibility) | **SUPERSEDED** — different adjacency context |
 | C81 §5 (independence / no logic change) | **UNCHANGED** — still applies |
+
+---
+
+### C85 — #141 Post-Deploy Code-Path Verification (2026-06-16)
+
+**Type:** Post-deploy review  
+**Version:** v1.20.128 (commit ee7d6b7b)  
+**Status:** PASS — all items verified
+
+#### v1.20.127 "C" pill REVERTED: PASS
+
+No trace of C82's pill-styled element in the partNumber cell. Grep for `width:8,height:8` + confidence (old 8×8 dot): zero matches. Grep for `padding.*1px 7px` + confidence (C82 pill): zero matches. Line 28086 carries a comment confirming removal: `/* #141 (C84): confidence indicator moved out of this input wrapper to the _bc column */`.
+
+#### New "C" circle mirrors blue "BC" circle EXACTLY: PASS
+
+**"C" circle** (line 28057, shipped):
+```js
+style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",
+  cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,
+  display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}
+```
+
+**Blue "BC" circle** (line 28067, unchanged):
+```js
+style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,
+  fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,
+  display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0}}
+```
+
+| Property | "C" circle | "BC" circle | Match? |
+|----------|-----------|-------------|--------|
+| `width` | 24 | 24 | ✓ |
+| `height` | 24 | 24 | ✓ |
+| `borderRadius` | "50%" | "50%" | ✓ |
+| `fontSize` | 9 | 9 | ✓ |
+| `fontWeight` | 800 | 800 | ✓ |
+| `lineHeight` | 1 | 1 | ✓ |
+| `display` | "inline-flex" | "inline-flex" | ✓ |
+| `alignItems` | "center" | "center" | ✓ |
+| `justifyContent` | "center" | "center" | ✓ |
+| `padding` | 0 | 0 | ✓ |
+| `border` | "none" | "none" | ✓ |
+
+Element: `<span>` (informational) vs `<button>` (clickable). `cursor:"help"` vs `"pointer"`. Text: "C" vs "BC". Color: `#000` on amber/red vs `#fff` on blue. All intentional per C84 spec.
+
+#### Placement in `_bc` column: PASS
+
+**Column width-map** (line 28046): `["_bc",56]` — widened from 32. Comment: `/* #141 (C84): _bc widened 32→56 */`.
+
+**`<td>` width** (line 28048): `width:56` — matches the map.
+
+**Flex wrapper** (line 28049): `<div style={{display:"inline-flex",alignItems:"center",justifyContent:"center",gap:4}}>` — wraps both circles with 4px gap, centered.
+
+**Order:** "C" circle (line 28055-28058) renders FIRST (left), "BC" circle (line 28059-28068) renders SECOND (right). Matches C84 spec.
+
+#### Co-existence with verify pills: PASS
+
+Red `+ BC` pill (line 28202-28207) and amber `? BC` pill (line 28209-28220) remain in the partNumber cell — `f==="partNumber"` gate, `marginLeft:6`, `borderRadius:10` pill shape. Completely untouched. These live in a different `<td>` from the `_bc` column circles — no overlap, no interference.
+
+#### Independence: PASS
+
+**Confidence clears on PN edit** (line 25525): `if(field==="partNumber"){next.confidence="high";...}` — unchanged. Setting confidence to "high" hides the "C" circle (render guard: `row.confidence==="low"||row.confidence==="medium"`).
+
+**Blue "BC" circle onClick/style** (line 28060-28067): `bcFuzzyLookup` call, `applyBcItem`, `setBcBrowserTarget` — all unchanged. No reference to `row.confidence` anywhere in the BC circle's logic.
+
+**No coupling.** The "C" circle reads `row.confidence`. The "BC" circle reads `row.priceSource`. Different fields, different clear triggers, colocated in the same cell but logically independent.
+
+#### Layout check — 56px column width
+
+The `_bc` column widened from 32→56px (+24px). Column order: `qty(56)` → `partNumber(flex)` → `_bc(56)` → `description(220)` → `manufacturer(flex)` → `_supplier(flex)`. The 24px increase compresses the flex-width columns (`partNumber`, `manufacturer`, `_supplier`) by a proportional share. At typical BOM table widths (~1200px+ on 1080p+ screen), 24px is ~2% — absorbed by `overflow:hidden` + `textOverflow:ellipsis` on all flex columns (line 28076).
+
+**Risk assessment:** On very narrow viewports or dense BOMs with long PNs, the description column (fixed 220px) is unaffected. The flex columns may lose ~8px each. The `partNumber` cell has a minimum sizer span (line 28087: `minWidth:80`) that prevents collapse below 80px. This is safe.
+
+Coach cannot render the actual layout — **the visual layout check (dense BOM, confirm no column crowding) is Jon's lane.** The math says 24px on a 1200px+ table is absorbed cleanly, but eyes on a real BOM with 50+ rows is the definitive test.
+
+#### Summary
+
+| Check | Result |
+|-------|--------|
+| v1.20.127 pill + old dot reverted? | PASS — no trace |
+| "C" matches "BC" circle dimensions? | PASS — all 11 properties identical |
+| In `_bc` column, width 56? | PASS — both map entry and `<td>` |
+| Flex wrapper, gap 4, C left / BC right? | PASS |
+| Verify pills untouched? | PASS — separate cell, unchanged |
+| Independence (confidence PN-edit clear)? | PASS — line 25525 unchanged |
+| BC circle onClick/style unchanged? | PASS |
+| Layout — 56px column safe? | PASS (math) — visual check is Jon's lane |
+
+All code-path items PASS. Jon's visual check on a live BOM (circle pair rendering, layout on dense BOM) is the remaining closure step for #141.
 
 ---
