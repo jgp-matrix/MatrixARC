@@ -2288,3 +2288,21 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      dot colors. Indicators remain independent (confidence clears on PN edit per #134; BC
      clears on pricing/BC browser match). Placement + glyph only, no logic change.
      Analysis: Coach C81. Logged: 2026-06-16.
+
+## Red "+BC" pill redundancy review (2026-06-16)
+
+142. **TABLED** [Investigation — Coach] — Red "+BC" pill possible redundancy review.
+     The BOM row has three BC-related indicators: the red "+BC" pill, the amber "?BC" pill, and
+     a separate blue "BC" circle (blue = item not in BC, needs adding). Jon suspects the red
+     "+BC" pill may be redundant with another indicator and wants it reviewed for possible
+     removal. TABLED — not active.
+     **When picked up (owner: Coach — read-only analysis):**
+     - Map the exact trigger condition for each of the three indicators (+BC / ?BC / blue-BC).
+     - Determine whether "+BC" genuinely DUPLICATES another indicator's meaning (redundant) or
+       covers a DISTINCT state (complementary — e.g. "+BC = in BC" vs "blue = not in BC" would
+       be opposite states, NOT redundant).
+     - Do NOT remove anything until the audit proves duplication.
+     **Interaction flag — couples with #141:** #141 placed the confidence "C" pill next to the
+     blue BC circle. If "+BC" is later removed, the row's indicator layout changes, so #141's
+     "C" placement must be re-checked against the changed row.
+     Logged: 2026-06-16.
