@@ -2181,3 +2181,18 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      - Any record that the approval email went out vs. send-and-reply.
      **Priority:** ELEVATED — gates PO acceptance, customer-facing. Above #127/#129.
      Discovered: 2026-06-15.
+
+## Part # confidence dots — what are they? (2026-06-16)
+
+134. **RESOLVED** [Answered — investigation, no code change] — Yellow circles next to Part #s.
+     The dots are AI extraction CONFIDENCE indicators, shipped v1.20.15 (2026-05-22) under #49
+     (scanned-PDF quality detection). Per-row:
+     - Amber (#f59e0b) = medium confidence — ≥1 confusable glyph (S/5, B/8, O/0).
+     - Red (#ef4444) = low confidence — multiple doubtful / faded / clipped chars.
+     - No dot = high confidence.
+     Clear on edit: editing the PN field resets confidence to high and removes the dot
+     (`app.jsx:25455`) — the edit IS the verification.
+     Distinct from the trust-layer `manualVerifyRequired` panel flag (#103–#112): these dots
+     are advisory per-row; that flag is the hard panel-level gate.
+     Source: Coach C70. Freddy's trust-layer lead ruled out.
+     Logged: 2026-06-16.
