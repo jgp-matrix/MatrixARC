@@ -51,6 +51,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-16 (Session 5, cont.)** — C73: #133 "Traveler"→"Quoted BOM" rename analysis. `opts.documentTitle` decoupling, 2 call sites proven safe, 15 rename surfaces enumerated. Open question: filename prefix change?
 - **2026-06-16 (Session 5, cont.)** — C74: #133 rename spot-check (v1.20.122). All 5 items PASS. Zero customer-facing "traveler" strings. #130 forward-note present. Last code-path step for #133 closure.
 - **2026-06-16 (Session 5, cont.)** — C75: #135/#136 cover-page BOM table analysis. #135 yellow PN-cell highlight (shared, ~5 lines); #136 hide Supplier column (customer-only via opts, ~8 lines). Two open decisions flagged for Jon.
+- **2026-06-16 (Session 5, cont.)** — C76: #138 split REV data box into Dv.# + Qv.#. Both fields exist (panel.bomVersion, project.quoteRev). quoteRev needs opts pass-through. ~20 lines, shared, no open decisions.
 
 ## Findings
 
@@ -6596,5 +6597,147 @@ The yellow-highlight targets (Change A) are:
 **Open decisions before Marc starts:**
 1. Yellow on two PN cells vs. whole crossed row? (Jon)
 2. Column redistribution: R1 (auto-fill, recommended) vs. R2 (wrap, literal no-redistribution)? (Jon)
+
+---
+
+### C76 — #138 Split "REV" Data Box into Dv.# + Qv.# (2026-06-16)
+
+**Type:** Pre-implementation analysis  
+**Status:** COMPLETE — ready for Marc  
+**TODO assignment:** #138  
+**Scope:** SHARED — both production traveler and Quoted BOM, no decoupling
+
+---
+
+#### 1. Data Existence — THE GATE: PASS (both fields exist and are live)
+
+**Dv.# = `panel.bomVersion`** (per-panel, Number)  
+Auto-incremented on BOM content changes via `_bumpBomVersionIfChanged` (line 8622). Bumps when the BOM hash changes (part adds/removes/edits, re-extraction) — NOT on price-only or lead-time changes. Seeds at 1 on first extraction. Already displayed in the UI as `Dv.{panel.bomVersion}` (line 27104-27106). Persisted on each `panel` object in Firestore.
+
+**Qv.# = `project.quoteRev`** (project-level, Number)  
+Auto-bumped when any quote-relevant content changes since last print (line 8765, 8882-8919). Also has a manual-reset mechanism for specific projects (line 9228). Already used throughout: filename stamps, send-record D3, quote PDF header. Persisted on the `project` doc in Firestore.
+
+**Both fields exist, are auto-maintained, and have clear semantics.** This is display-only — no new data-source build needed.
+
+---
+
+#### 2. Data Availability Inside `buildCoverPage`
+
+**`panel.bomVersion`:** Available — `panel` is the second parameter (line 7844). Use `panel.bomVersion||"—"`.
+
+**`project.quoteRev`:** NOT currently available. `buildCoverPage` receives `quoteData` (= `project.quote`, the quote blob) — `quoteRev` lives on `project` directly, not inside `project.quote`.
+
+**Two options to get `quoteRev` in:**
+
+| Option | Mechanism | Callers affected |
+|--------|-----------|-----------------|
+| **Q1 — via opts** | Pass `opts.quoteRev` from each caller | Both callers must pass it |
+| **Q2 — via quoteData** | Callers merge `quoteRev` into the `quoteData` object they pass | Both callers must merge it |
+
+**Recommendation: Q1 (via opts).** The `opts` bag is already the proven extension point (C73 `documentTitle`, C75 `hideSupplierColumn`). Each caller adds one field:
+
+- `generateTravelerBomPdf` (line 7585): `{documentTitle:"QUOTED BOM", quoteRev: project.quoteRev||0}` — has `project` in scope.
+- `buildAndAttachPdf` (line 24244): `{...uploadOpts, quoteRev: quoteRev}` — `quoteRev` is a PanelCard prop (line 22971, passed at line 34039 as `project.quoteRev||0`). Already in component scope.
+
+Inside `buildCoverPage`: `const qvRev=opts.quoteRev!=null?opts.quoteRev:null;`
+
+---
+
+#### 3. Current "REV" Box — What's Being Replaced
+
+The "REV" box is the **4th field** (index 3) in the info grid:
+- Production variant (line 7894): `["REV", panel.drawingRev||"—"]`
+- Quoting variant (line 7907): `["REV", panel.drawingRev||"—"]`
+
+This shows the **customer's drawing revision** (`panel.drawingRev` — e.g., "A", "B", "Rev 2"). This same value already appears in the title block at line 7877:
+```js
+const dwgTitle=[panel.drawingNo, panel.drawingRev?"Rev "+panel.drawingRev:""].filter(Boolean).join("  ·  ");
+```
+
+So after the split, the customer drawing rev is NOT lost — it stays in the title block. The data box switches from showing the customer rev (redundant with the title) to showing the two Matrix internal versions (Dv.# and Qv.#).
+
+---
+
+#### 4. Box-Split Mechanism
+
+The info grid renders each field as one box of width `cellW = (W - margin*2) / 4` (line 7915). Each box is drawn with `doc.rect(x, y-m(4), cellW-m(1), rowH-m(1))` (line 7922).
+
+**Approach: replace the single "REV" field entry with a custom render.** Instead of one `["REV", panel.drawingRev||"—"]` entry in the `fields` array, either:
+
+**(A) Two-pass render** — render the REV slot as TWO half-width boxes in the `forEach` loop by detecting the REV index and drawing two boxes of `(cellW-m(1))/2` width instead of one. Skip the standard label/value render for that slot.
+
+**(B) Post-grid overlay** — render the REV slot as a blank placeholder in the grid, then after the `forEach` loop, draw two half-boxes at the known position of index 3.
+
+**Recommendation: (A)** — cleaner, self-contained in the loop. The `forEach` already has access to the position (`x`, `y`, `cellW`). When the loop hits index 3 (the REV slot), it draws two boxes instead of one and skips the standard render.
+
+**Sketch (inside the forEach at line 7916):**
+```js
+fields.forEach(([lbl,val],i)=>{
+  const col=i%cols;
+  const row=Math.floor(i/cols);
+  const x=margin+col*cellW;
+  const y=infoY+row*rowH;
+  // #138: Split REV box into Dv.# + Qv.# (two half-width boxes)
+  if(lbl==="__DV_QV__"){
+    const halfW=(cellW-m(1))/2;
+    const bH=rowH-m(1);
+    // Left half: Dv.#
+    doc.setDrawColor(...black);doc.setLineWidth(m(0.3));
+    doc.rect(x,y-m(4),halfW,bH);
+    doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text("Dv.#",x+m(2),y);
+    doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...black);
+    doc.text(String(val[0]),x+m(2),y+m(6));
+    // Right half: Qv.#
+    const x2=x+halfW;
+    doc.rect(x2,y-m(4),halfW,bH);
+    doc.setFontSize(fs(7));doc.setFont("helvetica","normal");doc.setTextColor(...mid);
+    doc.text("Qv.#",x2+m(2),y);
+    doc.setFontSize(fs(11));doc.setFont("helvetica","bold");doc.setTextColor(...black);
+    doc.text(String(val[1]),x2+m(2),y+m(6));
+    return; // skip standard single-box render
+  }
+  // Standard single-box render (unchanged)
+  doc.setDrawColor(...black);doc.setLineWidth(m(0.3));
+  doc.rect(x,y-m(4),cellW-m(1),rowH-m(1));
+  ...
+});
+```
+
+And in the `fields` arrays, replace `["REV", panel.drawingRev||"—"]` with:
+```js
+["__DV_QV__", [panel.bomVersion!=null?String(panel.bomVersion):"—", qvRev!=null?String(qvRev).padStart(2,"0"):"—"]]
+```
+
+`padStart(2,"0")` on `Qv.#` matches the existing convention throughout the app (e.g., `"Qv."+String(project.quoteRev).padStart(2,"0")` at line 34843).
+
+**Total width: identical.** Two half-boxes of `(cellW-m(1))/2` sum to `cellW-m(1)` — the same footprint as the current single box. Height unchanged (`rowH-m(1)`). Surrounding boxes unaffected.
+
+---
+
+#### 5. Production Safety
+
+SHARED — intentionally. Both the production `fields` array (line 7890-7902) and the quoting `fields` array (line 7903-7913) get the same `["__DV_QV__", [...]]` entry replacing `["REV", ...]`. The `forEach` render logic handles the sentinel label identically regardless of caller.
+
+The customer drawing rev (`panel.drawingRev`) is NOT lost — it stays in the title block (line 7877), which is untouched.
+
+No other grid boxes are affected — the sentinel detection (`lbl==="__DV_QV__"`) only fires on the split slot; all other entries flow through the standard render path.
+
+---
+
+#### Summary
+
+| Check | Result |
+|-------|--------|
+| Dv.# data exists? | YES — `panel.bomVersion` (per-panel, auto-bumped on BOM changes) |
+| Qv.# data exists? | YES — `project.quoteRev` (project-level, auto-bumped on quote-relevant changes) |
+| `quoteRev` available in `buildCoverPage`? | NO today — pass via `opts.quoteRev` (Q1) |
+| Customer drawing rev lost? | NO — stays in title block (line 7877) |
+| Box split within same width? | YES — two half-boxes sum to same `cellW-m(1)` footprint |
+| Surrounding boxes disturbed? | NO — sentinel label only triggers on the split slot |
+| Both docs get the change? | YES — shared, intentional |
+| Estimated new lines | ~20 (sentinel render block + fields array edits + opts.quoteRev in both callers) |
+
+**No open decisions.** Both data fields exist and are live. Marc builds from this.
 
 ---

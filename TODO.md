@@ -2228,3 +2228,12 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      machine (sent → reviewed → approved/changed). Prerequisite: customer portal
      infrastructure (no portal exists today — Brief §2/§8).
      Logged: 2026-06-16.
+
+## Cover-page data box: Dv.# + Qv.# split (2026-06-16)
+
+138. **OPEN** [Queued] — Split "REV" data box into Dv.# (Drawing Version) + Qv.# (Quote Version).
+     Replace the single REV box in the cover-page info grid with two half-width boxes showing
+     `panel.bomVersion` (Dv.#) and `project.quoteRev` (Qv.#, via opts). Customer drawing rev
+     stays in the title block (line 7877) — NOT lost. Shared between production traveler and
+     Quoted BOM (no decoupling). ~20 new lines. Analysis: Coach C76.
+     Logged: 2026-06-16.
