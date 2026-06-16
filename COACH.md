@@ -45,6 +45,7 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 - **2026-06-15 (Session 4, cont.)** — C67: #128 feasibility trace. All data needed for region rendering IS persisted (bomRegion on pages, originalPdfPath, pageNumber). H5 tiles are transient but the BOM region is recomputable. Per-item y_top/y_bottom are stored but in tile/region-relative space (translateItemsToPageCoords no-op). For ny=1 grids (dominant case — landscape BOM tables), y_top IS region-relative → coord fix viable. For ny>1 (rare tall regions), y_top is tile-relative → coord fix broken. Brief direction: "render stored regions" (accurate, cheap) + companion coord fix (~15 lines). No "persist first" step. ~55-80 lines total.
 - **2026-06-15 (Session 4, cont.)** — C68: #128 detailed plan. Five discrete changes: (1) `renderBomRegionPreview` function (~25 lines, after line 11824), (2) `locateInRegion` function in BCItemBrowserModal (~30 lines), (3) mount useEffect + page button branching (~9 lines), (4) modal instantiation `h5PageIds` prop (~3 lines), (5) `getExtractionUnits` cropBounds fix (~3 lines). ny=1 → instant highlight from stored coords; ny>1 → Haiku-on-region fallback. Text-layer pages keep existing path. ~70 lines total. 8 test criteria incl. #126 regression cases. #133 (Customer BOM Approval) logged in TODO.md.
 - **2026-06-16 (Session 5)** — C69: #133 Supplement — verified Brief assumptions A1-A5 against codebase. Committed Brief + Supplement to `docs/133-BRIEF-AND-SUPPLEMENT.md`.
+- **2026-06-16 (Session 5, cont.)** — C70: #134 Yellow circle investigation. Per-row AI confidence dot (v1.20.15, TODO #49f). Not trust-layer/F1 — it's extraction quality feedback. Live and wired correctly.
 
 ## Findings
 
@@ -6161,5 +6162,80 @@ No blocking risks found. `buildCoverPage` is decoupled from PanelCard. Multi-att
 ~130-150 lines, single session. No H-item discipline needed (no extraction/save-path/pricing changes).
 
 **Verdict:** Brief APPROVED for implementation. Marc can proceed.
+
+---
+
+## C70 — #134 Yellow Circle Indicator Investigation
+
+**Date:** 2026-06-16
+**Role:** Coach (Sam Wize)
+**Type:** Investigation (read-only, code + history trace)
+**Request:** Jon — "What are the small yellow circles next to Part Numbers in the BOM view?"
+**Prod:** v1.20.120
+
+---
+
+### Answer
+
+The yellow circles are **AI extraction confidence dots** — per-row indicators showing how confident the AI was in its reading of each part number during BOM extraction.
+
+### UI Element
+
+**Location:** `app.jsx:28005-28008`, inside the BOM table's partNumber cell (mode==="fit" rendering path).
+
+**Render condition:**
+```
+f==="partNumber" && (row.confidence==="low" || row.confidence==="medium")
+  && !row.isLaborRow && !row.isContingency
+```
+
+**Appearance:**
+- 8×8px circle, `borderRadius:"50%"`
+- **Amber** (`#f59e0b`) for `confidence === "medium"` — at least one character could be a confusable glyph (S/5, B/8, O/0, I/1, etc.)
+- **Red** (`#ef4444`) for `confidence === "low"` — multiple doubtful characters, faded/clipped print
+- **No dot** for `confidence === "high"` — zero doubt on every character
+- Tooltip: `"AI confidence: {level} — verify this part number against the source drawing"`
+
+### Origin
+
+**Shipped in:** v1.20.15 (`06a0b9ee`, 2026-05-22), as part of TODO #49 — "Scanned PDF quality detection and enhanced extraction for degraded source material." Specifically item (f) of that multi-part feature.
+
+**Context:** v1.20.14 rolled back the crop-path extraction regression (#48). v1.20.15 added the full scan-quality detection suite to handle degraded source PDFs (CCITTFaxDecode monochrome fax scans). The confidence dot was one of six components: server-side quality assessment, dynamic prompt enhancement, CropBox, client-side propagation, scan-quality banner, and the per-row dots.
+
+### Data Flow
+
+1. **AI sets confidence per row** in the BOM extraction prompt response (line 11607). The prompt defines three levels with strict criteria: "high" requires ZERO doubt on every character; "medium" means at least one confusable-glyph pair in play; "low" means multiple doubtful characters.
+
+2. **Post-extraction code-level downgrade** (line 12001-12013): even if the AI returns "high," the extraction pipeline forces a downgrade to "medium" for any row whose partNumber contains a confusable glyph (S, 0, O, 8, B, I, Z, G, 6, T, 7, H, N, 5, D, C, 2, Q, l, L, 1) OR whose description matches enclosure keywords. The `_confDowngradeReason` field records why ("contains-confusable-glyph" or "enclosure-row").
+
+3. **Persisted on the BOM row** in Firestore — `row.confidence` is a string field on each `panel.bom[]` item. Survives save-reload cycles.
+
+4. **Cleared on manual edit** (line 25455): when a user edits the partNumber field, `confidence` is reset to `"high"` and `_confDowngradeReason` is deleted. The dot disappears — the user's edit is treated as verification.
+
+### Companion UI
+
+The dots work alongside a **toolbar badge** (line 27578-27597) that summarizes confidence issues:
+- Amber badge: `"⚠ N rows need review"` when low-confidence or placeholder rows exist
+- Blue badge: `"N medium-confidence rows"` when only medium-confidence rows exist
+- Clicking the badge opens a verification modal listing the flagged rows
+
+### Is It Stale/Orphaned?
+
+**No — fully live and correctly wired.** The confidence field is:
+- Written by every extraction path (BOM prompt at line 11607, all three extraction paths)
+- Downgraded by the post-extraction pipeline (line 12001-12013)
+- Read by the BOM table renderer (line 28005)
+- Read by the toolbar badge (line 27580-27581)
+- Read by `findIncompleteQuoteItems` for the send gate (indirectly — via `manualVerifyRequired` on the panel, not per-row confidence)
+- Cleared on user edit (line 25455)
+
+### Freddy's Lead: Confirm or Rule Out
+
+**RULED OUT.** The yellow dots are NOT from the trust-layer / F1 noisy-PN guard / #115 held-back-cross indicator. Those are separate systems:
+- **F1 noisy-PN guard** (v1.20.110, #110): holds back BC fuzzy matches as suggestions when `manualVerifyRequired` is true. No per-row dot.
+- **#115 held-back-cross per-row indicator**: scaffolding exists but UI not yet built (TODO #115 is OPEN — "needs per-row indicator").
+- **"Mark BOM Verified" button** (line 27539-27549): clears `manualVerifyRequired` on the panel — a panel-level flag, not per-row.
+
+The yellow dots are purely extraction-quality feedback from the AI confidence system (v1.20.15, #49f).
 
 ---
