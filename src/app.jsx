@@ -32503,13 +32503,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     const bad=recipients.filter(e=>!emailRe.test(e));
     if(!recipients.length){arcAlert("Enter at least one recipient email.");return;}
     if(bad.length){arcAlert(`Invalid email address${bad.length>1?"es":""}:\n\n${bad.map(e=>"  • "+e).join("\n")}\n\nCheck for typos (commas instead of dots, missing @, trailing spaces).`);return;}
+    // Set the in-flight guard BEFORE the slow awaits (token + per-panel PDF render)
+    // so a double-click during that window can't fire a second send. Every early
+    // return below resets it.
+    setBomSending(true);
     const graphToken=await acquireGraphToken();
-    if(!graphToken){arcAlert("Could not get Microsoft 365 token.");return;}
+    if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setBomSending(false);return;}
     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
     const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
     const trav=await generateTravelerBomPdf(project);
-    if(!trav){arcAlert("No panels — cannot generate traveler BOM.");return;}
-    setBomSending(true);
+    if(!trav){arcAlert("No panels — cannot generate traveler BOM.");setBomSending(false);return;}
     // Traveler is the PRIMARY (and only) attachment — no quote PDF, no extras.
     try{
       await sendGraphEmail(graphToken,m.to,m.subject,html,trav.pdfBase64,trav.pdfFilename,[]);
