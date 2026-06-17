@@ -2595,3 +2595,35 @@ reset that surfaced the ground-truth state.
      DEFERRED: investigate which save path fires for unopened projects and whether it carries
      stale state. Not urgent — no known data loss.
      Logged: 2026-06-17 (Coach C93).
+
+## Drawing-revision re-extract + BOM/labor diff (2026-06-17)
+
+153. **OPEN** [HIGH — feature, needs Brief/spec] — Drop a revised drawing set onto an existing
+     project, re-extract, and DIFF the new BOM + labor against the prior version.
+     REQUEST (Jon, 2026-06-17): Let the user drop a new/updated set of drawings into an existing
+     project to be extracted. The ORIGINAL drawings + original BOM/labor must be RETAINED (Jon
+     believes retention already happens — VERIFY: pages keep `originalPdfPath`/`storageUrl`, and
+     prior BOM/labor are preserved, not overwritten). After re-extraction of the new set, compare
+     the new extracted BOM and labor against the prior version and surface the delta:
+       - BOM table → show items CHANGED (added + modified: qty / PN / description / price / labor
+         deltas relative to the prior version, visually flagged).
+       - Notes → show items DELETED (present in the prior version, absent from the new extraction).
+     INTENT: a drawing-revision comparison workflow — when a customer issues a revised drawing
+     package, the estimator sees exactly what changed without re-pricing from scratch or losing the
+     original estimate.
+     OPEN QUESTIONS FOR SPEC (Coach/Freddy):
+       - Where does the "prior version" live — a new ECO, a snapshot of the panel's BOM/labor at
+         re-extract time, or the existing Dv (Drawing Version) / bomVersion machinery? Strong
+         overlap with the Dv.# system (#138) and ECO flow — reuse vs. new snapshot store.
+       - Diff granularity + match key: how to pair "same" line items across revisions (PN? PN+desc?
+         itemNo? fuzzy?) so a renamed/re-PN'd part reads as CHANGED, not delete+add.
+       - Labor diff presentation: cut/layout/wire hour deltas, lead-time deltas, panel-level totals.
+       - Retention guarantee: confirm Data-Retention rules hold — original BOM rows, manual edits
+         (`priceSource:"manual"/"bc"`), crosses, corrections, and the original drawing blobs must
+         survive re-extraction. Re-extract must NOT silently clobber priced/edited rows (see #86 /
+         "Never overwrite user data silently").
+       - UX entry point: drop-zone on the existing project vs. "Re-Extract Drawings" (button already
+         present on the panel) — and how the compare view is surfaced.
+     SEQUENCING: H-item discipline — Freddy Brief → Coach Supplement/spec + retention-safety read →
+     Jon approves → Marc builds (diff-gated). Not started.
+     Logged: 2026-06-17 (Jon request).
