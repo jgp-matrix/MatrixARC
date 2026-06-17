@@ -2491,18 +2491,24 @@ reset that surfaced the ground-truth state.
 
 ## reviewUploads permanent Storage-URL exposure (2026-06-16)
 
-148. **OPEN** [HIGH — investigation first; TOP OF QUEUE, next session's FIRST task] — `reviewUploads`
+148. **OPEN** [LOW — latent flaw on an unfinished feature, no live exposure] — `reviewUploads`
      engineering-review portal embeds PERMANENT, unrevokable Firebase Storage download URLs for
      drawing pages directly in the token doc (`drawingPages: pageUrls`, ~`app.jsx:29119`), generated
      via `getDownloadURL()`. Those URLs carry permanent access tokens — a leaked review-portal link
-     exposes the actual drawing images FOREVER, independent of the token's `expiresAt`. This is a LIVE
-     production data-exposure of engineering drawings (likely customer IP). Surfaced by Coach during
-     the #137 trace (C89 side finding).
+     exposes the actual drawing images FOREVER, independent of the token's `expiresAt` (likely customer
+     IP). The flaw is real in code but NOT a live exposure — see the downgrade note below. Surfaced by
+     Coach during the #137 trace (C89 side finding).
      FIRST STEP (owner: Coach, read-only — before ANY fix): trace exactly what `reviewUploads` exposes,
      how the drawing URLs are generated/stored, how widely review-portal links are shared, and what the
      safe replacement is (short-lived SIGNED URL via Admin SDK behind a token-validating CF — NOT
      `getDownloadURL()`). Determine the scope of exposure before designing a fix.
-     Priority HIGH — ranks ABOVE #146 (which stays MEDIUM). Diff-gated (customer-facing + IP exposure).
+     Priority LOW (downgraded 2026-06-16 from HIGH). Diff-gated (customer-facing + IP exposure).
+     DOWNGRADED (2026-06-16): zero customer exposure — the review portal was never finished and has NO
+     reviews out with customers (no links in the wild, nothing actually exposed). Latent code flaw on an
+     unbuilt feature, NOT an active leak. When addressed, fix as part of completing/redesigning the review
+     portal (secure delivery baked into the design), NOT a standalone `getDownloadURL()` patch on a
+     half-built feature. Replacement pattern: short-lived SIGNED URL via a token-validating CF, never
+     `getDownloadURL()`.
      Logged: 2026-06-16.
 
 ## Backfill stale confidence "C" circles on existing projects (2026-06-16)
