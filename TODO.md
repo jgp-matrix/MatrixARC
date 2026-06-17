@@ -2555,3 +2555,18 @@ reset that surfaced the ground-truth state.
      automatically. But ARC CAN alert admins proactively so they increase the limit before
      work is interrupted.
      Logged: 2026-06-16.
+
+## Duplicated BC-apply logic — maintenance hazard (2026-06-16)
+
+151. **OPEN** [LOW — code maintenance] — The BC-match → row-update spread is DUPLICATED byte-for-byte
+     at two sites: background pricing `runPricingBackground` (~`app.jsx:14885-14901`) and foreground
+     `PanelCard`/`runPricingOnPanel` (~`app.jsx:26360-26379`). Any change to BC-apply behavior must be
+     made in BOTH or the two pricing paths silently diverge (path-dependent bugs — same class as #80).
+     Surfaced during the #146 diff review: rule #1 (exact-BC → confidence "high") had to be added to
+     both sites for path-consistency; the duplication itself was never captured as a cleanup item.
+     CANDIDATE FIX: extract the shared row-update spread into one helper (e.g. `_applyBcMatchToRow(r,
+     bcEntry)`) called by both paths, so future BC-apply changes touch one place. Low priority — not a
+     bug today (both sites are currently in sync), just a latent divergence risk. Verify no behavioral
+     difference between the two spreads before unifying (the priceDate guard differs slightly:
+     foreground gates on `hasActiveRfq`, background on `hasPrice&&hasPpDate`).
+     Logged: 2026-06-16.
