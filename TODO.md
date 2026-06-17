@@ -2570,3 +2570,28 @@ reset that surfaced the ground-truth state.
      difference between the two spreads before unifying (the priceDate guard differs slightly:
      foreground gates on `hasActiveRfq`, background on `hasPrice&&hasPpDate`).
      Logged: 2026-06-16.
+
+## Background save of unopened projects (2026-06-17)
+
+152. **OPEN** [LOW — pre-existing] — Background/onSnapshot save path writes to projects the user has not
+     opened. Observed during #149 live verification: PRJ402096 (Salares) had 43 exact-BC rows
+     promoted in memory by `migrateProjectShape` on dashboard load. Without the user ever opening
+     the project, a subsequent save wrote Salares to Firestore — but since `migrateProjectShape`
+     is pure (in-memory only, no Firestore side effects), the save came from a different path.
+     The save wrote the project WITHOUT the in-memory promoted confidence values (43→0 promoted
+     rows persisted) and WITHOUT the `_confidenceRecomputedAt` flag.
+     EVIDENCE: `docs/149-LIVE-VERIFICATION.md` (Marc, 2026-06-17). Salares was the only project
+     in the 4-project test set that reverted to 0 without being opened.
+     ADJACENCY: This is in #86's neighborhood — the CLAUDE.md "Async Project Ownership Rule"
+     states that "the currently open project must never determine where async results are written."
+     A background save writing an unopened project is the inverse: a save path reaching a project
+     that ISN'T currently active. Both violate project-scoped I/O boundaries. The #86 rule was
+     about extraction completion handlers; this is about save paths.
+     IMPACT: Low for #149 specifically (in-memory re-promotion is the correctness mechanism, not
+     Firestore persistence). Unknown for other data — if a background save writes stale in-memory
+     state over fresher Firestore state, that's a broader concern.
+     NOT a #149 regression — #149 adds no save paths. Pre-existing behavior surfaced by #149's
+     console logging.
+     DEFERRED: investigate which save path fires for unopened projects and whether it carries
+     stale state. Not urgent — no known data loss.
+     Logged: 2026-06-17 (Coach C93).

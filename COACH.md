@@ -7977,3 +7977,29 @@ Rows with `bcMatchType==="exact"` (introduced v1.20.110). Pre-v1.20.110 projects
 Full spec + test plan at `docs/149-SUPPLEMENT.md`.
 
 ---
+
+### C93 — #149 Post-Deploy Doc Correction + #152 Background Save TODO (2026-06-17)
+
+**Type:** Doc revision (no code changes)  
+**Status:** COMPLETE  
+**TODO assignments:** #149 (doc correction), #152 (new OPEN)
+
+---
+
+#### §1/§2 Revision
+
+Marc's live verification (`docs/149-LIVE-VERIFICATION.md`) showed the persist model in §1/§2 was inaccurate. The flag (`_confidenceRecomputedAt`) is best-effort, not guaranteed-once:
+
+1. **Panel-level saves don't carry the project-level flag** — `saveProjectPanel` (Lead-Drivers refresh on project open) persists the active panel's promoted BOM but not the flag. Can clobber a flag a prior `saveProject` set (Abbeville: null→stamped→null).
+2. **Multi-panel projects persist panel-by-panel** — only the active panel's rows write; other panels stay unpromoted in Firestore (Proctors: 49 in memory, 7 persisted).
+3. **Background saves touch unopened projects** — Salares went 43→0 without being opened (see #152).
+
+**Correctness is unaffected.** The real guarantee is idempotent in-memory re-promotion on every load across all panels — the flag and persistence are pure optimizations. `confidence` is not in the `quoteRev`/`bomVersion` hash domain, so re-runs cause no churn.
+
+Revised §1 to state the correctness model (in-memory re-promotion, not flag) upfront, added `_computeDvBomHash` to the consumer table. Revised §2 to document all three persistence behaviors with the observed evidence. Updated risk table and T5 test case.
+
+#### #152 — Background Save of Unopened Projects
+
+Logged TODO #152 (LOW, pre-existing). Salares was written to Firestore without the user opening it. Adjacent to #86's async-ownership rule — a save path reaching a project that isn't currently active is the inverse of #86's "completion handler writing to the wrong project." Not a #149 regression (#149 adds no save paths). Impact unknown for data beyond confidence. Deferred.
+
+---

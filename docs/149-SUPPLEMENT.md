@@ -1,8 +1,8 @@
 # #149 Supplement — Existing-Project Exact-BC Confidence Backfill
 
 **Author:** Sam Wize (Coach)  
-**Date:** 2026-06-17  
-**Status:** Spec — awaiting Jon approval, then Marc builds  
+**Date:** 2026-06-17 (revised post-deploy same day)  
+**Status:** DEPLOYED v1.20.134. §1/§2 revised to match runtime evidence from `docs/149-LIVE-VERIFICATION.md`.  
 **Depends on:** #146 core (RESOLVED, v1.20.132)
 
 ---
@@ -23,7 +23,13 @@
 
 **Verdict: SAFE.** Writing recomputed `confidence:"high"` to stored BOM rows for exact-BC-matched items has zero downstream perturbation. Full trace below.
 
-### Every consumer of `row.confidence`, checked:
+### Correctness model (revised post-deploy)
+
+The correctness guarantee is **idempotent in-memory re-promotion on every load**, not flag-gated persist-once. `migrateProjectShape` promotes all `bcMatchType==="exact"` rows below "high" across ALL panels in memory on every project load (dashboard + open + `onSnapshot`). Display is always correct regardless of what persisted to Firestore.
+
+The `_confidenceRecomputedAt` flag and Firestore persistence of promoted rows are **optimizations** that reduce redundant work — they are NOT the correctness mechanism. See §2 for the persistence model.
+
+### Why writing confidence back is safe — every consumer checked:
 
 | Consumer | Location | Reads | Effect of "medium"→"high" | Safe? |
 |----------|----------|-------|---------------------------|-------|
@@ -32,10 +38,11 @@
 | **Verification modal grouping** | line 28702-28704 | Splits `medConf` by `_confDowngradeReason` | Row not in `medConf` → grouping irrelevant | YES |
 | **Verification badge** | line 27672 | `lowConf.length`, `medConf.length` | Count decreases — correct | YES |
 | **Send-gate** | line 15632 | `panel.extractionReport?.manualVerifyRequired` | **Does not read per-row confidence.** Panel-level flag, independent system. | NOT AFFECTED |
-| **Extraction report tallies** | line 12092-12095 | `verification.lowConfidenceRows[]`, `.mediumConfidenceRows[]` | These are historical extraction-time snapshots, written once at extraction. Migration does NOT touch them. No downstream code reads `extractionReport.verification` (grep confirmed zero matches). | NOT AFFECTED |
+| **Extraction report tallies** | line 12092-12095 | `verification.lowConfidenceRows[]`, `.mediumConfidenceRows[]` | Historical extraction-time snapshots, written once at extraction. Migration does NOT touch them. No downstream code reads `extractionReport.verification` (grep confirmed zero matches). | NOT AFFECTED |
 | **Next pricing run** | line 14901/26379 | `bcMap[key].bcMatchType==="exact"` | Re-applies the same promotion. Idempotent. | YES |
 | **Manual PN edit** | line 25535 | Sets `confidence:"high"` | Already "high" → no-op. | YES |
 | **Portal supplier quotes** | line 46820/46826 | Separate confidence namespace (supplier extraction, not BOM row) | NOT AFFECTED |
+| **Quote hash / bomVersion** | `_computeDvBomHash` | Hashes `{partNumber, qty}` only | `confidence` is NOT in the hash domain — promotions never bump `quoteRev` or `bomVersion` | NOT AFFECTED |
 
 ### `_confDowngradeReason` cleanup
 
@@ -45,7 +52,7 @@ Note: the #146 apply paths (14901/26379) set confidence to "high" but do NOT del
 
 ---
 
-## 2. Hook Point Analysis
+## 2. Hook Point & Persistence Model
 
 ### Where: `migrateProjectShape()` (line 9219)
 
@@ -60,16 +67,26 @@ Every project that enters React state passes through this function. It is:
 
 ### Gate: `_confidenceRecomputedAt` project-level flag
 
-Pattern matches the existing `_quoteRevManualResetApplied` one-time flag. Set unconditionally at end of migration block (even if no rows changed) so the scan never re-runs after the flag persists.
+Set unconditionally at end of migration block (even if no rows changed).
 
-**Lifecycle:**
-1. First load post-deploy → flag absent → migration runs in memory → flag set on in-memory copy
-2. User works in project → any save (`safeSave`) writes flag to Firestore
-3. Subsequent loads → flag present → migration block skipped entirely
+### Persistence model (revised post-deploy — see `docs/149-LIVE-VERIFICATION.md`)
 
-**Dashboard load cost:** Flag check (`if(!out._confidenceRecomputedAt)`) short-circuits in O(1) for already-migrated projects. For unmigrated projects, scan is O(panels × bom_rows) — sub-millisecond even for 100+ row BOMs.
+The original spec claimed the flag persists on the next `safeSave` and subsequent loads skip entirely. **Live verification showed this is best-effort, not guaranteed-once.** Three observed behaviors:
 
-**Before-save re-load:** If `onSnapshot` fires before save (Firestore → `migrateProject` → `migrateProjectShape`), the flag isn't in Firestore yet, so migration re-runs in memory. Idempotent — same result. Flag persists on next save.
+1. **Panel-level saves don't carry the project-level flag.** Opening a project fires `saveProjectPanel` (Lead-Drivers refresh), which persists the active panel's promoted BOM rows but NOT `_confidenceRecomputedAt`. A panel save can also **clobber** a flag that a prior `saveProject` set — observed on PRJ402100 (Abbeville): flag went null → stamped → null.
+
+2. **Multi-panel projects persist panel-by-panel.** Only the open panel's rows write to Firestore; other panels stay unpromoted in Firestore but are re-promoted in memory on display. Observed on PRJ402119 (Proctors): 49 promoted in memory, only 7 persisted (active panel's rows).
+
+3. **Background saves can touch unopened projects.** PRJ402096 (Salares) went 43→0 promoted rows in Firestore without the user ever opening it — a pre-existing background save path wrote the project. (See TODO #152.)
+
+### Why this is correct despite imperfect persistence
+
+- **In-memory re-promotion on every load is the correctness mechanism.** `migrateProjectShape` runs on every project load across all panels. Display is always correct.
+- **The flag is a pure optimization.** When it persists (via `saveProject`), it short-circuits the O(panels × rows) scan to O(1). When it doesn't persist (panel save, clobber, or background save), the migration harmlessly re-runs.
+- **`[CONF BACKFILL]` logs are self-limiting but not strictly once-per-project.** They fire whenever unpersisted exact-non-high rows exist. As persistence accumulates across saves, they quiet. No churn risk — `confidence` is not in the `quoteRev`/`bomVersion` hash domain.
+- **No data loss.** Promotion only writes `confidence:"high"` + deletes the display-only `_confDowngradeReason`. No Firestore field is removed or overwritten with a destructive value.
+
+**Dashboard load cost:** Flag check (`if(!out._confidenceRecomputedAt)`) short-circuits in O(1) for flagged projects. For unflagged projects, scan is O(panels × bom_rows) — sub-millisecond even for 100+ row BOMs. Idempotent — identical results on every run.
 
 ---
 
@@ -149,8 +166,8 @@ Rows with no `bcMatchType` field (never priced via BC, or priced pre-v1.20.110).
 ### T4 — Already-high row untouched
 Rows with `bcMatchType:"exact"` AND `confidence:"high"` (already correct from #146 core). No change, no new object allocation.
 
-### T5 — Flag persists after save
-After T1, save the project (any edit). Reload. Migration should NOT re-run (flag present). Verify via console — no `[QUOTE REV]`-style log from the migration (or add a brief console.log in the migration block for Marc's testing, remove before ship).
+### T5 — Flag persistence (best-effort)
+After T1, trigger a **project-level** save (e.g. owner-lock toggle → `saveProject`). Reload. Flag should be present in Firestore; migration should skip. **Caveat (live-verified):** panel-level saves (`saveProjectPanel`, e.g. Lead-Drivers refresh) do NOT persist the flag and can clobber it. This is expected — in-memory re-promotion is the correctness mechanism, not the flag.
 
 ### T6 — Send-gate independent
 Project with `manualVerifyRequired:true`. Open post-deploy. Exact-BC circles disappear, but send-gate still blocks. Confirm independence.
@@ -168,8 +185,9 @@ Open a project (migration runs in memory). Don't save. Close and reopen. Migrati
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | Wrong rows promoted | Very low — `bcMatchType==="exact"` is the strictest possible check | Medium — false "high" hides a real misread | Gate is the same check #146 core uses; proven in production |
-| Performance on dashboard load | Very low — flag check is O(1), scan is O(rows) only once | Low — sub-ms even for large BOMs | Flag set unconditionally prevents re-scan |
-| Save race with onSnapshot | None — migration is idempotent | None | Re-runs produce identical output |
+| Performance on dashboard load | Very low — flag check is O(1); unflagged scan is O(rows), sub-ms | Low | Flag persists on `saveProject`; panel saves don't carry it but re-scan is harmless |
+| Flag clobbered by panel save | Observed (Abbeville) — panel-level save overwrites project-level flag | None — in-memory re-promotion is the correctness mechanism, not the flag | Idempotent re-run, sub-ms cost |
+| Background save of unopened project | Observed (Salares) — pre-existing behavior, not #149 regression | Low — promoted rows revert in Firestore but re-promote in memory on next load | Tracked as TODO #152 |
 | extractionReport drift | None — report not modified | None | Historical record preserved |
 
 ---
