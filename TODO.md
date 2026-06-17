@@ -2326,7 +2326,7 @@ link → `acceptTeamInvite` (member doc created before load). The incident expos
 durable defects below. See `tools/reset-user.js` (committed) for a dry-run-gated single-user
 reset that surfaced the ground-truth state.
 
-143. **OPEN** [HIGH — Marc build, Brief first — TOP OF QUEUE] — Boot fragility: un-try/caught
+143. **RESOLVED** [Shipped v1.20.131, commit b361d20e — verified] — Boot fragility: un-try/caught
      company-scoped reads hang the home load forever. In the app boot IIFE, `loadProjects`
      (`app.jsx:9209` reads `_appCtx.projectsPath`; called un-guarded at `:45681`) and the
      config `Promise.all` (`:45657`) have NO try/catch. Any permission-denied on a
@@ -2338,7 +2338,27 @@ reset that surfaced the ground-truth state.
      the loading flag, and branch on error code — `permission-denied` → "No access to this
      workspace, contact your admin" modal; anything else → "Couldn't load projects" + Retry.
      Owner: Marc (do NOT route to Coach as active work — his diagnostic role here is done).
-     Logged: 2026-06-16.
+     RESOLUTION (v1.20.131, commit b361d20e, 2026-06-16): Extracted the boot IIFE into a named,
+     re-entrant-safe `runBoot(user)` — tears down the member onSnapshot (`window._arcPermsUnsub`)
+     before re-subscribing and resets state so retries run clean. Wrapped in try/catch:
+     `setLoading(false)` on every terminal path; `console.error("[ARC boot]", code, msg)`;
+     two-branch INLINE surface in Dashboard (Q5, no modal) — `permission-denied` → "contact
+     administrator" (no Retry) vs. everything else → "Couldn't load projects" + Retry. Transient
+     codes auto-retry ≤2× (2s apart) before surfacing; manual Retry resets the auto-retry budget.
+     VERIFIED (live): happy path (v1.20.131 boots, all projects load, no hang), deployed-bundle
+     markers present, `permission-denied` discriminator confirmed via a harmless denied read,
+     bounded-retry / no-hang by design. The two error-RENDER branches are INSPECTION-confirmed —
+     driving the UI live would require re-orphaning an account (explicitly disallowed), and
+     inspection is the authorized fallback.
+     NOTE 1 (keep): the offline toggle does NOT trigger the transient branch — Firestore offline
+     persistence serves cache, so `loadProjects` returns cached/empty rather than throwing.
+     Routine connectivity blips degrade gracefully (cached projects). The transient branch is for
+     HARD backend failures only (resource-exhausted / deadline-exceeded / unavailable-without-cache).
+     NOTE 2 (known minor, NOT fixing): the `setTimeout(()=>runBoot(user),2000)` retry timer isn't
+     cancelled if `user.uid` changes mid-retry (sign-out + back in within the 2s window). Not a
+     regression (pre-existing IIFE pattern); the `_arcPermsUnsub` teardown at the top of `runBoot`
+     prevents stacked listeners. Trivial future cleanup, not a blocker.
+     Logged: 2026-06-16. Resolved: 2026-06-16 (v1.20.131).
 
 144. **OPEN** [Bug — provisioning asymmetry] — `removeTeamMember` orphans the user profile.
      `removeTeamMember` (`functions/index.js:531`) deletes `companies/{cid}/members/{targetUid}`
