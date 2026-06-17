@@ -14873,7 +14873,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   }finally{
     // #153 (C97): in stagingMode, hand the extracted BOM to the caller as a 2nd
     // arg so it routes to staging instead of being read off the (unsaved) panel.
-    try{if(onDone){if(cbs.stagingMode)onDone(latestPanel,latestPanel.bom||[]);else onDone(latestPanel);}}catch(e){}
+    try{if(onDone){if(cbs.stagingMode)onDone(latestPanel,latestPanel.bom||[]);else onDone(latestPanel);}}catch(e){console.error("[EXTRACTION] onDone callback error:",e);}
   }
 }
 
@@ -23314,6 +23314,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [reconStagedExtraction,setReconStagedExtraction]=useState(null); // {items, transientPanel, reason}
   const [showReconciliation,setShowReconciliation]=useState(false);
   const reconResolveRef=useRef(null);                                // resolves showRevisionPrompt()'s Promise
+  // #153 Option A (C101): revision INTENT decided at DROP time (in addFiles, with
+  // the fresh panel prop — no async window). Executed by confirmAndExtract AFTER
+  // the user reviews/corrects page types. null = normal | "revise" | "add".
+  const reconIntentRef=useRef(null);
+  const [reviseStagingPageCount,setReviseStagingPageCount]=useState(null); // #153 D4: transient page count shown during Revise extraction
   // #153 Phase A — PREVIOUS VERSIONS modal state
   const [showDvHistory,setShowDvHistory]=useState(false);
   const [dvHistory,setDvHistory]=useState([]);
@@ -23372,6 +23377,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(cached){
       if(Array.isArray(cached.pages)&&cached.pages.length>0)setPendingPages(cached.pages);
       if(cached.newItems)pendingNewItemsRef.current=cached.newItems;
+      if(cached.reconIntent)reconIntentRef.current=cached.reconIntent; // #153 Option A: survive remount so confirm routes correctly
       if(cached.awaiting)setAwaitingConfirm(true);
     }
   },[panel.id]);
@@ -24011,6 +24017,30 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       try{await arcAlert("This project is read-only. Drawings can't be added until the project is unlocked.",{kind:"warning"});}catch(_){}
       return;
     }
+    // #153 Option A (C101 Phase 1): REVISION GATE at DROP/ENTRY time. This is the
+    // single chokepoint for ALL file-entry paths (drag-on-strip, drag-on-tile,
+    // file picker — they all funnel through addFiles), and it runs with the FRESH
+    // `panel` prop BEFORE any append/processing — eliminating the async-window
+    // staleness that was BUG 1's root cause (no more reading BOM at confirm time).
+    // The INTENT (revise/add) is captured in reconIntentRef and EXECUTED by
+    // confirmAndExtract AFTER the user reviews/corrects page types — Phase 3 keeps
+    // the type-review step, so drop-first ordering does NOT regress extraction
+    // accuracy. Only for BASE scope, only on a fresh drop (not mid-review), only
+    // when the panel already has an extracted BOM. Cancel = zero processing.
+    if(!awaitingConfirm&&(!activeScope||activeScope.type!=="eco")){
+      const _lp=latestPanelRef.current||{};
+      const _hasBomNow=((panel.bom||[]).some(r=>!r.isLaborRow&&!r.isContingency))
+        ||((_lp.bom||[]).some(r=>!r.isLaborRow&&!r.isContingency))
+        ||(+(panel.bomVersion||_lp.bomVersion||0)>0);
+      if(_hasBomNow){
+        const _choice=await showRevisionPrompt();
+        console.log("[#153 REVISION-GATE]",{trigger:"drop",choice:_choice,bomRows:(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length,bomVersion:panel.bomVersion});
+        if(_choice==="cancel")return; // discard files — zero processing, zero state changes
+        reconIntentRef.current=_choice; // "revise" | "add" — executed in confirmAndExtract after type review
+      }else{
+        reconIntentRef.current=null; // fresh non-BOM drop → normal extraction
+      }
+    }
     _dbg("ADDFILES: start, files="+_files.length+", apiKey="+(!!_apiKey));
     setProcessing(true);setErr("");
     bgStart(_bgKey(projectId,panel.id), panel.name||("Panel "+(idx+1)), projectId);
@@ -24185,7 +24215,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // DECISION(v1.19.589): Persist pendingPages + awaitingConfirm to module-scope cache so
       // navigating out of the project and back doesn't silently lose the user's dropped drawings.
       // PanelCard's mount useEffect restores from this cache.
-      pendingPagesSet(projectId,panel.id,{pages:livePages,newItems,awaiting:true});
+      pendingPagesSet(projectId,panel.id,{pages:livePages,newItems,awaiting:true,reconIntent:reconIntentRef.current});
     }else{
       // DECISION(v1.19.897): No drawings landed. Build a per-file breakdown
       // from fileOutcomes and surface a blocking modal so the user knows
@@ -24306,6 +24336,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     };
     setPendingPages([]);pendingPagesClear(projectId,panel.id);setAwaitingConfirm(false);
     setExtracting(true);
+    setReviseStagingPageCount((transientPanel.pages||[]).length); // #153 D4: show transient (revised) page count, not the merged 50
     bgUpdate(_bgKey(projectId,panel.id),"Re-extracting revised drawings…");bgSetPct(_bgKey(projectId,panel.id),0,"Re-extracting revised drawings…");
     runExtractionTask(uid,capturedProjectId,transientPanel,{
       stagingMode:true,
@@ -24313,9 +24344,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       onDone:(finalTransientPanel,extractedBom)=>{
         if(_currentProjectId!==_reconProjectId){
           console.warn("[RECON] project changed during extraction — discarding staged result");
-          setExtracting(false);return;
+          setExtracting(false);setReviseStagingPageCount(null);return;
         }
-        setExtracting(false);
+        setExtracting(false);setReviseStagingPageCount(null);
         setReconStagedExtraction({items:extractedBom||[],transientPanel:finalTransientPanel,reason:"Drawing revision"});
         setShowReconciliation(true);
         bgDone(_bgKey(projectId,panel.id),"Review revision changes");
@@ -24490,65 +24521,26 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const livePages=pendingPages.length>0?pendingPages:(panel.pages||[]);
     const newItems=pendingNewItemsRef.current||[];
     const notes=extractionNotes.trim();
-    // #153 (C97): revision-drop disambiguation. Fires BEFORE any onSaveImmediate —
-    // pages are NOT yet persisted. If the panel already has an extracted BOM and the
-    // user just dropped new pages, ask: Revise (replace+reconcile) / Add pages
-    // (append, keep BOM, no extraction) / Cancel (discard, zero writes).
-    // ROBUST detection v2 (v1.20.138 fix): v1.20.137 still failed on Jon's copy of
-    // PRJ402096 — its Line 1 panel has bomVersion:1 + 54 BOM rows PERSISTED, yet the
-    // gate read false. Cause: at confirm time BOTH latestPanelRef.current AND the
-    // panel prop are stale (no bom AND no bomVersion) during the drop→confirm
-    // re-render window — so the in-memory checks AND the bomVersion fallback all
-    // miss. Authoritative fix: read the PERSISTED panel from Firestore (source of
-    // truth, immune to in-memory staleness). confirmAndExtract is already async, so
-    // a single get() on a user-initiated confirm is cheap (~50ms). A panel with a
-    // committed BOM (or any prior Dv) is treated as BOM'd → isRevisionDrop fires.
-    const _refPanel=latestPanelRef.current||{};
-    const _refBomRows=(_refPanel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length;
-    const _propBomRows=((panel&&panel.bom)||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length;
-    const _priorDv=(+(_refPanel.bomVersion||(panel&&panel.bomVersion)||0))>0;
-    // Persisted read with a HARD 4s timeout. On failure OR timeout, _persistedHasBom
-    // stays false and the gate FALLS BACK to the in-memory signals below
-    // (refBomRows||propBomRows||priorDv) — a read error/timeout must NEVER fail the
-    // gate OPEN (a silent append-and-re-extract would lose the user's BOM). The gate
-    // is biased toward FIRING: any positive signal from EITHER source fires the
-    // prompt — a false-positive costs one "Add pages" click; a false-negative loses
-    // the BOM. The await can't hang confirmAndExtract (timeout rejects the race).
-    let _persistedHasBom=false,_persistedBomVer=null,_persistedReadErr=null;
-    try{
-      const _psnap=await Promise.race([
-        fbDb.collection(_appCtx.projectsPath||`users/${uid}/projects`).doc(projectId).get(),
-        new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),4000)),
-      ]);
-      const _ppanel=(((_psnap.data()||{}).panels)||[]).find(x=>x.id===panel.id);
-      if(_ppanel){
-        _persistedBomVer=_ppanel.bomVersion;
-        _persistedHasBom=((_ppanel.bom||[]).some(r=>!r.isLaborRow&&!r.isContingency))||(+(_ppanel.bomVersion||0)>0);
-      }
-    }catch(e){_persistedReadErr=(e&&e.message)||"error";console.warn("[#153] persisted-panel read failed/timed out — falling back to in-memory gate:",_persistedReadErr);}
-    // FALLBACK is implicit in this OR: if the persisted read failed, _persistedHasBom
-    // is false and the decision rests on the in-memory signals (never fails open).
-    const _hasExistingBom=_refBomRows>0||_propBomRows>0||_priorDv||_persistedHasBom;
-    const _droppedNewPages=(newItems||[]).length>0;
-    console.log("[#153 REVISION-GATE]",{hasExistingBom:_hasExistingBom,droppedNewPages:_droppedNewPages,refBomRows:_refBomRows,propBomRows:_propBomRows,priorDv:_priorDv,persistedHasBom:_persistedHasBom,persistedBomVer:_persistedBomVer,persistedReadErr:_persistedReadErr,bomVersion:_refPanel.bomVersion,newItemsLen:(newItems||[]).length});
-    if(_hasExistingBom&&_droppedNewPages){
-      const _choice=await showRevisionPrompt();
-      if(_choice==="cancel"){
-        // Clean no-op: discard pending pages, panel intact (old pages + old BOM), zero writes.
-        setPendingPages([]);pendingPagesClear(projectId,panel.id);setAwaitingConfirm(false);
-        bgDone(_bgKey(projectId,panel.id),"Cancelled — BOM unchanged");
-        return;
-      }
-      if(_choice==="add"){
-        // D5: append the new pages + save, but SKIP extraction — BOM untouched.
-        const _updAdd={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
-        onUpdate(_updAdd);pendingPagesClear(projectId,panel.id);
-        onSaveImmediate(_updAdd).catch(()=>{});
-        setAwaitingConfirm(false);
-        bgDone(_bgKey(projectId,panel.id),"Pages added — BOM unchanged");
-        return;
-      }
-      // _choice==="revise" → #153 reconciliation flow (transient staging, no Firestore writes)
+    // #153 Option A (C101): the revise/add INTENT was decided at DROP time (in
+    // addFiles, with the FRESH panel prop — no async window, no stale-BOM race that
+    // defeated the old confirm-time 4-signal gate + Firestore backstop, now removed).
+    // Execute the intent here, AFTER the user reviewed/corrected page types — so the
+    // staging extraction runs on user-confirmed types (Phase 3 synced them into
+    // pendingNewItemsRef). reconIntentRef: null = normal | "revise" | "add".
+    const _reconIntent=reconIntentRef.current;
+    reconIntentRef.current=null;
+    if(_reconIntent==="add"){
+      // "Add pages": append the new pages + save, SKIP extraction — BOM untouched.
+      const _updAdd={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
+      onUpdate(_updAdd);pendingPagesClear(projectId,panel.id);
+      onSaveImmediate(_updAdd).catch(()=>{});
+      setAwaitingConfirm(false);
+      bgDone(_bgKey(projectId,panel.id),"Pages added — BOM unchanged");
+      return;
+    }
+    if(_reconIntent==="revise"){
+      // "Revise": reconcile against existing BOM via transient staging (no Firestore
+      // writes until commit). newItems carry the user-reviewed page types (Phase 3).
       handleRevisionDrop(livePages,newItems,notes);
       return;
     }
@@ -25131,6 +25123,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     const pg=pages.find(p=>p.id===id);
     if(pendingPages.length>0)setPendingPages(pp=>pp.map(p=>p.id===id?{...p,types}:p));
+    // #153 Phase 3 (D3): keep pendingNewItemsRef in sync with the user's type edits.
+    // handleRevisionDrop builds the transient panel from pendingNewItemsRef, so without
+    // this the Revise staging extraction would run on the ORIGINAL AI-detected types,
+    // ignoring the user's corrections made during type review (accuracy regression).
+    {const _nIdx=(pendingNewItemsRef.current||[]).findIndex(n=>n.id===id);
+     if(_nIdx>=0)pendingNewItemsRef.current[_nIdx]={...pendingNewItemsRef.current[_nIdx],types};}
     onUpdate({...panel,pages:pages.map(p=>p.id===id?{...p,types}:p)});
     setTagsChanged(true);
     // During confirm phase: track changes vs AI detection
@@ -25161,7 +25159,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         setPendingPages(updatedPending);
         const updatedNewItems=(pendingNewItemsRef.current||[]).filter(it=>it.id!==id);
         pendingNewItemsRef.current=updatedNewItems;
-        pendingPagesSet(projectId,panel.id,{pages:updatedPending,newItems:updatedNewItems,awaiting:awaitingConfirm});
+        pendingPagesSet(projectId,panel.id,{pages:updatedPending,newItems:updatedNewItems,awaiting:awaitingConfirm,reconIntent:reconIntentRef.current});
       }else{
         setPendingPages([]);
         pendingNewItemsRef.current=[];
@@ -27620,7 +27618,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {/* Drawings section */}
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
         <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:10,flexWrap:"wrap"}}>
-          <div style={{fontSize:12,color:"#fff",fontWeight:700,letterSpacing:0.7,marginRight:2}}>{pages.length>0?`${pages.length} `:""}DRAWING{pages.length===1?"":"S"}{pages.length>0?" in package":""}</div>
+          {(()=>{const _dispN=reviseStagingPageCount!=null?reviseStagingPageCount:pages.length;/* #153 D4: during Revise staging, show the transient revised-page count, not the merged prop count */return(
+          <div style={{fontSize:12,color:"#fff",fontWeight:700,letterSpacing:0.7,marginRight:2}}>{_dispN>0?`${_dispN} `:""}DRAWING{_dispN===1?"":"S"}{_dispN>0?" in package":""}</div>
+          );})()}
           {/* DECISION(v1.19.743): Drawing Version chip — shows v.N next to the DRAWINGS
               header. Bumps automatically when the BOM hash changes. Hidden when the panel
               has no version yet (existing pre-v1.19.743 panels until their first edit). */}
