@@ -2360,7 +2360,7 @@ reset that surfaced the ground-truth state.
      prevents stacked listeners. Trivial future cleanup, not a blocker.
      Logged: 2026-06-16. Resolved: 2026-06-16 (v1.20.131).
 
-144. **OPEN** [Bug — provisioning asymmetry] — `removeTeamMember` orphans the user profile.
+144. **RESOLVED** [Shipped 2026-06-16 — functions deploy, commit pending below] — `removeTeamMember` orphans the user profile.
      `removeTeamMember` (`functions/index.js:531`) deletes `companies/{cid}/members/{targetUid}`
      but never clears `users/{targetUid}/config/profile`. The profile retains `{companyId, role}`,
      so on the user's next login the app scopes them to a company they're no longer a member of
@@ -2370,7 +2370,20 @@ reset that surfaced the ground-truth state.
      fix: in `removeTeamMember`, also delete `users/{uid}/config/profile` (or null its
      `companyId`/`role`). Pairs with #143 — fixing #143 makes the symptom graceful; fixing #144
      prevents the orphan state in the first place.
-     Logged: 2026-06-16.
+     RESOLUTION (2026-06-16, functions deploy — Coach C88 / supplement Q2 Option B): `removeTeamMember`
+     now runs an ATOMIC batch — `batch.delete(members/{targetUid})` + `batch.set(users/{targetUid}/
+     config/profile, {companyId: FieldValue.delete(), role: FieldValue.delete()}, {merge:true})` +
+     `batch.commit()`. Both ops commit or both roll back (no window that re-creates the orphan).
+     `set({merge:true})`+`FieldValue.delete()` (not `update()`, which would NOT_FOUND on a missing
+     profile and roll back the member delete). Preserves `firstName`; caller contract unchanged
+     (`{success:true}`). Re-invite from clean state works (`acceptTeamInvite` is atomic + merge —
+     #144 supplement Q3). Boot self-heal deliberately NOT added (held as a future ticket #147, not
+     #145). Verified safe across all 11 profile read sites (supplement Q1 — every consumer uses
+     `profile?.companyId` or an `if(companyId)` gate, so a cleared companyId falls to the personal path).
+     AUDIT: `tools/audit-orphans.js` (read-only, committed) ran pre-deploy → 0 existing orphans
+     (6 profiles scanned, 5 with companyId, none missing a member doc). RYAN was the only one and
+     was already recovered — no cleanup sweep needed. Script retained as an admin shelf tool.
+     Logged: 2026-06-16. Resolved: 2026-06-16 (functions deploy).
 
 145. **RESOLVED** [Verified 2026-06-16 — account reactivation, no code change] — SendGrid API key rejected (401). Pulled
      `sendInviteEmail` logs: at 2026-06-16T20:29:34Z the function was reached (callable auth

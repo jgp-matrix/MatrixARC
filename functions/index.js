@@ -528,7 +528,18 @@ exports.removeTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(
     throw new functions.https.HttpsError('invalid-argument', 'Cannot remove yourself');
   }
 
-  await admin.firestore().doc(`companies/${companyId}/members/${targetUid}`).delete();
+  // #144: atomic cleanup — delete the member doc AND clear the orphaning companyId/role
+  // from the target's profile in one batch (both commit or both roll back). Using
+  // set({merge:true}) + FieldValue.delete() rather than update() so a missing profile doc
+  // doesn't throw NOT_FOUND and roll back the member delete. Preserves firstName. This is
+  // what prevents the orphaned-profile boot spin-trap (#143/#144).
+  const batch = admin.firestore().batch();
+  batch.delete(admin.firestore().doc(`companies/${companyId}/members/${targetUid}`));
+  batch.set(admin.firestore().doc(`users/${targetUid}/config/profile`), {
+    companyId: admin.firestore.FieldValue.delete(),
+    role: admin.firestore.FieldValue.delete(),
+  }, { merge: true });
+  await batch.commit();
   return { success: true };
 });
 
