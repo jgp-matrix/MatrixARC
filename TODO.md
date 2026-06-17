@@ -2764,3 +2764,20 @@ reset that surfaced the ground-truth state.
      ~6 lines, very low risk. Fully contained within `ReconciliationModal` + `buildReconciledBom`.
      SCOPE: `docs/160-RECON-REJECT-SCOPE.md` (Coach C105).
      Logged: 2026-06-17 (Jon, Coach C105 scope).
+
+## Miscellaneous (2026-06-17)
+
+161. **OPEN** [LOW — UX] — Mistimed BOM-region tip. The tooltip "Tip: Select BOM Regions for better
+     accuracy" fires AFTER the user has selected page types, selected regions, and clicked Proceed —
+     i.e. after the advice is actionable. Harmless but useless at that timing. FIX: show it earlier
+     (before/during region selection) or remove it entirely. Likely trivial.
+     Logged: 2026-06-17 (Jon, observed during testing).
+
+162. **OPEN** [LOW — display/metering] — Header Anthropic spend + token counters don't reset monthly.
+     The header "Anthropic $X/$500" and "Tokens XM/8.0M" are at-a-glance month-usage readouts
+     (general awareness, NOT the cost-attack gating ledger). They accumulate monotonically and never
+     reset (observed over cap: $524/$500, 28.9M/8.0M). FIX: reset at the start of each calendar
+     month (Mountain TZ), show current-month vs. cap. IMPORTANT: this is the DISPLAY counter only —
+     do NOT touch the `extractSupplierQuotePricing` spend ledger (`rfqUploads/{token}.aiSpendCents`)
+     which is the actual cost-control gate.
+     Logged: 2026-06-17 (Jon, observed during testing).
