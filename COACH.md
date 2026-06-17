@@ -7941,3 +7941,39 @@ Persisted: panel-level and per-page in `panel.extractionReport`. Not per-item, b
 Full report at `docs/146-FOLLOWUP-Q1Q2.md`.
 
 ---
+
+### C92 — #149 Persist-Safety Confirm + Backfill Spec (2026-06-17)
+
+**Type:** Read-only investigation + spec delivery  
+**Status:** COMPLETE — delivered to `docs/149-SUPPLEMENT.md`  
+**TODO assignment:** #149
+
+---
+
+#### Persist-Safety: SAFE
+
+Traced all 10 consumers of `row.confidence` in `src/app.jsx`. Writing `confidence:"high"` to exact-BC-matched rows has zero downstream perturbation:
+
+- **Display circle** (28068): disappears — desired effect
+- **Verification modal** (27663-27664, 28702-28704): row exits review list — correct
+- **Verification badge** (27672): count decreases — correct
+- **Send-gate** (15632): reads `manualVerifyRequired` (panel-level), NOT per-row confidence — independent
+- **Extraction report tallies** (12092-12095): historical snapshots, not modified — no downstream readers (grep confirmed)
+- **Next pricing run** (14901/26379): re-applies same promotion — idempotent
+- **Manual PN edit** (25535): already "high" → no-op
+
+`_confDowngradeReason` deleted on promoted rows (matches extraction-time pattern at 12089). Note: #146 apply paths (14901/26379) don't delete it — minor inconsistency, not a bug (field unreachable when confidence is "high").
+
+#### Hook Point
+
+`migrateProjectShape()` (line 9219) — single funnel for all project loads. After quoteRev auto-normalize (line 9306), before `return out`. Project-level `_confidenceRecomputedAt` flag gates it to run once. Flag persists on next `safeSave`. Dashboard load cost: O(1) flag check for migrated projects.
+
+#### Coverage
+
+Rows with `bcMatchType==="exact"` (introduced v1.20.110). Pre-v1.20.110 projects have no `bcMatchType` → left alone → self-heal on next "Get New Pricing" click.
+
+#### Deliverable
+
+Full spec + test plan at `docs/149-SUPPLEMENT.md`.
+
+---
