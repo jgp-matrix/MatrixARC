@@ -2627,3 +2627,27 @@ reset that surfaced the ground-truth state.
      SEQUENCING: H-item discipline — Freddy Brief → Coach Supplement/spec + retention-safety read →
      Jon approves → Marc builds (diff-gated). Not started.
      Logged: 2026-06-17 (Jon request).
+
+## Confidence "C" circle → clickable BC Item Browser button (2026-06-17)
+
+154. **OPEN** [MEDIUM — UX feature] — Make the confidence "C" circles clickable buttons that open the
+     BC Item Browser pre-filled with the row's part number.
+     REQUEST (Jon, 2026-06-17): The "C" confidence circle on a BOM row currently is informational only
+     (`<span>` with `cursor:help`, `src/app.jsx:~28096`). Turn it into a button: clicking it opens the
+     BC Item Browser (`BCItemBrowserModal`) pre-filled with the row's PN so the user can immediately
+     verify/match the flagged part against the BC catalog — one click from "this row looks uncertain"
+     to "verify it now."
+     IMPLEMENTATION POINTER: reuse the existing open pattern — the not-found "+BC" button at
+     `src/app.jsx:~28244` already opens the BC Item Browser pre-filled with the row's PN (sets
+     `targetRow` + `initialQuery`; modal mounts at `~29251`). The "C" circle just needs the same
+     onClick wired in, restyled from `cursor:help` span → button (keep the amber/red severity color,
+     the "C" glyph, and the tooltip; add hover affordance).
+     CONSIDERATIONS:
+       - Preserve the existing tooltip text (AI confidence: low/medium — verify against the drawing).
+       - The circle renders only for `confidence` low/medium and non-labor/non-contingency rows — same
+         gate stays; only rows that show a circle get the button.
+       - Base-locked-in-ECO rows already route field edits through the BC Item Browser (see the
+         `_baseLockedInEco` title at `~28130`) — confirm the new button respects ECO scope.
+       - Touches the #141 (C84/C86) confidence-circle render block — quick Coach glance for layout +
+         the `_bc` cell flex pair, then Marc builds (likely small/diff-gated, may skip full H-item flow).
+     Logged: 2026-06-17 (Jon request).
