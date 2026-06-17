@@ -2455,7 +2455,7 @@ reset that surfaced the ground-truth state.
 
 ## Confidence "C" indicator over-firing (2026-06-16)
 
-146. **OPEN** [MEDIUM — investigation first] — Confidence "C" circles render on nearly every BOM
+146. **RESOLVED** [Shipped v1.20.132, commit 86521d03 — verified] — Confidence "C" circles render on nearly every BOM
      line despite extraction now running ~100% accuracy (post-H5 / 600-DPI). The indicator has
      lost its signal value — if it flags everything, it flags nothing (trust-signal noise). Two
      candidate root causes to distinguish BEFORE any fix:
@@ -2468,7 +2468,26 @@ reset that surfaced the ground-truth state.
      #134 (confidence dots = AI extraction confidence — amber=medium, red=low; clears on PN edit)
      and #141 (the "C" pill relocated next to the blue BC circle).
      Priority MEDIUM — trust-signal noise, not a blocker. Brief being drafted by Freddy.
-     Logged: 2026-06-16.
+     RESOLUTION (v1.20.132, commit 86521d03 — Coach C90 + follow-up Q1/Q2): Determination was (a)
+     display/threshold — the v1.19.975 post-extraction confusable-glyph regex (`/[S0O8BIZG6...]/i`,
+     matched 20/36 alphanumerics) downgraded ~100% of real PNs from the model's "high" → "medium",
+     drowning the signal. Replaced with a 3-signal confidence ladder:
+       1. EXACT BC match (priceSource:"bc" + bcMatchType:"exact") → "high", authoritative (applied at
+          BOTH pricing paths — `runPricingBackground` :14898/:14901 + foreground PanelCard :26376/:26379;
+          verified no third BC-apply site). Fuzzy BC deliberately NOT promoted.
+       2. pdf-native (genuine text layer) → "high" ONLY when the model didn't itself flag low/medium
+          (text-layer clears glyph-uncertainty but does not steamroll genuine model doubt).
+       3. vision path ("hi-dpi-tiles" etc.) → trust the model's own high/medium/low.
+       4. confusable-glyph + enclosure regex auto-downgrade REMOVED.
+     Display-layer only — NO send-gate interaction (the "C" circle is cosmetic; `manualVerifyRequired`
+     is the gate — Coach confirmed they don't read each other). Untouched: render condition :28055,
+     manual-edit + applyLearnedCorrections restore paths, no field renames.
+     VERIFIED (before/after circle-rate reconstruction, 529 rows / 7 recent projects): aggregate
+     52% → 10%. Meaningful minority tracking genuine model doubt across all paths — vision (Proctors
+     19%), text-layer (Salares 16%, Springfield 50% = model flagged half that small BOM, real signal),
+     cleared on exact-BC ground truth + confidently-read text-layer. Not vanish-to-zero, not fires-on-
+     everything. #149 (existing-project exact-BC backfill) is now UNBLOCKED — it was gated on this deploy.
+     Logged: 2026-06-16. Resolved: 2026-06-16 (v1.20.132).
 
 ## reviewUploads permanent Storage-URL exposure (2026-06-16)
 
@@ -2488,7 +2507,7 @@ reset that surfaced the ground-truth state.
 
 ## Backfill stale confidence "C" circles on existing projects (2026-06-16)
 
-149. **OPEN** [MEDIUM — sequenced AFTER #146 core deploys; do NOT build before then] — Backfill stale
+149. **OPEN** [MEDIUM — UNBLOCKED: #146 core deployed v1.20.132 (2026-06-16); ready to spec] — Backfill stale
      confidence "C" circles on EXISTING projects (exact-BC clear). Companion to #146.
      PROBLEM: #146 core fixes confidence at EXTRACTION time, so it only helps NEW extractions. Existing
      projects still carry the old regex-downgraded "medium" confidence and keep showing stale "C" circles
@@ -2506,4 +2525,27 @@ reset that surfaced the ground-truth state.
      establishes — core must land first). Then normal pipeline: Coach confirms persisting recomputed
      confidence is safe (it's a stored field) + reads the on-open recompute hook point → spec → Jon
      approves → Marc builds, diff-gated.
+     Logged: 2026-06-16.
+
+150. **OPEN** [LOW] — Anthropic budget meter: proactive admin alert at 80% of real limit.
+     PROBLEM: The "Anthropic Max" in Settings is a user-editable soft cap that has no connection
+     to the actual Anthropic billing limit. The meter shows WARNING/CRITICAL but never stops API
+     calls — useless for answering "do I need to increase my Anthropic budget?" ARC must NEVER
+     stop working due to hitting a budget ceiling — blocking API calls is not acceptable.
+     FIX:
+     - Make the dollar cap admin-set-once (not freely editable). Value must match the account's
+       actual Anthropic console spend limit. Label it clearly: "Anthropic Account Limit (set to
+       match your console.anthropic.com spend cap)".
+     - At 80% of cap: fire a push notification + in-app notification to all admins:
+       "Anthropic spend is at $X of $Y (80%). Increase your limit at console.anthropic.com
+       before it runs out, then update this value in ARC Settings."
+     - Notification fires ONCE per billing month per threshold crossing (don't spam on every
+       API call). Track via a `budgetAlertSentMonth` field on the ledger doc.
+     - Remove the casual input field — replace with a locked display + admin "Update Limit"
+       action that requires confirmation.
+     - ARC never blocks API calls. The goal is to give admins enough runway to increase the
+       Anthropic limit before it's hit — not to shut down the tool.
+     WHY: Anthropic has no billing API to auto-read the account limit, so ARC can't pull it
+     automatically. But ARC CAN alert admins proactively so they increase the limit before
+     work is interrupted.
      Logged: 2026-06-16.
