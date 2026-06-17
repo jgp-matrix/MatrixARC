@@ -70,6 +70,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-17 (Session 6, cont.)** — C100: #153 revision-gate structural trace. Gate IS on the executed path (hypothesis refuted). Root cause: all four BOM-detection signals fail simultaneously — the panel prop loses its BOM between addFiles and confirmAndExtract. Three fixes modified the condition but never investigated what strips the inputs. Firestore read (v1.20.138) also fails — likely path or document mismatch. Deliverable: `docs/153-REVISION-GATE-TRACE.md`.
 - **2026-06-17 (Session 6, cont.)** — C101: #153 full flow read. Complete end-to-end audit of revision-drop flow vs C96/C97 plan. All 6 phases match structurally. BUG 1 unpinnable statically (needs runtime trace). BUG 2: silent catch at line 14876 swallows onDone errors. 5 divergences (D1-D5), D1 architectural — gate at confirm not drop — is root cause of both. Recommendation: branch at DROP (Option A). Consolidated fix plan in 4 phases. Deliverable: `docs/153-FULL-FLOW-READ.md`.
 - **2026-06-17 (Session 6, cont.)** — C102: #153 reconciliation cross trace. ReconciliationModal prior column shows pre-crossed (original) PNs instead of Jon's crossed/substituted PNs — would wipe crosses on commit. Static trace of full data flow: cross model (partNumber overwritten), prior source (latestPanelRef.current.bom), match engine (normPart on partNumber), carry-forward (unchanged preserves, pn_changed strips). No code path found that strips crosses — runtime race during drop→extraction→modal window most likely. Design defect found: `applyLearnedCorrections` runs on staging extraction with no stagingMode gate, masking real drawing changes. 4-point diagnostic log plan for CCD. Deliverable: `docs/153-RECON-CROSS-TRACE.md`.
+- **2026-06-17 (Session 6, cont.)** — C103: #153 cross-aware reconciliation fix plan (FINALIZED). Root cause confirmed via v1.20.140 RECON TRACE logs — Candidate B definitively. Two-part fix: (1) gate `applyLearnedCorrections` behind `!cbs.stagingMode` at line 14581, (2) cross-aware pre-pass in `reconcileBom` matching crossed rows by `crossedFrom` before Pass 1. Carry-forward behavior: crossed rows → unchanged → `carryUnchanged` preserves cross+pricing; genuine PN changes fall to Pass 2 → `pn_changed` strips cross (correct). 5 scenarios mapped (A-E), Pass 2 interaction verified clean. ~20 lines total. 7 test criteria. Deliverable: `docs/153-CROSS-FIX-PLAN.md`.
 
 ## Findings
 
@@ -8356,5 +8357,47 @@ Jon cancelled (safe).
 5. **4-point diagnostic log plan** provided for CCD (~10 lines of console.log). One
    reproduction will pin whether crosses are missing from the prior (Candidate A) or
    masked by double auto-cross (Candidate B).
+
+---
+
+### C103 — #153 Cross-Aware Reconciliation Fix Plan (2026-06-17)
+
+**Type:** Finalized two-part fix plan (diff-gated, Marc builds)
+**Status:** READY FOR IMPLEMENTATION
+**Deliverable:** `docs/153-CROSS-FIX-PLAN.md`
+**Builds on:** C102 (root cause confirmed by v1.20.140 RECON TRACE logs)
+
+---
+
+#### Root cause confirmed
+
+Candidate B (C102) validated by runtime logs. All 4 diagnostic points returned:
+prior has 17 crosses (Candidate A dead), staging extraction output has 16 crosses
+(the smoking gun — `applyLearnedCorrections` re-applied DB crosses to the raw
+extraction, masking all differences).
+
+#### Two-part fix
+
+1. **Gate `applyLearnedCorrections`** behind `!cbs.stagingMode` (line 14581, ~1 line).
+   Staging extraction produces raw PNs.
+
+2. **Cross-aware pre-pass in `reconcileBom`** (~18 lines, inserted before Pass 1).
+   Matches crossed prior rows by `normPart(crossedFrom)` against extraction's
+   `normPart(partNumber)`. Same underlying part → unchanged → `carryUnchanged`
+   preserves cross + pricing + all user edits. Pass 1 guard added to skip
+   already-matched rows.
+
+Part 1 alone makes the problem WORSE (all crossed rows → pn_changed → strips cross).
+Both parts must ship together.
+
+#### Carry-forward behavior (5 scenarios verified)
+
+- A: Drawing unchanged → cross pre-pass matches → unchanged → cross preserved
+- B: Drawing changed PN → no match → Pass 2 → pn_changed → cross stripped (correct)
+- C: Drawing updated to replacement PN → Pass 1 matches → unchanged → cross preserved
+- D: Non-crossed row → Pass 1 as before → no regression
+- E: Qty change on crossed row → cross pre-pass → changed-qty → cross preserved, qty updated
+
+Pass 2 interaction verified clean — no changes to Pass 2 or Pass 3.
 
 ---
