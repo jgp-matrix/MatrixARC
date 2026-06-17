@@ -23094,6 +23094,9 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
   const [matchResult,setMatchResult]=useState(null);
   const [resolutions,setResolutions]=useState(new Map());
   useEffect(()=>{
+    // #153 TEMP diagnostic (C102 Step 1 — THE CRITICAL ONE): does the frozen prior BOM carry Jon's manual crosses?
+    console.log("[RECON TRACE] frozenBom total:",frozenBom.current.length,"crossed:",frozenBom.current.filter(r=>r.isCrossed).length);
+    console.log("[RECON TRACE] frozenBom crossed rows:",frozenBom.current.filter(r=>r.isCrossed).map(r=>({partNumber:r.partNumber,crossedFrom:r.crossedFrom,isCrossed:r.isCrossed})));
     const result=reconcileBom(frozenBom.current,(stagedExtraction&&stagedExtraction.items)||[]);
     setMatchResult(result);
     const init=new Map();
@@ -24328,6 +24331,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   function handleRevisionDrop(livePages,newItems,notes){
     const capturedProjectId=projectId;
     const _reconProjectId=capturedProjectId;
+    console.log("[RECON TRACE] handleRevisionDrop entry — crossed in latestPanelRef:",(latestPanelRef.current.bom||[]).filter(r=>r.isCrossed).length,"total:",(latestPanelRef.current.bom||[]).length); // #153 TEMP diagnostic (C102 Step 3)
     const ecoPages=(latestPanelRef.current.pages||[]).filter(p=>p.ecoId);
     const transientPanel={
       ...latestPanelRef.current,
@@ -24342,6 +24346,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       stagingMode:true,
       projectName,bcProjectNumber,
       onDone:(finalTransientPanel,extractedBom)=>{
+        console.log("[RECON TRACE] staging extraction done — extractedBom crossed:",(extractedBom||[]).filter(r=>r.isCrossed).length,"total:",(extractedBom||[]).length); // #153 TEMP diagnostic (C102 Step 4 — Candidate B check)
         if(_currentProjectId!==_reconProjectId){
           console.warn("[RECON] project changed during extraction — discarding staged result");
           setExtracting(false);setReviseStagingPageCount(null);return;
@@ -29889,7 +29894,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>
         </div>,document.body)}
       {/* #153 Phase E: reconciliation modal (operates on a frozen BOM snapshot) */}
-      {showReconciliation&&reconStagedExtraction&&(
+      {showReconciliation&&reconStagedExtraction&&(console.log("[RECON TRACE] latestPanelRef.current.bom at render — crossed:",(latestPanelRef.current.bom||[]).filter(r=>r.isCrossed).length,"total:",(latestPanelRef.current.bom||[]).length), /* #153 TEMP diagnostic (C102 Step 2) */
         <ReconciliationModal
           currentBom={latestPanelRef.current.bom||[]}
           stagedExtraction={reconStagedExtraction}
