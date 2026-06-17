@@ -2485,3 +2485,25 @@ reset that surfaced the ground-truth state.
      `getDownloadURL()`). Determine the scope of exposure before designing a fix.
      Priority HIGH — ranks ABOVE #146 (which stays MEDIUM). Diff-gated (customer-facing + IP exposure).
      Logged: 2026-06-16.
+
+## Backfill stale confidence "C" circles on existing projects (2026-06-16)
+
+149. **OPEN** [MEDIUM — sequenced AFTER #146 core deploys; do NOT build before then] — Backfill stale
+     confidence "C" circles on EXISTING projects (exact-BC clear). Companion to #146.
+     PROBLEM: #146 core fixes confidence at EXTRACTION time, so it only helps NEW extractions. Existing
+     projects still carry the old regex-downgraded "medium" confidence and keep showing stale "C" circles
+     on ~every line. We do NOT want to re-extract them all.
+     SCOPE (deliberately tight — exact-BC clear only):
+     - On project OPEN, recompute confidence for existing rows: any row with an EXACT BC match
+       (`priceSource:"bc"` AND `bcMatchType:"exact"`) → set confidence "high" → clears its "C" circle.
+     - FUZZY BC matches → do NOT clear (a fuzzy match can mask a misread — same rule as #146 core; exact only).
+     - No match → leave as-is (do NOT suppress — a not-in-BC row may be a misread and must stay flagged).
+     - OUT of scope: text-layer recompute, and vision-row/raw-model-confidence reconstruction. Exact-BC is
+       the single highest-impact, lowest-risk slice and covers the large majority of rows. Keep it simple.
+     PERSIST ONCE: write the recomputed confidence back AND flag the project as migrated (e.g.
+     `confidence-recomputed-at-vX`) so it runs ONCE per project on first open post-deploy — NOT on every open.
+     SEQUENCING: builds AFTER #146 core is deployed (it applies the same exact-BC rule the core fix
+     establishes — core must land first). Then normal pipeline: Coach confirms persisting recomputed
+     confidence is safe (it's a stored field) + reads the on-open recompute hook point → spec → Jon
+     approves → Marc builds, diff-gated.
+     Logged: 2026-06-16.
