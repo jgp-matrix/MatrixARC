@@ -8065,3 +8065,42 @@ Four-axis deep trace of `src/app.jsx` to verify Brief #153 assumptions:
 - **Confidence fields should NOT be carried** — fresh extraction produces fresh confidence, and #146/#149 re-promotion handles exact-BC rows on load.
 
 ---
+
+### C96 — #153 Detailed Plan: Drawing-Revision Re-Extract + BOM Reconciliation (2026-06-17)
+
+**Type:** Implementation plan  
+**Status:** COMPLETE — awaiting Jon approval, then Marc builds (diff-gated)  
+**Deliverable:** `docs/153-PHASE1-PLAN.md`
+
+---
+
+#### Internal phasing (6 phases)
+
+| Phase | Component | Key changes |
+|-------|-----------|-------------|
+| **A** | `_dvHistory` archive + PREVIOUS VERSIONS modal | `archiveDvVersion()`, `loadDvHistory()`, Firestore rules, read-only modal near Dv pill |
+| **B** | Three-pass match engine (`reconcileBom()`) | Pure function: normPN exact → position+desc fallback → residuals. Duplicate-PN positional+itemNo disambiguation. |
+| **C** | Carry-forward merge (`buildReconciledBom()`) | Spread-then-override-then-clear pattern. Explicit clear-list for ~8 no-carry fields (confidence, suspectQty, companion flags, etc.) per MUST-ADDRESS #1. |
+| **D** | Staging area + `addFiles` interception | `reconStagedExtraction` state in PanelCard. Interception in `confirmAndExtract()` (line 24028) — early-exit `if (isRevisionDrop)` route. `runExtractionTask` staging mode flag. |
+| **E** | Reconciliation Modal | Frozen-BOM isolation (deep copy on mount), gated commit (disabled until all CHANGED/NEW/DELETED resolved), Accept All for CHANGED+NEW only. |
+| **F** | Post-commit pipeline | `applyLearnedCorrections` on NEW + PN-CHANGED rows, auto-price trigger, `qvHistory` logging. |
+
+#### Three must-address items
+
+1. **Carry-forward completeness** — spread-then-override is necessary but insufficient. Plan specifies an explicit `delete` list for 8 fields that must NOT carry through: `confidence`, `_confDowngradeReason`, `suspectQty`, `suspectQtyReason`, `autoAddedCompanion`, `companionOfPartNumber`, `snippetCorrected`, `additionalPartNumbers`. These are re-derived by fresh extraction or downstream processors.
+
+2. **Archive timing + identity** — `archiveDvVersion()` runs BEFORE page replacement and BEFORE extraction. Captures `capturedProjectId`/`capturedPanelId` in closure per #86. Write ordering: archive → replace pages → extract → modal → commit.
+
+3. **Concurrent-save isolation** — Modal takes `frozenBom = useRef(JSON.parse(JSON.stringify(currentBom)))` on mount. Background `onSnapshot` updates flow into parent state but NOT into the modal's frozen copy. Commit writes through `onSaveImmediate` → `saveProjectPanel` with its existing mutex (line 9066) and per-page metadata guards (lines 9117-9146).
+
+#### Risks surfaced
+
+- `runExtractionTask` refactor for staging mode is medium-risk — function has multiple internal branches.
+- Cancel-without-commit leaves new pages + old BOM (inconsistent state); documented with recovery paths (Re-Extract, Restore, re-drop).
+- Post-commit enrichment is a second sequential save; if it fails, user recovers via "Refresh Pricing."
+
+#### Test matrix
+
+20 test criteria (T1-T20) covering: no-regression fresh extraction, revision-drop trigger, `_dvHistory` archive verification, carry-forward completeness (all Tier-1 fields), D1 PN-same/PN-changed rules, NEW accept/reject, DELETED delete/keep, Accept All behavior, gated-commit blocking, Dv bump, cancel behavior, concurrent-save isolation, PREVIOUS VERSIONS modal, labor/ECO/contingency passthrough, duplicate-PN disambiguation, corrected-PN fallback match, and #86 async-ownership.
+
+---
