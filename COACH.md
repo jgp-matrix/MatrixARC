@@ -71,6 +71,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-17 (Session 6, cont.)** — C101: #153 full flow read. Complete end-to-end audit of revision-drop flow vs C96/C97 plan. All 6 phases match structurally. BUG 1 unpinnable statically (needs runtime trace). BUG 2: silent catch at line 14876 swallows onDone errors. 5 divergences (D1-D5), D1 architectural — gate at confirm not drop — is root cause of both. Recommendation: branch at DROP (Option A). Consolidated fix plan in 4 phases. Deliverable: `docs/153-FULL-FLOW-READ.md`.
 - **2026-06-17 (Session 6, cont.)** — C102: #153 reconciliation cross trace. ReconciliationModal prior column shows pre-crossed (original) PNs instead of Jon's crossed/substituted PNs — would wipe crosses on commit. Static trace of full data flow: cross model (partNumber overwritten), prior source (latestPanelRef.current.bom), match engine (normPart on partNumber), carry-forward (unchanged preserves, pn_changed strips). No code path found that strips crosses — runtime race during drop→extraction→modal window most likely. Design defect found: `applyLearnedCorrections` runs on staging extraction with no stagingMode gate, masking real drawing changes. 4-point diagnostic log plan for CCD. Deliverable: `docs/153-RECON-CROSS-TRACE.md`.
 - **2026-06-17 (Session 6, cont.)** — C103: #153 cross-aware reconciliation fix plan (FINALIZED). Root cause confirmed via v1.20.140 RECON TRACE logs — Candidate B definitively. Two-part fix: (1) gate `applyLearnedCorrections` behind `!cbs.stagingMode` at line 14581, (2) cross-aware pre-pass in `reconcileBom` matching crossed rows by `crossedFrom` before Pass 1. Carry-forward behavior: crossed rows → unchanged → `carryUnchanged` preserves cross+pricing; genuine PN changes fall to Pass 2 → `pn_changed` strips cross (correct). 5 scenarios mapped (A-E), Pass 2 interaction verified clean. ~20 lines total. 7 test criteria. Deliverable: `docs/153-CROSS-FIX-PLAN.md`.
+- **2026-06-17 (Session 6, cont.)** — C104: #159 Copy-to-New-Quote customer selection scope. Copies stranded without customer/PRJ# because customer assignable only at creation. Fix: add BC customer picker (reuse existing `bcLoadAllCustomers`/`bcFilterCustomers`) to `CopyProjectModal`, pre-fill from source, call `bcCreateProject` on copy. ~70 lines, low risk. Tension resolved: fresh BC identity ≠ source carry-over. #159 logged. Deliverable: `docs/159-COPY-CUSTOMER-SCOPE.md`.
 
 ## Findings
 
@@ -8399,5 +8400,51 @@ Both parts must ship together.
 - E: Qty change on crossed row → cross pre-pass → changed-qty → cross preserved, qty updated
 
 Pass 2 interaction verified clean — no changes to Pass 2 or Pass 3.
+
+---
+
+### C104 — #159 Copy-to-New-Quote Customer Selection Scope (2026-06-17)
+
+**Type:** Scoping read + fix plan
+**Status:** SCOPED — ready for implementation
+**Deliverable:** `docs/159-COPY-CUSTOMER-SCOPE.md`
+
+---
+
+#### Problem
+
+`CopyProjectModal` (line 43622) creates projects with no customer and no PRJ#.
+Customer is assignable only at creation — copies are permanently stranded.
+
+#### Scope
+
+~70 lines, low risk. All BC functions already exist in `NewProjectModal`:
+
+1. **Customer picker UI** (~35 lines): Reuse `bcLoadAllCustomers()` (line 4041) +
+   `bcFilterCustomers()` (line 4111). Pre-fill from source project's customer.
+
+2. **BC project creation** (~25 lines): After `copyProject()`, call
+   `bcCreateProject()` (line 3984) → generates PRJ# + BC Job card. Update Firestore
+   doc with `bcProjectId`, `bcProjectNumber`, `bcCustomerNumber`, `bcCustomerName`.
+   Optional `bcCreatePanelTaskStructure()` for panel task lines.
+
+3. **Progress + info text** (~10 lines): Add "BC project" step, update copy
+   description from "No BC linkage" to "Fresh BC project — no purchasing state
+   carried from source."
+
+#### Tension resolved
+
+Customer + PRJ# requires `bcCreateProject()` (creates a BC Job card). This IS a BC
+connection, but it's the copy's OWN identity — not source carry-over. The copy still
+excludes `bomSyncHash`, vendor assignments, pricing sources, BC item matches.
+
+#### Decision for Jon
+
+Should customer be REQUIRED on Copy? Recommendation: required when BC connected,
+allowed-without when BC down (with warning).
+
+#### Future
+
+Post-creation customer reassignment flagged as separate enhancement.
 
 ---

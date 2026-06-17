@@ -2739,3 +2739,17 @@ reset that surfaced the ground-truth state.
      `_captureRegionForLearning` ~line 4508.
      PRIORITIZE: silent, active, production, accuracy-affecting.
      Logged: 2026-06-17 (Jon, observed in console during #153 testing).
+
+## Copy-to-New-Quote: add customer selection + PRJ# (2026-06-17)
+
+159. **OPEN** [HIGH — functional gap, copies permanently stranded] — Copy-to-New-Quote modal creates
+     projects with no customer and no PRJ#. Customer is assignable ONLY at creation (no post-creation
+     way to change/add it), so copies are permanently stranded customerless. FIX: add the BC customer
+     picker (reuse `NewProjectModal`'s `bcLoadAllCustomers` + `bcFilterCustomers` components) to
+     `CopyProjectModal` (line 43622). Pre-fill from source project's customer (editable). On copy,
+     call `bcCreateProject` to generate PRJ# + BC Job card. ~70 lines, low risk — all BC functions
+     already exist. Tension resolved: customer + PRJ# creation is NOT "BC linkage" in the carry-over
+     sense — the copy gets its OWN fresh BC identity while source purchasing state stays excluded.
+     SCOPE: `docs/159-COPY-CUSTOMER-SCOPE.md` (Coach C104).
+     FUTURE: post-creation customer reassignment (broader limitation, separate ticket).
+     Logged: 2026-06-17 (Jon, Coach C104 scope).
