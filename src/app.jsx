@@ -24494,20 +24494,43 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // pages are NOT yet persisted. If the panel already has an extracted BOM and the
     // user just dropped new pages, ask: Revise (replace+reconcile) / Add pages
     // (append, keep BOM, no extraction) / Cancel (discard, zero writes).
-    // ROBUST detection (v1.20.137 fix): the original gate read ONLY
-    // latestPanelRef.current.bom, which could be empty at confirm time (stale ref
-    // after a re-render/reload during the drop→confirm window) even when the panel
-    // has a committed BOM — so isRevisionDrop fell through to the pre-#153 append-
-    // and-re-extract path. Now treat the panel as BOM'd if a non-passthrough BOM
-    // row exists on EITHER the ref OR the prop, OR a prior Drawing Version was
-    // assigned (bomVersion>0 ⇒ a BOM was extracted at least once, persists reloads).
+    // ROBUST detection v2 (v1.20.138 fix): v1.20.137 still failed on Jon's copy of
+    // PRJ402096 — its Line 1 panel has bomVersion:1 + 54 BOM rows PERSISTED, yet the
+    // gate read false. Cause: at confirm time BOTH latestPanelRef.current AND the
+    // panel prop are stale (no bom AND no bomVersion) during the drop→confirm
+    // re-render window — so the in-memory checks AND the bomVersion fallback all
+    // miss. Authoritative fix: read the PERSISTED panel from Firestore (source of
+    // truth, immune to in-memory staleness). confirmAndExtract is already async, so
+    // a single get() on a user-initiated confirm is cheap (~50ms). A panel with a
+    // committed BOM (or any prior Dv) is treated as BOM'd → isRevisionDrop fires.
     const _refPanel=latestPanelRef.current||{};
     const _refBomRows=(_refPanel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length;
     const _propBomRows=((panel&&panel.bom)||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length;
     const _priorDv=(+(_refPanel.bomVersion||(panel&&panel.bomVersion)||0))>0;
-    const _hasExistingBom=_refBomRows>0||_propBomRows>0||_priorDv;
+    // Persisted read with a HARD 4s timeout. On failure OR timeout, _persistedHasBom
+    // stays false and the gate FALLS BACK to the in-memory signals below
+    // (refBomRows||propBomRows||priorDv) — a read error/timeout must NEVER fail the
+    // gate OPEN (a silent append-and-re-extract would lose the user's BOM). The gate
+    // is biased toward FIRING: any positive signal from EITHER source fires the
+    // prompt — a false-positive costs one "Add pages" click; a false-negative loses
+    // the BOM. The await can't hang confirmAndExtract (timeout rejects the race).
+    let _persistedHasBom=false,_persistedBomVer=null,_persistedReadErr=null;
+    try{
+      const _psnap=await Promise.race([
+        fbDb.collection(_appCtx.projectsPath||`users/${uid}/projects`).doc(projectId).get(),
+        new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),4000)),
+      ]);
+      const _ppanel=(((_psnap.data()||{}).panels)||[]).find(x=>x.id===panel.id);
+      if(_ppanel){
+        _persistedBomVer=_ppanel.bomVersion;
+        _persistedHasBom=((_ppanel.bom||[]).some(r=>!r.isLaborRow&&!r.isContingency))||(+(_ppanel.bomVersion||0)>0);
+      }
+    }catch(e){_persistedReadErr=(e&&e.message)||"error";console.warn("[#153] persisted-panel read failed/timed out — falling back to in-memory gate:",_persistedReadErr);}
+    // FALLBACK is implicit in this OR: if the persisted read failed, _persistedHasBom
+    // is false and the decision rests on the in-memory signals (never fails open).
+    const _hasExistingBom=_refBomRows>0||_propBomRows>0||_priorDv||_persistedHasBom;
     const _droppedNewPages=(newItems||[]).length>0;
-    console.log("[#153 REVISION-GATE]",{hasExistingBom:_hasExistingBom,droppedNewPages:_droppedNewPages,refBomRows:_refBomRows,propBomRows:_propBomRows,priorDv:_priorDv,bomVersion:_refPanel.bomVersion,newItemsLen:(newItems||[]).length});
+    console.log("[#153 REVISION-GATE]",{hasExistingBom:_hasExistingBom,droppedNewPages:_droppedNewPages,refBomRows:_refBomRows,propBomRows:_propBomRows,priorDv:_priorDv,persistedHasBom:_persistedHasBom,persistedBomVer:_persistedBomVer,persistedReadErr:_persistedReadErr,bomVersion:_refPanel.bomVersion,newItemsLen:(newItems||[]).length});
     if(_hasExistingBom&&_droppedNewPages){
       const _choice=await showRevisionPrompt();
       if(_choice==="cancel"){
