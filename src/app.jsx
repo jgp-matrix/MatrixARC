@@ -23162,7 +23162,7 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
                 <tbody>
                   {sec.key==="changed"&&sec.rows.map((m,i)=>{const r=resolutions.get(`changed:${i}`);return(
                     <Row key={i} k={`changed:${i}`} newPN={m.extracted.partNumber} newQty={m.extracted.qty} priorPN={m.prior.partNumber} priorQty={m.prior.qty} desc={(m.reason==="pn_changed"?"PN changed":"Qty changed")+" — "+(m.extracted.description||m.prior.description||"")} tone={sec.tone}
-                      actions={<><span style={{fontSize:10,color:C.yellow,marginRight:6}}>{m.reason==="pn_changed"?"PN changed":"qty"}</span><button style={btn("#16a34a",r==="accepted")} onClick={()=>setRes(`changed:${i}`,"accepted")}>{r==="accepted"?"✓ Accepted":"Accept"}</button></>}/>
+                      actions={<><span style={{fontSize:10,color:C.yellow,marginRight:6}}>{m.reason==="pn_changed"?"PN changed":"qty"}</span><button style={btn("#16a34a",r==="accepted")} onClick={()=>setRes(`changed:${i}`,"accepted")}>{r==="accepted"?"✓ Accepted":"Accept"}</button><button style={btn("#dc2626",r==="rejected")} onClick={()=>setRes(`changed:${i}`,"rejected")}>{r==="rejected"?"✕ Keep Prior":"Reject"}</button>{r==="rejected"&&<span style={{fontSize:10,color:C.muted,marginLeft:4}}>kept prior — differs from revision</span>}</>}/>
                   );})}
                   {sec.key==="added"&&sec.rows.map((ext,i)=>{const r=resolutions.get(`added:${i}`);return(
                     <Row key={i} k={`added:${i}`} newPN={ext.partNumber} newQty={ext.qty} priorPN={null} priorQty={null} desc={ext.description||""} tone={sec.tone}
@@ -23187,7 +23187,7 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
         )}
         <div style={{padding:"14px 22px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:12}}>
           <button onClick={acceptAll} disabled={!matchResult} style={{background:"transparent",border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Accept All (Changed + New)</button>
-          <div style={{flex:1,fontSize:12,color:canCommit?"#4ade80":C.yellow,fontWeight:700}}>{canCommit?"All rows resolved — ready to commit":`${unresolved} unresolved — resolve all to commit (deletions individually)`}</div>
+          <div style={{flex:1,fontSize:12,color:canCommit?"#4ade80":C.yellow,fontWeight:700}}>{canCommit?"All rows resolved — ready to commit":`${unresolved} unresolved — resolve all to commit`}</div>
           <button onClick={onCancel} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Cancel</button>
           <button onClick={commit} disabled={!canCommit} style={{background:canCommit?"#16a34a":"#1f2937",border:"none",color:canCommit?"#fff":"#6b7280",borderRadius:8,padding:"8px 20px",fontSize:13,fontWeight:800,cursor:canCommit?"pointer":"default"}}>Commit Reconciliation</button>
         </div>
@@ -47419,7 +47419,11 @@ function buildReconciledBom(matchResult,resolutions,currentBom){
   });
   const unchangedMerged=(matchResult.unchanged||[]).map(p=>carryUnchanged(p.prior,p.extracted));
   const changedMerged=[];
-  (matchResult.changed||[]).forEach((m,i)=>{if(resolutions.get(`changed:${i}`)==="accepted")changedMerged.push(m.reason==="pn_changed"?carryChangedPnChanged(m.prior,m.extracted):carryChangedPnSame(m.prior,m.extracted));});
+  // #160 (C105): "accepted" takes the revision; "rejected" keeps the prior row EXACTLY
+  // as-is ({...prior} — no position/qty/field changes, all crosses+pricing+BC data intact).
+  // The explicit rejected branch also closes the latent silent-drop bug: previously any
+  // non-"accepted" changed row fell through and vanished from the output BOM (data loss).
+  (matchResult.changed||[]).forEach((m,i)=>{const res=resolutions.get(`changed:${i}`);if(res==="accepted")changedMerged.push(m.reason==="pn_changed"?carryChangedPnChanged(m.prior,m.extracted):carryChangedPnSame(m.prior,m.extracted));else if(res==="rejected")changedMerged.push({...m.prior});});
   const acceptedNew=[];
   (matchResult.added||[]).forEach((ext,i)=>{if(resolutions.get(`added:${i}`)==="accepted")acceptedNew.push(buildNewRow(ext));});
   const keptDeleted=[];
