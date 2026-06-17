@@ -31910,6 +31910,39 @@ function CADLinkSendModal({project,onClose}){
   ,document.body);
 }
 
+// #137 Phase 1 (C94): BOM Approval token generator. Builds the unguessable
+// 128-bit token + the bomApprovals/{token} Firestore doc payload. Module-level —
+// references only module globals (_appCtx, fbAuth, crypto); both send paths call
+// it then write the returned doc under the returned token. The token doc carries
+// summary fields only (no project/BOM/drawing data — least-exposure scope, sec
+// req #3). 14-day expiry. Caller writes: fbDb.collection('bomApprovals').doc(token).set(doc).
+function createBomApprovalTokenDoc(project,barId,sentTo){
+  const token=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const doc={
+    uid:_appCtx.uid,
+    companyId:_appCtx.companyId||null,
+    projectId:project.id,
+    barId,
+    sentTo,
+    sentBy:fbAuth.currentUser?.email||_appCtx.uid,
+    sentAt:Date.now(),
+    panels:(project.panels||[]).map(p=>p.name||p.drawingNo||p.id),
+    panelIds:(project.panels||[]).map(p=>p.id),
+    quoteRev:project.quoteRev||0,
+    projectName:project.name||'',
+    companyName:_appCtx.company?.name||'',
+    companyLogoUrl:_appCtx.company?.logoUrl||null,
+    expiresAt:Date.now()+14*24*60*60*1000,
+    revoked:false,
+    status:'pending',
+    accessLog:[],
+    readCount:0,
+    respondedAt:null,
+    responseComments:null,
+  };
+  return{token,doc};
+}
+
 // ── PANEL LIST VIEW ──
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
@@ -32053,11 +32086,30 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
     try{
       const graphToken=await acquireGraphToken();
       if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setSending(false);return;}
+      // #137 Phase 1: create the BOM approval token doc BEFORE the email send (so the
+      // portal link in the email resolves on click) — ONLY when the Quoted BOM rides
+      // along (includeTravelerBom). approvalSentTo is resolved here (reply → thread
+      // sender; new → m.to) and reused for BOTH the token doc and the bar_ record so
+      // they carry the SAME recipient. The compound `sentTo` computed after the email
+      // stays the display value for quoteSentTo only. Token-doc-before-email is the
+      // load-bearing atomicity constraint; a creation failure aborts the send.
+      let approvalToken=null,approvalBarId=null;
+      const approvalSentTo=sendMode==="reply"?(selectedThread?.fromEmail||selectedThread?.from||""):m.to;
+      if(includeTravelerBom){
+        approvalBarId="bar_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+        const {token:_tok,doc:_adoc}=createBomApprovalTokenDoc(populated,approvalBarId,approvalSentTo);
+        try{
+          await fbDb.collection('bomApprovals').doc(_tok).set(_adoc);
+          approvalToken=_tok;
+        }catch(e){arcAlert("Could not create approval portal link: "+e.message);setSending(false);return;}
+      }
       const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
       // #139 follow-up: explain the yellow highlight ONLY when the Quoted BOM is attached
       // (toggle ON). A plain quote with no BOM carries no highlight to explain.
       const bomNote=includeTravelerBom?`<p style="margin-top:12px">Any deviation from the customer-supplied BOM is shown in yellow highlight. Please verify these items are acceptable and we will finalize the quote.</p>`:"";
-      const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}${bomNote}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+      // #137 Phase 1: portal CTA — only present when a token was created (BOM included).
+      const portalBlock=approvalToken?`<p style="margin-top:16px"><a href="https://matrix-arc.web.app?bomApproval=${approvalToken}" style="display:inline-block;background:#7c3aed;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:700;font-size:14px">Review &amp; Approve BOM →</a></p><p style="font-size:12px;color:#94a3b8;margin-top:4px">This link expires in 14 days.</p>`:"";
+      const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}${bomNote}${portalBlock}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
       const jsPDF=await ensureJsPDF();
       const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
       await buildQuotePdfDoc(pdfDoc,populated);
@@ -32130,10 +32182,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // rode along. id "bar_"-prefixed (future portal write-back key); panels = stable
       // panel IDs; status write-once "sent" — never mutated by #133 code.
       if(includeTravelerBom){
-        const req={id:"bar_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
-          sentAt:Date.now(),sentTo:sentTo,sentBy:fbAuth.currentUser?.email||uid,
+        // #137 Phase 1: reuse the pre-generated barId + approvalSentTo so the bar_
+        // record matches the token doc; bomApprovalToken is the Phase-2 back-reference.
+        const req={id:approvalBarId,
+          sentAt:Date.now(),sentTo:approvalSentTo,sentBy:fbAuth.currentUser?.email||uid,
           mode:"bundled",panels:(project.panels||[]).map(p=>p.id),
-          quoteRev:rev,status:"sent"};
+          quoteRev:rev,status:"sent",bomApprovalToken:approvalToken};
         upd.bomApprovalRequests=[...(upd.bomApprovalRequests||[]),req];
       }
       try{
@@ -32603,10 +32657,21 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     setBomSending(true);
     const graphToken=await acquireGraphToken();
     if(!graphToken){arcAlert("Could not get Microsoft 365 token.");setBomSending(false);return;}
+    // #137 Phase 1: generate the barId + create the BOM approval token doc BEFORE the
+    // email (token-doc-before-email atomicity — the portal link must resolve on click).
+    // Standalone always includes the Quoted BOM, so a token is always created here.
+    // A creation failure aborts the send (no email, no link, no bar_ record).
+    const barId="bar_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    const {token:approvalToken,doc:approvalDoc}=createBomApprovalTokenDoc(project,barId,m.to);
+    try{
+      await fbDb.collection('bomApprovals').doc(approvalToken).set(approvalDoc);
+    }catch(e){arcAlert("Could not create approval portal link: "+e.message);setBomSending(false);return;}
     const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
     // #139 follow-up: explain the yellow highlight. Standalone Quoted BOM ALWAYS carries it.
     const bomNote=`<p style="margin-top:12px">Any deviation from the customer-supplied BOM is shown in yellow highlight. Please verify these items are acceptable and we will finalize the quote.</p>`;
-    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}${bomNote}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
+    // #137 Phase 1: portal CTA — links the customer to the approval page for this token.
+    const portalBlock=`<p style="margin-top:16px"><a href="https://matrix-arc.web.app?bomApproval=${approvalToken}" style="display:inline-block;background:#7c3aed;color:#fff;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:700;font-size:14px">Review &amp; Approve BOM →</a></p><p style="font-size:12px;color:#94a3b8;margin-top:4px">This link expires in 14 days.</p>`;
+    const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}${bomNote}${portalBlock}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
     const trav=await generateTravelerBomPdf(project);
     if(!trav){arcAlert("No panels — cannot generate quoted BOM.");setBomSending(false);return;}
     // Quoted BOM is the PRIMARY (and only) attachment — no quote PDF, no extras.
@@ -32618,10 +32683,12 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     // #133 Change 1 (D3): approval-request record. id "bar_"-prefixed (future portal
     // write-back key); panels = stable panel IDs; status write-once "sent".
     try{
-      const req={id:"bar_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),
+      // #137 Phase 1: reuse the pre-generated barId; bomApprovalToken back-references
+      // the token doc (Phase-2 convenience — token doc is the source of truth).
+      const req={id:barId,
         sentAt:Date.now(),sentTo:m.to,sentBy:fbAuth.currentUser?.email||uid,
         mode:"standalone",panels:(project.panels||[]).map(p=>p.id),
-        quoteRev:project.quoteRev||0,status:"sent"};
+        quoteRev:project.quoteRev||0,status:"sent",bomApprovalToken:approvalToken};
       const upd={...project,bomApprovalRequests:[...(project.bomApprovalRequests||[]),req]};
       await persistProject(upd);
     }catch(saveErr){
@@ -46741,6 +46808,136 @@ function partMatch(a,b){
   return false;
 }
 
+// ── BOM APPROVAL PORTAL PAGE (#137 Phase 1) ──
+// Customer-facing, no ARC sign-in (the token IS the auth). Response-only — serves
+// NO document/drawings, only the summary fields stored on the token doc. Loads the
+// bomApprovals/{token} doc, marks it viewed (status + accessLog + readCount), and
+// lets the customer Approve / Reject / Request Changes (terminal, one-time). Phase 2
+// (CF write-back, bell, QUOTE SUMMARY surface, Revoke) is NOT here — a response lands
+// on the token doc and surfaces nowhere in ARC yet.
+function BomApprovalPortalPage({token}){
+  const [info,setInfo]=useState(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState(null);
+  const [submitting,setSubmitting]=useState(false);
+  const [comments,setComments]=useState('');
+  const fmt=ts=>{try{return ts?new Date(ts).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}):'';}catch(e){return '';}};
+
+  useEffect(()=>{
+    fbDb.collection('bomApprovals').doc(token).get()
+      .then(snap=>{
+        if(!snap.exists){setError("This link is invalid or has expired.");setLoading(false);return;}
+        const data=snap.data();
+        if(data.expiresAt&&data.expiresAt<Date.now()){setError("This approval link has expired. Please contact your sales representative for a new link.");setLoading(false);return;}
+        if(data.revoked){setError("This approval link has been revoked. Please contact your sales representative.");setLoading(false);return;}
+        setInfo(data);
+        // Mark viewed + append access log + bump readCount. Pending → viewed; any
+        // non-terminal state just logs access. Terminal states are read-only (no write).
+        const terminal=['approved','rejected','changes_requested'].includes(data.status);
+        if(!terminal){
+          const upd={accessLog:firebase.firestore.FieldValue.arrayUnion({ts:Date.now()}),readCount:firebase.firestore.FieldValue.increment(1)};
+          if(data.status==='pending')upd.status='viewed';
+          fbDb.collection('bomApprovals').doc(token).update(upd).catch(e=>console.warn('[BOM APPROVAL] viewed/access update failed:',e));
+        }
+        setLoading(false);
+      })
+      .catch(e=>{setError("Could not load this approval request: "+e.message);setLoading(false);});
+  },[token]);
+
+  async function handleSubmit(status){
+    if(status!=='approved'&&!comments.trim()){
+      arcAlert('Please enter a reason for '+(status==='rejected'?'rejection':'the requested changes')+'.');
+      return;
+    }
+    const confirmMsg=status==='approved'?'Approve this Quoted BOM? This action is final.'
+      :status==='rejected'?'Reject this Quoted BOM? This action is final.'
+      :'Request changes to this Quoted BOM? This action is final.';
+    if(!await arcConfirm(confirmMsg,{kind:status==='approved'?'info':'warning'}))return;
+    setSubmitting(true);
+    try{
+      const respondedAt=Date.now();
+      await fbDb.collection('bomApprovals').doc(token).update({status,respondedAt,responseComments:comments.trim()||null});
+      setInfo(prev=>({...prev,status,respondedAt,responseComments:comments.trim()||null}));
+    }catch(e){arcAlert('Failed to submit your response: '+e.message);}
+    setSubmitting(false);
+  }
+
+  const wrap=(children)=>(
+    <div style={{minHeight:"100vh",background:`radial-gradient(ellipse at 50% 0%,#1a1a3e 0%,${C.bg} 60%)`,display:"flex",flexDirection:"column",alignItems:"center",padding:"32px 16px",fontFamily:"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif"}}>
+      <div style={{width:"100%",maxWidth:620}}>{children}</div>
+    </div>
+  );
+  const header=(
+    <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}>
+      {info?.companyLogoUrl
+        ?<img src={info.companyLogoUrl} alt="" style={{maxHeight:48,maxWidth:160,objectFit:"contain"}}/>
+        :<div style={{fontSize:20,fontWeight:800,color:C.text}}>{info?.companyName||"Matrix Systems"}</div>}
+      {info?.companyLogoUrl&&info?.companyName?<div style={{fontSize:15,fontWeight:700,color:C.muted}}>{info.companyName}</div>:null}
+    </div>
+  );
+
+  if(loading)return wrap(<div style={{color:C.muted,fontSize:14,textAlign:"center",padding:"60px 0"}}>Loading…</div>);
+  if(error)return wrap(<>
+    <div style={{fontSize:20,fontWeight:800,color:C.text,marginBottom:16}}>Matrix Systems</div>
+    <div style={{background:C.card,border:`1px solid ${C.red}`,borderRadius:12,padding:"24px 28px",color:"#fca5a5",fontSize:15,lineHeight:1.6}}>{error}</div>
+  </>);
+
+  // Read-count cap — PORTAL-SIDE UX ONLY. The Firestore rules do NOT enforce this cap
+  // (they gate on expiry/revoked/terminal/allow-list only); this just refuses to render.
+  if((info?.readCount||0)>100)return wrap(<>
+    {header}
+    <div style={{background:C.card,border:`1px solid ${C.yellow}`,borderRadius:12,padding:"24px 28px",color:"#fde68a",fontSize:15,lineHeight:1.6}}>This link has been accessed too many times. Please contact your sales representative.</div>
+  </>);
+
+  const terminal=['approved','rejected','changes_requested'].includes(info?.status);
+  const verb=info?.status==='approved'?'approved':info?.status==='rejected'?'rejected':'requested changes to';
+  const sumRow=(label,val)=>(<div style={{display:"flex",justifyContent:"space-between",gap:12,padding:"6px 0",borderBottom:`1px solid ${C.border}`}}><span style={{color:C.muted,fontSize:13}}>{label}</span><span style={{color:C.text,fontSize:13,fontWeight:600,textAlign:"right"}}>{val}</span></div>);
+
+  return wrap(<>
+    {header}
+    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"24px 28px",marginBottom:18,boxShadow:"0 8px 40px rgba(0,0,0,0.4)"}}>
+      <div style={{fontSize:18,fontWeight:800,color:C.text,marginBottom:4}}>Quoted BOM for {info?.projectName||"your project"}</div>
+      <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Please review the bill of materials below and approve, reject, or request changes.</div>
+      {sumRow("Project",info?.projectName||"—")}
+      {sumRow("Quote Revision","Qv."+String(info?.quoteRev||0).padStart(2,"0"))}
+      {sumRow("Panels",(info?.panels||[]).join(", ")||"—")}
+      {sumRow("Sent",fmt(info?.sentAt))}
+      {sumRow("Sent to",info?.sentTo||"—")}
+    </div>
+
+    {terminal?(
+      <div style={{background:C.card,border:`1px solid ${info.status==='approved'?"#22c55e":info.status==='rejected'?C.red:C.yellow}`,borderRadius:12,padding:"22px 26px"}}>
+        <div style={{fontSize:15,fontWeight:700,color:C.text,marginBottom:info.responseComments?10:0}}>
+          You {verb} this Quoted BOM on {fmt(info.respondedAt)}.
+        </div>
+        {info.responseComments?(
+          <div style={{marginTop:8}}>
+            <div style={{fontSize:12,color:C.muted,marginBottom:4}}>Your comments:</div>
+            <div style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 14px",color:C.text,fontSize:13,lineHeight:1.5,whiteSpace:"pre-wrap"}}>{info.responseComments}</div>
+          </div>
+        ):null}
+        <div style={{fontSize:12,color:C.muted,marginTop:14}}>This response is final. If you need to make a change, please contact your sales representative.</div>
+      </div>
+    ):(
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"22px 26px"}}>
+        <div style={{fontSize:13,color:C.muted,marginBottom:8}}>Comments {`(required to reject or request changes)`}</div>
+        <textarea value={comments} onChange={e=>setComments(e.target.value)} rows={4} placeholder="Add any notes for the sales team…"
+          style={{width:"100%",boxSizing:"border-box",background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:14,padding:"10px 12px",resize:"vertical",fontFamily:"inherit",marginBottom:16}}/>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <button disabled={submitting} onClick={()=>handleSubmit('approved')}
+            style={{flex:"1 1 140px",padding:"12px 18px",borderRadius:8,border:"none",background:"#16a34a",color:"#fff",fontSize:14,fontWeight:700,cursor:submitting?"default":"pointer",opacity:submitting?0.6:1}}>✓ Approve</button>
+          <button disabled={submitting} onClick={()=>handleSubmit('changes_requested')}
+            style={{flex:"1 1 140px",padding:"12px 18px",borderRadius:8,border:"none",background:"#d97706",color:"#fff",fontSize:14,fontWeight:700,cursor:submitting?"default":"pointer",opacity:submitting?0.6:1}}>✎ Request Changes</button>
+          <button disabled={submitting} onClick={()=>handleSubmit('rejected')}
+            style={{flex:"1 1 140px",padding:"12px 18px",borderRadius:8,border:"none",background:"#dc2626",color:"#fff",fontSize:14,fontWeight:700,cursor:submitting?"default":"pointer",opacity:submitting?0.6:1}}>✕ Reject</button>
+        </div>
+        {submitting?<div style={{color:C.muted,fontSize:12,marginTop:12,textAlign:"center"}}>Submitting…</div>:null}
+      </div>
+    )}
+    <div style={{textAlign:"center",color:C.muted,fontSize:11,marginTop:24}}>Powered by ARC · This link is unique to you and expires 14 days after it was sent.</div>
+  </>);
+}
+
 // ── SUPPLIER PORTAL PAGE ──
 function SupplierPortalPage({token}){
   const [info,setInfo]=useState(null);
@@ -47477,6 +47674,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
 // ── ROOT ──
 function Root(){
   const [rfqUploadToken]=useState(()=>{try{const p=new URLSearchParams(window.location.search);return p.get("rfqUpload")||null;}catch(e){return null;}});
+  // #137 Phase 1: customer-facing BOM approval portal route (?bomApproval=TOKEN).
+  const [bomApprovalToken]=useState(()=>{try{return new URLSearchParams(window.location.search).get("bomApproval")||null;}catch(e){return null;}});
   const [user,setUser]=useState(undefined);
   const [redirectDone,setRedirectDone]=useState(false);
 
@@ -47529,6 +47728,8 @@ function Root(){
   },[joinPayload]);
 
   if(rfqUploadToken)return(<><SupplierPortalPage token={rfqUploadToken}/><ArcDialogHost/><PopupBlockedModal/></>);
+  // #137 Phase 1: the token IS the auth — portal renders without ARC sign-in.
+  if(bomApprovalToken)return(<><BomApprovalPortalPage token={bomApprovalToken}/><ArcDialogHost/><PopupBlockedModal/></>);
   if(user===undefined||!redirectDone)return(<>
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg}}>
       <div style={{color:C.muted,fontSize:14}}>Loading…</div>
