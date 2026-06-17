@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Matrix ARC — Team Invitation (transactional email sample)</title>
+<style>
+  body { margin:0; background:#e2e8f0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; padding:32px 16px; }
+  .wrap { max-width:640px; margin:0 auto; }
+  .note { font-size:12px; color:#475569; background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:10px 14px; margin-bottom:18px; }
+  .mail { background:#fff; border:1px solid #cbd5e1; border-radius:12px; overflow:hidden; box-shadow:0 6px 24px rgba(15,23,42,0.10); }
+  .hdr { padding:16px 24px; border-bottom:1px solid #e2e8f0; background:#f8fafc; }
+  .hdr .row { font-size:13px; color:#334155; margin:2px 0; }
+  .hdr .row .lbl { display:inline-block; width:64px; color:#94a3b8; font-weight:600; }
+  .hdr .subj { font-size:16px; font-weight:700; color:#0f172a; margin:6px 0 2px; }
+  .body { padding:8px 0 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="note">
+      Transactional email sample — <strong>Matrix ARC team invitation</strong>. Sent from
+      <code>sales@matrixpci.com</code> via SendGrid when an administrator invites a new teammate.
+      Recipient/inviter values below are sample placeholders; the invitation link contains a fake,
+      redacted token (no live credentials).
+    </div>
+
+    <div class="mail">
+      <!-- Inbox-style header so the reviewer sees from / to / subject as a recipient would -->
+      <div class="hdr">
+        <div class="row"><span class="lbl">From</span> Matrix Systems &lt;sales@matrixpci.com&gt;</div>
+        <div class="row"><span class="lbl">To</span> newteammember@example.com</div>
+        <div class="subj">You&#39;ve been invited to Matrix ARC</div>
+      </div>
+
+      <!-- Email body — exact markup produced by sendInviteEmail (functions/index.js), placeholders filled -->
+      <div class="body">
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px">
+          <h2 style="color:#1e293b;margin-bottom:8px">You&#39;re invited to Matrix ARC</h2>
+          <p style="color:#64748b;margin-bottom:24px">You&#39;ve been invited to join a team as <strong>edit</strong>.</p>
+          <a href="https://matrix-arc.web.app/?join=eyJjIjoiU0FNUExFX0NPTVBBTllfSUQiLCJyIjoiZWRpdCIsImUiOiJuZXd0ZWFtbWVtYmVyQGV4YW1wbGUuY29tIiwidCI6IlNBTVBMRTBUT0tFTjBSRURBQ1RFRDAwMDAwMDAwMDAifQ==" style="display:inline-block;background:#2563eb;color:#fff;font-weight:700;font-size:15px;padding:12px 28px;border-radius:8px;text-decoration:none">Accept Invitation &rarr;</a>
+          <p style="color:#94a3b8;font-size:12px;margin-top:24px">If you didn&#39;t expect this invitation, you can ignore this email.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
