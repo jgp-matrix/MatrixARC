@@ -2753,3 +2753,14 @@ reset that surfaced the ground-truth state.
      SCOPE: `docs/159-COPY-CUSTOMER-SCOPE.md` (Coach C104).
      FUTURE: post-creation customer reassignment (broader limitation, separate ticket).
      Logged: 2026-06-17 (Jon, Coach C104 scope).
+
+160. **OPEN** [HIGH — feature, UX gap] — ReconciliationModal Changed rows offer ONLY "Accept" (take the
+     new extraction's value). No way to reject a change and keep the prior row — critical for crossed
+     rows where the prior contains the user's deliberate substitution + pricing. FIX: add Reject
+     button to changed row actions (line 23165), handle `"rejected"` resolution in
+     `buildReconciledBom` (line 47422) by carrying `{...m.prior}` (prior row exactly as-is, no
+     position update, no field changes — all crosses, pricing, BC data preserved). Existing
+     `unresolved` gating already counts changed rows without resolution — no gating changes needed.
+     ~6 lines, very low risk. Fully contained within `ReconciliationModal` + `buildReconciledBom`.
+     SCOPE: `docs/160-RECON-REJECT-SCOPE.md` (Coach C105).
+     Logged: 2026-06-17 (Jon, Coach C105 scope).

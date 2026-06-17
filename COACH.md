@@ -8448,3 +8448,49 @@ allowed-without when BC down (with warning).
 Post-creation customer reassignment flagged as separate enhancement.
 
 ---
+
+### C105 — #160 Reconciliation Modal: Reject/Keep-Prior for Changed Rows (2026-06-17)
+
+**Type:** Scoping read + fix plan
+**Status:** SCOPED — ready for implementation
+**Deliverable:** `docs/160-RECON-REJECT-SCOPE.md`
+
+---
+
+#### Problem
+
+Changed rows in the ReconciliationModal offer only "Accept." No way to reject a
+change and keep the prior row — critical for crossed rows where the prior contains
+the user's deliberate substitution + pricing.
+
+#### Key findings
+
+1. **Gating already works** — `unresolved` computation at line 23113 counts changed
+   rows without a resolution. Both `"accepted"` and `"rejected"` satisfy the gate.
+   No changes needed.
+
+2. **Silent drop bug** — `buildReconciledBom` (line 47422) only handles `"accepted"`.
+   Any other resolution value causes the row to be silently dropped from the output
+   BOM. Adding a Reject button without fixing this would cause rejected rows to vanish.
+
+3. **Reject semantics** — `{...m.prior}` (shallow copy of prior row, exactly as-is).
+   No position update for rejects: for `pn_changed` rejects, the extraction's position
+   corresponds to the NEW PN's location, not the prior's. Consistent behavior regardless
+   of change reason.
+
+#### Scope
+
+~6 lines, very low risk:
+
+1. **Add Reject button** to changed row actions (line 23165) — `btn("#dc2626")`
+   with toggled "✕ Keep Prior" state + "kept prior — differs from revision" indicator.
+
+2. **Handle rejected resolution** in `buildReconciledBom` (line 47422) — `else if
+   (res === "rejected") changedMerged.push({...m.prior})`.
+
+3. **Footer text cleanup** (line 23190) — remove "(deletions individually)" parenthetical.
+
+No new functions. No data model changes. No changes to `reconcileBom`. Fully contained
+within `ReconciliationModal` + `buildReconciledBom`.
+
+---
