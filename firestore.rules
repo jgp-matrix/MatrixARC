@@ -118,6 +118,48 @@ service cloud.firestore {
       allow delete: if _isOwnerOrTeamWriter();
     }
 
+    // #137 Phase 1 (C94): BOM Approval portal tokens. Same security model as
+    // rfqUploads — public read while unexpired AND not revoked; public (customer)
+    // update restricted to response fields, blocked once a terminal status is set
+    // (post-resolution lockout); create/delete require an authenticated company
+    // writer. The token doc carries summary fields only (no project data, no
+    // drawings — least-exposure scope). NOTE: there is NO rule-level readCount cap
+    // — the 100-access cap is portal-side UX only (Phase 1, Jon-locked).
+    match /bomApprovals/{token} {
+      // Helpers duplicated (Firestore functions are match-block-scoped).
+      function _baWriterIsCompanyWriter(cid) {
+        return cid != null
+          && exists(/databases/$(database)/documents/companies/$(cid)/members/$(request.auth.uid))
+          && get(/databases/$(database)/documents/companies/$(cid)/members/$(request.auth.uid)).data.role != 'view';
+      }
+      function _baIsOwnerOrTeamWriter() {
+        return request.auth != null && (
+          resource.data.get('uid', null) == request.auth.uid
+          || _baWriterIsCompanyWriter(resource.data.get('companyId', null))
+        );
+      }
+      // READ: ARC owner/team always; public only while unexpired AND not revoked.
+      allow read: if _baIsOwnerOrTeamWriter()
+                  || (resource.data.get('expiresAt', 0) > request.time.toMillis()
+                      && resource.data.get('revoked', false) == false);
+      // CREATE: authenticated ARC user, own uid, company membership if companyId set.
+      allow create: if request.auth != null
+                    && request.resource.data.uid == request.auth.uid
+                    && (request.resource.data.get('companyId', null) == null
+                        || _baWriterIsCompanyWriter(request.resource.data.companyId));
+      // UPDATE: ARC owner/team freely (revoke, Phase 2 write-back); public (customer)
+      // only when unexpired + unrevoked + non-terminal, restricted to response fields.
+      allow update: if _baIsOwnerOrTeamWriter()
+                    || (resource.data.get('expiresAt', 0) > request.time.toMillis()
+                        && resource.data.get('revoked', false) == false
+                        && !(['approved','rejected','changes_requested'].hasAny([resource.data.get('status','pending')]))
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                          'status','respondedAt','responseComments','accessLog','readCount'
+                        ]));
+      // DELETE: ARC owner/team only.
+      allow delete: if _baIsOwnerOrTeamWriter();
+    }
+
     // DECISION(v1.19.734): Security audit finding C-2 — engineering review portal.
     // Same model as rfqUploads: public read while unexpired, public update restricted
     // to the draft + submit field allow-lists, create/delete require auth.
