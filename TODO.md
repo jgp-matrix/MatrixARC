@@ -2654,24 +2654,88 @@ reset that surfaced the ground-truth state.
 
 ## Bundled quote-send bypasses the manualVerify send-gate (2026-06-17)
 
-155. **OPEN** [HIGH — trust-layer gap, NOT a #137 regression, needs-Coach] — The bundled quote-send
-     path (`QuoteSendModal`, the "Include Quoted BOM" toggle) does NOT enforce the manual-verification
-     send-gate that the standalone Quoted-BOM path enforces. A project flagged
-     `manualVerifyRequired` can therefore ship a traveler/Quoted BOM to the customer via the bundled
-     quote send without the gate ever firing.
-     REFERENCE BEHAVIOR (the gate the bundled path lacks): standalone `handleBomSend`
-     (`src/app.jsx:~32587`) computes `findIncompleteQuoteItems(project).filter(i=>i.isVerificationBlock)`
-     and hard-returns with a "BOM send blocked — N panel(s) require manual verification" alert BEFORE
-     any token creation or email send. The bundled `QuoteSendModal` send function has no equivalent
-     `isVerificationBlock` check — it validates emails + quote-field population (#117 Fix 3c) but never
-     consults the manual-verify gate.
-     IMPACT: a manualVerify-flagged BOM (the exact case the gate exists to stop) can reach a customer
-     through the bundled path. Trust-layer hole — same class of "send a not-yet-verified BOM to the
-     customer" risk the standalone gate was built to prevent.
-     PRE-EXISTING: this gap exists independently of #137 — #137 only added token-doc creation INSIDE
-     the existing `includeTravelerBom` block; it did not add or remove any send-gate. Surfaced during
-     the #137 Phase 1 build review (Marc).
-     NEEDS-COACH: code-path scope before any fix — confirm where the bundled path should call the
-     same verification gate (and whether the block should stop the whole quote send or only strip the
-     Quoted-BOM attachment while letting the plain quote through). Doc-only for now; do NOT fix here.
-     Logged: 2026-06-17 (Marc, #137 Phase 1 build review).
+155. **RESOLVED** [FALSE POSITIVE — no code change, Coach C98/C99 trace] — The bundled quote-send
+     path (`QuoteSendModal`, the "Include Quoted BOM" toggle) was reported as not enforcing the
+     manual-verification send-gate. INVESTIGATION (Coach, 2026-06-17): the gate IS enforced
+     implicitly through the same `findIncompleteQuoteItems(project)` pipeline. Three enforcement
+     points:
+       (1) QUOTE SUMMARY "Send" button: `disabled={_sendBlocked}` (line 35335), where
+           `_sendBlocked = _incompleteItems.length > 0` and `_incompleteItems` includes
+           `isVerificationBlock:true` items from `findIncompleteQuoteItems` (line 15704).
+       (2) QuoteSendModal send buttons: `disabled={sending||sendBlocked}` (lines 32702, 32710),
+           where `sendBlocked = incompleteItems.length > 0` (line 32385).
+       (3) Runtime double-check: `if(sendBlocked){ arcAlert(...); return; }` (line 32390).
+     The bundled path is actually STRICTER than standalone — it blocks on verification + pricing,
+     whereas standalone `handleBomSend` blocks on verification only (line 33016). Marc's note was
+     narrowly true (no explicit `isVerificationBlock` filter in `handleSend`) but the gate is
+     enforced one layer up via `sendBlocked`. The warning banner (line 32682) explicitly surfaces
+     "Send disabled — BOM verification required" when `_hasVerifyBlock` is true.
+     DURABLE RECORD: this trace is preserved so no future session re-flags the same apparent gap.
+     Original logged: 2026-06-17 (Marc, #137 Phase 1 build review).
+     Resolved: 2026-06-17 (Coach, false-positive trace).
+
+## In-Portal BOM Accuracy Confirmation + Verified Access (2026-06-17)
+
+156. **OPEN** [HIGH — feature, absorbs #137 Phase 2] — In-portal BOM accuracy confirmation with
+     verified access. Reframes #137 Phase 2 from quote-approval to BOM-accuracy-confirmation:
+     customer verifies ARC read their drawings correctly (parts, quantities, manufacturers),
+     references the drawing PDF, flags wrong lines. No pricing exposed.
+     ARCHITECTURE: frozen BOM snapshot server-side (`bomApprovalSnapshots/{token}`), CF-mediated
+     view-time fetch (token revalidated every request), signed-URL-via-CF for PDF (5-min, Admin
+     SDK, never stored download URL), email one-time-code domain-allowed verification, per-line
+     response model (flag wrong lines, no global reject verb), DQ3 hard rule (never auto-edit
+     BOM from customer input).
+     BUILDS ON: #137 Phase 1 (token core, rules, send-path wiring — all live). Retires the
+     Phase 1 response-only summary portal (safe — no real customer link ever sent).
+     ABSORBS: #137 Phase 2 scope (CF write-back, bell notification, QUOTE SUMMARY display,
+     Revoke). #137's Phase 2 description should be considered superseded by this ticket.
+     SCOPE: 6 new CFs, 1 new Firestore collection, portal rewrite, 2 ARC modals, QUOTE SUMMARY
+     extension, IAM config for signed URLs. Proposed 3 internal phases (A: server infra,
+     B: portal rewrite, C: ARC surfacing).
+     SUPPLEMENT: `docs/156-SUPPLEMENT.md` (Coach C98) — all Brief assumptions verified, no
+     blocking gaps.
+     SEQUENCING: H-item discipline — Brief (Jon, chat) → Coach Supplement (C98) → Jon approves →
+     Coach Detailed Plan → Jon approves → Marc builds (diff-gated).
+     INTERACTION: #155 (bundled send bypasses manualVerify gate) should be resolved before or
+     alongside #156 — prevents a verified-BOM-accuracy portal showing an unverified BOM.
+     Logged: 2026-06-17 (Jon Brief, Coach C98 Supplement).
+
+## Bundled send: BOM Report PDF uses stale `project` instead of `populated` (2026-06-17)
+
+157. **OPEN** [LOW — pre-existing data-staleness bug] — In `QuoteSendModal.handleSend`, the BOM Report
+     PDF builder at line 32500 (`buildBomReportPdfDoc(bomDoc, project)`) and the traveler BOM PDF at
+     line 32513 (`generateTravelerBomPdf(project)`) use the stale closure `project` instead of the
+     post-BC-sync `populated` object (computed at line 32446 via `ensureQuoteFieldsPopulated`). The
+     Quote PDF correctly uses `populated` (line 32490: `buildQuotePdfDoc(pdfDoc, populated)`), so only
+     the BOM Report and traveler BOM attachments are affected. Impact: if BC sync populates fields that
+     `buildBomReportPdfDoc` or `generateTravelerBomPdf` reference (e.g. payment terms in headers, or
+     BC-populated vendor data on rows), the BOM Report / traveler BOM may show pre-sync values.
+     Low urgency — the delta is typically small (BC sync primarily populates quote-level fields that the
+     BOM Report doesn't display), and the BOM row pricing data is identical on both objects.
+     FIX: change line 32500 to `buildBomReportPdfDoc(bomDoc, populated)` and line 32513 to
+     `generateTravelerBomPdf(populated)`. Single-line each.
+     Surfaced: 2026-06-17 (Coach, #156 send-path investigation). NOT a #156 dependency.
+
+## Region-learning document exceeds Firestore 1MB hard limit (2026-06-17)
+
+158. **OPEN** [HIGH — silent production data-integrity failure] — Region-learning document exceeds
+     Firestore 1MB hard limit; learning silently broken.
+     DISCOVERED: 2026-06-17 during #153 v1.20.140 testing (console, real prod data).
+     `config/region_learning` for company XODxZ8xJc0dQXGZI7jbo exceeds Firestore's 1,048,576-byte
+     per-doc hard limit (observed climbing 1,114,178 → 1,179,954 bytes). Every
+     `saveRegionLearningEntry` / `updateRegionLearningEntry` now fails (also a 400 on the Firestore
+     Write channel). SILENT — `console.warn` caught in `.catch()`, no user indication. HARD CEILING
+     — the doc can never be written again until restructured; every future region capture fails.
+     DEGRADES EXTRACTION ACCURACY — per-company region targeting is frozen at whatever state the doc
+     was in when it crossed 1MB. POSSIBLY related to 3 native-PDF mis-reads Jon saw 2026-06-17
+     (unconfirmed; check together).
+     SUSPECTED ROOT CAUSE: entire region_learning set stored in a SINGLE doc that grows unbounded →
+     inherent 1MB ceiling.
+     FIX DIRECTION: shard region_learning across multiple docs (subcollection per learned region /
+     per template) and/or prune stale entries; make write-failure LOUD not silent. CRITICAL: the
+     existing doc is ALREADY over-limit and frozen — the fix MUST include a migration to split the
+     oversized doc, or this company stays broken even after the code fix.
+     SCOPE REFS: `saveRegionLearningEntry` / `updateRegionLearningEntry` ~line 3298,
+     `_captureRegionForLearning` ~line 4508.
+     PRIORITIZE: silent, active, production, accuracy-affecting.
+     Logged: 2026-06-17 (Jon, observed in console during #153 testing).
