@@ -8104,3 +8104,49 @@ Four-axis deep trace of `src/app.jsx` to verify Brief #153 assumptions:
 20 test criteria (T1-T20) covering: no-regression fresh extraction, revision-drop trigger, `_dvHistory` archive verification, carry-forward completeness (all Tier-1 fields), D1 PN-same/PN-changed rules, NEW accept/reject, DELETED delete/keep, Accept All behavior, gated-commit blocking, Dv bump, cancel behavior, concurrent-save isolation, PREVIOUS VERSIONS modal, labor/ECO/contingency passthrough, duplicate-PN disambiguation, corrected-PN fallback match, and #86 async-ownership.
 
 ---
+
+### C97 — #153 Plan Addendum: Transient Staging + Disambiguation Prompt + Filter Fix (2026-06-17)
+
+**Type:** Plan revision  
+**Status:** COMPLETE — awaiting Jon review  
+**Deliverable:** `docs/153-PLAN-ADDENDUM.md`
+
+---
+
+#### Code-path verification
+
+Traced `runExtractionTask` (line 14036). **Reads pages from passed `panel` argument** (line 14042: `_basePages(panel)`), never from Firestore. Two Firestore `save()` calls at lines 14116 (early-upload) and 14823 (final consolidated) — suppressed in staging mode by overriding `save` with `applyInMemory`. Storage uploads still fire (harmless, needed at commit). Clean answer: transient panel works.
+
+#### Revision 1 — Transient staging (Cancel = clean no-op)
+
+Moved page-persist + archive from drop time to commit time. Flow:
+- Interception fires BEFORE `onSaveImmediate` at line 24117 — pages NOT yet in Firestore
+- Build transient panel (`{...panel, pages: [...newPages, ...ecoPages]}`) passed to `runExtractionTask` with `stagingMode: true`
+- Staging mode suppresses all Firestore writes in the extractor
+- Commit handler does: `archiveDvVersion` (reads current Firestore state) → swap pages + write merged BOM (single `onSaveImmediate`)
+- Cancel discards staging — zero Firestore writes, panel fully intact
+
+Eliminates the broken-Cancel state from C96 entirely. No recovery-warning dialog needed.
+
+#### Revision 2 — Disambiguation prompt
+
+Three-option dialog when files dropped on a BOM'd panel:
+- **"Revise drawings (replace & reconcile)"** → #153 flow
+- **"Add pages (keep current BOM)"** → append pages, save, skip extraction, BOM unchanged
+- **Cancel** → discard pending pages
+
+"Add pages" is a well-defined path: supplementary sheets for reference without disturbing the BOM.
+
+#### Filter fix (build-note bug)
+
+Shared `isPassthrough()` predicate:
+```
+const isPassthrough = r => r.isLaborRow || r.ecoTag || r.isContingency || r.autoLoaded;
+```
+Used with `!` for matchable, directly for passthrough. Eliminates the asymmetric AND/OR gap where a row with exactly one flag would fall through both filters and vanish.
+
+#### Test criteria additions
+
+T14 revised (Cancel verifies zero Firestore writes + panel unchanged). T21 (disambiguation prompt), T22 ("Add pages" keeps BOM intact), T23 (passthrough filter completeness — manually-added contingency row survives).
+
+---
