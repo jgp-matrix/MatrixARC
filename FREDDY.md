@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.130 (defined in `public/index.html`; master at f59b1fb7). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.133 (defined in `public/index.html`; master at f862e49e). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -249,18 +249,27 @@ The misreads on image-based drawings were a **resolution bottleneck in ARC's own
 
 > Strategic thread (how we got here): the goal evolved "get Sales using ARC" → "let Sales produce unsupervised drawing quotes" → built the **trust layer** (#103–#112, #108–#110) so bad extractions can't silently ship → "accuracy is still poor on image drawings" → **H5** traced it to render resolution. Jon's instinct — *"I can read these part numbers fine at high zoom, why can't ARC?"* — drove the resolution finding. The answer: ARC wasn't sending the model the resolution Jon was looking at.
 
+### Shipped This Session (v1.20.131 → v1.20.133)
+- **RYAN orphan-account incident — closed end-to-end.** A newly-active user hit an eternal "Loading Projects" spinner: his profile carried a `companyId` but he had no member doc (orphaned profile), so the boot-time projects read was permission-denied and the spinner never cleared.
+  - **#143 boot-failure handling (v1.20.131)** — RESOLVED. Boot extracted into re-entrant-safe `runBoot()`; try/catch always clears the spinner; inline two-branch surface (`permission-denied` → "contact your administrator", no retry; else → "Couldn't load projects" + Retry); transient codes auto-retry ≤2×. Coach C87.
+  - **#144 removeTeamMember orphan-fix (functions deploy)** — RESOLVED. Removal now atomically clears the profile's `companyId`/`role` (was deleting only the member doc → orphan). `tools/audit-orphans.js` → 0 existing orphans. Coach C88.
+- **#145 SendGrid email restored** — RESOLVED (no code change). The 7-week invite-email failure was an EXPIRED SendGrid account (401), not a bad key. Account reactivated → existing key authenticates → verified `status:"delivered"`. ALL transactional email (invites, supplier quotes, engineer questions, etc.) shares that key and is back.
+- **#95 PRJ402119 PN accuracy** — RESOLVED. H5/600-DPI fixed the glyph-misread root cause; PRJ402119 re-extracted → Jon-confirmed 100%. (See H5 headline above.)
+- **#146 confidence-"C" 3-signal ladder (v1.20.132)** — RESOLVED. The "C" circle was firing on ~every row: a context-blind confusable-glyph regex (matched 20/36 alphanumerics) downgraded ~100% of the model's "high" → "medium". Replaced with a 3-signal ladder — exact-BC → high (authoritative); pdf-native → high *unless* the model itself flagged low/medium; vision → trust the model; regex removed. Display-only (no send-gate interaction). Circle rate **52%→10%** — now a meaningful minority tracking genuine model doubt. Coach C90.
+- **Queue moves:** **#137** Customer Portal (digital Quoted-BOM approval) APPROVED — two-phase build ready (Coach C89, security-first Phase 1 then write-back/surfacing Phase 2). **#149** existing-project exact-BC confidence backfill UNBLOCKED (was gated on #146 core). **#148** reviewUploads permanent-URL flaw downgraded HIGH→LOW (unfinished portal, zero live exposure). **#83** narrowed to fail-visibly-only; **#85** downgraded (both post-H5).
+
 ### Shipped + Verified (v1.20.102 → v1.20.113)
 - **Required-BOM-Region (#103–#112)** — PHASE 1 COMPLETE. Input-tier classifier (text-layer / vector-stroke / bitmap / scan), block-with-override extraction gate, detection summary after import, 0-byte PDF hardening, Cloud Function timeout fix, region-learning + L3 verification wire-up. All verified by Coach (C31–C45).
 - **Sales-path trust layer (#108–#110)** — B1 send-gate, B2 carry-forward, F1 noisy-PN guard, F2 BC-failure toast, F3 print warning, C5 auto-cross freeze, "Mark Verified" action. Lets Sales quote unsupervised without bad data shipping silently. Coach C40–C42.
 - **H5 high-DPI rendering (#120)** — v1.20.112 (tile build) + v1.20.113 (6 Opus call sites → `thinking:{type:"adaptive"}`; Opus 4.7+ rejects the old `enabled`/`budget_tokens` syntax). All 8 Opus sites verified clean. Coach C51 + C52.
 
-### Shipped This Session (v1.20.121 → v1.20.130)
+### Shipped Last Session (v1.20.121 → v1.20.130)
 - **#133 Send Quoted BOM to Customer (v1.20.121–122 + follow-ups)** — RESOLVED. Standalone + bundled send of the existing traveler cover-page BOM (cross column) to the customer for review/approval before PO. Standalone `handleBomSend` (gates on `manualVerifyRequired`, skips quote-field populate, double-send guard); bundled = "Include Quoted BOM" toggle (default OFF). D3 `bomApprovalRequests[]` record (status write-once "sent") is the forward-hook for a future customer portal (#137). Customer-facing renamed **"Traveler BOM" → "Quoted BOM"** via `opts.documentTitle` (C73); production traveler unchanged. Yellow-highlight email explainer line (v1.20.126). Change 4b dropped (dead inline modal #130).
 - **#134 Confidence dots explainer** — RESOLVED (no code). Yellow circles by PNs = AI extraction confidence (amber=medium, red=low; clears on PN edit). Coach C70.
 - **#135 Yellow crossed-PN highlight (v1.20.124)** — RESOLVED. Part # + Original Part # cells filled yellow on crossed rows. SHARED (both docs). C75.
 - **#136 Hide Supplier column on Quoted BOM (v1.20.124)** — RESOLVED. `opts.hideSupplierColumn` (customer doc only); production keeps it. C75.
 - **#138 Cover-page REV → Dv.# | Qv.# split (v1.20.123)** — RESOLVED. Dv.# = `panel.bomVersion`, Qv.# = `project.quoteRev` (via opts). Customer drawing rev stays in the title block. SHARED. C76/C77.
-- **#139 bomVersion seed-gap fix (v1.20.125)** — RESOLVED. Removed the `oldCount===0` gate so legacy panels (rows but no `bomVersion`, pre-v1.19.743) seed to 1 on next save. Root cause: PRJ402096 panel 3 rendered Dv.# "—". Coach C78/C79. **Live confirmation on PRJ402096 panel 3 still OUTSTANDING** (needs a save to that project).
+- **#139 bomVersion seed-gap fix (v1.20.125)** — RESOLVED. Removed the `oldCount===0` gate so legacy panels (rows but no `bomVersion`, pre-v1.19.743) seed to 1 on next save. Root cause: PRJ402096 panel 3 rendered Dv.# "—". Coach C78/C79. Live-confirmed this session — PRJ402096 panel 3 now stamps `bomVersion:1` (Dv.# shows "1").
 - **#141 Confidence "C" indicator relocation (v1.20.127–130)** — RESOLVED. Four iterations. **Transferable lessons:** (1) v1.20.127 matched the WRONG element (the +BC verify pill, not the blue BC circle) — *confirm exactly which on-screen element a "match this" request points at before styling.* (2) The final defect was the C+BC circle pair rendering as OVALS at a 52px-in-56px exact fit — `display:flex` let the children shrink; `flexShrink:0` fixed it. *An exact-fit flex layout has zero tolerance; pin child dimensions.* Live-verified by Jon. Coach C81/C82/C84/C85/C86.
 - **#140 (OPEN, Watch)** / **#142 (TABLED)** — see Open Threads below.
 
