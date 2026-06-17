@@ -1467,6 +1467,8 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     merge behavior. F-1g.1's exactMerges instrumentation will surface this over-merge when it
     happens, making it visible rather than silent.
     Discovered: Coach trace during F-1g.1 plan (2026-06-02).
+    H5 RE-TRIAGE (2026-06-16): NOT addressed by H5 — independent root cause. H5 is a rendering/model
+    fidelity change; it doesn't touch dedup-key logic. Still OPEN as-is.
 
 ## PRJ402119 Extraction Failure (2026-06-02)
 
@@ -1486,6 +1488,9 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     had wrong regions with 0 items and ARC said nothing.
     Design: Freddy scope (modal triggers, wording, actions). Not part of F-1g.1.
     Discovered: PRJ402119 diagnostic (2026-06-02).
+    H5 RE-TRIAGE (2026-06-16): NOT addressed by H5 — independent root cause (missing warning UI, not a
+    fidelity problem). Higher H5 accuracy lowers anomaly frequency but the safety-net surface still
+    doesn't exist. Still OPEN.
 
 82. **RESOLVED** [Verified] — `10fdced5` + `4e31f918` (2026-06-02, functions deployed 2026-06-02T21:49:04Z).
     PDF-native extraction bailing on CropBox pages with `noBomReason:"wrong-page-type"`.
@@ -1507,6 +1512,11 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     confident. Before removing the JPEG path, need data: how often does image-crop fallback
     produce a GOOD BOM vs garbled? Investigation pending.
     Discovered: PRJ402119 diagnostic (2026-06-02).
+    H5 RE-TRIAGE (2026-06-16): SCOPE DOWN to the "fail visibly" half only. H5 (v1.20.112–113) delivered
+    the controlled high-DPI region render this ticket called for — 600-DPI region tiles replacing the
+    lossy 166-DPI JPEG crop — so the fidelity half is DONE. BUT H5 silently falls through to the old
+    PDF-native/crop paths on failure (H5-VERIFICATION-RESULTS.md line 39); the "if it fails, FAIL
+    VISIBLY" requirement is still open. Keep OPEN, narrowed to fail-loud-on-fallback.
 
 84. **OPEN** [Backlog] (MEDIUM) — Extraction drops last row(s) on scanned BOMs + misses companion parts.
     On PRJ402119 Sht 3/6 (13-row BOM), the JPEG+P2 path consistently extracts 13/14 items
@@ -1743,7 +1753,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     Discovered: 2026-06-03 (PRJ402119 Line 1 empty-BOM trace, Coach C23).
     Owner: Coach (C23) → Marc (implemented A+B).
 
-95. **OPEN** [Backlog] (HIGH) — PRJ402119 Line 1 PN accuracy: ground truth SETTLED (2026-06-04).
+95. **RESOLVED** [v1.20.112–113 H5/600-DPI; re-validated on PRJ402119 2026-06-16] — PRJ402119 Line 1 PN accuracy: ground truth SETTLED (2026-06-04).
     Marc read the drawing via browser. Score: **7/13 correct (54%), 6/13 wrong (46%).**
 
     **CONFIRMED ERRORS (against authoritative drawing):**
@@ -1788,6 +1798,13 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     companion symptoms NOT reproduced), #85 (Excel cross-check), C5 (auto-cross corruption).
     Discovered: 2026-06-03 (PRJ402119 Line 1 post-#94 validation). Corrected same day after
     Marc's source comparison revealed ground-truth disputes.
+    RESOLUTION (2026-06-16): H5 region-targeted 600-DPI tiling + Opus 4.8 (v1.20.112–113) fixed the
+    glyph-misread root cause — Hypothesis 1 (image fidelity) CONFIRMED ("the misreads were a DPI
+    problem"). PRJ402119 — the ACTUAL #95 case, not just the PRJ402101 verification project — was
+    re-extracted and Jon confirmed 100% PN accuracy against ground truth. The 54% misread baseline
+    (digit-substitution + phantom-char classes) is resolved. The structural errors (#95 items 8/12/13)
+    are also covered — the slash-split × positional-dedup bug behind them was fixed in #97.
+    Resolved: 2026-06-16.
 
 96. **OPEN** [Backlog] (IDEA) — Windows facilitator app for three-role Claude workflow.
     Currently Jon manually copy-pastes messages between CCD (Marc), Terminal (Coach), and
@@ -1805,6 +1822,10 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     typed part numbers, no glyph-reading required. For customers who provide Excel BOMs
     alongside drawings, cross-check extracted PNs against the spreadsheet and flag mismatches.
     Discovered: PRJ402119 diagnostic — Jon confirmed both candidate PNs resolve in BC (2026-06-02).
+    H5 RE-TRIAGE (2026-06-16): urgency REDUCED (H5 600-DPI cut misreads sharply — 100% on the
+    re-validated cases) but NOT closed. The gap survives any nonzero misread rate: a misread landing on
+    ANOTHER valid PN is invisible to BC lookup — the independent-source (Excel) cross-check is still the
+    only thing that catches it. Keep OPEN, lower priority.
 
 ## Round 18 (extraction pipeline audit, 2026-06-04)
 
@@ -1829,6 +1850,10 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     on D2 sample (PRJ402113, 402100, 402101, 402076, 402092).
     Discovered: 2026-06-04 session — #98 evidence pull showed ARC Cross coverage as primary
     differentiator between good/bad extractions.
+    H5 RE-TRIAGE (2026-06-16): NOT addressed by H5 — if anything, H5's "100%" claim is exactly what
+    #98's measurement framework exists to validate SYSTEMATICALLY. #95 closing on one project's ground
+    truth does NOT mean global extraction accuracy is measured/solved — #98 remains the open rigorous-
+    measurement question (still BLOCKED on ground-truth measurement). Still OPEN.
 
 99. **OPEN** [Backlog] (HIGH) — Model partial-read on long single-column BOMs.
     PRJ402114 (47-item BOM, single column, single page): model returned ONLY items 26-47.
@@ -1840,6 +1865,9 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     The re-extraction path lacks L3 retry/gap-fill (initial path only, L13680-13808). This is the
     root cause of differential completeness between initial and re-extraction.
     Discovered: 2026-06-04 — C28 validation + #99 diagnostic.
+    H5 RE-TRIAGE (2026-06-16): NOT addressed by H5 — independent root cause. This is a COMPLETENESS
+    failure (model stops at end_turn), orthogonal to image fidelity — higher DPI doesn't make the model
+    read more rows. Still OPEN (see #100 interim completeness warning).
 
 100. **OPEN** [Backlog] (MEDIUM) — Completeness guarantee: permanent fix requires text-layer row counting.
      Interim shipped (v1.20.100-101): warn-only completeness flag. PART A: extractionVerification
@@ -1863,6 +1891,9 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      BOM extraction is stable and non-BOM regions are ready to graduate.
      See `ARC-VISION-ESTIMATOR-REVIEW.md`.
      Captured: 2026-06-05, from Jon.
+     H5 RE-TRIAGE (2026-06-16): NOT addressed by H5 — different scope (future multi-region milestone).
+     H5 strengthens the BOM-extraction foundation #101 depends on, but the milestone itself is untouched.
+     Still OPEN.
 
 102. **OPEN** [Backlog] (MEDIUM, Phase 2 ENTRY GATE) — classifyBomInputTier scan/bitmap leak to vector-stroke.
      The classifier checks `q.isMonochrome` but not `q.isScanned`, and uses `imageCount >= 2` for
