@@ -69,6 +69,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-17 (Session 6)** — C98-C99: #156 Supplement (Brief verification) + #155 false-positive closure + #156 Detailed Plan (3 phases, 39 tests). #157 logged (stale-project bug).
 - **2026-06-17 (Session 6, cont.)** — C100: #153 revision-gate structural trace. Gate IS on the executed path (hypothesis refuted). Root cause: all four BOM-detection signals fail simultaneously — the panel prop loses its BOM between addFiles and confirmAndExtract. Three fixes modified the condition but never investigated what strips the inputs. Firestore read (v1.20.138) also fails — likely path or document mismatch. Deliverable: `docs/153-REVISION-GATE-TRACE.md`.
 - **2026-06-17 (Session 6, cont.)** — C101: #153 full flow read. Complete end-to-end audit of revision-drop flow vs C96/C97 plan. All 6 phases match structurally. BUG 1 unpinnable statically (needs runtime trace). BUG 2: silent catch at line 14876 swallows onDone errors. 5 divergences (D1-D5), D1 architectural — gate at confirm not drop — is root cause of both. Recommendation: branch at DROP (Option A). Consolidated fix plan in 4 phases. Deliverable: `docs/153-FULL-FLOW-READ.md`.
+- **2026-06-17 (Session 6, cont.)** — C102: #153 reconciliation cross trace. ReconciliationModal prior column shows pre-crossed (original) PNs instead of Jon's crossed/substituted PNs — would wipe crosses on commit. Static trace of full data flow: cross model (partNumber overwritten), prior source (latestPanelRef.current.bom), match engine (normPart on partNumber), carry-forward (unchanged preserves, pn_changed strips). No code path found that strips crosses — runtime race during drop→extraction→modal window most likely. Design defect found: `applyLearnedCorrections` runs on staging extraction with no stagingMode gate, masking real drawing changes. 4-point diagnostic log plan for CCD. Deliverable: `docs/153-RECON-CROSS-TRACE.md`.
 
 ## Findings
 
@@ -8314,5 +8315,46 @@ Complete end-to-end read of the #153 revision-drop flow (drop → addFiles → g
 4. **5 divergences found (D1-D5):** D1 (architectural — gate at confirm not drop) is root cause of both bugs. D2 (silent catch) masks BUG 2. D3 (pendingNewItemsRef types stale after tagPage). D4 (cosmetic page count). D5 (Signal D path for team projects).
 
 5. **Recommendation: Branch at DROP (Option A).** Move gate upstream to `handleDrawingDrop` before addFiles. Eliminates the async window (BUG 1) and ensures Revise path controls the full pipeline (BUG 2). Consolidated fix plan in 4 phases.
+
+---
+
+### C102 — #153 Reconciliation Cross Trace (2026-06-17)
+
+**Type:** Read-only structural trace (urgent — potential data-loss)
+**Status:** COMPLETE — runtime verification needed
+**Deliverable:** `docs/153-RECON-CROSS-TRACE.md`
+**Builds on:** C100, C101
+
+---
+
+#### Symptom
+
+ReconciliationModal opened (47 unchanged / 4 changed / 3 new / 1 deleted) but the
+"Prior Part#" column shows PRE-CROSSED (original extracted) PNs — not Jon's crossed
+replacements. Committing would carry pre-cross state forward, wiping all crosses.
+Jon cancelled (safe).
+
+#### Key findings
+
+1. **Cross data model confirmed:** `partNumber` is OVERWRITTEN with the replacement;
+   `crossedFrom` stores the original. Both auto-crosses (`applyLearnedCorrections`)
+   and manual crosses (BC Item Browser) use this model.
+
+2. **Prior BOM source confirmed:** `latestPanelRef.current.bom`, deep-copied at modal
+   mount. All examined code paths preserve crosses. No code path found that strips them.
+
+3. **Root cause unpinnable statically:** Most likely a runtime race where something
+   replaces the panel state with a pre-cross BOM during the drop→extraction→modal
+   window.
+
+4. **Design defect found:** `applyLearnedCorrections` at line 14583 runs on the staging
+   extraction with NO `stagingMode` gate. This auto-crosses the new extraction
+   identically to the prior BOM, causing reconcileBom to report "unchanged" for rows
+   where the underlying drawing PN actually changed. **Recommended fix:** gate behind
+   `!cbs.stagingMode`.
+
+5. **4-point diagnostic log plan** provided for CCD (~10 lines of console.log). One
+   reproduction will pin whether crosses are missing from the prior (Candidate A) or
+   masked by double auto-cross (Candidate B).
 
 ---
