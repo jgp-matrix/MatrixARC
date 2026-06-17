@@ -2393,3 +2393,20 @@ reset that surfaced the ground-truth state.
      NO key change, NO redeploy required. All other email paths share the same key so they
      recover too.
      Logged: 2026-06-16.
+
+## Confidence "C" indicator over-firing (2026-06-16)
+
+146. **OPEN** [MEDIUM — investigation first] — Confidence "C" circles render on nearly every BOM
+     line despite extraction now running ~100% accuracy (post-H5 / 600-DPI). The indicator has
+     lost its signal value — if it flags everything, it flags nothing (trust-signal noise). Two
+     candidate root causes to distinguish BEFORE any fix:
+     (a) DISPLAY/THRESHOLD — circles render regardless of confidence, or the threshold is mis-set;
+         the "C" should only surface on lines below some confidence bar.
+     (b) SCORE CALIBRATION — the confidence algorithm assigns low scores to lines that now extract
+         correctly; the scores didn't keep pace with the accuracy gains.
+     FIRST STEP (owner: Coach, read-only): read the circle render condition + how the confidence
+     value is computed/sourced, to determine (a) vs (b) before any fix is designed. Relates to
+     #134 (confidence dots = AI extraction confidence — amber=medium, red=low; clears on PN edit)
+     and #141 (the "C" pill relocated next to the blue BC circle).
+     Priority MEDIUM — trust-signal noise, not a blocker. Brief being drafted by Freddy.
+     Logged: 2026-06-16.
