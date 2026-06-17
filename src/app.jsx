@@ -12068,18 +12068,25 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
       }
     }
   }
-  // Confusable-glyph + enclosure auto-downgrade (mirrors v1.19.975 logic)
-  const _enclosureKw=/(enclosure|cabinet|nema\s*(?:box|enc)|free[\s-]*stand|consolet|jic\s*box|subpanel|back[\s-]?(?:pan|plate)|door\s+ass)/i;
-  const _confusableAny=/[S0O8BIZG6T7HN5DC2QlIL1]/i;
-  for(const it of items){
-    if(String(it.confidence||"").toLowerCase()!=="high")continue;
-    const stripped=String(it.partNumber||"").replace(/[^A-Z0-9]/gi,"");
-    if(!stripped||stripped==="?")continue;
-    const hasConfusable=_confusableAny.test(stripped);
-    const isEnclosure=_enclosureKw.test(String(it.description||""));
-    if(hasConfusable||isEnclosure){
-      it.confidence="medium";
-      it._confDowngradeReason=isEnclosure?"enclosure-row":"contains-confusable-glyph";
+  // #146: confidence priority ladder — REPLACES the v1.19.975 context-blind confusable-glyph +
+  // enclosure auto-downgrade (Coach C90 / docs/146-SUPPLEMENT.md). The old regex matched 20/36
+  // alphanumerics, downgrading ~100% of real part numbers from the model's "high" → "medium" and
+  // drowning the "C" signal. The model already performs a CONTEXT-AWARE confusable-glyph check at
+  // prompt level (~line 11680), so the post-extraction regex was redundant and strictly coarser.
+  //   Rule #2: genuine text-layer ("pdf-native") guarantees the CHARACTERS were read correctly (no
+  //           glyph misread) → promote to "high", but ONLY when the model didn't itself assign
+  //           "low"/"medium". A text layer does NOT guarantee the model UNDERSTOOD the row — a model
+  //           low/medium (garbled text layer, ambiguous PN, unclear structure) is genuine non-glyph
+  //           doubt and is LEFT as-is (circle stays). Never DOWNGRADE on text-layer (that was the
+  //           regex bug); never force-UP over genuine model doubt either.
+  //   Rule #3: vision paths ("hi-dpi-tiles" etc.) carry real misread risk → leave the MODEL's own
+  //           high/medium/low UNTOUCHED, so the circle correctly appears on model-uncertain rows.
+  //   Rule #1 (exact-BC → "high") is applied later in runPricingOnPanel, where the BC-match signal
+  //           (priceSource/bcMatchType) first exists — still authoritative, overrides everything.
+  if(extractionPath==="pdf-native"){
+    for(const it of items){
+      const _c=String(it.confidence||"").toLowerCase();
+      if(_c!=="low"&&_c!=="medium"){ it.confidence="high"; delete it._confDowngradeReason; }
     }
   }
   for(const it of items){
@@ -14888,7 +14895,10 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
               ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
               bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
               bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||"",
-              ...(bcMap[key].bcMatchType?{bcMatchType:bcMap[key].bcMatchType}:{})};
+              ...(bcMap[key].bcMatchType?{bcMatchType:bcMap[key].bcMatchType}:{}),
+              // #146 rule #1: EXACT BC match = authoritative → confidence "high" (fuzzy excluded).
+              // Applied here too (background pricing pass) so the promotion is path-independent.
+              ...(bcMap[key].bcMatchType==="exact"?{confidence:"high"}:{})};
           }
           return r;
         });
@@ -26363,7 +26373,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
                 bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
                 bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||"",
-                ...(bcMap[key].bcMatchType?{bcMatchType:bcMap[key].bcMatchType}:{})};
+                ...(bcMap[key].bcMatchType?{bcMatchType:bcMap[key].bcMatchType}:{}),
+                // #146 rule #1: an EXACT BC match is authoritative ground truth → confidence "high"
+                // (fuzzy deliberately excluded — a fuzzy match can mask a misread, keep its circle).
+                ...(bcMap[key].bcMatchType==="exact"?{confidence:"high"}:{})};
             }
             return r;
           });
