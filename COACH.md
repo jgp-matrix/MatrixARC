@@ -66,6 +66,9 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-16 (Session 5, cont.)** — C84: #141 RE-SPEC — match BLUE "BC" circle (line 28057), not the red/amber pills. Blue circle: 24×24px, borderRadius 50%, fontSize 9, fontWeight 800, blue #2563eb. Lives in dedicated `_bc` column (32px). Placement option: widen `_bc` to 56px for side-by-side. Supersedes C82 sizing+placement; C81 independence unchanged.
 - **2026-06-16 (Session 5, cont.)** — C85: #141 post-deploy code-path verification (v1.20.128). All items PASS. "C" circle matches blue "BC" circle exactly (24×24, 50%, fs 9, fw 800). In `_bc` column widened to 56px. Old dot removed, C82 pill reverted. Verify pills untouched. Independence intact.
 - **2026-06-16 (Session 5, cont.)** — C86: #141 layout fix — right-justify circle pair. Change flex wrapper from `inline-flex`/`center` to `flex`/`flex-end` so BC anchors right (original position) and "C" extends leftward into the extra column width.
+- **2026-06-17 (Session 6)** — C98-C99: #156 Supplement (Brief verification) + #155 false-positive closure + #156 Detailed Plan (3 phases, 39 tests). #157 logged (stale-project bug).
+- **2026-06-17 (Session 6, cont.)** — C100: #153 revision-gate structural trace. Gate IS on the executed path (hypothesis refuted). Root cause: all four BOM-detection signals fail simultaneously — the panel prop loses its BOM between addFiles and confirmAndExtract. Three fixes modified the condition but never investigated what strips the inputs. Firestore read (v1.20.138) also fails — likely path or document mismatch. Deliverable: `docs/153-REVISION-GATE-TRACE.md`.
+- **2026-06-17 (Session 6, cont.)** — C101: #153 full flow read. Complete end-to-end audit of revision-drop flow vs C96/C97 plan. All 6 phases match structurally. BUG 1 unpinnable statically (needs runtime trace). BUG 2: silent catch at line 14876 swallows onDone errors. 5 divergences (D1-D5), D1 architectural — gate at confirm not drop — is root cause of both. Recommendation: branch at DROP (Option A). Consolidated fix plan in 4 phases. Deliverable: `docs/153-FULL-FLOW-READ.md`.
 
 ## Findings
 
@@ -8148,5 +8151,168 @@ Used with `!` for matchable, directly for passthrough. Eliminates the asymmetric
 #### Test criteria additions
 
 T14 revised (Cancel verifies zero Firestore writes + panel unchanged). T21 (disambiguation prompt), T22 ("Add pages" keeps BOM intact), T23 (passthrough filter completeness — manually-added contingency row survives).
+
+---
+
+### C98 — #156 Supplement: In-Portal BOM Accuracy Confirmation + Verified Access (2026-06-17)
+
+**Type:** Codebase verification supplement  
+**Status:** COMPLETE — awaiting Jon review  
+**Deliverable:** `docs/156-SUPPLEMENT.md`  
+**Ticket:** #156 (NEW — absorbs #137 Phase 2)
+
+---
+
+#### Scope
+
+Verifies all Brief assumptions for the BOM accuracy confirmation portal against the live codebase (v1.20.134, #137 Phase 1 deployed). Eight investigation axes:
+
+1. **MFR field** — schema-guaranteed on all extracted rows (line 11748). Can be empty string, never undefined. Labor/contingency rows identifiable by flags.
+2. **Admin SDK signed-URL** — `admin.storage().bucket().file()` pattern exists (line 2425) but `getSignedUrl()` is new. Requires IAM Service Account Token Creator role on default SA.
+3. **Email OTP** — no existing OTP system; entirely new. SendGrid delivery trivial (6+ existing email CFs as pattern). Proposed: SHA-256 hash storage, 10-min expiry, rate-limiting (5/hr per token, 3-strike lockout).
+4. **Send-time snapshot hooks** — both paths (standalone `handleBomSend` line 32637, bundled `QuoteSendModal` line 32011) have clean insertion point between token generation and token doc write. Full `project.panels[].bom` + `panel.pages[].originalPdfPath` in memory. Pre-projects to 4 columns at write time.
+5. **Portal retirement** — `BomApprovalPortalPage` (lines 46818–46939) is the only component replaced. Token doc structure, URL routing, send-path wiring, bar\_ records all kept and extended. Safe: no real customer link was ever sent.
+6. **Per-line response** — data shape: `lineResponses[]` with `{panelId, lineIndex, flagged, comment}`. Status derived from flags (DQ1). Default-accept (DQ2). No auto-edit (DQ3).
+7. **ARC surfacing** — `onBomApprovalResponse` trigger (pattern: `onSupplierQuoteSubmitted`), bar\_ update, bell notification, QUOTE SUMMARY display with status pills, `BomApprovalResponseModal`, expired-unanswered detection.
+8. **Token-only CF auth** — `extractSupplierQuotePricing` (line 988) is exact precedent: `onCall` without `context.auth`, authenticates via token doc lookup.
+
+#### Key finding: PDF storage path available but MUST NOT be exposed
+
+`panel.pages[].originalPdfPath` is accessible at send time and stored in the snapshot doc as a Storage object path (for the CF to locate the file). The **URL** is never exposed to the client — the CF mints a 5-minute signed URL via Admin SDK on each request. This establishes the pattern #148's fix adopts.
+
+#### Gap analysis
+
+13 new components: 6 CFs, 1 Firestore collection, 1 portal rewrite, 2 ARC modals, 1 QUOTE SUMMARY extension, 1 IAM config. No blocking gaps. Pre-existing #155 (bundled send bypasses manualVerify gate) should be resolved before/alongside #156.
+
+#### Phasing recommendation
+
+Phase A (server infra) → Phase B (portal rewrite) → Phase C (ARC surfacing). Each independently deployable.
+
+---
+
+### C99 — #155 False-Positive Closure + #156 Detailed Plan (2026-06-17)
+
+**Type:** Investigation + Detailed Plan  
+**Status:** COMPLETE — awaiting Marc build  
+**Deliverables:** `docs/156-PHASE1-PLAN.md` (Detailed Plan), TODO.md #155 resolved, TODO.md #157 logged
+
+---
+
+#### #155 closure — false positive
+
+Traced the bundled send path (`QuoteSendModal`). The `manualVerifyRequired` gate IS enforced at three independent points:
+1. QUOTE SUMMARY "Send" button disabled via `_sendBlocked` (line 35335)
+2. Modal send buttons disabled via `sendBlocked` (lines 32702, 32710)
+3. Runtime `if(sendBlocked)` check in `handleSend` (line 32390)
+
+`sendBlocked = incompleteItems.length > 0` (line 32385) where `incompleteItems` = `findIncompleteQuoteItems(project)` which pushes `isVerificationBlock:true` for any `manualVerifyRequired` panel (line 15704). Bundled path is actually STRICTER than standalone (blocks on verification + pricing vs. verification-only). Marc's note was narrowly true (no explicit `isVerificationBlock` filter in `handleSend`) but the gate is present one layer up. Marked RESOLVED as false positive with durable trace in TODO.md.
+
+#### #157 logged — stale-project bug in bundled send
+
+Surfaced during send-path investigation: `buildBomReportPdfDoc(bomDoc, project)` at line 32500 and `generateTravelerBomPdf(project)` at line 32513 use stale `project` instead of post-BC-sync `populated`. Low urgency, NOT #156's concern. Logged as #157.
+
+#### #156 Detailed Plan
+
+Three independently deployable phases, 39 test criteria:
+
+**Phase A — Server infrastructure (deploy: functions + rules)**
+- `bomApprovalSnapshots/{token}` collection + create-only rules (A1)
+- `bomApprovals/{token}` rules: no public allow-list expansion needed — all new writes via Admin SDK (A2)
+- 7 new CFs: `sendBomApprovalOtp` (A3), `verifyBomApprovalOtp` (A4), `getBomApprovalSnapshot` (A5), `getBomApprovalPdf` (A6), `submitBomApprovalResponse` (A7), `onBomApprovalResponse` trigger (A8), `revokeBomApproval` (A9)
+- IAM Service Account Token Creator role — **hard pre-deploy gate** (verified via functions:shell before deploy)
+- ~400 new lines in functions/index.js
+
+**Phase B — Portal rewrite + snapshot write (deploy: hosting)**
+- Snapshot write in both send paths (B1a standalone, B1b bundled) — positioned AFTER `sendBlocked` check, so it can never fire on an unverified BOM (#155's gate covers #156 for free)
+- Snapshot filter: excludes labor, contingency, crate, buyoff via `_isBuyoffOrCrate` (line 15621) + `isLaborRow` + `isContingency`
+- `allowedDomains` capture from recipient email at send time (B2)
+- `BomAccuracyPortalPage` replaces `BomApprovalPortalPage` (B3) — OTP flow, CF-mediated data, per-line flagging, PDF viewer
+- `lineResponses` carry `partNumber` + `description` so ARC-side modal is self-describing without snapshot access
+- ~315 new lines in app.jsx
+
+**Phase C — ARC surfacing (deploy: hosting)**
+- QUOTE SUMMARY bar\_ display with status pills (C1)
+- `BomApprovalResponseModal` with flagged-line display, revoke, re-send (C2)
+- Notification deep-link via `handleNotifClick` + `setPendingBomApprovalResponseOpen` (C3)
+- Bell icon update for `bom_approval` type (C4)
+- Expired-unanswered detection (client-side, `sentAt + 14d`)
+- ~200 new lines in app.jsx
+
+**Risks surfaced:** R1 (project path ambiguity — solo vs. team), R2 (bar\_ array rewrite race — recommend transaction), R3 (snapshot cleanup — recommend Firestore TTL), R4 (SendGrid sender for OTP).
+
+**Five analyst review items folded in:**
+1. Crate exclusion from portal snapshot (verified: `_isBuyoffOrCrate` covers it)
+2. PN + description in `lineResponses` (self-describing modal)
+3. Snapshot write after `sendBlocked` (explicit sequencing guarantee)
+4. IAM role as hard pre-deploy gate
+5. #157 logged for stale-project bug (separate from #156)
+
+---
+
+### C100 — #153 Revision-Gate Structural Trace (2026-06-17)
+
+**Type:** Read-only code-path trace
+**Status:** COMPLETE — root cause identified, runtime verification needed
+**Deliverable:** `docs/153-REVISION-GATE-TRACE.md`
+
+---
+
+#### Verdict: gate IS on the executed path
+
+Jon's hypothesis — "the condition probably isn't on the executed path" — is **REFUTED**. The complete call chain is:
+
+```
+handleDrawingDrop (24236)
+  → addFiles (23955): appends pages (24088), AI detects, sets awaitingConfirm
+  → USER clicks Confirm button (27924)
+  → confirmAndExtract (24414): quality gate → revision gate (24534) → extraction (24602)
+```
+
+There is NO alternative path from drop to extraction. `addFiles` does NOT extract, does NOT call `onUpdate`, does NOT call `confirmAndExtract`. The user MUST click Confirm, which MUST call `confirmAndExtract`, which contains the gate.
+
+#### Why three fixes produced zero behavior change
+
+**The condition is correct. The INPUTS are wrong.** All four BOM-detection signals (`_refBomRows`, `_propBomRows`, `_priorDv`, `_persistedHasBom`) fail simultaneously because:
+
+1. **In-memory signals (A/B/C):** `latestPanelRef.current = panel` (line 23920) on every render. If the `panel` prop loses its BOM during the addFiles→confirm window, all three zero out together. The v1.20.138 comment confirms this diagnosis ("BOTH latestPanelRef.current AND the panel prop are stale, no bom AND no bomVersion").
+
+2. **Firestore signal (D):** The v1.20.138 read at line 24519 uses `_appCtx.projectsPath || users/${uid}/projects`. If the path is wrong for a team project, the read returns no document and `_persistedHasBom` stays false.
+
+**Three fixes modified the condition. None investigated what STRIPS the BOM from the panel prop between addFiles and confirmAndExtract.**
+
+#### Recommended next step
+
+Reproduce with console open. The debug log at line 24533 (`[#153 REVISION-GATE]`) dumps every signal value and will immediately reveal which input is wrong. Based on output:
+
+- If `refBomRows=0, propBomRows=0` → add `console.trace` inside parent's `onUpdate` callback (line 34722), filtering for calls where `updatedPanel.bom` is empty/undefined. This catches the caller that strips the BOM.
+- If `persistedReadErr` is populated → log `_appCtx.projectsPath` at read time. Verify it points to the correct Firestore collection.
+- If `newItemsLen=0` → `pendingNewItemsRef` was cleared between addFiles and confirm. Add sentinel logs.
+
+---
+
+### C101 — #153 Full Flow Read: End-to-End Revision Path Audit (2026-06-17)
+
+**Type:** Comprehensive code-path read vs. C96/C97 plan
+**Status:** COMPLETE
+**Deliverable:** `docs/153-FULL-FLOW-READ.md`
+**Builds on:** C100
+
+---
+
+#### Scope
+
+Complete end-to-end read of the #153 revision-drop flow (drop → addFiles → gate → both branches → staging → ReconciliationModal → commit) against the C96/C97 plan. Two confirmed bugs investigated (v1.20.138, project DCeU9GGjJLgB1NP0MJuJ).
+
+#### Key findings
+
+1. **Code structurally matches C96/C97** at all 6 phases (A-F). All specified components exist and are wired correctly.
+
+2. **BUG 1 (gate intermittency):** Cannot be pinned via static analysis. Every examined code path preserves BOM. The `projectRemoteTasks` listener churn creates re-render windows, but the `didInitialFirestoreSyncRef` and `updatedBy!==uid` guards prevent state clobbering. Root cause is timing-dependent — needs runtime `console.trace` in parent onUpdate to catch the exact caller that strips BOM.
+
+3. **BUG 2 (Replace → no modal):** Code is wired correctly per C97. `handleRevisionDrop` IS called (return at 24553 prevents normal path). The "50-page extraction" is a display discrepancy — extraction runs on 25-page transient panel while UI shows 50 from panel prop. Most likely failure: silent `try{...}catch(e){}` at line 14876 swallows onDone errors. Secondary: `_currentProjectId` guard discards result.
+
+4. **5 divergences found (D1-D5):** D1 (architectural — gate at confirm not drop) is root cause of both bugs. D2 (silent catch) masks BUG 2. D3 (pendingNewItemsRef types stale after tagPage). D4 (cosmetic page count). D5 (Signal D path for team projects).
+
+5. **Recommendation: Branch at DROP (Option A).** Move gate upstream to `handleDrawingDrop` before addFiles. Eliminates the async window (BUG 1) and ensures Revise path controls the full pipeline (BUG 2). Consolidated fix plan in 4 phases.
 
 ---
