@@ -379,6 +379,17 @@ service cloud.firestore {
           allow update: if false;
         }
 
+        // #153 Phase A: permanent Drawing-Version archive (NOT FIFO). Written by
+        // archiveDvVersion() before a drawing revision overwrites a panel. Doc id =
+        // the Dv number; .set() is create-or-update (allow write covers both). Read
+        // for any member; write for any company writer. (User-path fallback
+        // users/{uid}/projects/.../_dvHistory is covered by the recursive wildcard
+        // at users/{uid}/{document=**}.)
+        match /_dvHistory/{dvVersion} {
+          allow read: if isMember();
+          allow write: if canWrite();
+        }
+
         // DECISION(v1.19.785): ECO subcollection — append-only audit records of customer-
         // approvable change-orders. Per the ECO plan (docs/superpowers/plans/2026-04-28-
         // change-orders.md):
