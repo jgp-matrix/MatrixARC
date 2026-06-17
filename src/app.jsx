@@ -9059,6 +9059,37 @@ function _mergeQvHistory(projectId,target,serverDoc){
   return merged;
 }
 function _flushQvHistory(projectId){delete _pendingQvHistory[projectId];}
+// #153 Phase A: archive a panel's outgoing Drawing Version (Dv) into the
+// permanent _dvHistory subcollection BEFORE a drawing revision overwrites it.
+// Doc id = the Dv number (natural key, prevents duplicate archives). pageRefs are
+// POINTERS to already-retained Storage files (no duplication; Storage is never
+// deleted). ECO pages excluded (matching _basePages). NOT FIFO — version history
+// is permanent (docs are small, few per project). Carries projectId for #86.
+async function archiveDvVersion(uid,projectId,panel){
+  const dv=panel&&panel.bomVersion||0;
+  if(dv===0)return;
+  const path=(_appCtx.projectsPath||`users/${uid}/projects`)+`/${projectId}/_dvHistory`;
+  const doc={
+    dvVersion:dv,
+    panelId:panel.id,
+    panelName:panel.name||"",
+    createdAt:Date.now(),
+    reason:`Archived before drawing revision (Dv.${dv} → Dv.${dv+1})`,
+    bom:JSON.parse(JSON.stringify(panel.bom||[])),
+    laborData:panel.laborData||null,
+    pageRefs:(panel.pages||[]).filter(p=>!p.ecoId).map(p=>({
+      pageId:p.id,name:p.name||null,storageUrl:p.storageUrl||null,
+      originalPdfPath:p.originalPdfPath||null,pageNumber:p.pageNumber||null,types:p.types||[],
+    })),
+  };
+  await fbDb.collection(path).doc(String(dv)).set(doc);
+}
+// #153 Phase A: load all archived Dv versions for a project, newest first.
+async function loadDvHistory(uid,projectId){
+  const path=(_appCtx.projectsPath||`users/${uid}/projects`)+`/${projectId}/_dvHistory`;
+  const snap=await fbDb.collection(path).orderBy("dvVersion","desc").get();
+  return snap.docs.map(d=>({id:d.id,...d.data()}));
+}
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=false){
   // Skip if panel was deleted
   if(window._deletedPanelIds&&window._deletedPanelIds.has(panelId)){console.log("saveProjectPanel: skipped — panel",panelId,"was deleted");return;}
@@ -14057,7 +14088,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   // final consolidated save at the end (with ALL stage results). Intermediate stages use
   // `applyInMemory()` which only updates the local `latestPanel`. Eliminates all intra-
   // extraction save races.
-  const save=async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));};
+  // #153 (C97): in stagingMode the panel must NOT be persisted until the user
+  // commits the reconciliation. Replace save() with an in-memory accumulator so
+  // BOTH save() call sites (early-upload + final consolidated) become no-ops.
+  // Storage page-image uploads still fire (harmless, cheap, never auto-deleted).
+  const save=cbs.stagingMode
+    ?(p=>{latestPanel=p;})
+    :(async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));});
   const applyInMemory=p=>{latestPanel=p;};
   // Always update immediately so the bar never stays on "Starting extraction…"
   // Calculate phase weights for progress — each phase gets a proportional slice
@@ -14830,9 +14867,13 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     bgError(_bgKey(projectId,panel.id),ex.message.slice(0,60));
     // DECISION(v1.19.644): If extraction fails partway, persist whatever we've accumulated
     // so the user doesn't lose intermediate progress. Otherwise in-memory state is gone.
-    try{await saveProjectPanel(uid,projectId,panel.id,latestPanel).catch(()=>{});}catch(e){}
+    // #153 (C97): suppress the error-path save in stagingMode — a failed staged
+    // extraction must leave zero Firestore writes on the panel doc.
+    if(!cbs.stagingMode){try{await saveProjectPanel(uid,projectId,panel.id,latestPanel).catch(()=>{});}catch(e){}}
   }finally{
-    try{if(onDone)onDone(latestPanel);}catch(e){}
+    // #153 (C97): in stagingMode, hand the extracted BOM to the caller as a 2nd
+    // arg so it routes to staging instead of being read off the (unsaved) panel.
+    try{if(onDone){if(cbs.stagingMode)onDone(latestPanel,latestPanel.bom||[]);else onDone(latestPanel);}}catch(e){}
   }
 }
 
@@ -23043,6 +23084,159 @@ function ScanResultsBanner({panel}){
   );
 }
 
+// ── #153 RECONCILIATION MODAL (drawing-revision review + gated commit) ──
+// currentBom = FULL current BOM (incl. passthrough — buildReconciledBom carries it).
+// stagedExtraction = {items, transientPanel, reason}. onCommit(mergedBom,matchResult,
+// resolutions). onCancel() = clean no-op. Operates on a FROZEN deep copy of
+// currentBom taken at mount — background saves never flow into the working set.
+function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCancel}){
+  const frozenBom=useRef(JSON.parse(JSON.stringify(currentBom||[])));
+  const [matchResult,setMatchResult]=useState(null);
+  const [resolutions,setResolutions]=useState(new Map());
+  useEffect(()=>{
+    const result=reconcileBom(frozenBom.current,(stagedExtraction&&stagedExtraction.items)||[]);
+    setMatchResult(result);
+    const init=new Map();
+    result.unchanged.forEach((_,i)=>init.set(`unchanged:${i}`,"accepted")); // pre-resolved, don't block
+    setResolutions(init);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
+  const setRes=(k,v)=>setResolutions(prev=>{const m=new Map(prev);m.set(k,v);return m;});
+  const unresolved=useMemo(()=>{
+    if(!matchResult)return Infinity;
+    let n=0;
+    matchResult.changed.forEach((_,i)=>{if(!resolutions.get(`changed:${i}`))n++;});
+    matchResult.added.forEach((_,i)=>{if(!resolutions.get(`added:${i}`))n++;});
+    matchResult.deleted.forEach((_,i)=>{if(!resolutions.get(`deleted:${i}`))n++;});
+    return n;
+  },[matchResult,resolutions]);
+  const canCommit=unresolved===0;
+  const acceptAll=()=>{ // CHANGED + NEW only — deletions resolved individually (per Brief)
+    setResolutions(prev=>{
+      const m=new Map(prev);
+      matchResult.changed.forEach((_,i)=>m.set(`changed:${i}`,"accepted"));
+      matchResult.added.forEach((_,i)=>m.set(`added:${i}`,"accepted"));
+      return m;
+    });
+  };
+  const commit=()=>{ if(!canCommit||!matchResult)return; onCommit(buildReconciledBom(matchResult,resolutions,frozenBom.current),matchResult,resolutions); };
+  const cell={padding:"4px 8px",fontSize:12,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"};
+  const hcell={...cell,color:C.muted,fontWeight:700,fontSize:11,textTransform:"uppercase",letterSpacing:0.4,whiteSpace:"nowrap"};
+  const btn=(bg,on)=>({background:on?bg:"transparent",border:`1px solid ${bg}`,color:on?"#fff":bg,borderRadius:6,padding:"3px 10px",fontSize:11,fontWeight:700,cursor:"pointer",marginRight:4});
+  const Row=({k,newPN,newQty,priorPN,priorQty,desc,tone,actions})=>(
+    <tr style={{background:tone||"transparent"}}>
+      <td style={cell}>{newPN||<span style={{color:C.muted}}>—</span>}</td>
+      <td style={{...cell,textAlign:"center"}}>{newQty==null?"—":newQty}</td>
+      <td style={cell}>{priorPN||<span style={{color:C.muted}}>—</span>}</td>
+      <td style={{...cell,textAlign:"center"}}>{priorQty==null?"—":priorQty}</td>
+      <td style={{...cell,maxWidth:280}} title={desc}>{desc||""}</td>
+      <td style={{...cell,whiteSpace:"nowrap"}}>{actions}</td>
+    </tr>
+  );
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:12,width:"96%",maxWidth:1080,maxHeight:"92vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.5),0 12px 48px rgba(0,0,0,0.7)"}}>
+        <div style={{padding:"16px 22px",borderBottom:`1px solid ${C.border}`}}>
+          <div style={{fontSize:16,fontWeight:800,color:C.text}}>Reconcile Drawing Revision — {panel.name||"Panel"}</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:2}}>{(stagedExtraction&&stagedExtraction.reason)||"Drawing revision"} · Review changes against the existing BOM. Edits, pricing and crosses are preserved on matching items.</div>
+        </div>
+        {!matchResult?(
+          <div style={{padding:40,textAlign:"center",color:C.muted}}>Analyzing…</div>
+        ):(
+        <div style={{overflow:"auto",padding:"8px 22px",flex:1}}>
+          {[
+            {key:"changed",label:"Changed",rows:matchResult.changed,tone:"#3a2a00"},
+            {key:"added",label:"New",rows:matchResult.added,tone:"#052e1c"},
+            {key:"deleted",label:"Deleted (in prior, not in new)",rows:matchResult.deleted,tone:"#3b0808"},
+            {key:"unchanged",label:"Unchanged",rows:matchResult.unchanged,tone:"transparent"},
+          ].map(sec=>sec.rows.length===0?null:(
+            <div key={sec.key} style={{marginBottom:14}}>
+              <div style={{fontSize:12,fontWeight:800,color:C.text,margin:"8px 0 4px"}}>{sec.label} ({sec.rows.length})</div>
+              <table style={{width:"100%",borderCollapse:"collapse",tableLayout:"fixed"}}>
+                <thead><tr><th style={hcell}>New Part#</th><th style={{...hcell,width:60,textAlign:"center"}}>New Qty</th><th style={hcell}>Prior Part#</th><th style={{...hcell,width:60,textAlign:"center"}}>Prior Qty</th><th style={hcell}>Description</th><th style={{...hcell,width:200}}>Action</th></tr></thead>
+                <tbody>
+                  {sec.key==="changed"&&sec.rows.map((m,i)=>{const r=resolutions.get(`changed:${i}`);return(
+                    <Row key={i} k={`changed:${i}`} newPN={m.extracted.partNumber} newQty={m.extracted.qty} priorPN={m.prior.partNumber} priorQty={m.prior.qty} desc={(m.reason==="pn_changed"?"PN changed":"Qty changed")+" — "+(m.extracted.description||m.prior.description||"")} tone={sec.tone}
+                      actions={<><span style={{fontSize:10,color:C.yellow,marginRight:6}}>{m.reason==="pn_changed"?"PN changed":"qty"}</span><button style={btn("#16a34a",r==="accepted")} onClick={()=>setRes(`changed:${i}`,"accepted")}>{r==="accepted"?"✓ Accepted":"Accept"}</button></>}/>
+                  );})}
+                  {sec.key==="added"&&sec.rows.map((ext,i)=>{const r=resolutions.get(`added:${i}`);return(
+                    <Row key={i} k={`added:${i}`} newPN={ext.partNumber} newQty={ext.qty} priorPN={null} priorQty={null} desc={ext.description||""} tone={sec.tone}
+                      actions={<><button style={btn("#16a34a",r==="accepted")} onClick={()=>setRes(`added:${i}`,"accepted")}>{r==="accepted"?"✓ Accept":"Accept"}</button><button style={btn("#dc2626",r==="rejected")} onClick={()=>setRes(`added:${i}`,"rejected")}>{r==="rejected"?"✕ Reject":"Reject"}</button></>}/>
+                  );})}
+                  {sec.key==="deleted"&&sec.rows.map((row,i)=>{const r=resolutions.get(`deleted:${i}`);return(
+                    <Row key={i} k={`deleted:${i}`} newPN={null} newQty={null} priorPN={row.partNumber} priorQty={row.qty} desc={row.description||""} tone={sec.tone}
+                      actions={<><button style={btn("#dc2626",r==="deleted")} onClick={()=>setRes(`deleted:${i}`,"deleted")}>{r==="deleted"?"✓ Delete":"Delete"}</button><button style={btn("#38bdf8",r==="kept")} onClick={()=>setRes(`deleted:${i}`,"kept")}>{r==="kept"?"✓ Keep":"Keep"}</button></>}/>
+                  );})}
+                  {sec.key==="unchanged"&&sec.rows.map((m,i)=>(
+                    <Row key={i} k={`unchanged:${i}`} newPN={m.extracted.partNumber} newQty={m.extracted.qty} priorPN={m.prior.partNumber} priorQty={m.prior.qty} desc={m.prior.description||m.extracted.description||""} tone={sec.tone}
+                      actions={<span style={{fontSize:10,color:C.muted}}>carried (edits kept)</span>}/>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+          {matchResult.changed.length===0&&matchResult.added.length===0&&matchResult.deleted.length===0&&matchResult.unchanged.length===0&&(
+            <div style={{padding:30,textAlign:"center",color:C.muted}}>No matchable rows in the new extraction.</div>
+          )}
+        </div>
+        )}
+        <div style={{padding:"14px 22px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:12}}>
+          <button onClick={acceptAll} disabled={!matchResult} style={{background:"transparent",border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Accept All (Changed + New)</button>
+          <div style={{flex:1,fontSize:12,color:canCommit?"#4ade80":C.yellow,fontWeight:700}}>{canCommit?"All rows resolved — ready to commit":`${unresolved} unresolved — resolve all to commit (deletions individually)`}</div>
+          <button onClick={onCancel} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+          <button onClick={commit} disabled={!canCommit} style={{background:canCommit?"#16a34a":"#1f2937",border:"none",color:canCommit?"#fff":"#6b7280",borderRadius:8,padding:"8px 20px",fontSize:13,fontWeight:800,cursor:canCommit?"pointer":"default"}}>Commit Reconciliation</button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+// ── #153 Phase A — PREVIOUS VERSIONS modal (read-only Dv history) ──
+function DvHistoryModal({history,loading,onClose}){
+  const fmt=ts=>{try{return ts?new Date(ts).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}):'';}catch(e){return '';}};
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#0d0d1a",border:`1px solid ${C.purple}`,borderRadius:12,width:"94%",maxWidth:960,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(139,92,246,0.4),0 12px 48px rgba(0,0,0,0.7)"}}>
+        <div style={{padding:"16px 22px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div style={{fontSize:16,fontWeight:800,color:C.text}}>📋 Previous Drawing Versions</div>
+          <button onClick={onClose} style={{background:"transparent",border:"none",color:C.muted,fontSize:20,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{overflow:"auto",padding:"8px 22px",flex:1}}>
+          {loading?<div style={{padding:40,textAlign:"center",color:C.muted}}>Loading…</div>
+          :!history.length?<div style={{padding:40,textAlign:"center",color:C.muted}}>No archived versions yet.</div>
+          :history.map(v=>(
+            <div key={v.id} style={{marginBottom:18,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px"}}>
+              <div style={{fontSize:14,fontWeight:800,color:C.text}}>Dv.{v.dvVersion} <span style={{fontSize:12,fontWeight:500,color:C.muted}}>— archived {fmt(v.createdAt)} — {v.reason||""}</span></div>
+              {(v.pageRefs||[]).length>0&&(
+                <div style={{display:"flex",gap:8,overflowX:"auto",padding:"10px 0"}}>
+                  {(v.pageRefs||[]).map((pg,i)=>(
+                    <div key={i} style={{flex:"0 0 auto",textAlign:"center"}}>
+                      {pg.storageUrl
+                        ?<a href={pg.storageUrl} target="_blank" rel="noopener noreferrer"><img src={pg.storageUrl} alt={pg.name||"page"} style={{height:90,maxWidth:140,objectFit:"cover",borderRadius:6,border:`1px solid ${C.border}`,background:"#fff"}}/></a>
+                        :<div style={{height:90,width:120,display:"flex",alignItems:"center",justifyContent:"center",border:`1px dashed ${C.border}`,borderRadius:6,color:C.muted,fontSize:10}}>{(pg.types||[]).join(",")||"page"}</div>}
+                      <div style={{fontSize:10,color:C.muted,marginTop:2,maxWidth:140,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{pg.name||(pg.originalPdfPath?`PDF p${pg.pageNumber||"?"}`:"page")}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <table style={{width:"100%",borderCollapse:"collapse",marginTop:6}}>
+                <thead><tr>{["Part #","Qty","Description","Mfr","Unit $"].map(h=><th key={h} style={{textAlign:"left",fontSize:10,color:C.muted,textTransform:"uppercase",letterSpacing:0.4,padding:"3px 8px",borderBottom:`1px solid ${C.border}`}}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {(v.bom||[]).filter(r=>!r.isLaborRow).map((r,i)=>(
+                    <tr key={i}><td style={{padding:"3px 8px",fontSize:12,color:C.text}}>{r.partNumber||""}</td><td style={{padding:"3px 8px",fontSize:12,color:C.text}}>{r.qty}</td><td style={{padding:"3px 8px",fontSize:12,color:C.muted,maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.description||""}</td><td style={{padding:"3px 8px",fontSize:12,color:C.muted}}>{r.manufacturer||""}</td><td style={{padding:"3px 8px",fontSize:12,color:C.text}}>{r.unitPrice!=null?`$${r.unitPrice}`:""}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── PANEL CARD (inline workspace) ──
 function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger}){
   const [dragging,setDragging]=useState(false);
@@ -23115,6 +23309,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [detectProgress,setDetectProgress]=useState("");
   const [awaitingConfirm,setAwaitingConfirm]=useState(false);
   const [extractionNotes,setExtractionNotes]=useState(panel.extractionNotes||"");
+  // #153 Drawing-revision reconciliation state
+  const [revisionPrompt,setRevisionPrompt]=useState(null);          // {onChoice,onCancel} for the disambiguation dialog
+  const [reconStagedExtraction,setReconStagedExtraction]=useState(null); // {items, transientPanel, reason}
+  const [showReconciliation,setShowReconciliation]=useState(false);
+  const reconResolveRef=useRef(null);                                // resolves showRevisionPrompt()'s Promise
+  // #153 Phase A — PREVIOUS VERSIONS modal state
+  const [showDvHistory,setShowDvHistory]=useState(false);
+  const [dvHistory,setDvHistory]=useState([]);
+  const [dvHistoryLoading,setDvHistoryLoading]=useState(false);
   const pendingNewItemsRef=useRef([]);
   const pageTypeChangesRef=useRef({});
   const learningExamplesRef=useRef([]);
@@ -24025,6 +24228,138 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");
   }
 
+  // #153 (C97): three-way disambiguation prompt. Resolves "revise" | "add" | "cancel".
+  function showRevisionPrompt(){
+    return new Promise(resolve=>{
+      reconResolveRef.current=resolve;
+      setRevisionPrompt({
+        onChoice:v=>{setRevisionPrompt(null);const r=reconResolveRef.current;reconResolveRef.current=null;if(r)r(v);},
+        onCancel:()=>{setRevisionPrompt(null);const r=reconResolveRef.current;reconResolveRef.current=null;if(r)r("cancel");},
+      });
+    });
+  }
+
+  // #153 (C97): "Revise" path — extract over a TRANSIENT panel (new pages, NOT
+  // persisted to Firestore) in stagingMode, route results to staging, open the
+  // Reconciliation Modal. ZERO Firestore writes happen here — the original panel
+  // (old pages + old BOM) stays untouched until commit. #86: capture projectId,
+  // verify in onDone before touching staging.
+  function handleRevisionDrop(livePages,newItems,notes){
+    const capturedProjectId=projectId;
+    const _reconProjectId=capturedProjectId;
+    const ecoPages=(latestPanelRef.current.pages||[]).filter(p=>p.ecoId);
+    const transientPanel={
+      ...latestPanelRef.current,
+      pages:[...newItems,...ecoPages],          // new base pages + ECO pages preserved (drops old base)
+      ...(notes?{extractionNotes:notes}:{}),
+    };
+    setPendingPages([]);pendingPagesClear(projectId,panel.id);setAwaitingConfirm(false);
+    setExtracting(true);
+    bgUpdate(_bgKey(projectId,panel.id),"Re-extracting revised drawings…");bgSetPct(_bgKey(projectId,panel.id),0,"Re-extracting revised drawings…");
+    runExtractionTask(uid,capturedProjectId,transientPanel,{
+      stagingMode:true,
+      projectName,bcProjectNumber,
+      onDone:(finalTransientPanel,extractedBom)=>{
+        if(_currentProjectId!==_reconProjectId){
+          console.warn("[RECON] project changed during extraction — discarding staged result");
+          setExtracting(false);return;
+        }
+        setExtracting(false);
+        setReconStagedExtraction({items:extractedBom||[],transientPanel:finalTransientPanel,reason:"Drawing revision"});
+        setShowReconciliation(true);
+        bgDone(_bgKey(projectId,panel.id),"Review revision changes");
+      },
+      // #153: own stampFn (mirrors confirmAndExtract's, scoped to the transient panel)
+      stampFn:async(dataUrl,pgIdx,total,ctx)=>{
+        const d=new Date();
+        const mon=['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][d.getMonth()];
+        const scanned=`Scanned ${String(d.getDate()).padStart(2,'0')}-${mon}-${String(d.getFullYear()).slice(2)}`;
+        const rev=quoteRev||0;
+        const dwgV=(latestPanelRef.current||transientPanel)?.bomVersion;
+        const dwgVStr=dwgV!=null?` · Dv.${dwgV}`:"";
+        const stampLabel=rev===0?`AS-QUOTED${dwgVStr} · ${scanned}`:`AS-QUOTED Q-REV ${String(rev).padStart(2,'0')}${dwgVStr} · ${scanned}`;
+        const hazloc=(ctx&&'hazloc' in ctx)?!!ctx.hazloc:!!(transientPanel.hazardousLocation&&transientPanel.hazardousLocation.found);
+        const rightParts=[hazloc?'UL698/1203':null,bcProjectNumber?`${bcProjectNumber} - ${String((idx+1)*100)}`:null,transientPanel.drawingNo,transientPanel.requestedShipDate].filter(Boolean).join(' · ');
+        return burnStampCanvas(dataUrl,{left:stampLabel,center:`${pgIdx+1} of ${total}`,right:rightParts,hazloc});
+      },
+    });
+  }
+
+  // #153 (C97): commit — the ONLY place that touches Firestore in the revise flow.
+  // Archive outgoing Dv → swap pages from the transient panel → write merged BOM
+  // (single onSaveImmediate; Dv auto-bumps in saveProjectPanel) → post-commit
+  // enrichment (NEW + PN-changed rows) → auto-price → qvHistory log.
+  async function handleReconciliationCommit(mergedBom,matchResult,resolutions){
+    const capturedProjectId=projectId;
+    const staged=reconStagedExtraction;
+    if(!staged){setShowReconciliation(false);return;}
+    // STEP 1 — archive outgoing Dv (latestPanelRef still has old pages + old BOM)
+    try{await archiveDvVersion(uid,capturedProjectId,latestPanelRef.current);}
+    catch(e){console.warn("[RECON] dvHistory archive failed:",e.message);}
+    // STEP 2 — committed panel: new pages (carry storageUrls from staging upload) + merged BOM
+    const tp=staged.transientPanel||{};
+    const committed={
+      ...latestPanelRef.current,
+      pages:tp.pages||latestPanelRef.current.pages,
+      bom:mergedBom,
+      updatedAt:Date.now(),
+      laborData:null,validation:null,bomVerification:null,bomAudit:null,
+      extractionReport:tp.extractionReport||null,
+    };
+    // STEP 3 — single atomic write; _bumpBomVersionIfChanged bumps Dv inside saveProjectPanel
+    latestPanelRef.current=committed;
+    onUpdate(committed);
+    try{onSaveImmediate(committed);}catch(e){}
+    // STEP 4 — clean up modal state
+    setShowReconciliation(false);
+    setReconStagedExtraction(null);
+    // STEP 5 — post-commit pipeline: enrich NEW + PN-changed rows, auto-price, qvHistory
+    try{
+      const enrichIds=new Set();
+      (matchResult&&matchResult.added||[]).forEach((ext,i)=>{
+        if(resolutions.get(`added:${i}`)==="accepted"){
+          const np=normPart(ext.partNumber);
+          const row=committed.bom.find(r=>!r.isLaborRow&&normPart(r.partNumber)===np&&r.y_top===ext.y_top);
+          if(row)enrichIds.add(row.id);
+        }
+      });
+      (matchResult&&matchResult.changed||[]).forEach((m,i)=>{if(resolutions.get(`changed:${i}`)==="accepted"&&m.reason==="pn_changed"&&m.prior&&m.prior.id)enrichIds.add(m.prior.id);});
+      if(enrichIds.size>0){
+        const toEnrich=committed.bom.filter(r=>enrichIds.has(r.id));
+        const enriched=await applyLearnedCorrections(toEnrich,uid,{});
+        const emap=new Map((enriched.bom||[]).map(r=>[r.id,r]));
+        const finalBom=committed.bom.map(r=>emap.get(r.id)||r);
+        const enrichedPanel={...latestPanelRef.current,bom:finalBom};
+        latestPanelRef.current=enrichedPanel;onUpdate(enrichedPanel);
+        try{onSaveImmediate(enrichedPanel);}catch(e){}
+      }
+    }catch(e){console.warn("[RECON] post-commit enrichment failed:",e.message);}
+    try{
+      if((latestPanelRef.current.bom||[]).some(r=>!r.isLaborRow&&!r.unitPrice)&&_apiKey){
+        runPricingOnPanel(latestPanelRef.current.bom,latestPanelRef.current,()=>{}).catch(()=>{});
+      }
+    }catch(e){}
+    try{
+      _logQvHistory(capturedProjectId,{
+        type:"reconciliation",panelId:panel.id,panelName:panel.name||"",
+        unchanged:(matchResult&&matchResult.unchanged||[]).length,
+        changed:(matchResult&&matchResult.changed||[]).filter((_,i)=>resolutions.get(`changed:${i}`)==="accepted").length,
+        added:(matchResult&&matchResult.added||[]).filter((_,i)=>resolutions.get(`added:${i}`)==="accepted").length,
+        rejected:(matchResult&&matchResult.added||[]).filter((_,i)=>resolutions.get(`added:${i}`)==="rejected").length,
+        deleted:(matchResult&&matchResult.deleted||[]).filter((_,i)=>resolutions.get(`deleted:${i}`)==="deleted").length,
+        kept:(matchResult&&matchResult.deleted||[]).filter((_,i)=>resolutions.get(`deleted:${i}`)==="kept").length,
+      });
+    }catch(e){}
+  }
+
+  // #153 (C97): cancel — clean no-op. Discard staging, ZERO Firestore writes, panel
+  // intact (old pages + old BOM). No recovery warning needed.
+  function handleReconciliationCancel(){
+    setShowReconciliation(false);
+    setReconStagedExtraction(null);
+    bgDone(_bgKey(projectId,panel.id),"Revision cancelled — BOM unchanged");
+  }
+
   async function confirmAndExtract(){
     setAwaitingConfirm(false);
     eqModalShownRef.current=false;
@@ -24104,6 +24439,33 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const livePages=pendingPages.length>0?pendingPages:(panel.pages||[]);
     const newItems=pendingNewItemsRef.current||[];
     const notes=extractionNotes.trim();
+    // #153 (C97): revision-drop disambiguation. Fires BEFORE any onSaveImmediate —
+    // pages are NOT yet persisted. If the panel already has an extracted BOM and the
+    // user just dropped new pages, ask: Revise (replace+reconcile) / Add pages
+    // (append, keep BOM, no extraction) / Cancel (discard, zero writes).
+    const _hasExistingBom=(latestPanelRef.current.bom||[]).some(r=>!r.isLaborRow&&!r.isContingency);
+    const _droppedNewPages=(newItems||[]).length>0;
+    if(_hasExistingBom&&_droppedNewPages){
+      const _choice=await showRevisionPrompt();
+      if(_choice==="cancel"){
+        // Clean no-op: discard pending pages, panel intact (old pages + old BOM), zero writes.
+        setPendingPages([]);pendingPagesClear(projectId,panel.id);setAwaitingConfirm(false);
+        bgDone(_bgKey(projectId,panel.id),"Cancelled — BOM unchanged");
+        return;
+      }
+      if(_choice==="add"){
+        // D5: append the new pages + save, but SKIP extraction — BOM untouched.
+        const _updAdd={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
+        onUpdate(_updAdd);pendingPagesClear(projectId,panel.id);
+        onSaveImmediate(_updAdd).catch(()=>{});
+        setAwaitingConfirm(false);
+        bgDone(_bgKey(projectId,panel.id),"Pages added — BOM unchanged");
+        return;
+      }
+      // _choice==="revise" → #153 reconciliation flow (transient staging, no Firestore writes)
+      handleRevisionDrop(livePages,newItems,notes);
+      return;
+    }
     const updated={...panel,pages:livePages,...(notes?{extractionNotes:notes}:{})};
     onUpdate(updated);
     // DECISION(v1.19.631): Do NOT eagerly clear pendingPages. The rAF defer (v1.19.627) still
@@ -27185,6 +27547,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               Dv.{panel.bomVersion}
             </span>
           )}
+          {/* #153 Phase A: PREVIOUS VERSIONS — read-only browse of archived Dv history */}
+          {panel.bomVersion>1&&(
+            <button title="Browse prior drawing versions — old drawings + BOM, read-only"
+              onClick={async()=>{
+                if(showDvHistory){setShowDvHistory(false);return;}
+                setDvHistoryLoading(true);setShowDvHistory(true);
+                try{const hist=await loadDvHistory(uid,projectId);setDvHistory(hist);}catch(e){setDvHistory([]);}
+                setDvHistoryLoading(false);
+              }}
+              style={{fontSize:11,fontWeight:700,color:C.purple,background:"rgba(139,92,246,0.10)",border:`1px solid ${C.purple}55`,borderRadius:6,padding:"2px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>
+              📋 Previous Versions
+            </button>
+          )}
           {/* DECISION(v1.19.790): Show Re-Extract whenever ANY page is tagged BOM —
               not only when the panel already has rows. Previously the button was hidden
               when extraction completed with 0 items (e.g. AI mis-tagged the page,
@@ -29402,6 +29777,36 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           )
         ),document.body
       )}
+      {/* #153 (C97): drawing-revision disambiguation prompt — Revise / Add pages / Cancel */}
+      {revisionPrompt&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:10001,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.purple}`,borderRadius:12,padding:"24px 28px",width:"95%",maxWidth:560,boxShadow:"0 0 40px 10px rgba(139,92,246,0.4),0 12px 48px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:16,fontWeight:800,color:C.text,marginBottom:6}}>This panel already has an extracted BOM</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:18}}>What do you want to do with the new drawings?</div>
+            <button onClick={()=>revisionPrompt.onChoice("revise")} style={{display:"block",width:"100%",textAlign:"left",background:"rgba(139,92,246,0.10)",border:`1px solid ${C.purple}`,borderRadius:10,padding:"12px 16px",marginBottom:10,cursor:"pointer",color:C.text}}>
+              <div style={{fontSize:14,fontWeight:800,color:C.purple}}>Revise drawings (replace &amp; reconcile)</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:3,whiteSpace:"normal",lineHeight:1.4}}>Replace the current drawings with the new set. Opens the Reconciliation Modal to review changes against the existing BOM — edits, pricing, and crosses are preserved on matching items.</div>
+            </button>
+            <button onClick={()=>revisionPrompt.onChoice("add")} style={{display:"block",width:"100%",textAlign:"left",background:"rgba(56,189,248,0.10)",border:`1px solid ${C.accent}`,borderRadius:10,padding:"12px 16px",marginBottom:14,cursor:"pointer",color:C.text}}>
+              <div style={{fontSize:14,fontWeight:800,color:C.accent}}>Add pages (keep current BOM)</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:3,whiteSpace:"normal",lineHeight:1.4}}>Append the new pages to the existing drawing set. The current BOM is unchanged — no extraction, no reconciliation. Re-Extract later if you want a full re-extract.</div>
+            </button>
+            <div style={{textAlign:"right"}}>
+              <button onClick={()=>revisionPrompt.onCancel()} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"8px 18px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Cancel</button>
+            </div>
+          </div>
+        </div>,document.body)}
+      {/* #153 Phase E: reconciliation modal (operates on a frozen BOM snapshot) */}
+      {showReconciliation&&reconStagedExtraction&&(
+        <ReconciliationModal
+          currentBom={latestPanelRef.current.bom||[]}
+          stagedExtraction={reconStagedExtraction}
+          panel={latestPanelRef.current}
+          onCommit={handleReconciliationCommit}
+          onCancel={handleReconciliationCancel}/>
+      )}
+      {/* #153 Phase A: previous drawing versions (read-only) */}
+      {showDvHistory&&<DvHistoryModal history={dvHistory} loading={dvHistoryLoading} onClose={()=>setShowDvHistory(false)}/>}
       {priceConfirmPending&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
           onMouseDown={e=>{if(e.target===e.currentTarget){applyBudgetaryPrice();}}}>
@@ -46775,6 +47180,132 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps}){
 // ── PART NUMBER FUZZY MATCHING ──
 // Normalize: remove spaces/dashes/dots, uppercase
 function normPart(s){return(s||'').replace(/[\s\-\.]/g,'').toUpperCase();}
+// #153 Phase B/C: shared passthrough predicate (C97 fix) — EXACT complement of
+// matchable. A row is passthrough (carried unconditionally, never matched) iff it
+// is labor, ECO-tagged, contingency, or auto-loaded. Used with ! for matchable,
+// directly for passthrough — impossible for a row to fall through both.
+function _isReconPassthrough(r){return !!(r&&(r.isLaborRow||r.ecoTag||r.isContingency||r.autoLoaded));}
+
+// #153 Phase B: three-pass drawing-revision reconciliation match engine. PURE —
+// no side effects, no Firestore, no React. currentBom = user's EDITED BOM;
+// newExtraction = raw items from the new drawings. Returns
+// {unchanged:[{prior,extracted}], changed:[{prior,extracted,reason}],
+//  deleted:[prior], added:[extracted], matchLog:[...]}.
+function reconcileBom(currentBom,newExtraction){
+  const matchableCurrent=(currentBom||[]).filter(r=>r&&!_isReconPassthrough(r));
+  const extraction=(newExtraction||[]).filter(Boolean);
+  const unchanged=[],changed=[],matchLog=[];
+  const matchedCur=new Set(),matchedExt=new Set();
+  const descSim=(a,b)=>{
+    a=(a||'').trim().toLowerCase();b=(b||'').trim().toLowerCase();
+    if(!a&&!b)return 1;if(!a||!b)return 0;if(a===b)return 1;
+    const ta=new Set(a.split(/[^a-z0-9]+/).filter(Boolean)),tb=new Set(b.split(/[^a-z0-9]+/).filter(Boolean));
+    if(!ta.size||!tb.size)return 0;
+    let inter=0;ta.forEach(t=>{if(tb.has(t))inter++;});
+    return inter/(ta.size+tb.size-inter);
+  };
+  // Pass 1 — normPN exact, with duplicate-PN disambiguation (positional → itemNo → index order)
+  const curByPN=new Map(),extByPN=new Map();
+  matchableCurrent.forEach(r=>{const np=normPart(r.partNumber);if(!np)return;if(!curByPN.has(np))curByPN.set(np,[]);curByPN.get(np).push(r);});
+  extraction.forEach(it=>{const np=normPart(it.partNumber);if(!np)return;if(!extByPN.has(np))extByPN.set(np,[]);extByPN.get(np).push(it);});
+  const pairGroup=(curArr,extArr)=>{
+    const pairs=[],cl=[...curArr],el=[...extArr];
+    for(let ei=el.length-1;ei>=0;ei--){
+      const ext=el[ei];if(typeof ext.y_top!=='number')continue;
+      let best=-1,bestD=0.05+1e-9;
+      for(let ci=0;ci<cl.length;ci++){
+        const c=cl[ci];
+        if((c.sourcePageIdx??-1)!==(ext.sourcePageIdx??-2))continue;
+        if(typeof c.y_top!=='number')continue;
+        const d=Math.abs(c.y_top-ext.y_top);
+        if(d<=0.05&&d<bestD){bestD=d;best=ci;}
+      }
+      if(best>=0){pairs.push({cur:cl[best],ext});cl.splice(best,1);el.splice(ei,1);}
+    }
+    for(let ei=el.length-1;ei>=0;ei--){
+      const ext=el[ei];const ino=(ext.itemNo||'').toString().trim();if(!ino)continue;
+      const ci=cl.findIndex(c=>(c.itemNo||'').toString().trim()===ino);
+      if(ci>=0){pairs.push({cur:cl[ci],ext});cl.splice(ci,1);el.splice(ei,1);}
+    }
+    while(cl.length&&el.length){pairs.push({cur:cl.shift(),ext:el.shift()});}
+    return pairs;
+  };
+  curByPN.forEach((curArr,np)=>{
+    const extArr=extByPN.get(np);if(!extArr||!extArr.length)return;
+    const pairs=pairGroup(curArr,extArr);
+    const ambiguous=curArr.length>1||extArr.length>1;
+    pairs.forEach(({cur,ext})=>{
+      matchedCur.add(cur);matchedExt.add(ext);
+      if((+cur.qty||0)===(+ext.qty||0)){unchanged.push({prior:cur,extracted:ext});matchLog.push({pass:1,action:ambiguous?'ambiguous':'match',cls:'unchanged',pn:np});}
+      else{changed.push({prior:cur,extracted:ext,reason:'qty'});matchLog.push({pass:1,action:ambiguous?'ambiguous':'match',cls:'changed-qty',pn:np});}
+    });
+  });
+  // Pass 2 — position + description fallback → pn_changed (catches user-corrected PNs)
+  let unmatchedExt=extraction.filter(e=>!matchedExt.has(e));
+  let unmatchedCur=matchableCurrent.filter(r=>!matchedCur.has(r));
+  unmatchedExt.forEach(ext=>{
+    if(typeof ext.y_top!=='number')return;
+    let best=null,bestSim=0.7;
+    unmatchedCur.forEach(cur=>{
+      if(matchedCur.has(cur))return;
+      if((cur.sourcePageIdx??-1)!==(ext.sourcePageIdx??-2))return;
+      if(typeof cur.y_top!=='number')return;
+      if(Math.abs(cur.y_top-ext.y_top)>0.08)return;
+      const sim=descSim(cur.description,ext.description);
+      if(sim>bestSim){bestSim=sim;best=cur;}
+    });
+    if(best){matchedCur.add(best);matchedExt.add(ext);changed.push({prior:best,extracted:ext,reason:'pn_changed'});matchLog.push({pass:2,action:'match',cls:'pn_changed'});unmatchedCur=unmatchedCur.filter(c=>c!==best);}
+  });
+  // Pass 3 — residuals
+  const added=extraction.filter(e=>!matchedExt.has(e));
+  const deleted=matchableCurrent.filter(r=>!matchedCur.has(r));
+  added.forEach(()=>matchLog.push({pass:3,action:'unmatched',cls:'added'}));
+  deleted.forEach(()=>matchLog.push({pass:3,action:'unmatched',cls:'deleted'}));
+  return{unchanged,changed,deleted,added,matchLog};
+}
+
+// #153 Phase C: carry-forward merge. PURE. matchResult = reconcileBom() output;
+// resolutions = Map<"changed:i"|"added:i"|"deleted:i", "accepted"|"rejected"|"deleted"|"kept">;
+// currentBom = full current BOM (incl. passthrough). Spread prior → override
+// extraction-position fields → EXPLICITLY delete the no-carry fields (don't rely
+// on spread alone). PN-changed clears all cross/pricing/BC.
+function buildReconciledBom(matchResult,resolutions,currentBom){
+  const passthroughRows=(currentBom||[]).filter(r=>r&&_isReconPassthrough(r));
+  const NO_CARRY=['confidence','_confDowngradeReason','suspectQty','suspectQtyReason','autoAddedCompanion','companionOfPartNumber','snippetCorrected','additionalPartNumbers'];
+  const carryUnchanged=(prior,ext)=>{
+    const m={...prior,y_top:ext.y_top,y_bottom:ext.y_bottom,x_left:ext.x_left,x_right:ext.x_right,sourcePageIdx:ext.sourcePageIdx,sourcePageId:ext.sourcePageId};
+    NO_CARRY.forEach(f=>delete m[f]);
+    return m;
+  };
+  const carryChangedPnSame=(prior,ext)=>{
+    const m=carryUnchanged(prior,ext);
+    m.qty=ext.qty;
+    if(ext.description&&ext.description!==prior.description)m.description=ext.description;
+    return m;
+  };
+  const carryChangedPnChanged=(prior,ext)=>({
+    id:prior.id,partNumber:ext.partNumber,qty:ext.qty,
+    description:ext.description||prior.description,manufacturer:ext.manufacturer||"",
+    itemNo:ext.itemNo||prior.itemNo,
+    y_top:ext.y_top,y_bottom:ext.y_bottom,x_left:ext.x_left,x_right:ext.x_right,
+    sourcePageIdx:ext.sourcePageIdx,sourcePageId:ext.sourcePageId,
+  });
+  const buildNewRow=ext=>({
+    id:"row-"+Date.now()+"-"+Math.random().toString(36).slice(2,8),
+    partNumber:ext.partNumber,qty:ext.qty||1,description:ext.description||"",
+    manufacturer:ext.manufacturer||"",itemNo:ext.itemNo||"",
+    y_top:ext.y_top,y_bottom:ext.y_bottom,x_left:ext.x_left,x_right:ext.x_right,
+    sourcePageIdx:ext.sourcePageIdx,sourcePageId:ext.sourcePageId,
+  });
+  const unchangedMerged=(matchResult.unchanged||[]).map(p=>carryUnchanged(p.prior,p.extracted));
+  const changedMerged=[];
+  (matchResult.changed||[]).forEach((m,i)=>{if(resolutions.get(`changed:${i}`)==="accepted")changedMerged.push(m.reason==="pn_changed"?carryChangedPnChanged(m.prior,m.extracted):carryChangedPnSame(m.prior,m.extracted));});
+  const acceptedNew=[];
+  (matchResult.added||[]).forEach((ext,i)=>{if(resolutions.get(`added:${i}`)==="accepted")acceptedNew.push(buildNewRow(ext));});
+  const keptDeleted=[];
+  (matchResult.deleted||[]).forEach((r,i)=>{if(resolutions.get(`deleted:${i}`)==="kept")keptDeleted.push(r);});
+  return[...sortBomByDrawingPosition([...unchangedMerged,...changedMerged,...acceptedNew]),...keptDeleted,...passthroughRows];
+}
 function stripMfrPrefix(pn){
   if(!pn)return pn;
   // Known MFR prefixes that suppliers prepend to part numbers
