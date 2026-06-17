@@ -8003,3 +8003,35 @@ Revised §1 to state the correctness model (in-memory re-promotion, not flag) up
 Logged TODO #152 (LOW, pre-existing). Salares was written to Firestore without the user opening it. Adjacent to #86's async-ownership rule — a save path reaching a project that isn't currently active is the inverse of #86's "completion handler writing to the wrong project." Not a #149 regression (#149 adds no save paths). Impact unknown for data beyond confidence. Deferred.
 
 ---
+
+### C94 — #137 Phase 1 Detailed Plan: BOM Approval Token Core + Portal Page (2026-06-17)
+
+**Type:** Implementation plan  
+**Status:** COMPLETE — awaiting Jon approval, then Marc builds (diff-gated)  
+**Deliverable:** `docs/137-PHASE1-PLAN.md`
+
+---
+
+#### Scope
+
+Phase 1 of #137 Customer Portal. Six changes shipping together in one deploy (rules + hosting, no functions):
+
+1. **Firestore rules** — `bomApprovals/{token}` match block with scoped helpers, all 8 security requirements from C89
+2. **Token helper** — `createBomApprovalTokenDoc()`, DRY for both send paths
+3. **Standalone send** — `handleBomSend()` modified: token-doc-before-email ordering, portal link in HTML, token back-ref on bar_
+4. **Bundled send** — QuoteSendModal modified: same ordering, gated on `includeTravelerBom`
+5. **Root routing** — `bomApprovalToken` URL param detection, portal page render without auth
+6. **BomApprovalPortalPage** — new component (~120-150 lines), mirrors SupplierPortalPage pattern but simpler (response-only, no file upload)
+
+#### Key design decisions
+
+- **Token-doc-before-email** is the critical atomicity constraint. If email goes first and token write fails → customer gets dead link with no recovery. Token-first guarantees the link works.
+- **bar_ save is best-effort** (existing pattern). Token doc is authoritative; Phase 2 CF reads from token doc, not bar_.
+- **Phase 1 responses are invisible in ARC.** Customer responses land on the token doc but surface nowhere until Phase 2 ships CF write-back + notification + QUOTE SUMMARY display. Test criteria verify via direct Firestore inspection.
+- **Rules deploy before hosting.** New collection — no existing behavior changes. If hosting deploys first and user sends before rules land, token write gets denied.
+
+#### Test matrix
+
+15 test criteria (P1-T1 through P1-T15) covering: both send paths, email link verification, portal load + summary display, viewed status update, approve/reject/changes_requested flows, post-resolution lockout, expired/revoked token handling, atomicity failure modes (token-fail blocks email, bar_-fail is benign), send-gate independence, and read-count cap.
+
+---
