@@ -9304,6 +9304,34 @@ function migrateProjectShape(p){
       out.lastQuoteHash=null;
     }
   }
+  // #149: Backfill exact-BC confidence for existing projects.
+  // #146 core (v1.20.132) established Rule #1: exact BC match → confidence
+  // "high". Projects priced before v1.20.132 carry stale medium/low confidence
+  // on rows BC already verified. Recompute once, then set the flag
+  // UNCONDITIONALLY (even if zero rows changed) so the scan never re-runs after
+  // the flag persists to Firestore on the next save. Scope is exact-BC ONLY —
+  // fuzzy / no-match / already-high rows are left untouched (Jon-locked,
+  // docs/149-SUPPLEMENT.md §0). Immutable spread: new panel/row objects only
+  // when a row actually changes; unchanged rows keep their original references.
+  if(!out._confidenceRecomputedAt){
+    let _confPromoted=0;
+    out.panels=(out.panels||[]).map(pan=>{
+      if(!pan||!pan.bom||!pan.bom.length)return pan;
+      let changed=false;
+      const bom=pan.bom.map(r=>{
+        if(r&&r.bcMatchType==="exact"&&r.confidence!=="high"){
+          changed=true;_confPromoted++;
+          const nr={...r,confidence:"high"};
+          delete nr._confDowngradeReason;
+          return nr;
+        }
+        return r;
+      });
+      return changed?{...pan,bom}:pan;
+    });
+    if(_confPromoted)console.log(`[CONF BACKFILL] ${out.id||"<unknown>"}: promoted ${_confPromoted} exact-BC row(s) → confidence "high"`);
+    out._confidenceRecomputedAt="v1.20.134";
+  }
   return out;
 }
 async function deleteProject(uid,id){
