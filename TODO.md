@@ -2651,3 +2651,27 @@ reset that surfaced the ground-truth state.
        - Touches the #141 (C84/C86) confidence-circle render block — quick Coach glance for layout +
          the `_bc` cell flex pair, then Marc builds (likely small/diff-gated, may skip full H-item flow).
      Logged: 2026-06-17 (Jon request).
+
+## Bundled quote-send bypasses the manualVerify send-gate (2026-06-17)
+
+155. **OPEN** [HIGH — trust-layer gap, NOT a #137 regression, needs-Coach] — The bundled quote-send
+     path (`QuoteSendModal`, the "Include Quoted BOM" toggle) does NOT enforce the manual-verification
+     send-gate that the standalone Quoted-BOM path enforces. A project flagged
+     `manualVerifyRequired` can therefore ship a traveler/Quoted BOM to the customer via the bundled
+     quote send without the gate ever firing.
+     REFERENCE BEHAVIOR (the gate the bundled path lacks): standalone `handleBomSend`
+     (`src/app.jsx:~32587`) computes `findIncompleteQuoteItems(project).filter(i=>i.isVerificationBlock)`
+     and hard-returns with a "BOM send blocked — N panel(s) require manual verification" alert BEFORE
+     any token creation or email send. The bundled `QuoteSendModal` send function has no equivalent
+     `isVerificationBlock` check — it validates emails + quote-field population (#117 Fix 3c) but never
+     consults the manual-verify gate.
+     IMPACT: a manualVerify-flagged BOM (the exact case the gate exists to stop) can reach a customer
+     through the bundled path. Trust-layer hole — same class of "send a not-yet-verified BOM to the
+     customer" risk the standalone gate was built to prevent.
+     PRE-EXISTING: this gap exists independently of #137 — #137 only added token-doc creation INSIDE
+     the existing `includeTravelerBom` block; it did not add or remove any send-gate. Surfaced during
+     the #137 Phase 1 build review (Marc).
+     NEEDS-COACH: code-path scope before any fix — confirm where the bundled path should call the
+     same verification gate (and whether the block should stop the whole quote send or only strip the
+     Quoted-BOM attachment while letting the plain quote through). Doc-only for now; do NOT fix here.
+     Logged: 2026-06-17 (Marc, #137 Phase 1 build review).
