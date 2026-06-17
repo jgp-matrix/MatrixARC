@@ -8,6 +8,10 @@ Any design decision, analyst review, or scope change produced or relayed during 
 
 Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans, any >50-line content) ALWAYS go to a file + `Start-Process explorer.exe -ArgumentList "/select,<path>"` + a file link for Jon to drag — never pasted into chat. Missed 2026-06-15.
 
+## Supplement Durability
+
+When producing a supplement, Brief response, or any analysis artifact in docs/, commit it to git as part of creating it — do not leave it untracked in the working tree. The reasoning behind a spec must be in version control before the work it informs gets built, so the record survives independent of the working tree or conversation. Write → commit → then open/surface for relay.
+
 ## Session Index
 
 - **2026-05-22 (Session 1)** — Initial onboarding. Read CLAUDE.md, TODO.md, git log. Assessed current architecture and risk posture.
