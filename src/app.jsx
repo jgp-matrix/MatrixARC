@@ -14578,7 +14578,12 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // isCorrection / correctedByLibrary) which the audit's self-healing pass respects — the
     // audit will NOT override user-verified values.
     let learnedLog=[];
-    if(mergedBom.length>0){
+    // #153 (C103 Part 1): in stagingMode the extraction must be RAW (no auto-cross/
+    // correction/library fix) so the reconciliation engine compares what the revised
+    // drawing actually says against the user's worked BOM. Without this gate,
+    // applyLearnedCorrections re-applied the same DB crosses to BOTH sides → every
+    // real diff was masked as "unchanged" (confirmed: staging crossed:16).
+    if(mergedBom.length>0&&!cbs.stagingMode){
       try{
         const learned=await applyLearnedCorrections(mergedBom,uid,{manualVerifyRequired:!!panel._manualVerifyRequired});
         mergedBom=learned.bom;
@@ -23094,9 +23099,6 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
   const [matchResult,setMatchResult]=useState(null);
   const [resolutions,setResolutions]=useState(new Map());
   useEffect(()=>{
-    // #153 TEMP diagnostic (C102 Step 1 — THE CRITICAL ONE): does the frozen prior BOM carry Jon's manual crosses?
-    console.log("[RECON TRACE] frozenBom total:",frozenBom.current.length,"crossed:",frozenBom.current.filter(r=>r.isCrossed).length);
-    console.log("[RECON TRACE] frozenBom crossed rows:",frozenBom.current.filter(r=>r.isCrossed).map(r=>({partNumber:r.partNumber,crossedFrom:r.crossedFrom,isCrossed:r.isCrossed})));
     const result=reconcileBom(frozenBom.current,(stagedExtraction&&stagedExtraction.items)||[]);
     setMatchResult(result);
     const init=new Map();
@@ -24037,7 +24039,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         ||(+(panel.bomVersion||_lp.bomVersion||0)>0);
       if(_hasBomNow){
         const _choice=await showRevisionPrompt();
-        console.log("[#153 REVISION-GATE]",{trigger:"drop",choice:_choice,bomRows:(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length,bomVersion:panel.bomVersion});
         if(_choice==="cancel")return; // discard files — zero processing, zero state changes
         reconIntentRef.current=_choice; // "revise" | "add" — executed in confirmAndExtract after type review
       }else{
@@ -24331,7 +24332,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   function handleRevisionDrop(livePages,newItems,notes){
     const capturedProjectId=projectId;
     const _reconProjectId=capturedProjectId;
-    console.log("[RECON TRACE] handleRevisionDrop entry — crossed in latestPanelRef:",(latestPanelRef.current.bom||[]).filter(r=>r.isCrossed).length,"total:",(latestPanelRef.current.bom||[]).length); // #153 TEMP diagnostic (C102 Step 3)
     const ecoPages=(latestPanelRef.current.pages||[]).filter(p=>p.ecoId);
     const transientPanel={
       ...latestPanelRef.current,
@@ -24346,7 +24346,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       stagingMode:true,
       projectName,bcProjectNumber,
       onDone:(finalTransientPanel,extractedBom)=>{
-        console.log("[RECON TRACE] staging extraction done — extractedBom crossed:",(extractedBom||[]).filter(r=>r.isCrossed).length,"total:",(extractedBom||[]).length); // #153 TEMP diagnostic (C102 Step 4 — Candidate B check)
         if(_currentProjectId!==_reconProjectId){
           console.warn("[RECON] project changed during extraction — discarding staged result");
           setExtracting(false);setReviseStagingPageCount(null);return;
@@ -29894,7 +29893,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>
         </div>,document.body)}
       {/* #153 Phase E: reconciliation modal (operates on a frozen BOM snapshot) */}
-      {showReconciliation&&reconStagedExtraction&&(console.log("[RECON TRACE] latestPanelRef.current.bom at render — crossed:",(latestPanelRef.current.bom||[]).filter(r=>r.isCrossed).length,"total:",(latestPanelRef.current.bom||[]).length), /* #153 TEMP diagnostic (C102 Step 2) */
+      {showReconciliation&&reconStagedExtraction&&(
         <ReconciliationModal
           currentBom={latestPanelRef.current.bom||[]}
           stagedExtraction={reconStagedExtraction}
@@ -47327,11 +47326,35 @@ function reconcileBom(currentBom,newExtraction){
     while(cl.length&&el.length){pairs.push({cur:cl.shift(),ext:el.shift()});}
     return pairs;
   };
+  // #153 (C103 Part 2): cross-aware pre-pass. A crossed prior row has partNumber=
+  // replacement (the user's cross) and crossedFrom=original drawing PN. With Part 1
+  // the staging extraction is RAW (original PNs), so match crossed prior rows by
+  // crossedFrom against the extraction's partNumber — same underlying part; the cross
+  // is user work that carryUnchanged preserves. Runs BEFORE Pass 1 so crossed rows are
+  // claimed before the partNumber-based pass can mis-match them.
+  const _crossByOrig=new Map();
+  matchableCurrent.forEach(r=>{
+    if(!r.isCrossed||!r.crossedFrom)return;
+    const np=normPart(r.crossedFrom);if(!np)return;
+    if(!_crossByOrig.has(np))_crossByOrig.set(np,[]);
+    _crossByOrig.get(np).push(r);
+  });
+  _crossByOrig.forEach((curArr,np)=>{
+    const extArr=extByPN.get(np);if(!extArr||!extArr.length)return;
+    const pairs=pairGroup(curArr,extArr);
+    pairs.forEach(({cur,ext})=>{
+      if(matchedCur.has(cur)||matchedExt.has(ext))return;
+      matchedCur.add(cur);matchedExt.add(ext);
+      if((+cur.qty||0)===(+ext.qty||0)){unchanged.push({prior:cur,extracted:ext});matchLog.push({pass:'cross',action:'cross-match',cls:'unchanged',pn:np});}
+      else{changed.push({prior:cur,extracted:ext,reason:'qty'});matchLog.push({pass:'cross',action:'cross-match',cls:'changed-qty',pn:np});}
+    });
+  });
   curByPN.forEach((curArr,np)=>{
     const extArr=extByPN.get(np);if(!extArr||!extArr.length)return;
     const pairs=pairGroup(curArr,extArr);
     const ambiguous=curArr.length>1||extArr.length>1;
     pairs.forEach(({cur,ext})=>{
+      if(matchedCur.has(cur)||matchedExt.has(ext))return; // #153 (C103): skip rows already claimed by the cross pre-pass
       matchedCur.add(cur);matchedExt.add(ext);
       if((+cur.qty||0)===(+ext.qty||0)){unchanged.push({prior:cur,extracted:ext});matchLog.push({pass:1,action:ambiguous?'ambiguous':'match',cls:'unchanged',pn:np});}
       else{changed.push({prior:cur,extracted:ext,reason:'qty'});matchLog.push({pass:1,action:ambiguous?'ambiguous':'match',cls:'changed-qty',pn:np});}
