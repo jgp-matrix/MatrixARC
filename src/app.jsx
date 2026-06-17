@@ -24228,6 +24228,57 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setProcessing(false);setProcessingMsg("");setDetecting(false);setDetectProgress("");
   }
 
+  // #153 fix: shared file-drop handler for the drawings strip. Extracted from the
+  // "+" drop-zone tile so the ENTIRE strip (including on top of existing drawing
+  // thumbnails) is a drop target — previously only the "+" tile had drop handlers,
+  // so dropping a PDF on the existing drawings hit the browser default (opened the
+  // PDF) and never reached addFiles → confirmAndExtract → the revision prompt.
+  function handleDrawingDrop(e){
+    e.preventDefault();setDragging(false);
+    if(awaitingConfirm)return;
+    // DECISION(v1.19.585): Outlook drags put attachments in dataTransfer.items (kind:'file'),
+    // not dataTransfer.files. Collect from BOTH sources synchronously before the event ends.
+    const files=[];
+    if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
+    if(files.length===0&&e.dataTransfer.items){
+      for(const item of Array.from(e.dataTransfer.items)){
+        if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}
+      }
+    }
+    if(files.length>0){addFiles(files);return;}
+    // DECISION(v1.19.588): Outlook drags use the Office.js drag protocol — no file, just a
+    // JSON descriptor. Try to fetch the actual bytes via Graph using the app's MSAL token.
+    try{
+      const outlookItem=Array.from(e.dataTransfer.items||[]).find(i=>i.kind==='string'&&i.type==='attachment');
+      if(outlookItem){
+        setErr("Fetching attachment from Outlook…");
+        outlookItem.getAsString(async(s)=>{
+          try{
+            const result=await fetchOutlookAttachment(s);
+            if(result.ok){setErr("");addFiles([result.file]);return;}
+            const n=result.attachmentName||"the attachment";
+            const saveHint=`Save it to your Desktop first (right-click → Save As), then drag from File Explorer — or click the drop zone to browse.`;
+            let msg;
+            switch(result.reason){
+              case"no-graph-token":msg=`To drag ${n} directly from Outlook, open Settings and sign in with Microsoft first. In the meantime: ${saveHint}`;break;
+              case"not-found":msg=`Couldn't find "${n}" in your Outlook mailbox — it may be in a very old email that's out of search range. ${saveHint}`;break;
+              case"search-failed":msg=`Outlook search returned status ${result.status}. ${saveHint}`;break;
+              case"download-failed":msg=`Couldn't download "${n}" from Outlook (status ${result.status}). ${saveHint}`;break;
+              case"parse-failed":case"no-attachment":msg=`Couldn't read the Outlook attachment info. ${saveHint}`;break;
+              case"fetch-error":msg=`Error fetching from Outlook: ${result.error}. ${saveHint}`;break;
+              default:msg=`Couldn't fetch "${n}" from Outlook. ${saveHint}`;
+            }
+            setErr(msg);
+          }catch(fetchErr){
+            setErr(`Failed to process Outlook drop: ${fetchErr.message||fetchErr}. Save it to your Desktop first, then drag from File Explorer.`);
+          }
+        });
+        return;
+      }
+    }catch(dropErr){console.warn("Outlook drop detection failed:",dropErr);}
+    setErr("Couldn't read that attachment. If it's from Outlook or another email app, save it to your Desktop first, then drag it from File Explorer — or click the drop zone to browse.");
+  }
+
   // #153 (C97): three-way disambiguation prompt. Resolves "revise" | "add" | "cancel".
   function showRevisionPrompt(){
     return new Promise(resolve=>{
@@ -24443,8 +24494,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // pages are NOT yet persisted. If the panel already has an extracted BOM and the
     // user just dropped new pages, ask: Revise (replace+reconcile) / Add pages
     // (append, keep BOM, no extraction) / Cancel (discard, zero writes).
-    const _hasExistingBom=(latestPanelRef.current.bom||[]).some(r=>!r.isLaborRow&&!r.isContingency);
+    // ROBUST detection (v1.20.137 fix): the original gate read ONLY
+    // latestPanelRef.current.bom, which could be empty at confirm time (stale ref
+    // after a re-render/reload during the drop→confirm window) even when the panel
+    // has a committed BOM — so isRevisionDrop fell through to the pre-#153 append-
+    // and-re-extract path. Now treat the panel as BOM'd if a non-passthrough BOM
+    // row exists on EITHER the ref OR the prop, OR a prior Drawing Version was
+    // assigned (bomVersion>0 ⇒ a BOM was extracted at least once, persists reloads).
+    const _refPanel=latestPanelRef.current||{};
+    const _refBomRows=(_refPanel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length;
+    const _propBomRows=((panel&&panel.bom)||[]).filter(r=>!r.isLaborRow&&!r.isContingency).length;
+    const _priorDv=(+(_refPanel.bomVersion||(panel&&panel.bomVersion)||0))>0;
+    const _hasExistingBom=_refBomRows>0||_propBomRows>0||_priorDv;
     const _droppedNewPages=(newItems||[]).length>0;
+    console.log("[#153 REVISION-GATE]",{hasExistingBom:_hasExistingBom,droppedNewPages:_droppedNewPages,refBomRows:_refBomRows,propBomRows:_propBomRows,priorDv:_priorDv,bomVersion:_refPanel.bomVersion,newItemsLen:(newItems||[]).length});
     if(_hasExistingBom&&_droppedNewPages){
       const _choice=await showRevisionPrompt();
       if(_choice==="cancel"){
@@ -27609,8 +27672,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
         </div>
 
-        {/* Thumbnail strip + drop tile */}
-        <div style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:6,alignItems:"flex-start"}}>
+        {/* Thumbnail strip + drop tile — #153 fix: the WHOLE strip is a file-drop
+            target (incl. on top of existing drawings), not just the "+" tile. */}
+        <div
+          onDragOver={!readOnly?(e=>{e.preventDefault();setDragging(true);}):undefined}
+          onDragLeave={!readOnly?(()=>setDragging(false)):undefined}
+          onDrop={!readOnly?handleDrawingDrop:undefined}
+          style={{display:"flex",gap:12,overflowX:"auto",paddingBottom:6,alignItems:"flex-start"}}>
           {(()=>{
             const extracted=["extracted","validated","costed","quoted"].includes(panel.status);
             const statusLabel=panel.status==="quoted"||panel.status==="costed"?"QUOTE":panel.status==="validated"?"VALIDATED":panel.status==="extracted"?"EXTRACTED":"DRAFT";
@@ -27715,6 +27783,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               onDragOver={e=>{e.preventDefault();setDragging(true);}}
               onDragLeave={()=>setDragging(false)}
               onDrop={e=>{
+                e.stopPropagation();// #153 fix: tile handles its own drop; don't double-fire via the strip container's onDrop
                 e.preventDefault();setDragging(false);
                 if(awaitingConfirm)return;
                 // DECISION(v1.19.585): Outlook drags put attachments in dataTransfer.items (kind:'file'),
