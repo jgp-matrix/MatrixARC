@@ -439,12 +439,13 @@ Coach maintains this document. Marc can update it if Coach delegates.
 v1.20.133 (deployed 2026-06-16). Confidence-"C" 3-signal ladder (#146) + RYAN orphan-account incident chain (#143 boot-failure handling, #144 removeTeamMember orphan-fix) + SendGrid email restored (#145) + #95 closure. Stable, live-verified.
 
 ## Deploy State
-- Master tip: f862e49e ("Release v1.20.133")
+- Master tip: 73b31e4d ("TODO #151 (LOW): duplicated BC-apply logic — maintenance hazard") — doc-only commit, no code change, no version bump after the v1.20.133 release stamp
 - Local master == origin/master (synced)
 - Latest tag: v1.20.133
 - v1.20.133 is a close-out version stamp (no code change since v1.20.132 — the #146 ladder shipped in v1.20.132). #144 shipped via `firebase deploy --only functions` (no client version bump).
 
 ## Recent Commits (last 15)
+- 73b31e4d TODO #151 (LOW): duplicated BC-apply logic — maintenance hazard
 - f862e49e Release v1.20.133
 - 3f724417 docs: SendGrid sender-review invite-email sample (HTML + rendered PNG)
 - 9cf2d630 TODO #148: re-rank HIGH -> LOW (latent flaw, zero live exposure)
@@ -491,6 +492,7 @@ Replaced the v1.19.975 context-blind confusable-glyph regex (matched 20/36 alpha
 - **#83** narrowed to "fail-visibly-on-fallback" only (H5 delivered the high-DPI render half).
 - **#85** downgraded (H5 cut misreads; independent-source cross-check gap remains).
 - **#148** reviewUploads getDownloadURL() permanent-URL flaw — LOW (downgraded: unfinished portal, zero live exposure; fix as part of portal redesign with signed-URL-via-CF, not a standalone patch).
+- **#151** Duplicated BC-apply logic — LOW maintenance hazard (logged 2026-06-16 post-close-out; doc-only entry, no fix scheduled).
 
 ## Parked Backlog
 - #80 (feedback dedup key), #81 (anomaly-detection warning), #98 (foundational accuracy measurement — NOT addressed by H5; remains the rigorous-measurement question), #99 (long single-column completeness), #101 (Estimator's-Eye milestone), #128 (Drawing Reference band), #142 (red "+BC" pill redundancy — Coach), #129 (usage telemetry, needs Brief).
@@ -499,8 +501,8 @@ Replaced the v1.19.975 context-blind confusable-glyph regex (matched 20/36 alpha
 - **T9** Claude-in-Chrome MCP can't navigate to non-prod / file:// origins. Workaround: render via puppeteer-core + system Chrome, or `tests/extraction-baseline/h5-headless.js`.
 
 ## Open TODOs
-~76 OPEN findings in TODO.md.
+~77 OPEN findings in TODO.md.
 
 ## Working Tree
-- Branch: master (up to date with origin/master at f862e49e)
+- Branch: master (up to date with origin/master at 73b31e4d)
 - Clean
