@@ -7760,3 +7760,180 @@ When "C" is absent (high confidence): BC alone (24px), right-aligned. BC sits at
 One-line change, no new elements, no width adjustment. Marc applies directly.
 
 ---
+
+### C87 — #143 Boot-Failure Handling: Coach Supplement (2026-06-16)
+
+**Type:** Architectural supplement (read-only analysis, no code changes)  
+**Status:** COMPLETE — delivered to `docs/143-SUPPLEMENT.md`  
+**TODO assignment:** #143
+
+---
+
+#### Context
+
+Freddy's Brief #143 identified two-layer root cause of RYAN's eternal spinner: (1) `loadProjects` has no try/catch — only uncaught Firestore read in the boot chain, (2) `removeTeamMember` orphans the profile doc. Brief asked Coach to answer five architectural questions before CCD builds.
+
+#### Supplement Decisions
+
+| Q | Question | Decision |
+|---|---|---|
+| Q1 | Error-branch granularity | Two branches: `permission-denied` (contact admin, no retry) vs everything else (retry button). Matches existing `e?.code === "permission-denied"` pattern at lines 39290, 40494. |
+| Q2 | Retry mechanism | Full boot retry via extracted `runBoot()` function. Partial retry risks stale config from silently-failed loaders in the Promise.all. Cap at 2 auto-retries for transient; manual Retry after that. |
+| Q3 | #143/#144 boundary | #143 = catch + branch + clear flag (safety net for ALL boot failures). #144 = fix `removeTeamMember` symmetry (root-cause elimination). #143 stays load-bearing even after #144 ships. |
+| Q4 | Observability | `console.error` only. Debug log system writes to company path requiring `isMember()` — the misprovisioned user IS the failure case and can't write to it. Defer Firestore logging to #129. |
+| Q5 | Modal vs inline | Inline, replacing spinner in same content area (line 42145). Follows `connStatus` indicator pattern (line 46034). No modal — don't block toolbar for transient errors. |
+
+#### Key Technical Evidence
+
+- `loadProjects` (line 9207): sole uncaught read — no try/catch, bare `await`
+- Boot IIFE (line 45583+): no top-level try/catch; `setLoading(false)` at line 45682 is the ONLY call site
+- All 5 config loaders in the Promise.all have internal try/catch (return defaults on failure — safe but silently degraded)
+- `connStatus` inline pattern (line 46034): existing precedent for inline error/status display
+
+#### Deliverable
+
+Full supplement at `docs/143-SUPPLEMENT.md`.
+
+---
+
+### C88 — #144 removeTeamMember Orphan Cleanup: Coach Supplement (2026-06-16)
+
+**Type:** Architectural supplement (read-only analysis, no code changes)  
+**Status:** COMPLETE — delivered to `docs/144-SUPPLEMENT.md`  
+**TODO assignment:** #144
+
+---
+
+#### Context
+
+Freddy's Brief #144 — companion to #143. #143 catches the fall (boot-failure handling); #144 prevents the push (fix `removeTeamMember` to clear profile on removal). Core fork: delete the profile doc (Option A) vs null the companyId (Option B).
+
+#### Profile Read Audit — Complete Codebase Sweep
+
+Audited all 11 read sites across `app.jsx` (6 sites) and `functions/index.js` (5 sites). **Zero sites assume "profile exists implies companyId present."** Every consumer uses optional chaining (`profile?.companyId`) or truthiness gates (`if (companyId) {...}`). A profile with null/absent companyId cleanly falls to the personal/solo path in every case.
+
+#### Supplement Decisions
+
+| Q | Question | Decision |
+|---|---|---|
+| Q1 | Clear vs neutralize | Option B — `FieldValue.delete()` on companyId + role, with `set({merge:true})`. Preserves firstName. All 11 read sites are null-safe. |
+| Q2 | Atomicity | Yes — batch both writes (member delete + profile field clear). Mirrors `acceptTeamInvite` batch symmetry. |
+| Q3 | Re-invite from clean state | Confirmed safe — `acceptTeamInvite` uses `{merge:true}`, sets companyId+role, preserves firstName. |
+| Q4 | Existing orphans | Cannot query Firestore from this session. Recommended: Marc writes `tools/audit-orphans.js` (read-only count). Jon decides on sweep. |
+| Q5 | reset-user.js relationship | No conflict. Script is full delete (superset); #144 is surgical field clear. Complementary tools. |
+| Boot self-heal | Recommend NO — keep boot read-only. #143 handles symptom; #144 closes creation path. |
+
+#### The Build
+
+One change to `removeTeamMember` (functions/index.js line 531): replace the single `delete()` with a two-operation batch (member delete + profile field clear via `FieldValue.delete()` + `set({merge:true})`). No other files change. 4 lines replace 1 line. Diff-gated per CLAUDE.md.
+
+#### Deliverable
+
+Full supplement at `docs/144-SUPPLEMENT.md`.
+
+---
+
+### C89 — #137 Customer Portal: Coach Supplement (2026-06-16)
+
+**Type:** Architectural supplement (read-only analysis, no code changes)  
+**Status:** COMPLETE — delivered to `docs/137-SUPPLEMENT.md`  
+**TODO assignment:** #137
+
+---
+
+#### Context
+
+Freddy's Brief #137 — Customer Portal for digital Quoted BOM approval. Builds on #133's `bomApprovalRequests[]` hook. Seven design questions + eight security requirements. The gating question (Jon-directed, answer first): how does `generateTravelerBomPdf` output reach the customer's browser?
+
+#### Gating Answer: No Storage URL Exists
+
+`generateTravelerBomPdf` (app.jsx:7576) is 100% client-side jsPDF. Returns base64. Sent as inline email attachment via Graph API. No Firebase Storage upload, no URL. **Zero standing exposure.**
+
+Recommendation: **response-only portal** for v1. Customer already has the PDF from the email. Portal shows summary + action buttons (Approve/Reject/Request Changes). No document served through the portal. Document-in-portal viewing parked as upgrade (would require Storage upload + CF-gated signed URLs).
+
+#### Side Finding
+
+Engineering review portal (`reviewUploads`, line 29119) embeds `getDownloadURL()` Storage URLs in the token doc — these contain permanent, unrevokable access tokens. A leaked review link exposes drawings independent of token expiry. Separate security concern, not #137 scope.
+
+#### Supplement Decisions
+
+| Q | Question | Decision |
+|---|---|---|
+| ★ Q6 Security | Document delivery | Response-only portal; no document; zero leak risk |
+| Q1 | Token model | New `bomApprovals/{token}` collection; 128-bit crypto token; 14-day expiry |
+| Q2 | Status lifecycle | pending → viewed → approved / rejected / changes_requested; comments required for reject |
+| Q3 | Write-back | CF trigger `onBomApprovalResponse` patches matching bar_ record; append-only |
+| Q4 | Quote-rev | Record stale approval flag; don't auto-invalidate tokens |
+| Q5 | Identity | Token-only; all 8 security requirements addressed (revocation, post-resolution lockout, access audit, etc.) |
+| Q6 | ARC surfacing | Bell notification (type: bom_approval) + QUOTE SUMMARY section |
+| Q7 | Partial approval | All-or-nothing per request v1; partial parked for v2 |
+
+#### Staging
+
+Two build phases within the same ticket: Phase 1 (token core + portal page + security rules), Phase 2 (CF trigger + write-back + notification + QUOTE SUMMARY surface).
+
+#### Deliverable
+
+Full supplement at `docs/137-SUPPLEMENT.md`.
+
+---
+
+### C90 — #146 Confidence Circle Over-Display: Diagnostic (2026-06-16)
+
+**Type:** Read-only diagnostic (no code changes, no fix proposed)  
+**Status:** COMPLETE — delivered to `docs/146-SUPPLEMENT.md`  
+**TODO assignment:** #146
+
+---
+
+#### Determination: (a) — Display/Threshold Problem
+
+The confidence scores from the AI model are correct. The over-display is caused by a post-extraction auto-downgrade regex at line 12073 that catches virtually every real part number.
+
+#### Root Cause
+
+`_confusableAny = /[S0O8BIZG6T7HN5DC2QlIL1]/i` matches any part number containing ANY of 20 out of 36 alphanumeric characters (7 of 10 digits, 13 of 26 letters). Every real electrical part number contains at least one. The regex overrides the model's correct "high" confidence → "medium", and the render condition at line 28055 shows the circle for "medium".
+
+The model already checks for confusable glyphs IN CONTEXT (per the prompt at line 11680–11691). The regex re-checks CONTEXT-BLIND — if the character "1" appears anywhere, downgrade. This double-gate was a v1.19.975 safety net for lower-accuracy extraction; it never updated for H5/600-DPI gains.
+
+#### Trust Layer
+
+Confidence circle is cosmetic (informational only). `manualVerifyRequired` is the send gate. Independent systems — fixing the circle does not affect the BOM send gate.
+
+#### Fix Location
+
+Line 12071–12083 (the auto-downgrade block). Render condition at line 28055 is correct. Fix depends on Jon's decision about what signal the circle should carry — awaiting review.
+
+#### Deliverable
+
+Full diagnostic at `docs/146-SUPPLEMENT.md`.
+
+---
+
+### C91 — #146 Follow-Up: Pipeline Signal Availability (2026-06-16)
+
+**Type:** Read-only investigation (no code changes)  
+**Status:** COMPLETE — delivered to `docs/146-FOLLOWUP-Q1Q2.md`  
+**TODO assignment:** #146
+
+---
+
+#### Q1 — BC Match Ordering
+
+`runPricingOnPanel` (line 26225) runs during extraction and identifies BC matches — sets `priceSource:"bc"`, `bcMatchType`, pricing fields. But it does NOT set `confidence`. The BC match data is available at extraction time; confidence just isn't wired to it. No pipeline reordering needed to implement Jon's rule #1 ("BC-matched → high") — only a confidence write at the existing BC-match point.
+
+`applyLearnedCorrections` (line 14511) DOES set confidence to "high" but only for previously-saved user alternates, not first-time BC catalog matches.
+
+#### Q2 — Text-Layer Signal Availability
+
+`classifyBomInputTier` (line 15174) uses pdf.js `getTextContent()` to count actual text characters in the PDF's text layer. Scanned images wrapped in PDFs return 0 chars → correctly classified as `"scan"`/`"bitmap"`, NOT `"text-layer"`. The distinction is genuine text layer vs interpreted from pixels — exactly what Jon asked about.
+
+The `extractionPath` value (`"pdf-native"` for text-layer, `"hi-dpi-tiles"` for vision) is a parameter to `_parseAndVerifyBomRaw` — the same function containing the confusable regex at line 12073. The signal is in scope at the confidence assignment point; it's just not read.
+
+Persisted: panel-level and per-page in `panel.extractionReport`. Not per-item, but cross-referenceable via `item.sourcePageId` → `perPageOutcomes[].pageId`.
+
+#### Deliverable
+
+Full report at `docs/146-FOLLOWUP-Q1Q2.md`.
+
+---
