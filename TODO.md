@@ -2233,7 +2233,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## Customer Portal — Quoted BOM Approval Workflow (2026-06-16)
 
-137. **OPEN** [Backlog, needs Brief] — Customer Portal: digital Quoted BOM approval with
+137. **APPROVED — ready to build (two-phase; do NOT start yet)** [Coach C89 / docs/137-SUPPLEMENT.md] — Customer Portal: digital Quoted BOM approval with
      change-request workflow. When the customer portal is built, Quoted BOM approvals (#133)
      route through it instead of email-only. Customers can review the BOM digitally, enter
      any items they wish to change or substitute, and submit changes back to ARC. Matrix
@@ -2244,6 +2244,21 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
      D3 record (#133) as the persistence layer; the `status:"sent"` field becomes a state
      machine (sent → reviewed → approved/changed). Prerequisite: customer portal
      infrastructure (no portal exists today — Brief §2/§8).
+     APPROVED 2026-06-16 (Coach C89 / docs/137-SUPPLEMENT.md is the spec). Build is two-phase
+     WITHIN this ticket; logged approved-and-ready — do NOT start building yet.
+     Gating resolved: `generateTravelerBomPdf` is 100% client-side (jsPDF → base64 → Graph email
+     attachment) — there is NO Firebase Storage URL for the BOM doc, and the portal is
+     RESPONSE-ONLY (serves no document). Zero IP-leak risk.
+     PHASE 1 (security-first): `bomApprovals/{token}` Firestore rules (all 8 security reqs); token
+     creation at send (standalone + bundled); portal link in the email body; `BomApprovalPortalPage`
+     (response-only); Root URL-param detection.
+     PHASE 2: `onBomApprovalResponse` CF trigger; append-only write-back into `bomApprovalRequests[]`;
+     bell notification (type `bom_approval`) + deep-link; QUOTE SUMMARY section; Revoke Link action;
+     quote-rev stale-approval warning.
+     REFINEMENT (fold into Phase 2 surfacing): handle the "expired-unanswered" state explicitly — if a
+     token's 14-day `expiresAt` passes with no customer response, QUOTE SUMMARY must show it as a
+     distinct "expired, unanswered" state (prompting re-send), NOT let the request go silent/invisible.
+     Token-only access, hardened per all 8 security requirements. Diff-gated (customer-facing + IP exposure).
      Logged: 2026-06-16.
 
 ## Cover-page data box: Dv.# + Qv.# split (2026-06-16)
@@ -2422,4 +2437,20 @@ reset that surfaced the ground-truth state.
      #134 (confidence dots = AI extraction confidence — amber=medium, red=low; clears on PN edit)
      and #141 (the "C" pill relocated next to the blue BC circle).
      Priority MEDIUM — trust-signal noise, not a blocker. Brief being drafted by Freddy.
+     Logged: 2026-06-16.
+
+## reviewUploads permanent Storage-URL exposure (2026-06-16)
+
+148. **OPEN** [HIGH — investigation first; TOP OF QUEUE, next session's FIRST task] — `reviewUploads`
+     engineering-review portal embeds PERMANENT, unrevokable Firebase Storage download URLs for
+     drawing pages directly in the token doc (`drawingPages: pageUrls`, ~`app.jsx:29119`), generated
+     via `getDownloadURL()`. Those URLs carry permanent access tokens — a leaked review-portal link
+     exposes the actual drawing images FOREVER, independent of the token's `expiresAt`. This is a LIVE
+     production data-exposure of engineering drawings (likely customer IP). Surfaced by Coach during
+     the #137 trace (C89 side finding).
+     FIRST STEP (owner: Coach, read-only — before ANY fix): trace exactly what `reviewUploads` exposes,
+     how the drawing URLs are generated/stored, how widely review-portal links are shared, and what the
+     safe replacement is (short-lived SIGNED URL via Admin SDK behind a token-validating CF — NOT
+     `getDownloadURL()`). Determine the scope of exposure before designing a fix.
+     Priority HIGH — ranks ABOVE #146 (which stays MEDIUM). Diff-gated (customer-facing + IP exposure).
      Logged: 2026-06-16.
