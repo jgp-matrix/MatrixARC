@@ -8035,3 +8035,33 @@ Phase 1 of #137 Customer Portal. Six changes shipping together in one deploy (ru
 15 test criteria (P1-T1 through P1-T15) covering: both send paths, email link verification, portal load + summary display, viewed status update, approve/reject/changes_requested flows, post-resolution lockout, expired/revoked token handling, atomicity failure modes (token-fail blocks email, bar_-fail is benign), send-gate independence, and read-count cap.
 
 ---
+
+### C95 — #153 Supplement: Drawing-Revision Re-Extract + BOM Reconciliation (2026-06-17)
+
+**Type:** Codebase verification supplement  
+**Status:** COMPLETE  
+**Deliverable:** `docs/153-SUPPLEMENT.md`
+
+---
+
+#### Investigation scope
+
+Four-axis deep trace of `src/app.jsx` to verify Brief #153 assumptions:
+
+1. **Retention Guarantee** — complete inventory of ~67 edit-work fields across 20 categories on BOM rows. Verified achievable by carrying prior-row objects forward on match (spread-then-override pattern), not by preserving through re-extraction. Current `runExtraction()` (line 24770) replaces `panel.bom` wholesale — all enrichment destroyed.
+
+2. **Existing Re-Extract path** — `runExtraction()` at line 24770. Snapshots BOM before overwrite (line 24781), clears derived data, extracts, replaces BOM entirely. `addFiles()` (line 23752) appends pages (doesn't replace). #153 builds a new flow that intercepts after extraction but before BOM replacement.
+
+3. **Dv/bomVersion machinery** — `_bumpBomVersionIfChanged()` (line 8661) auto-bumps on PN/Qty hash change via `_computeDvBomHash()` (line 8646). Works as-is for reconciliation commits. **Gap identified**: existing `_snapshots` subcollection (line 9008) stores BOM only (no page refs, 10-cap FIFO). New `_dvHistory` subcollection needed for version-indexed archive with drawing page references.
+
+4. **Match-key mechanism** — three-pass algorithm: normPN (line 46777) primary → position+description fallback → unmatched residuals. ECO diff (line 16837) is prior art but operates on per-PN aggregates, not individual rows — needs adaptation. Documented 8 failure modes with mitigations.
+
+#### Key findings
+
+- **Retention is achievable** but requires explicit field-by-field carry-forward logic (~15 fields to carry, ~10 to take from new extraction, ~5 to clear conditionally per D1).
+- **ECO diff at line 16837** is direct prior art — same `normPart()` normalizer, same add/modify/remove classification. But wrong granularity (sums qty across duplicate PNs) and wrong interaction model (checkboxes vs gated commit).
+- **New `_dvHistory` subcollection recommended** over extending `_snapshots` — different retention policy (permanent vs FIFO-10), different schema (includes `pageRefs`).
+- **Labor, ECO, and contingency rows** must be excluded from matching and carried through unconditionally.
+- **Confidence fields should NOT be carried** — fresh extraction produces fresh confidence, and #146/#149 re-promotion handles exact-BC rows on load.
+
+---
