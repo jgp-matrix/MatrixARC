@@ -41856,7 +41856,7 @@ function ReportsModal({uid,onClose}){
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRetry,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnlyLocal,setMyProjectsOnlyLocal]=useState(false);
   const myProjectsOnly=myProjectsOnlyProp!=null?myProjectsOnlyProp:myProjectsOnlyLocal;
@@ -42142,10 +42142,23 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         </div>
       </div>}
 
-      {loading&&(
+      {loading&&!bootError&&(
         <div style={{textAlign:"center",padding:80,color:C.muted}}>
           <div className="spin" style={{fontSize:24,marginBottom:12}}>◌</div>
           <div>Loading projects…</div>
+        </div>
+      )}
+
+      {/* #143: boot-failure inline surface — third state alongside the spinner and the empty "No projects" state */}
+      {bootError&&(
+        <div style={{textAlign:"center",padding:80,color:C.muted}}>
+          <div style={{fontSize:40,marginBottom:12,opacity:0.85}}>⚠</div>
+          {bootError.code==="permission-denied"?(
+            <div style={{fontSize:14,color:C.sub,maxWidth:420,margin:"0 auto",lineHeight:1.6}}>You don't have access to this company's projects. Contact your administrator.</div>
+          ):(<>
+            <div style={{fontSize:14,color:C.sub,marginBottom:16}}>Couldn't load projects.</div>
+            <button onClick={onRetry} style={btn(C.accent,"#fff")}>Retry</button>
+          </>)}
         </div>
       )}
 
@@ -42177,7 +42190,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,onOpen,onNew,on
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         return(<>
-          {!loading&&myProjects.length===0&&transferred.length===0&&(
+          {!loading&&!bootError&&myProjects.length===0&&transferred.length===0&&(
             <div style={{textAlign:"center",padding:80,color:C.muted}}>
               <div style={{fontSize:52,marginBottom:16,opacity:0.2}}>⬡</div>
               <div style={{fontSize:18,fontWeight:700,color:C.sub,marginBottom:8}}>No projects yet</div>
@@ -44975,6 +44988,8 @@ function DebugLogsModal({onClose,companyId,uid}){
 function App({user}){
   const [projects,setProjects]=useState([]);
   const [loading,setLoading]=useState(true);
+  const [bootError,setBootError]=useState(null); // #143: boot-failure surface — {code,message} or null
+  const bootAttemptRef=useRef(0); // #143: auto-retry counter for transient boot failures
   const [view,setView]=useState("dashboard");
   const [navTab,setNavTab]=useState("projects");
   const [navPinned,setNavPinned]=useState(true);
@@ -45580,8 +45595,17 @@ INSTRUCTIONS:
     return()=>cancelAnimationFrame(raf);
   },[]);
 
-  useEffect(()=>{
-    (async()=>{
+  // #143: boot sequence extracted into a named, re-entrant-safe function so it can be
+  // retried (auto for transient errors; manual via the Dashboard Retry button) without
+  // stacking the member onSnapshot listener or running on stale state.
+  async function runBoot(user){
+    // Re-entrancy: tear down any existing member listener BEFORE (re)subscribing, and
+    // reset the state a retry must not inherit. Spinner goes back up for this attempt.
+    try{ window._arcPermsUnsub?.(); }catch(_e){}
+    if(typeof window!=="undefined") window._arcPermsUnsub=null;
+    _appCtx.companyId=null; _appCtx.role=null;
+    setCompanyId(null); setUserRole(null); setBootError(null); setLoading(true);
+    try{
       _appCtx.uid=user.uid;
       const profile=await loadUserProfile(user.uid);
       if(profile?.companyId){
@@ -45679,6 +45703,7 @@ INSTRUCTIONS:
       // DECISION(v1.19.405): Don't log any API key content — security risk.
       console.log("API key loaded:",_apiKey?"YES":"NO — set in Settings");
       setProjects(await loadProjects(user.uid));
+      bootAttemptRef.current=0; // #143: clean boot → reset auto-retry counter
       setLoading(false);
       // Auto-connect BC silently in background
       if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
@@ -45705,7 +45730,24 @@ INSTRUCTIONS:
           console.log("Members cached:",window._arcMembersCache.length,"members");
         }).catch(e=>{console.warn("Members cache load failed:",e&&e.message);});
       }
-    })();
+    }catch(e){
+      // #143: never let the spinner hang. Log, then auto-retry transient errors (capped)
+      // or surface the failure inline. permission-denied is never auto-retried (the user's
+      // membership state won't change on retry — they need an admin).
+      console.error("[ARC boot]", e?.code||"unknown", e?.message||e);
+      const code=e?.code||"unknown";
+      if(code!=="permission-denied" && bootAttemptRef.current<2){
+        bootAttemptRef.current++;
+        setTimeout(()=>runBoot(user), 2000); // bounded retry (≤2); spinner stays up, not a hang
+        return;
+      }
+      setBootError({code, message:e?.message});
+      setLoading(false);
+    }
+  }
+  useEffect(()=>{
+    bootAttemptRef.current=0; // fresh user → reset retry counter
+    runBoot(user);
   },[user.uid]);
 
   // DECISION(v1.19.415): Version update push notification — listens to Firestore _system/version doc.
@@ -46202,9 +46244,9 @@ INSTRUCTIONS:
             renderDashboardFor(tabId) = (navTab===tabId && !renderProjectView)
           projectOriginTab tracks where the project was opened from; the back/return
           labels in the tab strip key off the same value. */}
-      {navTab==="production"&&!(view==="project"&&(projectOriginTab||"projects")==="production")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
-      {navTab==="purchasing"&&!(view==="project"&&(projectOriginTab||"projects")==="purchasing")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
-      {navTab==="engineering"&&!(view==="project"&&(projectOriginTab||"projects")==="engineering")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
+      {navTab==="production"&&!(view==="project"&&(projectOriginTab||"projects")==="production")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
+      {navTab==="purchasing"&&!(view==="project"&&(projectOriginTab||"projects")==="purchasing")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
+      {navTab==="engineering"&&!(view==="project"&&(projectOriginTab||"projects")==="engineering")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
@@ -46238,7 +46280,7 @@ INSTRUCTIONS:
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly}/>
         </>
       )}
       {/* ProjectView render moved out of the navTab==="projects" block (v1.19.787) so the
