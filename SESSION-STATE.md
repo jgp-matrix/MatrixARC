@@ -1,73 +1,67 @@
-# Session State — 2026-06-16 MDT
+# Session State — 2026-06-17 MDT
 
 ## Version
-v1.20.133 (deployed 2026-06-16). Confidence-"C" 3-signal ladder (#146) + RYAN orphan-account incident chain (#143 boot-failure handling, #144 removeTeamMember orphan-fix) + SendGrid email restored (#145) + #95 closure. Stable, live-verified.
+v1.20.142 (deployed 2026-06-17). #153 Drawing-Revision Re-Extract + BOM Reconciliation now working end-to-end (Option A entry gate + C103 cross-aware reconciliation), plus #160 Reconciliation Reject/Keep-Prior with a latent silent-drop data-loss fix. Live-verified through the cross-masking fix; #160 awaiting Jon's T1–T8.
 
 ## Deploy State
-- Master tip: 73b31e4d ("TODO #151 (LOW): duplicated BC-apply logic — maintenance hazard") — doc-only commit, no code change, no version bump after the v1.20.133 release stamp
-- Local master == origin/master (synced)
-- Latest tag: v1.20.133
-- v1.20.133 is a close-out version stamp (no code change since v1.20.132 — the #146 ladder shipped in v1.20.132). #144 shipped via `firebase deploy --only functions` (no client version bump).
+- Master tip: 37527cdb ("Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)") — doc-only TODO commit after the v1.20.142 release stamp, no code change, no version bump
+- Local master == origin/master (synced at 37527cdb)
+- Latest tag: v1.20.142
+- v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live; the only post-deploy commit is the #163 TODO log (non-deployable).
 
 ## Recent Commits (last 15)
-- 73b31e4d TODO #151 (LOW): duplicated BC-apply logic — maintenance hazard
-- f862e49e Release v1.20.133
-- 3f724417 docs: SendGrid sender-review invite-email sample (HTML + rendered PNG)
-- 9cf2d630 TODO #148: re-rank HIGH -> LOW (latent flaw, zero live exposure)
-- 14241a89 #146 RESOLVED — confusable-glyph over-downgrade replaced with 3-signal confidence ladder (v1.20.132)
-- 86521d03 Release v1.20.132
-- 2ca981da COACH.md: add supplement-durability convention (commit specs at creation)
-- ec3dbd03 Coach supplements + COACH.md: #143/#144/#146/#137 specs (durable record)
-- 36c1515d TODO #149 (MEDIUM): backfill stale confidence "C" circles on existing projects
-- 50fc9fc3 TODO: #95 RESOLVED (H5/600-DPI, re-validated on PRJ402119) + H5 re-triage notes
-- 15a088ca TODO: #137 APPROVED (two-phase, ready) + add #148 HIGH (reviewUploads URL exposure)
-- d6595614 #144: removeTeamMember clears orphaning profile fields atomically
-- e648e853 Add tools/audit-orphans.js — read-only orphaned-profile audit (#144 Q4)
-- 6de46f05 TODO #146 (MEDIUM): confidence "C" circles over-firing — investigation first
-- dde26d92 #143 RESOLVED — boot-failure handling shipped (v1.20.131)
-- b361d20e Release v1.20.131
+- 37527cdb Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)
+- 987bbdb3 Log #161 (BOM-region tip timing) and #162 (monthly counter reset) to TODO
+- 0a3c7121 Release v1.20.142
+- 218c5c1f C105: #160 Reconciliation reject/keep-prior scope for changed rows
+- d0dcd6f2 C104: #159 Copy-to-New-Quote customer selection scope
+- f3e83a4f Release v1.20.141
+- 9d83efb7 C103: #153 cross-aware reconciliation fix plan — two-part fix finalized
+- eb810ba3 Log #158: region-learning doc exceeds Firestore 1MB limit (silent prod failure)
+- ba919deb Release v1.20.140
+- 2c244a79 C102: #153 reconciliation cross trace — prior BOM shows pre-crossed PNs
+- 1853ce5e Release v1.20.139
+- 19316090 Append entry-point correction to #156 plan (C99)
+- 223b8461 C101: #153 full flow read — end-to-end revision path audit
+- 282c12c0 docs: stub 153-FULL-FLOW-READ.md for compaction durability
 
-## Headline: RYAN orphan-account incident closed end-to-end + confidence-"C" ladder shipped
-Diagnosed and fixed the RYAN eternal-spinner (orphaned profile: companyId set, no member doc). #143 makes boot fail gracefully; #144 closes the orphan-creation path. Restored all transactional email (#145, SendGrid account reactivation — no code change). Closed #95 (H5 fixed the glyph-misread root cause, re-validated on PRJ402119). Replaced the over-firing confidence-"C" regex with a 3-signal ladder (#146). 9 releases referenced; key client releases v1.20.131 (#143), v1.20.132 (#146); #144 functions-only.
+## Headline: #153 revision reconciliation works end-to-end + #160 silent-drop data-loss closed
+The drawing-revision re-extract flow (#153) is now functional through its two hardest defects: the entry gate (was firing in a stale async window — fixed structurally via Option A, gate at drop with a fresh panel prop) and the cross-masking bug (the reconciliation modal compared raw PNs on both sides, so a crossed prior would have been carried forward pre-cross on commit, wiping the user's substitutions — fixed via C103's two-part fix). On top of that, #160 added Reject/Keep-Prior to the Changed bucket and, in doing so, closed a latent silent-drop bug where a non-accepted Changed row vanished from the output BOM.
 
-## Shipped This Session — RESOLVED
+## Shipped This Session — RESOLVED / LIVE
 
-### #143 Boot-failure handling (v1.20.131) — RESOLVED
-Extracted the boot IIFE into re-entrant-safe `runBoot(user)` (tears down member onSnapshot before re-subscribe, resets state). try/catch: `setLoading(false)` on every terminal path; `console.error("[ARC boot]",…)`; two-branch INLINE Dashboard surface — `permission-denied` → "contact administrator" (no Retry) vs other → "Couldn't load projects" + Retry; transient codes auto-retry ≤2× (2s), manual Retry resets the budget. Live-verified happy path + permission-denied discriminator; error-render branches inspection-confirmed (no re-orphaning). Coach C87.
+### #153 Option A entry gate (v1.20.139) — SHIPPED, T5/T6 confirmed
+Revision gate moved from `confirmAndExtract` (async-window staleness was the root cause of 4 failed gate patches, v1.20.136–138) to drop time — top of `addFiles`, against the fresh panel prop. Decision stored in `reconIntentRef`; `confirmAndExtract` is a pure intent-router (reads only `reconIntentRef`, NO BOM re-evaluation in the confirm window — verified). Also: un-silenced the `runExtractionTask` onDone catch (line ~14876, KEEP permanently); `tagPage` syncs `pendingNewItemsRef` so type review survives; D4 staging page count. Coach C101. T5 (gate fires, 4/4 reliable Cancel) + T6 confirmed.
 
-### #144 removeTeamMember orphan-fix (functions deploy) — RESOLVED
-`removeTeamMember` now runs an atomic batch: delete member doc + `set({merge:true})` profile with `companyId`/`role` `FieldValue.delete()`. Closes the orphaned-profile creation path; preserves firstName; `{success:true}` unchanged. `tools/audit-orphans.js` (committed) → 0 existing orphans. Coach C88.
+### #153 C103 cross-aware reconciliation fix (v1.20.141) — SHIPPED, awaiting full T1–T7
+Two-part fix, ships together:
+- **Part 1** (`runExtractionTask` ~line 14581): `applyLearnedCorrections` gated behind `!cbs.stagingMode` so the staging extraction is RAW — the reconciliation engine compares what the revised drawing actually says against the user's worked BOM. Without it, the DB re-crossed both sides identically and every real diff was masked as "unchanged" (the `crossed:16` symptom).
+- **Part 2** (`reconcileBom` ~line 47334): cross-aware pre-pass runs BEFORE Pass 1 — indexes crossed prior rows by `normPart(crossedFrom)`, matches against the raw extraction's `partNumber`; equal qty → unchanged (cross preserved via carryUnchanged), differing qty → changed/qty. Pass-1 loop guards on `matchedCur/matchedExt` so pre-pass claims aren't re-matched.
+- Removed all 4 [RECON TRACE] diagnostic logs (C102) + the [#153 REVISION-GATE] log.
+- Harness: cross pre-pass synced; Scenario A/B/D/E cases added.
+- **Live-test note (Scenario B):** a genuinely changed PN relies on Pass 2 (position+description); a revision that reflows the BOM table can drop it to Pass 3 (deleted+new) instead of pn_changed — still safe, just a different classification. Coach C103.
 
-### #145 SendGrid email restored — RESOLVED (no code change)
-The 7-week 401 was an expired SendGrid account, not a bad key. Account reactivated (Essentials 50K); existing key authenticates again. Verified live: deployed `sendInviteEmail` → 200, Email Activity `status:"delivered"`. All transactional email paths recovered (shared key).
+### #160 Reconciliation Reject/Keep-Prior + silent-drop fix (v1.20.142) — SHIPPED, awaiting T1–T8
+- Added Reject ⇄ "✕ Keep Prior" toggle to Changed rows (symmetric with New/Deleted) + "kept prior — differs from revision" indicator.
+- `buildReconciledBom`: rejected → `{...prior}` (prior kept EXACTLY — no position/qty/field changes; crosses+pricing+BC intact).
+- **Data-loss fix:** the explicit rejected branch closes a latent silent-drop — previously any non-"accepted" Changed row fell through and vanished from the output BOM.
+- Footer text cleanup (dropped stale "(deletions individually)").
+- Harness: reject-not-dropped, reject-pn-preserves-cross, unresolved-still-drops (gate rationale), mixed-batch. 64 passing total. Coach C105.
 
-### #95 PRJ402119 PN accuracy — RESOLVED
-H5 region-targeted 600-DPI tiling + Opus 4.8 (v1.20.112–113) fixed the glyph-misread root cause (image-fidelity confirmed). PRJ402119 re-extracted → Jon-confirmed 100% PN accuracy. Structural errors covered by #97.
+## Coach scopes logged this session (not yet built)
+- **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH.
+- **#159** (C104) — Copy-to-New-Quote customer selection.
+- **#160** (C105) — built this session (above).
+- Untracked Coach docs in working tree at close (left for Coach to commit): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
 
-### #146 Confidence "C" 3-signal ladder (v1.20.132) — RESOLVED
-Replaced the v1.19.975 context-blind confusable-glyph regex (matched 20/36 alphanumerics → downgraded ~100% of rows) with: (1) exact-BC → high authoritative (both pricing paths `:14898`/`:26376`); (2) pdf-native → high unless model flagged low/medium; (3) vision → trust model; (4) regex removed. Display-layer only, no send-gate interaction. Verified 52%→10% circle rate (meaningful minority tracking genuine model doubt). Coach C90.
+## Open work queue (top candidates)
+- **#160 live T-suite** (T1–T8) — Jon to run on v1.20.142.
+- **#153 C103 T1–T7** — full reconciliation cross verification on v1.20.142.
+- **#158** — Firestore 1MB region_learning limit (HIGH, silent failure).
+- **#159** — Copy-to-New-Quote customer selection (C104 scope ready).
+- **#163** — Part# >20 chars truncation / BC field spillover (MED, needs briefing).
+- **#161/#162** — BOM-region tip timing; monthly counter reset (both LOW).
 
-## Top of Queue (Jon to direct)
-1. **#137** Customer Portal — digital Quoted BOM approval. APPROVED, two-phase build ready (Phase 1 security-first bomApprovals/{token} + portal; Phase 2 write-back + surfacing incl. expired-unanswered state). Coach C89 / docs/137-SUPPLEMENT.md is the spec. NOT started.
-2. **#149** Existing-project exact-BC backfill — UNBLOCKED (was gated on #146 core, now deployed). Needs Coach persist-safety confirm + spec.
-3. **#146 backfill** is #149 (above).
-
-## Open Items / Watch
-- **#140** WATCH (post-#139): first-extraction bomVersion seed reliability.
-- **#83** narrowed to "fail-visibly-on-fallback" only (H5 delivered the high-DPI render half).
-- **#85** downgraded (H5 cut misreads; independent-source cross-check gap remains).
-- **#148** reviewUploads getDownloadURL() permanent-URL flaw — LOW (downgraded: unfinished portal, zero live exposure; fix as part of portal redesign with signed-URL-via-CF, not a standalone patch).
-- **#151** Duplicated BC-apply logic — LOW maintenance hazard (logged 2026-06-16 post-close-out; doc-only entry, no fix scheduled).
-
-## Parked Backlog
-- #80 (feedback dedup key), #81 (anomaly-detection warning), #98 (foundational accuracy measurement — NOT addressed by H5; remains the rigorous-measurement question), #99 (long single-column completeness), #101 (Estimator's-Eye milestone), #128 (Drawing Reference band), #142 (red "+BC" pill redundancy — Coach), #129 (usage telemetry, needs Brief).
-
-## Known Tooling Gaps
-- **T9** Claude-in-Chrome MCP can't navigate to non-prod / file:// origins. Workaround: render via puppeteer-core + system Chrome, or `tests/extraction-baseline/h5-headless.js`.
-
-## Open TODOs
-~77 OPEN findings in TODO.md.
-
-## Working Tree
-- Branch: master (up to date with origin/master at 73b31e4d)
-- Clean
+## Working tree / TODO
+- Clean except two untracked Coach docs (above), intentionally left for Coach's close-out.
+- TODO.md OPEN findings: ~88.

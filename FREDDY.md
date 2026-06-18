@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.133 (defined in `public/index.html`; master at f862e49e). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.142 (defined in `public/index.html`; master at 37527cdb). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -242,7 +242,16 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-16)
+## Recently Active Work (as of 2026-06-17)
+
+### Shipped This Session (v1.20.139 → v1.20.142) — #153 revision reconciliation + #160 data-loss fix
+- **#153 Drawing-Revision Re-Extract + BOM Reconciliation — now working end-to-end.** Drop a revised drawing set on a panel that already has a BOM → ARC re-extracts and reconciles against the worked BOM (Changed / New / Deleted / Unchanged) instead of clobbering it. Two hard defects fixed this session:
+  - **Entry gate (Option A, v1.20.139, C101)** — the "revise vs add" gate was firing in a stale async window (root cause of 4 failed patches, v1.20.136–138). Moved the decision to drop time (top of `addFiles`, fresh panel prop); `confirmAndExtract` is now a pure intent-router that reads only `reconIntentRef` and does NOT re-evaluate the BOM. *Lesson: eliminate the class of bug (the async window), not the instance.* T5/T6 confirmed.
+  - **Cross-masking fix (C103, v1.20.141)** — the modal compared raw extraction PNs on both sides, so a user's crossed/substituted parts would have been carried forward PRE-cross on commit — wiping their substitutions (the exact data-loss #153 exists to prevent). Fix: staging extraction now runs RAW (no auto-cross/correction in staging mode), and a cross-aware pre-pass matches crossed prior rows by their original PN (`crossedFrom`) against the raw extraction. Crosses + pricing are preserved on unchanged/qty-changed rows. Awaiting full T1–T7.
+- **#160 Reconciliation Reject / Keep-Prior (C105, v1.20.142)** — the Changed bucket only had "Accept"; added a "Keep Prior" reject so a user can decline a revision and keep their prior row exactly as-is. Building it surfaced and closed a **latent silent-drop data-loss bug**: a non-accepted Changed row was silently dropped from the output BOM (it vanished). Now rejected rows are carried forward intact. Awaiting T1–T8.
+- **Scoped but not built:** #158 (region_learning Firestore 1MB limit — HIGH, silent prod failure), #159 (Copy-to-New-Quote customer selection, C104). **Logged:** #161/#162 (LOW UX/metering), #163 (Part# >20 chars truncated → full PN lost to BC field limit; MED, needs briefing — overflow could spill into other BC fields rather than discarding).
+
+
 
 ### HEADLINE: Vision-mode extraction accuracy is SOLVED (H5)
 The misreads on image-based drawings were a **resolution bottleneck in ARC's own render pipeline**, not a source-quality ceiling. ARC was sending pages to the model at an uncontrolled, too-low DPI; the model couldn't resolve confusable glyphs (8↔6, S↔3, Q↔D, 1↔3, phantom strokes). **H5 (#120)** renders the BOM region client-side at high DPI (pdf.js → JPEG tiles → image blocks) and the extraction model is now **Claude Opus 4.8** (2576 px image ceiling). Result: the two worst-case drawings both hit **100%** — PRJ402101 **54/54** and PRJ402119 **14/14**, up from ~36–50%. Text-layer pages are completely unaffected (they keep the PDF-native path).
