@@ -81,11 +81,30 @@ function reconcileBom(currentBom,newExtraction){
     return pairs;
   };
 
+  // #153 (C103 Part 2): cross-aware pre-pass — match crossed prior rows by crossedFrom
+  const _crossByOrig=new Map();
+  matchableCurrent.forEach(r=>{
+    if(!r.isCrossed||!r.crossedFrom)return;
+    const np=normPart(r.crossedFrom);if(!np)return;
+    if(!_crossByOrig.has(np))_crossByOrig.set(np,[]);
+    _crossByOrig.get(np).push(r);
+  });
+  _crossByOrig.forEach((curArr,np)=>{
+    const extArr=extByPN.get(np);if(!extArr||!extArr.length)return;
+    const pairs=pairGroup(curArr,extArr);
+    pairs.forEach(({cur,ext})=>{
+      if(matchedCur.has(cur)||matchedExt.has(ext))return;
+      matchedCur.add(cur);matchedExt.add(ext);
+      if((+cur.qty||0)===(+ext.qty||0)){unchanged.push({prior:cur,extracted:ext});matchLog.push({pass:'cross',action:'cross-match',cls:'unchanged',pn:np});}
+      else{changed.push({prior:cur,extracted:ext,reason:'qty'});matchLog.push({pass:'cross',action:'cross-match',cls:'changed-qty',pn:np});}
+    });
+  });
   curByPN.forEach((curArr,np)=>{
     const extArr=extByPN.get(np);if(!extArr||!extArr.length)return;
     const pairs=pairGroup(curArr,extArr);
     const ambiguous=curArr.length>1||extArr.length>1;
     pairs.forEach(({cur,ext})=>{
+      if(matchedCur.has(cur)||matchedExt.has(ext))return;
       matchedCur.add(cur);matchedExt.add(ext);
       if((+cur.qty||0)===(+ext.qty||0)){unchanged.push({prior:cur,extracted:ext});matchLog.push({pass:1,action:ambiguous?'ambiguous':'match',cls:'unchanged',pn:np});}
       else{changed.push({prior:cur,extracted:ext,reason:'qty'});matchLog.push({pass:1,action:ambiguous?'ambiguous':'match',cls:'changed-qty',pn:np});}
@@ -149,7 +168,7 @@ function buildReconciledBom(matchResult,resolutions,currentBom){
   });
   const unchangedMerged=(matchResult.unchanged||[]).map(p=>carryUnchanged(p.prior,p.extracted));
   const changedMerged=[];
-  (matchResult.changed||[]).forEach((m,i)=>{if(resolutions.get(`changed:${i}`)==="accepted")changedMerged.push(m.reason==="pn_changed"?carryChangedPnChanged(m.prior,m.extracted):carryChangedPnSame(m.prior,m.extracted));});
+  (matchResult.changed||[]).forEach((m,i)=>{const res=resolutions.get(`changed:${i}`);if(res==="accepted")changedMerged.push(m.reason==="pn_changed"?carryChangedPnChanged(m.prior,m.extracted):carryChangedPnSame(m.prior,m.extracted));else if(res==="rejected")changedMerged.push({...m.prior});});
   const acceptedNew=[];
   (matchResult.added||[]).forEach((ext,i)=>{if(resolutions.get(`added:${i}`)==="accepted")acceptedNew.push(buildNewRow(ext));});
   const keptDeleted=[];
@@ -301,6 +320,86 @@ console.log("\n=== robustness ===");
 {
   ok("empty inputs → empty result",(()=>{const r=reconcileBom([],[]);return r.unchanged.length===0&&r.added.length===0&&r.deleted.length===0;})());
   ok("no-PN current row → deleted candidate (not crash)",(()=>{const r=reconcileBom([{id:'n',partNumber:'',qty:1,description:'x',y_top:0.1,sourcePageIdx:0}],[]);return r.deleted.length===1;})());
+}
+
+// ---- C103 cross-aware pre-pass (Scenarios A / B / E / D) ----
+console.log("\n=== C103 — cross-aware pre-pass ===");
+{
+  // Scenario A: drawing unchanged — crossed prior matches RAW extraction by crossedFrom → UNCHANGED, cross preserved
+  const priorA={id:'cA',partNumber:'ABC-REPL',crossedFrom:'XYZ-ORIG',isCrossed:true,qty:5,description:'Relay',unitPrice:42,priceSource:'bc',bcMatchType:'exact',y_top:0.20,sourcePageIdx:0};
+  const extA={partNumber:'XYZ-ORIG',qty:5,description:'Relay',y_top:0.22,sourcePageIdx:0}; // raw (Part 1: no auto-cross)
+  const rA=reconcileBom([priorA],[extA]);
+  ok("A: cross-matched as UNCHANGED (not deleted+new)",rA.unchanged.length===1&&rA.deleted.length===0&&rA.added.length===0);
+  ok("A: matchLog records cross pass",rA.matchLog.some(l=>l.pass==='cross'));
+  const mA=buildReconciledBom(rA,new Map(),[priorA])[0];
+  ok("A: cross PRESERVED (isCrossed + crossedFrom + replacement PN)",mA.isCrossed===true&&mA.crossedFrom==='XYZ-ORIG'&&mA.partNumber==='ABC-REPL');
+  ok("A: pricing/BC carried",mA.unitPrice===42&&mA.bcMatchType==='exact');
+  ok("A: position updated from new drawing",mA.y_top===0.22);
+
+  // Scenario E: qty change on a crossed row → CHANGED(qty), cross preserved, qty updated
+  const priorE={id:'cE',partNumber:'ABC-REPL',crossedFrom:'XYZ-ORIG',isCrossed:true,qty:5,description:'Relay',unitPrice:42,priceSource:'bc',y_top:0.30,sourcePageIdx:0};
+  const extE={partNumber:'XYZ-ORIG',qty:8,description:'Relay',y_top:0.31,sourcePageIdx:0};
+  const rE=reconcileBom([priorE],[extE]);
+  ok("E: cross-matched as CHANGED/qty",rE.changed.length===1&&rE.changed[0].reason==='qty'&&rE.unchanged.length===0);
+  const mE=buildReconciledBom(rE,new Map([['changed:0','accepted']]),[priorE])[0];
+  ok("E: cross PRESERVED + qty updated",mE.isCrossed===true&&mE.crossedFrom==='XYZ-ORIG'&&mE.partNumber==='ABC-REPL'&&mE.qty===8);
+
+  // Scenario B: drawing PN genuinely changed → NOT cross-matched; Pass 2 → pn_changed → cross STRIPPED on accept
+  const priorB={id:'cB',partNumber:'ABC-REPL',crossedFrom:'XYZ-ORIG',isCrossed:true,qty:1,description:'Breaker 100A',unitPrice:99,priceSource:'bc',y_top:0.40,sourcePageIdx:0};
+  const extB={partNumber:'DEF-NEW',qty:1,description:'Breaker 100A',y_top:0.41,sourcePageIdx:0}; // different part, same position+desc
+  const rB=reconcileBom([priorB],[extB]);
+  ok("B: NOT cross-matched (crossedFrom XYZ-ORIG absent) → Pass 2 pn_changed",rB.changed.length===1&&rB.changed[0].reason==='pn_changed');
+  const mB=buildReconciledBom(rB,new Map([['changed:0','accepted']]),[priorB])[0];
+  ok("B: cross STRIPPED, new PN, pricing cleared",mB.partNumber==='DEF-NEW'&&!('isCrossed'in mB)&&!('crossedFrom'in mB)&&!('unitPrice'in mB));
+
+  // Scenario D: non-crossed row, same PN — pre-pass skips it, Pass 1 matches by partNumber
+  const priorD={id:'cD',partNumber:'XYZ-ORIG',qty:1,description:'Wire',y_top:0.50,sourcePageIdx:0};
+  const extD={partNumber:'XYZ-ORIG',qty:1,description:'Wire',y_top:0.51,sourcePageIdx:0};
+  const rD=reconcileBom([priorD],[extD]);
+  ok("D: non-crossed same-PN → UNCHANGED via Pass 1 (no regression)",rD.unchanged.length===1&&rD.matchLog.some(l=>l.pass===1));
+}
+
+// ---- #160 (C105) Reject / Keep-Prior on Changed rows ----
+console.log("\n=== #160 — reject keeps prior (no silent drop) ===");
+{
+  // Reject a qty-changed crossed row → prior carried EXACTLY as-is, NOT dropped
+  const priorQ={id:'rQ',partNumber:'ABC-REPL',crossedFrom:'XYZ-ORIG',isCrossed:true,qty:5,description:'Relay',unitPrice:42,priceSource:'bc',bcMatchType:'exact',y_top:0.20,sourcePageIdx:0};
+  const extQ={partNumber:'XYZ-ORIG',qty:8,description:'Relay',y_top:0.22,sourcePageIdx:0};
+  const rQ=reconcileBom([priorQ],[extQ]);
+  ok("qty change present in changed bucket",rQ.changed.length===1&&rQ.changed[0].reason==='qty');
+  const mergedQ=buildReconciledBom(rQ,new Map([['changed:0','rejected']]),[priorQ]);
+  ok("reject: row NOT dropped (silent-drop bug fixed)",mergedQ.length===1);
+  const mQ=mergedQ[0];
+  ok("reject qty: prior kept EXACTLY (qty/PN/cross/pricing as-is)",mQ.qty===5&&mQ.partNumber==='ABC-REPL'&&mQ.crossedFrom==='XYZ-ORIG'&&mQ.isCrossed===true&&mQ.unitPrice===42&&mQ.bcMatchType==='exact');
+  ok("reject qty: position NOT updated from revision",mQ.y_top===0.20);
+
+  // Reject a pn_changed crossed row → cross + pricing preserved (NOT stripped)
+  const priorP={id:'rP',partNumber:'CROSSED-REPL',crossedFrom:'XYZ',isCrossed:true,qty:1,description:'Breaker 100A',unitPrice:99,priceSource:'bc',y_top:0.40,sourcePageIdx:0};
+  const extP={partNumber:'DEF-NEW',qty:1,description:'Breaker 100A',y_top:0.41,sourcePageIdx:0};
+  const rP=reconcileBom([priorP],[extP]);
+  ok("pn change present in changed bucket",rP.changed.length===1&&rP.changed[0].reason==='pn_changed');
+  const mP=buildReconciledBom(rP,new Map([['changed:0','rejected']]),[priorP])[0];
+  ok("reject pn: cross PRESERVED (vs accept which strips it)",mP.partNumber==='CROSSED-REPL'&&mP.crossedFrom==='XYZ'&&mP.isCrossed===true&&mP.unitPrice===99);
+
+  // Contrast: unresolved (neither accept nor reject) STILL drops — but gating prevents commit.
+  // Verify the prior behavior only fires when nothing is set (documents the gate's necessity).
+  const mNone=buildReconciledBom(rQ,new Map(),[priorQ]);
+  ok("unresolved changed row drops (gate blocks this state at commit)",mNone.length===0);
+
+  // Mixed: one accept, one reject in same batch → each treated correctly
+  const pA={id:'mA',partNumber:'AAA',qty:2,description:'Term',y_top:0.10,sourcePageIdx:0};
+  const pB={id:'mB',partNumber:'BBB-REPL',crossedFrom:'BBB',isCrossed:true,qty:3,description:'Lug',unitPrice:7,y_top:0.50,sourcePageIdx:0};
+  const eA={partNumber:'AAA',qty:9,description:'Term',y_top:0.11,sourcePageIdx:0}; // qty change
+  const eB={partNumber:'BBB',qty:3,description:'Lug',y_top:0.51,sourcePageIdx:0};   // raw matches crossedFrom → cross pre-pass, but qty same → unchanged; force a changed by qty diff
+  const eB2={partNumber:'BBB',qty:6,description:'Lug',y_top:0.51,sourcePageIdx:0};
+  const rMix=reconcileBom([pA,pB],[eA,eB2]);
+  ok("mixed: two changed rows",rMix.changed.length===2);
+  const idxA=rMix.changed.findIndex(c=>c.prior.id==='mA');const idxB=rMix.changed.findIndex(c=>c.prior.id==='mB');
+  const resMix=new Map();resMix.set(`changed:${idxA}`,'accepted');resMix.set(`changed:${idxB}`,'rejected');
+  const mergedMix=buildReconciledBom(rMix,resMix,[pA,pB]);
+  const outA=mergedMix.find(r=>r.id==='mA');const outB=mergedMix.find(r=>r.id==='mB');
+  ok("mixed: accepted row takes revision qty",outA&&outA.qty===9);
+  ok("mixed: rejected row keeps prior qty + cross",outB&&outB.qty===3&&outB.isCrossed===true&&outB.crossedFrom==='BBB'&&outB.partNumber==='BBB-REPL');
 }
 
 console.log(`\n================  ${pass} passed, ${fail} failed  ================`);
