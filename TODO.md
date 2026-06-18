@@ -2781,3 +2781,13 @@ reset that surfaced the ground-truth state.
      do NOT touch the `extractSupplierQuotePricing` spend ledger (`rfqUploads/{token}.aiSpendCents`)
      which is the actual cost-control gate.
      Logged: 2026-06-17 (Jon, observed during testing).
+
+163. **OPEN** [MED — data integrity / extraction] — Part# > 20 chars truncated; full PN lost. When a
+     part number exceeds BC's field length (~20 chars), ARC currently treats the TRUNCATED Part# as
+     the authoritative value, even though the FULL Part# is present in the description. This is a BC
+     field-length limitation, but there are other BC fields we can spill the overflow into rather than
+     discarding it. INVESTIGATE: (a) where extraction/BC-sync truncates the PN, (b) which BC fields
+     can hold the overflow (e.g. description, a secondary text field, ItemReference), (c) how to keep
+     the full PN authoritative in ARC while satisfying BC's limit on write. Needs briefing + review
+     before implementation — capture the BC field options and the extraction-side handling.
+     Logged: 2026-06-17 (Jon, observed during testing).
