@@ -2791,3 +2791,31 @@ reset that surfaced the ground-truth state.
      the full PN authoritative in ARC while satisfying BC's limit on write. Needs briefing + review
      before implementation — capture the BC field options and the extraction-side handling.
      Logged: 2026-06-17 (Jon, observed during testing).
+
+164. **OPEN** [HIGH — possible data loss, untested branch] — Reconciliation Deleted→"Keep" may strip
+     crosses. Surfaced after the #160 commit: a kept row (XT1HU3003MFF000XXX) reverted to its ORIGINAL
+     (pre-cross) Part# instead of retaining the user's crossed/substituted PN. The Deleted→Keep path
+     (`keptDeleted.push(r)` in `buildReconciledBom`, where `r` is the unmatched prior row from
+     `reconcileBom`'s `deleted` bucket) was NOT touched or tested by #160 (#160 only added the Changed→
+     Reject branch) and is NOT covered by the C103 cross pre-pass (that runs on matched rows; deleted =
+     unmatched). With C103 Part 1 the staging extraction is now RAW (original PNs), which may interact
+     with how a crossed prior lands in `deleted` and what PN the kept row carries. INVESTIGATE: confirm
+     whether the kept deleted row carries `partNumber`(replacement)+`crossedFrom`+`isCrossed` intact, or
+     whether it reverts to the original PN. Reproduce with a crossed prior that does NOT match the new
+     extraction (so it lands in Deleted), then Keep it and inspect the committed row. This is the one
+     genuinely open correctness question from the #153/#160 work — possible cross/data loss in an
+     untested branch. Add a harness case (deleted-kept preserves cross) once root cause is known.
+     Logged: 2026-06-17 (Jon + Marc, observed during #160 live testing).
+
+165. **OPEN** [HIGH — UX with data-loss risk, NOT cosmetic] — Reconciliation Accept/Reject verbs read
+     BACKWARDS. In ReconciliationModal the Changed-row verbs ("Accept" = take the revision; "Reject" /
+     "Keep Prior" = keep the user's worked row) feel inverted to the user — Marc's own instinct read
+     them the wrong way during the #160 build. RISK (why this is HIGH, not minor polish): misreading
+     "Accept All" can STRIP CROSSES on a real quote — Accept on a `pn_changed` crossed row runs
+     `carryChangedPnChanged`, which intentionally drops `isCrossed`/`crossedFrom`/pricing. A user who
+     thinks "Accept = keep my work" would silently lose their substitutions + pricing on commit. This
+     is therefore a data-loss-via-misread hazard, explicitly ABOVE the cosmetic Revise-UX items. FIX:
+     relabel for unambiguous direction (e.g. "Use Revision" vs "Keep My BOM", or split the
+     take-revision vs keep-prior intent visually), and reconsider whether "Accept All" should default
+     to taking revisions on crossed rows at all. Verb clarity first; default-safety second.
+     Logged: 2026-06-17 (Jon + Marc, identified during #160 build/testing).

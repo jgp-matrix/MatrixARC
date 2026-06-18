@@ -502,9 +502,11 @@ Two-part fix, ships together:
 - Untracked Coach docs in working tree at close (left for Coach to commit, 5 of 7 already committed): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
 
 ## Open work queue (top candidates)
+- **#164** — Reconciliation Deleted→"Keep" may strip crosses (HIGH, possible data loss in an untested branch; XT1HU3003MFF000XXX reverted to original PN after #160). THE open correctness question from today — investigate first.
+- **#165** — Accept/Reject verbs read backwards (HIGH, UX with data-loss risk: misreading "Accept All" strips crosses on a real quote via carryChangedPnChanged). Above cosmetic Revise-UX items.
 - **#160 live T-suite** (T1–T8) — Jon to run on v1.20.142.
 - **#153 C103 T1–T7** — full reconciliation cross verification on v1.20.142.
-- **#158** — Firestore 1MB region_learning limit (HIGH, silent failure).
+- **#158** — Firestore 1MB region_learning limit (HIGH, silent failure; logged, not scoped).
 - **#159** — Copy-to-New-Quote customer selection (C104 scope ready).
 - **#163** — Part# >20 chars truncation / BC field spillover (MED, needs briefing).
 - **#161/#162** — BOM-region tip timing; monthly counter reset (both LOW).
