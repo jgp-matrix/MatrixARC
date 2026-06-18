@@ -4,10 +4,11 @@
 v1.20.142 (deployed 2026-06-17). #153 Drawing-Revision Re-Extract + BOM Reconciliation now working end-to-end (Option A entry gate + C103 cross-aware reconciliation), plus #160 Reconciliation Reject/Keep-Prior with a latent silent-drop data-loss fix. Live-verified through the cross-masking fix; #160 awaiting Jon's T1–T8.
 
 ## Deploy State
-- Master tip: 37527cdb ("Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)") — doc-only TODO commit after the v1.20.142 release stamp, no code change, no version bump
-- Local master == origin/master (synced at 37527cdb)
+- Master tip: e774ef38 ("tests: #153 C103 cross pre-pass + #160 reject/keep-prior harness coverage") — doc/test commits after the v1.20.142 release stamp, no code change, no version bump
+- v1.20.142 was deployed at commit 0a3c7121; post-deploy commits are all non-deployable: 37527cdb (#163 TODO log) → e101d816 (handoff files) → e774ef38 (harness coverage — deploy.sh doesn't stage tests/, so the C103+#160 harness changes were committed separately at close-out)
+- Local master == origin/master (synced at e774ef38)
 - Latest tag: v1.20.142
-- v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live; the only post-deploy commit is the #163 TODO log (non-deployable).
+- v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live.
 
 ## Recent Commits (last 15)
 - 37527cdb Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)
@@ -48,11 +49,12 @@ Two-part fix, ships together:
 - Footer text cleanup (dropped stale "(deletions individually)").
 - Harness: reject-not-dropped, reject-pn-preserves-cross, unresolved-still-drops (gate rationale), mixed-batch. 64 passing total. Coach C105.
 
-## Coach scopes logged this session (not yet built)
-- **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH.
-- **#159** (C104) — Copy-to-New-Quote customer selection.
+## Coach items this session (not yet built)
+- **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH. **LOGGED only** (eb810ba3), no scope doc yet.
+- **#159** (C104) — Copy-to-New-Quote customer selection. **SCOPED** (`docs/159-COPY-CUSTOMER-SCOPE.md`).
 - **#160** (C105) — built this session (above).
-- Untracked Coach docs in working tree at close (left for Coach to commit): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
+- ⚠️ The stampFn/drop-handler **dedup** cleanup (a deferred Marc item earlier expected at "#158") is NOT at #158 (that slot is region-learning) and does not appear logged under any number — possible unlogged gap, confirm with Jon.
+- Untracked Coach docs in working tree at close (left for Coach to commit, 5 of 7 already committed): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
 
 ## Open work queue (top candidates)
 - **#160 live T-suite** (T1–T8) — Jon to run on v1.20.142.

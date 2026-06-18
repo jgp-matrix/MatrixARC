@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.142 (defined in `public/index.html`; master at 37527cdb). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.20.142 (defined in `public/index.html`; deployed at commit 0a3c7121, master tip e774ef38 with doc/test commits since). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -249,7 +249,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
   - **Entry gate (Option A, v1.20.139, C101)** — the "revise vs add" gate was firing in a stale async window (root cause of 4 failed patches, v1.20.136–138). Moved the decision to drop time (top of `addFiles`, fresh panel prop); `confirmAndExtract` is now a pure intent-router that reads only `reconIntentRef` and does NOT re-evaluate the BOM. *Lesson: eliminate the class of bug (the async window), not the instance.* T5/T6 confirmed.
   - **Cross-masking fix (C103, v1.20.141)** — the modal compared raw extraction PNs on both sides, so a user's crossed/substituted parts would have been carried forward PRE-cross on commit — wiping their substitutions (the exact data-loss #153 exists to prevent). Fix: staging extraction now runs RAW (no auto-cross/correction in staging mode), and a cross-aware pre-pass matches crossed prior rows by their original PN (`crossedFrom`) against the raw extraction. Crosses + pricing are preserved on unchanged/qty-changed rows. Awaiting full T1–T7.
 - **#160 Reconciliation Reject / Keep-Prior (C105, v1.20.142)** — the Changed bucket only had "Accept"; added a "Keep Prior" reject so a user can decline a revision and keep their prior row exactly as-is. Building it surfaced and closed a **latent silent-drop data-loss bug**: a non-accepted Changed row was silently dropped from the output BOM (it vanished). Now rejected rows are carried forward intact. Awaiting T1–T8.
-- **Scoped but not built:** #158 (region_learning Firestore 1MB limit — HIGH, silent prod failure), #159 (Copy-to-New-Quote customer selection, C104). **Logged:** #161/#162 (LOW UX/metering), #163 (Part# >20 chars truncated → full PN lost to BC field limit; MED, needs briefing — overflow could spill into other BC fields rather than discarding).
+- **Logged (not scoped):** #158 (region_learning Firestore 1MB limit — HIGH, silent prod failure; logged via eb810ba3, no scope doc yet). **Scoped but not built:** #159 (Copy-to-New-Quote customer selection — C104, docs/159-COPY-CUSTOMER-SCOPE.md). **Also logged:** #161/#162 (LOW UX/metering), #163 (Part# >20 chars truncated → full PN lost to BC field limit; MED, needs briefing — overflow could spill into other BC fields rather than discarding).
 
 
 
@@ -449,10 +449,11 @@ Coach maintains this document. Marc can update it if Coach delegates.
 v1.20.142 (deployed 2026-06-17). #153 Drawing-Revision Re-Extract + BOM Reconciliation now working end-to-end (Option A entry gate + C103 cross-aware reconciliation), plus #160 Reconciliation Reject/Keep-Prior with a latent silent-drop data-loss fix. Live-verified through the cross-masking fix; #160 awaiting Jon's T1–T8.
 
 ## Deploy State
-- Master tip: 37527cdb ("Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)") — doc-only TODO commit after the v1.20.142 release stamp, no code change, no version bump
-- Local master == origin/master (synced at 37527cdb)
+- Master tip: e774ef38 ("tests: #153 C103 cross pre-pass + #160 reject/keep-prior harness coverage") — doc/test commits after the v1.20.142 release stamp, no code change, no version bump
+- v1.20.142 was deployed at commit 0a3c7121; post-deploy commits are all non-deployable: 37527cdb (#163 TODO log) → e101d816 (handoff files) → e774ef38 (harness coverage — deploy.sh doesn't stage tests/, so the C103+#160 harness changes were committed separately at close-out)
+- Local master == origin/master (synced at e774ef38)
 - Latest tag: v1.20.142
-- v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live; the only post-deploy commit is the #163 TODO log (non-deployable).
+- v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live.
 
 ## Recent Commits (last 15)
 - 37527cdb Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)
@@ -493,11 +494,12 @@ Two-part fix, ships together:
 - Footer text cleanup (dropped stale "(deletions individually)").
 - Harness: reject-not-dropped, reject-pn-preserves-cross, unresolved-still-drops (gate rationale), mixed-batch. 64 passing total. Coach C105.
 
-## Coach scopes logged this session (not yet built)
-- **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH.
-- **#159** (C104) — Copy-to-New-Quote customer selection.
+## Coach items this session (not yet built)
+- **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH. **LOGGED only** (eb810ba3), no scope doc yet.
+- **#159** (C104) — Copy-to-New-Quote customer selection. **SCOPED** (`docs/159-COPY-CUSTOMER-SCOPE.md`).
 - **#160** (C105) — built this session (above).
-- Untracked Coach docs in working tree at close (left for Coach to commit): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
+- ⚠️ The stampFn/drop-handler **dedup** cleanup (a deferred Marc item earlier expected at "#158") is NOT at #158 (that slot is region-learning) and does not appear logged under any number — possible unlogged gap, confirm with Jon.
+- Untracked Coach docs in working tree at close (left for Coach to commit, 5 of 7 already committed): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
 
 ## Open work queue (top candidates)
 - **#160 live T-suite** (T1–T8) — Jon to run on v1.20.142.
