@@ -2819,3 +2819,14 @@ reset that surfaced the ground-truth state.
      take-revision vs keep-prior intent visually), and reconsider whether "Accept All" should default
      to taking revisions on crossed rows at all. Verb clarity first; default-safety second.
      Logged: 2026-06-17 (Jon + Marc, identified during #160 build/testing).
+
+166. **OPEN** [LOW — maintenance / dedup cleanup] — stampFn / drop-handler duplicated logic in the
+     #153 revision flow. A deferred cleanup item from the #153 build: the drawing-drop handling and the
+     stamp/version logic carry duplicated code that should be consolidated. This was the item earlier
+     mis-remembered as "#158" — but #158 was taken by the region_learning 1MB issue, so it went
+     unlogged until now. NOT urgent and NO known data-loss (purely a maintenance hazard — duplicated
+     code drifts out of sync over time). SCOPE NEEDED: Coach flagged this during #153; the exact call
+     sites + what to dedup need Coach's input before implementation (Coach owns the original finding —
+     see COACH.md C100–C105 era / SESSION-STATE.md dedup flag). Confirm the precise duplication with
+     Coach, then consolidate.
+     Logged: 2026-06-17 (Jon, after Marc+Coach confirmed it was unlogged at close-out).

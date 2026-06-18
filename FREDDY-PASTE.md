@@ -498,7 +498,7 @@ Two-part fix, ships together:
 - **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH. **LOGGED only** (eb810ba3), no scope doc yet.
 - **#159** (C104) — Copy-to-New-Quote customer selection. **SCOPED** (`docs/159-COPY-CUSTOMER-SCOPE.md`).
 - **#160** (C105) — built this session (above).
-- ⚠️ The stampFn/drop-handler **dedup** cleanup (a deferred Marc item earlier expected at "#158") is NOT at #158 (that slot is region-learning) and does not appear logged under any number — possible unlogged gap, confirm with Jon.
+- **#166** — stampFn/drop-handler dedup cleanup (LOW maintenance, no data-loss). Now logged (was the item mis-remembered as "#158"; #158 was taken by region-learning). Needs scope from Coach (owns the original #153-era finding) before implementation.
 - Untracked Coach docs in working tree at close (left for Coach to commit, 5 of 7 already committed): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
 
 ## Open work queue (top candidates)
@@ -510,6 +510,7 @@ Two-part fix, ships together:
 - **#159** — Copy-to-New-Quote customer selection (C104 scope ready).
 - **#163** — Part# >20 chars truncation / BC field spillover (MED, needs briefing).
 - **#161/#162** — BOM-region tip timing; monthly counter reset (both LOW).
+- **#166** — stampFn/drop-handler dedup cleanup (LOW, needs scope from Coach).
 
 ## Working tree / TODO
 - Clean except two untracked Coach docs (above), intentionally left for Coach's close-out.
