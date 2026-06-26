@@ -41,6 +41,9 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-09 (Session 3, cont.)** — C47: #119 investigation (PRJ402119 silent zero-BOM). SYSTEMIC finding: every Phase 1 safety mechanism (ZeroBomBanner, amber chip, send gate, completeness warning) is gated on `panel.extractionReport` existing. Legacy projects extracted before v1.19.598 have NO extractionReport — all safety systems return null/undefined silently. PRJ402119 hit the C23 dataUrl gating bug, got 0 items, and was never re-extracted. The batch-path hypothesis (from #118) is NOT the primary cause — batch runs INSIDE runExtractionTask, which is called FROM confirmAndExtract AFTER the 1c gate. The real gap is that the warning UI has no fallback for legacy panels. Details below.
 - **2026-06-09 (Session 3, cont.)** — C48: High-DPI resolution test on PRJ402101. CONFIRMED: resolution is the root cause for Pattern A+B errors (32 of 38 wrong PNs). Rendered BOM page 10 at 150/300/600/1600 DPI, read each as ground truth + accuracy test. All three anchor PNs (SCE-90EL4820SSFSD, SCE-90P48F1, XT1SU3060AFF000XXX) read correctly at 600 DPI, unreadable at 150 DPI, borderline at 300 DPI. ARC's specific errors (dropped-S, 8→B, SU→US transposition) are all resolution-class failures that vanish with more pixels. Answer to Jon's question: YES — high-DPI region crop fixes it. H5 is the right fix. Details below.
 - **2026-06-09 (Session 3, cont.)** — C49: H5 scope — region-targeted high-DPI rendering. Buildable implementation plan. Core change: for vision-mode PDFs, stop sending native PDF → render BOM region to high-DPI image tiles client-side via pdf.js → send tiles as `type: "image"`. Critical finding: ARC uses `claude-opus-4-6` (1568 px model limit, NOT the 2576 of Opus 4.7+) — must tile to achieve usable DPI. Recommended 2×2 grid → 369 effective DPI (Opus 4.6), upgrading to 606 DPI when model bumped to 4.7+. ~143 lines, ~2 days dev + 1 day test. TODO #120. Details below.
+- **2026-06-26 (Session 6)** — C106: Pre-Print Checklist "AI prices" overcount on PRJ402124. RESOLVED — NO BUG. Initial trace misidentified the source: analyzed the Check 2 pricing predicate (`r.priceSource==="ai"`, line 37210) when the actual "28" came from the AI lead-time entry (`_countAiLeadTimes`, line 37183, `leadTimeSource:"ai"`). Marc's runtime read confirmed 0/89 rows have `priceSource:"ai"` across all 4 panels; 28 rows have `leadTimeSource:"ai"` (L1=17, L4=11). Modal text reads "AI-estimated lead times," not "AI prices" — Jon's paraphrase was the mismatch, not the code. Budgetary stamp via `_markProjectBudgetaryForAiLeads` is working as designed. Details below.
+- **2026-06-26 (Session 6, cont.)** — C107: #163 expanded — BC 20-char PN field limit scoping trace. Full territory map: (1) No ARC-side truncation — BC server silently truncates at POST time; ARC's Firestore BOM stores whatever BC returns. (2) `bcCreateItem` sends full PN as `body.number`, BC enforces 20-char; follow-up OData PATCH copies the already-truncated `item.number` back into `Vendor_Item_No` — wrong. (3) `Vendor_Item_No` IS written today (line 4921) but set to the truncated `item.number`, never the full PN. (4) Five key-matching paths use `partNumber` as identity: `bcFuzzyLookup`, `bcLookupItem`, `applyLearnedCorrections` (4 paths), `reconcileBom`, and `bcSyncPanelPlanningLines` (line 3662: `No:row.partNumber` pushed directly to BC). (5) All three document surfaces (RFQ, Traveler, BC Item Browser) read `partNumber`/`item.number` — the truncated value. Details below.
+- **2026-06-26 (Session 6, cont.)** — C108: #163 Coach Supplement — verified Freddy's 5 open questions against current tip. Q1: `bcNo` is net-new to BOM row schema (no existing BC item number persisted on rows). Q2: All 7 BC boundaries (5 original + 2 pricing-path overwrite vectors discovered in C107) can key on captured surrogate — uniform pattern. Q3: Lazy dual-match (.slice(0,20) fallback) for learning DB transition; optional batch re-key. Q4: ARC always supplies `number` to `bcCreateItem` (all 3 call sites); omitting it would trigger BC No.-Series auto-assignment. Q5: Clean-break viable — existing quotes already issued with truncated PNs, active projects self-heal on next BC interaction. Additional finding: background/foreground pricing paths (lines 14964, 26846) are independent truncation vectors not in C107's original 5. Deliverable: `docs/163-SUPPLEMENT.md`.
 - **2026-06-15 (Session 4)** — C57-C62: #117 Phase 2 cycle. C57 re-confirmed root cause at v1.20.114. C58 detailed plan (Option 3). C59 amended Path B wiring per Marc's findings. C60 Phase 1 code review sign-off (+218/-165). C61 QuoteTab unreachability finding — _bcToken null is PRIMARY cause, Path C (QuoteSendModal) found. C62 Phase 2 detailed plan: Fixes 3/3c/4, ~36 lines, 10 test criteria.
 - **2026-06-15 (Session 4, cont.)** — C63: Deferred TODO logged — post-extraction Engineering Questions to be SUPPRESSED (render-gated), not deleted. C62 carve-outs confirmed with expanded priority (T-bcTokenRefresh IMMEDIATE, dead code LOW, Path B LOW/gated).
 - **2026-06-15 (Session 4, cont.)** — C64: Phase 2 static verification. Finding 1 CONFIRMED (`{...populated}` spread at line 31886, prevents stale closure overwrite). Finding 2 Jon ruling applied (Option b — send proceeds when fully populated, blocks only on missing terms). Tests 3 & 9 amended. T-bcTokenRefresh exact fix confirmed captured. Build verification-complete on static side.
@@ -8492,5 +8495,144 @@ the user's deliberate substitution + pricing.
 
 No new functions. No data model changes. No changes to `reconcileBom`. Fully contained
 within `ReconciliationModal` + `buildReconciledBom`.
+
+---
+
+### C106 — Pre-Print Checklist "AI Prices" Overcount (2026-06-26)
+
+**Type:** Read-only trace
+**Status:** RESOLVED — NO BUG (misidentified source)
+**Trigger:** PRJ402124 Pre-Print Checklist shows "28 AI" — Jon reports zero AI-priced rows in BOM table.
+
+---
+
+#### Initial trace (incorrect)
+
+Analyzed the Check 2 pricing block (lines 37203-37224). Found the pricing predicate `r.priceSource==="ai"` (line 37210) is an exact match — no default-bucket, no inversion. Source array is `projectRef.current.panels` flatMapped — same as BOM table. Concluded the predicate was sound and hypothesized multi-panel aggregation as cause.
+
+#### Correction (Marc runtime read)
+
+Marc read PRJ402124 Firestore data: **0 of 89 rows** have `priceSource:"ai"` across all 4 panels. All 89 are `priceSource:"bc"`. The "28" is NOT from Check 2 (pricing). It is from the **AI lead-time checklist entry** at line 37183-37191:
+
+```js
+const aiLeadCount=_countAiLeadTimes(projectRef.current);
+if(aiLeadCount>0){
+  issues.push({
+    type:"ailead",
+    label:`${aiLeadCount} AI-estimated lead time${aiLeadCount>1?"s":""}`,
+    ...
+  });
+}
+```
+
+28 rows have `leadTimeSource:"ai"` with `leadTimeEstimated:true` — clustered on Line 1 (17) and Line 4 (11). The modal text reads "AI-estimated lead times," not "AI prices." The budgetary stamp via `_markProjectBudgetaryForAiLeads` is working as designed.
+
+#### Lesson
+
+The symptom description said "AI prices" but the checklist entry said "AI-estimated lead times." I should have confirmed which checklist line item Jon was reading before tracing the pricing predicate. The pricing code path is correct and was never implicated.
+
+---
+
+### C107 — #163 Expanded: BC 20-Char PN Field Limit — Scoping Trace (2026-06-26)
+
+**Type:** Read-only scoping trace (territory map, no fix)
+**Status:** COMPLETE — ready for Brief
+**Tip:** `bea037e5`
+
+---
+
+#### 1. THE PIVOT — WHERE DOES TRUNCATION HAPPEN?
+
+**There is no ARC-side truncation.** No `.slice(0,20)`, `.substring(0,20)`, or any 20-char limit applied to `partNumber` anywhere in `src/app.jsx` or `functions/index.js`. Grep confirmed zero hits.
+
+**Truncation is server-side in BC.** The `bcCreateItem` function (line 4889) sends the full PN as `body.number` to BC's `/companies(id)/items` REST API (line 4900, POST). BC enforces the 20-character limit on its `number` field server-side — it silently truncates or rejects. The API response returns the truncated `item.number`, which ARC then uses everywhere downstream.
+
+**The truncated value enters ARC's BOM via `commitBcItem`.** At line 26249: `const newPN=bcItem.number` (the BC response's `.number`, already truncated). At line 26262: `partNumber:newPN` overwrites the BOM row's `partNumber` with the truncated value. This persists to Firestore via `saveProjectPanel` at line 26357.
+
+**Once committed, the full PN is gone.** It exists only in the original AI extraction output (pre-`commitBcItem`). The `crossedFrom` field preserves the original extraction PN for crossed items, but for direct BC matches (not crosses), the extraction PN is overwritten with no breadcrumb.
+
+#### 2. BC ITEM-CREATE PATH
+
+**Create flow** (`bcCreateItem`, line 4889):
+1. POST to `/companies(id)/items` with `body.number = fullPN` (line 4894/4900)
+2. BC creates the item, truncating `number` to 20 chars server-side
+3. Response: `item.number` = truncated value
+4. Follow-up OData PATCH (line 4913-4931): sets `Vendor_No`, `Gen_Prod_Posting_Group`, `Inventory_Posting_Group`, `Manufacturer_Code`, and **`Vendor_Item_No`**
+
+**Critical finding on Vendor_Item_No:** Line 4921:
+```js
+if(vendorNo)patch.Vendor_Item_No=item.number;
+```
+This sets `Vendor_Item_No` to **the already-truncated `item.number`**, NOT the full PN. The full PN is available in the `number` parameter passed to `bcCreateItem`, but it's never consulted after the POST. The PATCH uses the response's `item.number`.
+
+**Is the full PN available in scope at create time?** YES. The `number` parameter to `bcCreateItem` carries the full PN. It survives until line 4894 where it's placed in `body.number`. After the POST, the function switches entirely to `item.number` (the response). The original `number` param is still in scope (closure) but never referenced again.
+
+**Can a follow-up write issue after item creation?** YES. The PATCH at line 4913 already runs after item creation (with a 3-second wait for BC indexing, line 4925). Adding `Vendor_Item_No = number` (the param, not `item.number`) to that same PATCH is structurally trivial — the PATCH infrastructure is already there.
+
+**Three call sites for `bcCreateItem`:**
+- BC Item Browser "Create in BC" button (line 22375) — `createNumber` from user input
+- Portal "Create New Item" flow (line 31481) — `newItemForm.itemNo` pre-filled from `item.partNumber`
+- Supplier CSV import create (line 41866) — `row.partNumber`
+
+#### 3. VENDOR ITEM NO. — CURRENT STATE
+
+**Already written, but incorrectly.** `Vendor_Item_No` is actively used in 3 contexts:
+
+(a) **`bcCreateItem` PATCH** (line 4921): `Vendor_Item_No = item.number` — copies the truncated "No." back in. This is the bug site for Jon's fix.
+
+(b) **`bcUpsertItemVendorLeadTime`** (line 4365): Writes `Vendor_Item_No` on `ItemVendorCatalog` records (not `ItemCard`). Lines 4425-4426:
+```js
+if(vendorItemNo&&String(vendorItemNo).trim()&&String(vendorItemNo).trim()!==String(partNumber).trim()){
+  body.Vendor_Item_No=String(vendorItemNo).trim();
+}
+```
+Conditional: only written when `vendorItemNo` differs from `partNumber`. Called from portal apply (line 26052: `vendorItemNo:row.supplierPartNumber`), lead-time batch flush (line 26089), and pricing lead-time paths (lines 26680, 31361, 37684). These already pass supplier part numbers that may differ from BC's "No." — this path is correct for its purpose (ItemVendorCatalog, not ItemCard).
+
+(c) **`bcFuzzyLookup` step 5** (line 4808): Searches across `No`, `Vendor_Item_No`, and `Common_Item_No` via `startswith()` — already reads `Vendor_Item_No` for matching. Once full PNs are stored there, fuzzy lookup would find them automatically.
+
+(d) **`_bcFetchItemsViaItemCard`** (line 4566): Maps `item.Vendor_Item_No` to `_vendorItemNo` on search results. Used in scoring/filtering at line 4731.
+
+**The field is NOT free** — it's actively written and read. But the current value (`item.number`, truncated) is wrong. Correcting it to the full PN would improve lookup AND fix display. No existing logic would break from a longer value there.
+
+#### 4. partNumber AS A KEY — BLAST RADIUS
+
+Every place `partNumber` is used as matching/lookup identity:
+
+| # | Path | Line(s) | Key usage | Truncation impact |
+|---|------|---------|-----------|-------------------|
+| 1 | `bcLookupItem` | 4328 | `number eq '${pn}'` — exact match against BC "No." | If ARC stores full PN, this would FAIL (BC's No. is truncated). Must query by `Vendor_Item_No` or accept No.-based identity. |
+| 2 | `bcFuzzyLookup` | 4758-4848 | Multi-step search: exact No., stripped search, contains, prefix. Step 5 already searches `Vendor_Item_No`. | Full PN in ARC → step 1 exact would fail. Step 5 (Vendor_Item_No startswith) would succeed IF backfill populates the field. |
+| 3 | `applyLearnedCorrections` | 10711, 10728, 10737, 10747 | Alternates: `_altMatchesPN(a,pn)`. Corrections: `c.badPN===pn \|\| normPN(c.badPN)===normPN(pn)`. Part library: key match. Desc crosses: description-keyed. | Alternates DB stores the PN as learned (currently truncated for affected items). Un-truncating new rows won't match old DB entries that stored truncated PNs. One-time DB correction needed for affected items. |
+| 4 | `reconcileBom` | 47290+ | `normPart(partNumber)` matching between prior BOM and new extraction | Extraction returns full PN. If prior BOM holds full PN, match succeeds. If prior BOM holds truncated (from old BC commit), match fails → shows as changed. One-time transition issue, self-corrects on re-extraction. |
+| 5 | `bcSyncPanelPlanningLines` | 3662 | `No:row.partNumber` — pushed directly as BC planning line's Item No. | **CRITICAL.** If ARC stores full PN, this would push >20 chars into BC planning line `No` field → BC 400 rejection. This is the BC-push boundary Jon described — truncation MUST happen here. |
+| 6 | `bcPushPurchasePrice` | 5126 | `Item_No:itemNo` on PurchasePrice record | Same as #5: BC field limit. Must use BC "No." (truncated), not full PN. |
+| 7 | `bcPatchItemOData` | 4949 | `ItemCard?$filter=No eq '${itemNo}'` | Must use BC "No." for this lookup. |
+| 8 | `bcFetchPurchasePrices` | 5152 | `Item_No eq '${pn}'` filter | Must use BC "No." |
+| 9 | Quote PDF BOM hash | various | `computePanelBomHash` / `computeBomHash` | Display-only, no BC interaction. Full PN fine. |
+| 10 | `normPart` matching (crosses, dedup) | ~20 sites | Cross detection: `normPart(crossedFrom)!==normPart(partNumber)` | If `partNumber` is full and `crossedFrom` is the extraction PN (also full), matching works. If `crossedFrom` stored a truncated value from a previous BC commit, the cross detection would break. Transition-period issue. |
+
+**Summary of blast radius:** Paths 1, 5, 6, 7, 8 all send `partNumber` directly to BC fields with a 20-char limit. Un-truncating ARC's `partNumber` without adding a truncation-at-boundary layer would break BC sync. Path 3 (learning DB) has a stale-data transition issue for items learned while truncated.
+
+#### 5. DOCUMENT + BROWSER RENDER SOURCES
+
+| Surface | Field rendered | Line(s) | Fix difficulty |
+|---------|---------------|---------|----------------|
+| **RFQ email/PDF** | `item.partNumber` | 6435, 6446 (`_esc(item.partNumber\|\|"—")`) | Trivial — once ARC BOM stores full PN, RFQ shows it automatically. Zero code change on this surface. |
+| **Traveler BOM (cover page PDF)** | `r.partNumber` | 8053 (`r.partNumber\|\|"—"`) | Same — auto-fixed when BOM row has full PN. Zero code change. |
+| **BC Item Browser (picker modal)** | `item.number` | 22421 (`{item.number}`) | This reads BC's "No." field directly from the search result, NOT the ARC BOM row. Changing to `item._vendorItemNo\|\|item.number` is a ~1-line swap. Requires `_vendorItemNo` to be populated (the backfill). |
+| **BOM table inline** | `row.partNumber` | 28558 column config | Auto-fixed when BOM row has full PN. |
+| **Quote PDF** | `r.partNumber` | via `buildQuotePdfDoc` | Auto-fixed. |
+
+#### Architecture summary for the Brief
+
+Jon's proposed direction aligns well with the code. The fix has 3 layers:
+
+**Layer A (storage):** ARC's BOM `partNumber` carries the full PN. The only mutation point is `commitBcItem` line 26262 — currently `partNumber:newPN` where `newPN = bcItem.number` (truncated). Change: keep ARC's original `partNumber` when it's longer than BC's "No.", or store full PN from a new field.
+
+**Layer B (BC-push boundary):** Every path that writes `partNumber` into a BC field with a 20-char limit (planning lines, purchase prices, item lookups) must use the BC "No." (truncated), not the full PN. This is 5-8 call sites (paths #1, #5, #6, #7, #8 above). A helper like `bcItemNo(row)` that returns `row.bcItemNumber || row.partNumber.slice(0,20)` would centralize this.
+
+**Layer C (Vendor_Item_No):** Fix `bcCreateItem` line 4921 to write the full PN (`number` param) instead of `item.number`. One-time backfill seeds existing items. BC Item Browser display (line 22421) swaps to `item._vendorItemNo||item.number`.
+
+**Blast-radius caution:** The learning DB (alternates, corrections) has entries keyed by truncated PNs for affected items. A transition strategy is needed so old DB entries still match during the changeover period.
 
 ---
