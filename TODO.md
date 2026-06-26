@@ -2830,3 +2830,25 @@ reset that surfaced the ground-truth state.
      see COACH.md C100–C105 era / SESSION-STATE.md dedup flag). Confirm the precise duplication with
      Coach, then consolidate.
      Logged: 2026-06-17 (Jon, after Marc+Coach confirmed it was unlogged at close-out).
+
+## False alarms (2026-06-26)
+
+167. **NO-BUG** [Verified — FALSE ALARM] (Coach C106) — "PRJ402124 reports 28 AI prices but shows zero AI
+     price pills." Reported as a checklist=28 vs pills=0 contradiction over the same `priceSource==="ai"`
+     predicate. Marc ran a read-only runtime investigation (in-memory `projectRef.current` + Pre-Print
+     Checklist DOM) on the live deployed app: the "28" is NOT AI prices — it is **28 AI-estimated LEAD
+     TIMES** (`leadTimeSource==="ai"` / `leadTimeEstimated:true`). The Pre-Print Checklist line reads
+     verbatim "28 AI-estimated lead times" and correctly flags the quote BUDGETARY via
+     `_markProjectBudgetaryForAiLeads`. Evidence: all 89 BOM rows across the 4 panels are
+     `priceSource:"bc"` (0 `"ai"` anywhere — in memory, in `quote`, and across all 16 `qvHistory`
+     revisions) → the zero AI-price pills are CORRECT. The 28 ai-lead rows cluster on the two EXTRACTED
+     lines (panel-1/Line 1 FLS-1071 = 17; panel-1781728550098/Line 4 FLS-1072 = 11); non-extracted Lines
+     2-3 = 0. Sample row `1492-SPM1C030`: `priceSource:"bc"` + `leadTimeSource:"ai"` + `leadTimeDays:10`.
+     ROOT CAUSE OF THE ALARM: terminological — "AI-estimated lead times" was read as "AI prices." App is
+     behaving as designed; no code change. CORRECTION FOR COACH C106: the checklist count predicate is
+     lead-time-based (`leadTimeSource==="ai"`), NOT `priceSource==="ai"` as C106 recorded — so the
+     "same-predicate contradiction" framing does not hold. (Note: rules block direct client reads of the
+     persisted doc — auto-ID doc not under the readable `users/{uid}/projects` collection — but the
+     determination is lead-based and in-memory==loaded-from-Firestore, so the persisted/in-memory split
+     is moot: no `priceSource:"ai"` population exists to be stale.)
+     Logged: 2026-06-26 (Jon directed; Marc runtime read, v1.20.142).

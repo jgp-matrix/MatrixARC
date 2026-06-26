@@ -1,16 +1,22 @@
-# Session State — 2026-06-17 MDT
+# Session State — 2026-06-17 MDT (refreshed at 2026-06-26 boot; no code work since, master tip advanced to 71649462 via TODO/Coach-doc commits)
 
 ## Version
 v1.20.142 (deployed 2026-06-17). #153 Drawing-Revision Re-Extract + BOM Reconciliation now working end-to-end (Option A entry gate + C103 cross-aware reconciliation), plus #160 Reconciliation Reject/Keep-Prior with a latent silent-drop data-loss fix. Live-verified through the cross-masking fix; #160 awaiting Jon's T1–T8.
 
 ## Deploy State
-- Master tip: e774ef38 ("tests: #153 C103 cross pre-pass + #160 reject/keep-prior harness coverage") — doc/test commits after the v1.20.142 release stamp, no code change, no version bump
-- v1.20.142 was deployed at commit 0a3c7121; post-deploy commits are all non-deployable: 37527cdb (#163 TODO log) → e101d816 (handoff files) → e774ef38 (harness coverage — deploy.sh doesn't stage tests/, so the C103+#160 harness changes were committed separately at close-out)
-- Local master == origin/master (synced at e774ef38)
+- Master tip: 71649462 ("Log #166 — stampFn/drop-handler dedup cleanup") — TODO-log + Coach-doc commits after the v1.20.142 release stamp, no code change, no version bump
+- v1.20.142 was deployed at commit 0a3c7121; all post-deploy commits are non-deployable (TODO logs, handoff files, harness coverage, Coach docs)
+- Local master == origin/master (synced at 71649462)
 - Latest tag: v1.20.142
 - v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live.
 
 ## Recent Commits (last 15)
+- 71649462 Log #166 (stampFn/drop-handler dedup cleanup, LOW maintenance) — closes the unlogged-gap flag
+- 34995028 Log #164 (Deleted->Keep cross-strip, HIGH data-loss) + #165 (Accept/Reject relabel, HIGH cross-loss-via-misread)
+- d466ee25 Coach docs: C100 revision-gate trace + #156 supplement
+- 93eda115 Correct handoff files: #158 logged-not-scoped, master tip e774ef38, flag unlogged dedup item
+- e774ef38 tests: #153 C103 cross pre-pass + #160 reject/keep-prior harness coverage (64 passing)
+- e101d816 Update handoff files for next session (v1.20.142)
 - 37527cdb Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)
 - 987bbdb3 Log #161 (BOM-region tip timing) and #162 (monthly counter reset) to TODO
 - 0a3c7121 Release v1.20.142
@@ -20,11 +26,6 @@ v1.20.142 (deployed 2026-06-17). #153 Drawing-Revision Re-Extract + BOM Reconcil
 - 9d83efb7 C103: #153 cross-aware reconciliation fix plan — two-part fix finalized
 - eb810ba3 Log #158: region-learning doc exceeds Firestore 1MB limit (silent prod failure)
 - ba919deb Release v1.20.140
-- 2c244a79 C102: #153 reconciliation cross trace — prior BOM shows pre-crossed PNs
-- 1853ce5e Release v1.20.139
-- 19316090 Append entry-point correction to #156 plan (C99)
-- 223b8461 C101: #153 full flow read — end-to-end revision path audit
-- 282c12c0 docs: stub 153-FULL-FLOW-READ.md for compaction durability
 
 ## Headline: #153 revision reconciliation works end-to-end + #160 silent-drop data-loss closed
 The drawing-revision re-extract flow (#153) is now functional through its two hardest defects: the entry gate (was firing in a stale async window — fixed structurally via Option A, gate at drop with a fresh panel prop) and the cross-masking bug (the reconciliation modal compared raw PNs on both sides, so a crossed prior would have been carried forward pre-cross on commit, wiping the user's substitutions — fixed via C103's two-part fix). On top of that, #160 added Reject/Keep-Prior to the Changed bucket and, in doing so, closed a latent silent-drop bug where a non-accepted Changed row vanished from the output BOM.
@@ -53,7 +54,8 @@ Two-part fix, ships together:
 - **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH. **LOGGED only** (eb810ba3), no scope doc yet.
 - **#159** (C104) — Copy-to-New-Quote customer selection. **SCOPED** (`docs/159-COPY-CUSTOMER-SCOPE.md`).
 - **#160** (C105) — built this session (above).
-- **#166** — stampFn/drop-handler dedup cleanup (LOW maintenance, no data-loss). Now logged (was the item mis-remembered as "#158"; #158 was taken by region-learning). Needs scope from Coach (owns the original #153-era finding) before implementation.
+- **#164/#165** — now LOGGED to TODO (34995028): #164 Deleted→Keep cross-strip (HIGH data-loss), #165 Accept/Reject relabel (HIGH cross-loss-via-misread). Top of queue.
+- **#166** — stampFn/drop-handler dedup cleanup (LOW maintenance, no data-loss). Now LOGGED (71649462). Needs scope from Coach (owns the original #153-era finding) before implementation.
 - Untracked Coach docs in working tree at close (left for Coach to commit, 5 of 7 already committed): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
 
 ## Open work queue (top candidates)
