@@ -3659,7 +3659,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     const desc=(row.description||"").slice(0,100);
     const fallbackDesc=`${row.partNumber||""} - ${(row.description||"").slice(0,90)}`.slice(0,100).trim();
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
-      Line_Type:"Budget",Type:"Item",No:row.partNumber,
+      Line_Type:"Budget",Type:"Item",No:_bcNo(row),
       Description:desc,
       // DECISION(v1.19.462): Push Unit_Cost from ARC so BC planning lines reflect ARC's costing.
       // Unit_Price is NOT set (caused BC rejection errors on Budget/Item lines).
@@ -3848,7 +3848,7 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
       Planning_Date:today,
       Line_Type:"Budget",
       Type:"Item",
-      No:row.partNumber.trim(),
+      No:_bcNo(row),
       Description:desc,
       // v1.19.979 (reverted v1.19.978): ECO qty IS per-panel — multiplying
       // by lineQty so a 3-panel project with per-panel ECO qty 1 yields
@@ -4319,6 +4319,28 @@ function _daysToBcDateFormula(days){
   return `${Math.round(days)}D`;
 }
 
+// #163: BC "No." for a BOM row — the captured surrogate (bcNo) when present, else a
+// 20-char-truncated fallback that preserves pre-#163 behavior for rows that never
+// touched BC. Use this anywhere row.partNumber would target a BC Code[20] field.
+function _bcNo(row){return row?.bcNo||(row?.partNumber||'').slice(0,20);}
+
+// #163: Resolve a BC item's full Part# from its Vendor_Item_No via the ItemCard OData
+// endpoint. Needed because bcItem objects sourced from the v2 /items mapper (the
+// "Part # Only" / "Description Only" search paths, bcLookupItem, and bcFuzzyLookup) do
+// NOT carry Vendor_Item_No — only the ItemCard search path (_bcFetchItemsViaItemCard)
+// maps it. `bcNo` is the BC "No." (surrogate). Returns the trimmed full PN, or '' if
+// not found / on error. Uses the direct ItemCard endpoint (proven in bcLookupLeadTime
+// ~4349 and bcUpsertItemVendorLeadTime ~4404) rather than bcDiscoverODataPages.
+async function _resolveVendorItemNo(bcNo){
+  if(!bcNo||!_bcToken)return '';
+  try{
+    const no=String(bcNo).trim().replace(/'/g,"''");
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${no}'&$select=No,Vendor_Item_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.ok){const row=((await r.json()).value||[])[0];if(row)return (row.Vendor_Item_No||'').trim();}
+  }catch(e){console.warn("_resolveVendorItemNo error:",bcNo,e);}
+  return '';
+}
+
 async function bcLookupItem(partNumber){
   if(!_bcToken||!partNumber||!partNumber.trim())return null;
   const compId=await bcGetCompanyId();
@@ -4497,7 +4519,7 @@ async function bcLookupItems(bomItems){
   for(const row of bomItems){
     const pn=(row.partNumber||"").trim();
     if(!pn)continue;
-    const item=await bcLookupItem(pn);
+    const item=await bcLookupItem(_bcNo(row));
     if(item&&item.unitCost!=null){
       result[String(row.id)]={unitPrice:item.unitCost,source:"bc",bcDisplayName:item.displayName,bcInventory:item.inventory};
     }
@@ -4858,7 +4880,7 @@ async function _bcReVerifyNotInBc(bom){
   for(const row of stale){
     if(!_bcToken)break;
     const pn=(row.partNumber||"").trim();
-    const item=await bcLookupItem(pn);
+    const item=await bcLookupItem(_bcNo(row));
     if(item){
       updates[String(row.id)]={
         bcVerify:{status:"in-bc",at:Date.now(),reVerified:true},
@@ -4868,7 +4890,7 @@ async function _bcReVerifyNotInBc(bom){
     }
   }
   if(!Object.keys(updates).length)return null;
-  const matchedPns=[...new Set(Object.keys(updates).map(k=>{const r=bom.find(b=>String(b.id)===k);return r?(r.partNumber||"").trim():null;}).filter(Boolean))];
+  const matchedPns=[...new Set(Object.keys(updates).map(k=>{const r=bom.find(b=>String(b.id)===k);return r?_bcNo(r):null;}).filter(Boolean))];
   if(matchedPns.length){
     try{
       const ppMap=await bcFetchPurchasePrices(matchedPns);
@@ -4890,8 +4912,28 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(!_bcToken)throw new Error("Not connected to Business Central");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve BC company");
+  // #163: Pre-create dedup. Post-#163 body.number is omitted so BC auto-assigns a NEW surrogate
+  // on every POST — without this, creating the same PN twice (CSV re-run, two users, a retry)
+  // would silently spawn duplicate BC items. The full PN lives in Vendor_Item_No, which is NOT
+  // unique-constrained, so we check it ourselves via ItemCard OData (the v2 /items endpoint has
+  // no vendorItemNo property — that filter 400s). If a match exists, reuse it (no duplicate).
+  if(number){
+    try{
+      const dpn=String(number).trim().replace(/'/g,"''");
+      const dupR=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=Vendor_Item_No eq '${dpn}'&$select=No,Vendor_Item_No,Description&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(dupR.ok){
+        const existing=((await dupR.json()).value||[])[0];
+        if(existing&&existing.No){
+          console.log(`bcCreateItem: item with Vendor_Item_No='${number}' already exists as ${existing.No}, reusing`);
+          return{number:existing.No||"",fullPN:number,displayName:existing.Description||"",unitCost:null,unitPrice:null,inventory:0,lastModifiedDateTime:"",vendorNo:""};
+        }
+      }
+    }catch(e){console.warn("bcCreateItem: dedup check failed, proceeding with create:",e);}
+  }
   const body={};
-  if(number)body.number=number;
+  // #163: body.number intentionally OMITTED — BC's No.-Series auto-assigns the surrogate (proven
+  // by the BC-1 probe: POST with number omitted returns MTX-##### in .number). The `number` param
+  // is now the FULL PN, written to Vendor_Item_No in the OData PATCH below.
   if(displayName)body.displayName=displayName.slice(0,100);
   if(unitCost!=null&&unitCost!=="")body.unitCost=parseFloat(unitCost);
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
@@ -4911,14 +4953,18 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
     if(!r.ok){const txt=await r.text();throw new Error(txt||`BC returned status ${r.status}`);}
     const item=await r.json();
     // PATCH extra fields via OData ItemCard (v2.0 API doesn't expose these)
-    if(item.number&&(vendorNo||genProdPostingGroup||inventoryPostingGroup||manufacturerCode)){
+    // #163: gate now includes `||number` so the PATCH fires even with no vendor/posting groups —
+    // otherwise a vendor-less create would never write Vendor_Item_No and the full PN would be
+    // lost (item left with only the auto-assigned surrogate as its "No.").
+    if(item.number&&(vendorNo||genProdPostingGroup||inventoryPostingGroup||manufacturerCode||number)){
       const patch={};
       if(vendorNo)patch.Vendor_No=vendorNo;
       if(genProdPostingGroup)patch.Gen_Prod_Posting_Group=genProdPostingGroup;
       if(inventoryPostingGroup)patch.Inventory_Posting_Group=inventoryPostingGroup;
       if(manufacturerCode)patch.Manufacturer_Code=manufacturerCode.slice(0,10);
-      // Also set Vendor_Item_No to the item number so BC knows the vendor's catalog number
-      if(vendorNo)patch.Vendor_Item_No=item.number;
+      // #163: ALWAYS write the full PN (the `number` param) to Vendor_Item_No when present,
+      // independent of vendorNo. This is where the full PN is preserved under the surrogate scheme.
+      if(number)patch.Vendor_Item_No=number;
       // DECISION(v1.19.377): Wait 3s before first OData PATCH (newly created items need time to index).
       // Retry up to 3x with 4s delays. Previous 5x/2s pattern triggered BC rate limiter ("Too many error requests").
       let patchOk=false;
@@ -4930,7 +4976,7 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
       }
       if(!patchOk)console.error("bcCreateItem: OData PATCH failed after 3 attempts for",item.number);
     }
-    return{number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:vendorNo||""};
+    return{number:item.number||"",fullPN:number||item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:vendorNo||""};
   }catch(e){
     if(e.message.includes("BC session expired")||e.message.includes("already exists"))throw e;
     console.warn("bcCreateItem error:",e);
@@ -6296,13 +6342,13 @@ async function buildRfqSupplierGroups(bom){
     if(item.isCrossed&&_bcToken){
       const pn=(item.partNumber||"").trim();
       if(pn){
-        const freshNo=await bcGetItemVendorNo(pn);
+        const freshNo=await bcGetItemVendorNo(_bcNo(item));
         if(freshNo){const freshName=await bcGetVendorName(freshNo);if(freshName){vendorName=freshName;vendorNo=freshNo;}}
       }
     }
     if(!vendorName&&_bcToken){
       const pn=(item.partNumber||"").trim();
-      if(pn){vendorNo=vendorNo||await bcGetItemVendorNo(pn);vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
+      if(pn){vendorNo=vendorNo||await bcGetItemVendorNo(_bcNo(item));vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
     }
     if(!vendorName)vendorName="Unknown Supplier";
     if(!groupMap[vendorName]){
@@ -10708,7 +10754,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
     // alternates instead of applying them. OCR-noisy PNs can match wrong learning DB entries.
     // Corrections (paths 2-4) still apply — they fix known errors, which helps noisy extraction.
     if(!r.isCrossed){
-      const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
+      const alt=userAlts.find(a=>a.autoReplace&&a.replacement&&(_altMatchesPN(a,pn)||_altMatchesPN(a,pn.slice(0,20))));
       if(alt){
         if(manualVerifyRequired){
           heldBackAlternates.push({rowId:r.id,from:pn,to:alt.replacement.partNumber,toDesc:alt.replacement.description||""});
@@ -10720,12 +10766,12 @@ async function applyLearnedCorrections(bom,uid,opts={}){
       // v1.19.977: log when an alternate exists for this PN but isn't set to
       // auto-replace — surfaces a UX bug (user crossed a part but uncheck auto)
       // versus a matching bug (no entry at all).
-      const matchedButNotAuto=userAlts.find(a=>!a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
+      const matchedButNotAuto=userAlts.find(a=>!a.autoReplace&&a.replacement&&(_altMatchesPN(a,pn)||_altMatchesPN(a,pn.slice(0,20))));
       if(matchedButNotAuto)skippedNonAuto.push(`${pn} (entry exists, autoReplace=false)`);
     }
     // 2. Bad PN → corrected PN (from correctionDB)
     if(!r.isCorrection){
-      const corr=userCorrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
+      const corr=userCorrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn)||c.badPN===pn.slice(0,20)||normPN(c.badPN)===normPN(pn.slice(0,20)));
       if(corr&&corr.correctedPN){
         appliedLog.push({rowId:r.id,kind:"correction",from:pn,to:corr.correctedPN,reason:"auto-fix from correction DB"});
         return{...r,partNumber:corr.correctedPN,isCorrection:true,correctionType:corr.type||"extraction",correctionFrom:pn};
@@ -10734,7 +10780,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
     // 3. Part library correction (legacy partLibrary.corrections)
     if(!r.correctedByLibrary){
       const pcKey=pn.toLowerCase();
-      const pc=userPartCorrs.find(c=>c.key===pcKey);
+      const pc=userPartCorrs.find(c=>c.key===pcKey||c.key===pn.slice(0,20).toLowerCase());
       if(pc&&pc.correctValue){
         appliedLog.push({rowId:r.id,kind:"partCorrection",from:pn,to:pc.correctValue,reason:"auto-fix from part library"});
         return{...r,partNumber:pc.correctValue,correctedByLibrary:true};
@@ -14915,16 +14961,19 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
           const row=eligible[i];
           const pn=(row.partNumber||"").trim();
           if(!pn)continue;
+          // #163: when the row already carries a BC surrogate, look up by it (BC's "No." is the
+          // surrogate post-#163, not the full PN). Falls back to pn for un-committed rows.
+          const _rowBcNo=row.bcNo||'';
           if(i%5===0)bgUpdate(_bgKey(projectId,panelId),`Background: BC ${i+1}/${eligible.length}…`);
           if(row.priceSource==="bc"){
-            const exact=await bcLookupItem(pn);
+            const exact=await bcLookupItem(_rowBcNo||pn);
             if(exact&&exact.unitCost!=null){
-              const vNo=exact.vendorNo||await bcGetItemVendorNo(pn);
-              bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
+              const vNo=exact.vendorNo||await bcGetItemVendorNo(_rowBcNo||pn);
+              bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:exact.number||_rowBcNo||pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
             }
             continue;
           }
-          const result=await bcFuzzyLookup(pn);
+          const result=await bcFuzzyLookup(_rowBcNo||pn);
           if(result.match&&result.match.unitCost!=null){
             const _isExact=result.type==="exact";
             const _needsReview=!_isExact&&_bgManualVerify;
@@ -14961,9 +15010,12 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
           if(key in bcMap){
             const hasPrice=bcMap[key].unitPrice>0;
             const hasPpDate=!!bcMap[key]._ppHasDate;
-            const newPn=bcMap[key].bcNumber||r.partNumber;
-            if(newPn!==r.partNumber)bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.partNumber,to:newPn,reason:"BC fuzzy match"});
-            return{...r,partNumber:newPn,
+            // #163: never overwrite partNumber with the BC "No." Capture the matched BC No.
+            // as bcNo; partNumber stays the full PN. Log when bcNo actually changes.
+            const matchedBcNo=bcMap[key].bcNumber||null;
+            if(matchedBcNo&&matchedBcNo!==(r.bcNo||''))bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.bcNo||r.partNumber,to:matchedBcNo,reason:"BC match → bcNo"});
+            return{...r,
+              ...(matchedBcNo?{bcNo:matchedBcNo}:{}),
               ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
               priceSource:"bc",
               ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
@@ -15039,7 +15091,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
       const vendorPatches={};
       for(const row of needVendor){
         const pn=(row.partNumber||"").trim();
-        try{const vNo=await bcGetItemVendorNo(pn);if(vNo){const vName=await bcGetVendorName(vNo);if(vName)vendorPatches[String(row.id)]={bcVendorNo:vNo,bcVendorName:vName};}}catch(e){}
+        try{const vNo=await bcGetItemVendorNo(_bcNo(row));if(vNo){const vName=await bcGetVendorName(vNo);if(vName)vendorPatches[String(row.id)]={bcVendorNo:vNo,bcVendorName:vName};}}catch(e){}
       }
       if(Object.keys(vendorPatches).length>0)updatedBom=updatedBom.map(r=>{const k=String(r.id);return k in vendorPatches?{...r,...vendorPatches[k]}:r;});
     }
@@ -22213,7 +22265,8 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
               <div style={{flex:1,minWidth:140}}>
                 <label style={{fontSize:11,color:C.muted,marginBottom:3,display:"block"}}>Part Number</label>
-                <input value={createNumber} onChange={e=>setCreateNumber(e.target.value)} placeholder="e.g. MTX-1234"
+                {/* #163: user enters the FULL manufacturer PN; BC auto-assigns the MTX-##### "No." */}
+                <input value={createNumber} onChange={e=>setCreateNumber(e.target.value)} placeholder="Full part number (BC assigns the item no.)"
                   style={{...inp(),width:"100%",boxSizing:"border-box"}}/>
               </div>
               <div style={{flex:2,minWidth:200}}>
@@ -22418,7 +22471,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onClick={()=>{const vn=vendorNames[item.number];const it=vn?{...item,_vendorName:vn}:item;onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.accentDim+"44"}
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
-                  <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item.number}</td>
+                  <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item._vendorItemNo||item.number}</td>
                   <td style={{padding:"7px 10px",color:C.sub}}>{item.displayName}</td>
                   <td style={{padding:"4px 6px",fontSize:11,whiteSpace:"nowrap",minWidth:80}} onClick={e=>e.stopPropagation()}>
                     {inlineMfrCreate===item.number?(
@@ -23712,7 +23765,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           for(const row of needVendor){
             const pn=(row.partNumber||"").trim();
             if(pnVendor[pn]!==undefined)continue;
-            const vNo=await bcGetItemVendorNo(pn);
+            const vNo=await bcGetItemVendorNo(_bcNo(row));
             pnVendor[pn]=vNo?await bcGetVendorName(vNo):"";
             _dbg("VENDOR BACKFILL:",pn,"→ vendorNo=",vNo,"→ name=",pnVendor[pn]);
           }
@@ -26079,13 +26132,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         let vn=w.vendorNo;
         let vname=w.vendorName;
         if(!vn){
-          vn=await bcGetItemVendorNo(w.partNumber).catch(()=>"");
+          vn=await bcGetItemVendorNo(_bcNo(w)).catch(()=>"");
           if(vn&&!vname)vname=await bcGetVendorName(vn).catch(()=>"");
           if(vn)resolvedVendorUpdates[w.rowId]={bcVendorNo:vn,bcVendorName:vname||""};
         }
         if(!vn){failed++;failures.push(`${w.partNumber}: no BC vendor`);continue;}
         const res=await bcUpsertItemVendorLeadTime({
-          partNumber:w.partNumber,vendorNo:vn,vendorName:vname||"",
+          partNumber:_bcNo(w),vendorNo:vn,vendorName:vname||"",
           vendorItemNo:w.vendorItemNo,leadTimeDays:w.leadTimeDays,
           projectId,uid,cid,
         });
@@ -26243,6 +26296,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Re-read livePanel after await — another save may have landed while PP fetch ran
     const livePanel2=latestPanelRef.current;
     liveBom=livePanel2.bom||liveBom;
+    // #163: Resolve the BC surrogate ("No.") and the full PN (Vendor_Item_No) ONCE here,
+    // before the synchronous .map() below (which can't await). bcItem._vendorItemNo is only
+    // populated when the item came from the ItemCard search path ("All Fields"); when it came
+    // from a "Part # Only"/"Description" search (v2 /items mapper) or bcFuzzyLookup, resolve it
+    // via a targeted ItemCard fetch. bcFullPN falls back to the surrogate for un-backfilled
+    // items (Vendor_Item_No empty) — which is why BC-2 backfill must precede deploy.
+    const bcSurrogate=bcItem.number;
+    let bcFullPN=(bcItem._vendorItemNo||'').trim();
+    if(!bcFullPN&&bcSurrogate)bcFullPN=await _resolveVendorItemNo(bcSurrogate);
+    bcFullPN=bcFullPN||bcSurrogate;
     const bom=liveBom.map(r=>{
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
@@ -26259,7 +26322,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // only stamped during runPricingOnPanel, leaving a stale "not-in-bc"
       // pill visible until the next pricing run.
       const updates={...r,
-        ...(newPN?{partNumber:newPN}:{}),
+        // #163: capture the BC surrogate as bcNo; only overwrite partNumber with the FULL PN
+        // (from Vendor_Item_No) — never with the surrogate. When Vendor_Item_No is empty
+        // (bcFullPN===bcSurrogate, un-backfilled item), partNumber is left untouched.
+        ...(bcSurrogate?{bcNo:bcSurrogate}:{}),
+        ...(bcFullPN&&bcFullPN!==bcSurrogate?{partNumber:bcFullPN}:{}),
         priceSource:"bc",
         bcVerify:{status:"in-bc",at:Date.now()},
         ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
@@ -26284,7 +26351,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // "Just Apply" — no cross or correction flags, no learning
         delete updates.isCrossed;delete updates.crossedFrom;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
-      }else if(asCross&&normPart(newPN)!==normPart(origPN)){
+      }else if(asCross&&normPart(bcFullPN)!==normPart(origPN)){
         updates.isCrossed=true;updates.crossedFrom=origPN;
         delete updates.isCorrection;delete updates.correctionType;delete updates.correctionFrom;
       }else{
@@ -26321,10 +26388,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(!skipLearning){
         if(asCross){
           // autoReplace:true — ARC selection immediately trains the learning database
-          saveAlternateEntry(uid,origPN,{partNumber:newPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
+          saveAlternateEntry(uid,origPN,{partNumber:bcFullPN,description:bcItem.displayName||r.description||"",unitCost:bcItem.unitCost},true)
             .then(alts=>setAlternates([...alts])).catch(()=>{});
         }else if(correctionType){
-          saveCorrectionEntry(uid,origPN,newPN,correctionType).then(()=>{}).catch(()=>{});
+          saveCorrectionEntry(uid,origPN,bcFullPN,correctionType).then(()=>{}).catch(()=>{});
         }
         // Description cross: when user fills a blank-PN row from BC Item Browser,
         // remember the description→part# mapping for future auto-population.
@@ -26333,7 +26400,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const rowDesc=(r.description||"").trim();
         if(wasBlankPN&&rowDesc){
           saveDescriptionCrossEntry(uid,rowDesc,{
-            partNumber:bcItem.number,
+            partNumber:bcFullPN,
             manufacturer:bcItem._mfrCode||r.manufacturer||"",
             description:bcItem.displayName||bcItem.description||rowDesc,
             unitCost:bcItem.unitCost||null
@@ -26367,7 +26434,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(allPriced)setBcSyncStatus("pending");
     }
   }
-  function applyBcItem(bomRowId,bcItem){
+  async function applyBcItem(bomRowId,bcItem){
     const row=(latestPanelRef.current.bom||[]).find(r=>r.id===bomRowId);
     if(!row)return;
     // DECISION(v1.19.873, ECO delta-row): if this is a base row in active ECO
@@ -26414,7 +26481,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(bcItem._customerSupplied&&!bcItem.number){commitBcItem(targetId,bcItem,false);return;}
     const origPN=(row.crossedFrom||row.partNumber||"").trim();
     const newPN=bcItem.number;
-    const isCrossing=origPN&&origPN!==newPN;
+    // #163: resolve the full PN for the cross decision. bcItem may lack _vendorItemNo when it
+    // came from a "Part # Only"/"Description" search (v2 mapper) or bcFuzzyLookup, so resolve
+    // via ItemCard. Compare normalized full PNs — the prompt should fire on a genuine cross,
+    // not on a surrogate-vs-full-PN difference or hyphen/case formatting noise.
+    let bcFullPN=(bcItem._vendorItemNo||'').trim();
+    if(!bcFullPN&&newPN)bcFullPN=await _resolveVendorItemNo(newPN);
+    bcFullPN=bcFullPN||newPN;
+    const isCrossing=origPN&&normPart(origPN)!==normPart(bcFullPN);
     if(isCrossing){
       setCrossOrCorrectPending({bomRowId:targetId,bcItem,origPN,newPN});
     }else{
@@ -26519,9 +26593,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setPriceConfirmPending(null);
     // Push to BC Item Card + Purchase Price
     if(partNumber&&_bcToken){
+      // #163: push to BC by the row's surrogate (bcNo) when present, not the full partNumber.
+      const _pushRow=(panel.bom||[]).find(r=>r.id===id);
+      const _bn=_bcNo(_pushRow||{partNumber});
       let bcPushOk=false;
       try{
-        await bcPatchItemOData(partNumber,{Unit_Cost:price});
+        await bcPatchItemOData(_bn,{Unit_Cost:price});
         bcPushOk=true;
       }catch(e){console.warn("BC unit cost update failed:",partNumber,e);}
       // Push to Purchase Price card if vendor provided
@@ -26530,7 +26607,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const vendors=await bcListVendors();
           const v=vendors.find(v=>v.displayName===vendorName);
           if(v?.number){
-            await bcPushPurchasePrice(partNumber,v.number,price,new Date().toISOString().split('T')[0],"EA");
+            await bcPushPurchasePrice(_bn,v.number,price,new Date().toISOString().split('T')[0],"EA");
             bcPushOk=true;
             console.log("BC PURCHASE PRICE pushed:",partNumber,v.number,price);
           }
@@ -26558,7 +26635,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time (see updateBomRow comment).
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(e){}},1500);
     // Write vendor back to BC item card
-    const pn=(row?.partNumber||"").trim();
+    const pn=_bcNo(row);
     if(pn&&_bcToken&&vendorName){
       const vendor=bomVendorList.find(v=>v.displayName===vendorName);
       if(vendor){bcPatchItemOData(pn,{Vendor_No:vendor.number}).then(()=>console.log("BC VENDOR UPDATE:",pn,"→",vendor.number,vendorName)).catch(e=>console.warn("BC vendor update failed:",pn,e));}
@@ -26649,7 +26726,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const stillNoVendor=[];
     for(const row of needVendorLookup){
       try{
-        const vNo=await bcGetItemVendorNo((row.partNumber||"").trim());
+        const vNo=await bcGetItemVendorNo(_bcNo(row));
         if(vNo){
           const vName=await bcGetVendorName(vNo).catch(()=>"");
           resolvedExtra.push({...row,bcVendorNo:vNo,bcVendorName:row.bcVendorName||vName||""});
@@ -26676,7 +26753,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     for(const row of qualifying){
       try{
         const result=await bcUpsertItemVendorLeadTime({
-          partNumber:row.partNumber,vendorNo:row.bcVendorNo,vendorName:row.bcVendorName||"",
+          partNumber:_bcNo(row),vendorNo:row.bcVendorNo,vendorName:row.bcVendorName||"",
           vendorItemNo:row.supplierPartNumber||"",leadTimeDays:+row.leadTimeDays,
           projectId,uid,cid,
         });
@@ -26782,6 +26859,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const row=eligible[i];
             const pn=(row.partNumber||"").trim();
             if(!pn)continue;
+            // #163: look up by the captured BC surrogate when present (post-#163 the BC "No."
+            // is the surrogate, not the full PN). Falls back to pn for un-committed rows.
+            const _rowBcNo=row.bcNo||'';
             _pp({msg:`BC: ${i+1} of ${eligible.length} — ${pn}`,pct:27+Math.round((i/eligible.length)*20)});
             // DECISION(v1.19.641): ARC priceDate is driven EXCLUSIVELY by BC PurchasePrices
             // Starting_Date. No fabricated Date.now(). No last-PO posting date (that's a
@@ -26790,14 +26870,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             // entry or scraper push that writes a PP record).
             // Already bc-priced: exact lookup to get current cost + vendor (don't fuzzy-match, avoid changing part number)
             if(row.priceSource==="bc"){
-              const exact=await bcLookupItem(pn);
+              const exact=await bcLookupItem(_rowBcNo||pn);
               if(exact&&exact.unitCost!=null){
-                const vNo=exact.vendorNo||await bcGetItemVendorNo(pn);
-                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
+                const vNo=exact.vendorNo||await bcGetItemVendorNo(_rowBcNo||pn);
+                bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:exact.number||_rowBcNo||pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
               }
               continue;
             }
-            const result=await bcFuzzyLookup(pn);
+            const result=await bcFuzzyLookup(_rowBcNo||pn);
             if(result.match&&result.match.unitCost!=null){
               const _isExact=result.type==="exact";
               const _needsReview=!_isExact&&_manualVerifyRequired;
@@ -26843,9 +26923,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const hasActiveRfq=r.rfqSentDate&&(!r.unitPrice||r.unitPrice===0);
               const hasPrice=bcMap[key].unitPrice>0;
               const hasPpDate=!!bcMap[key]._ppHasDate;
-              const newPn=bcMap[key].bcNumber||r.partNumber;
-              if(newPn!==r.partNumber)bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.partNumber,to:newPn,reason:"BC fuzzy match"});
-              return{...r,partNumber:newPn,
+              // #163: capture matched BC No. as bcNo; never overwrite partNumber with it.
+              const matchedBcNo=bcMap[key].bcNumber||null;
+              if(matchedBcNo&&matchedBcNo!==(r.bcNo||''))bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.bcNo||r.partNumber,to:matchedBcNo,reason:"BC match → bcNo"});
+              return{...r,
+                ...(matchedBcNo?{bcNo:matchedBcNo}:{}),
                 ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
                 priceSource:"bc",
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
@@ -27006,9 +27088,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(codaleVendorNo){
           const pushPromises=[];
           for(const[pn,{price}]of Object.entries(codaleMap)){
-            const origPN=codaleItems.find(r=>(r.partNumber||"").trim().toUpperCase()===pn)?.partNumber||pn;
-            bcPatchItemOData(origPN,{Unit_Cost:price}).catch(e=>console.warn("Codale BC item update failed:",origPN,e));
-            pushPromises.push(bcPushPurchasePrice(origPN,codaleVendorNo,price,Date.now()).catch(e=>{console.warn("Codale BC purchase price failed:",origPN,e);return{ok:false};}));
+            const _cr=codaleItems.find(r=>(r.partNumber||"").trim().toUpperCase()===pn);
+            const origPN=_cr?.partNumber||pn;
+            const _bn=_bcNo(_cr||{partNumber:origPN}); // #163: push by surrogate when the row carries one
+            bcPatchItemOData(_bn,{Unit_Cost:price}).catch(e=>console.warn("Codale BC item update failed:",origPN,e));
+            pushPromises.push(bcPushPurchasePrice(_bn,codaleVendorNo,price,Date.now()).catch(e=>{console.warn("Codale BC purchase price failed:",origPN,e);return{ok:false};}));
           }
           try{
             await Promise.allSettled(pushPromises);
@@ -27116,8 +27200,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 if(pr?.price){
                   const numPrice=parseFloat(String(pr.price).replace(/[$,]/g,""));
                   if(!isNaN(numPrice)&&numPrice>0){
-                    bcPatchItemOData(r.partNumber,{Unit_Cost:numPrice}).catch(e=>console.warn(scraper.name+" BC item update failed:",r.partNumber,e));
-                    pushPromises.push(bcPushPurchasePrice(r.partNumber,scraperVendorNo,numPrice,Date.now()).catch(e=>{console.warn(scraper.name+" BC purchase price failed:",r.partNumber,e);return{ok:false};}));
+                    bcPatchItemOData(_bcNo(r),{Unit_Cost:numPrice}).catch(e=>console.warn(scraper.name+" BC item update failed:",r.partNumber,e));
+                    pushPromises.push(bcPushPurchasePrice(_bcNo(r),scraperVendorNo,numPrice,Date.now()).catch(e=>{console.warn(scraper.name+" BC purchase price failed:",r.partNumber,e);return{ok:false};}));
                   }
                 }
               }
@@ -27209,7 +27293,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pn=(row.partNumber||"").trim();
           if(!pn)continue;
           try{
-            const vNo=await bcGetItemVendorNo(pn);
+            const vNo=await bcGetItemVendorNo(_bcNo(row));
             if(vNo){
               const vName=await bcGetVendorName(vNo);
               if(vName)vendorPatches[String(row.id)]={bcVendorNo:vNo,bcVendorName:vName};
@@ -30442,7 +30526,7 @@ function UpdateBomInBCModal({panel,onClose,onUpdate,onSaveImmediate}){
         for(const row of mergedBom){
           const pn=(row.partNumber||"").trim();
           if(!pn)continue;
-          const found=await bcLookupItem(pn);
+          const found=await bcLookupItem(_bcNo(row));
           if(!found)missing.push(pn);
         }
         if(missing.length>0){
@@ -31325,7 +31409,7 @@ ${fullText.slice(0,8000)}`;
         if(ppVendorNo){
           console.log("bcPushPurchasePrice: using vendor",ppVendorNo,"for",quoteHeader?.supplier);
           const ppResults=await Promise.all(toUpdate.filter(i=>i.price&&i.partNumber).map(async i=>{
-            try{return await bcPushPurchasePrice(i.partNumber,ppVendorNo,i.price,Date.now(),i.uom||'');}
+            try{return await bcPushPurchasePrice(_bcNo(i),ppVendorNo,i.price,Date.now(),i.uom||'');}
             catch(e){console.warn("BC purchase price push failed:",i.partNumber,e);return{ok:false,reason:'error'};}
           }));
           const missingItems=ppResults.filter(r=>r&&r.reason==='item_not_found').map(r=>r.itemNo);
@@ -31479,7 +31563,9 @@ ${fullText.slice(0,8000)}`;
     try{
       // Use same bcCreateItem as BC Item Browser — handles OData PATCH for posting groups
       const created=await bcCreateItem({
-        number:newItemForm.itemNo||undefined,
+        // #163: always pass a full PN as `number` so it lands in Vendor_Item_No (BC auto-assigns
+        // the surrogate "No."). Fall back to the line item's PN when the form field is blank.
+        number:newItemForm.itemNo||item.partNumber||item.rawPartNumber||undefined,
         displayName:newItemForm.description||item.description||item.rawPartNumber,
         unitCost:newItemForm.cost!==''?newItemForm.cost:item.price,
         itemCategoryCode:newItemForm.category||undefined,
@@ -37582,19 +37668,26 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       }catch(e){console.warn("Vendor lookup for portal prices failed:",e);}
     }
     if(vendorNo)_dbg("applyPortalPrices: vendor",vendorNo,submission.vendorName);
+    // #163: map BOM partNumber → captured BC surrogate (bcNo) so portal pushes target the
+    // surrogate, not the full PN. Items not in the map (crossed-to-supplier-PN, or never
+    // committed to BC) fall back to a 20-char truncation — the same surface as pre-#163; a
+    // failed push still surfaces via the existing "items not found in BC" alert below.
+    const _bcNoMap={};
+    (projectRef.current.panels||[]).forEach(p=>(p.bom||[]).forEach(r=>{if(r.bcNo)_bcNoMap[normPart(r.partNumber)]=r.bcNo;}));
+    const _portalBcNo=(pn)=>_bcNoMap[normPart(pn)]||(pn||'').slice(0,20);
     // DECISION(v1.19.703): Skip BC price pushes in leadTimeOnly submissions.
     if(!leadTimeOnlySubmission){
       // Push each price (and vendor if resolved) to BC item card
       const bcPushes=Object.values(priceMap).map(({price,partNumber})=>{
         const patch={Unit_Cost:price};
         if(vendorNo)patch.Vendor_No=vendorNo;
-        return bcPatchItemOData(partNumber,patch).catch(e=>console.warn("BC price push failed:",partNumber,e));
+        return bcPatchItemOData(_portalBcNo(partNumber),patch).catch(e=>console.warn("BC price push failed:",partNumber,e));
       });
       await Promise.all(bcPushes);
       // Push Purchase Prices to BC (vendor, direct unit cost, starting date = priced date)
       if(vendorNo&&_bcToken){
         const ppResults=await Promise.all(Object.values(priceMap).map(async({price,partNumber,uom})=>{
-          try{return await bcPushPurchasePrice(partNumber,vendorNo,price,now,uom);}
+          try{return await bcPushPurchasePrice(_portalBcNo(partNumber),vendorNo,price,now,uom);}
           catch(e){console.warn("BC purchase price push failed:",partNumber,e);return{ok:false,reason:'error'};}
         }));
         const missingItems=ppResults.filter(r=>r&&r.reason==='item_not_found').map(r=>r.itemNo);
@@ -37678,7 +37771,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           if(!item.partNumber||!String(item.partNumber).trim())continue; // HARD REJECT blank partNumber
           if(!item.leadTimeDays||item.leadTimeDays<=0)continue;
           const result=await bcUpsertItemVendorLeadTime({
-            partNumber:item.partNumber,
+            partNumber:_portalBcNo(item.partNumber),
             vendorNo:vendorNo,
             vendorName:submission.vendorName||"",
             vendorItemNo:item.supplierPartNumber||"",
@@ -38169,7 +38262,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 try{
                   const altVendor=vendors.find(v=>(v.displayName||"").toLowerCase().includes((alt.chosenSource||"").toLowerCase()));
                   if(altVendor){
-                    await bcPushPurchasePrice(alt.partNumber,altVendor.number,alt.chosenPrice,Date.now(),"EA");
+                    await bcPushPurchasePrice(_bcNo(alt),altVendor.number,alt.chosenPrice,Date.now(),"EA");
                     console.log(`[API] Wrote alternate price for ${alt.partNumber}: ${alt.chosenSource} $${alt.chosenPrice} (vendor ${altVendor.number})`);
                   }else{console.warn(`[API] Vendor not found in BC for "${alt.chosenSource}"`);}
                 }catch(e){console.warn(`[API] Failed to write alternate price for ${alt.partNumber}:`,e.message);}
@@ -38839,7 +38932,7 @@ function CodaleTestPanel({uid}){
       let written=0;
       for(const r of found){
         try{
-          await bcPushPurchasePrice(r.partNumber,"V00165",r.price,Date.now(),r.uom||"EA");
+          await bcPushPurchasePrice(_bcNo(r),"V00165",r.price,Date.now(),r.uom||"EA");
           written++;
           setUpdateStatus(prev=>({...prev,written}));
         }catch(e){
@@ -39366,7 +39459,7 @@ function DigikeyUpdatePanel({uid}){
       let written=0;
       for(const r of priced){
         try{
-          await bcPushPurchasePrice(r.partNumber,vendor,r.price,Date.now(),r.uom||"EA");
+          await bcPushPurchasePrice(_bcNo(r),vendor,r.price,Date.now(),r.uom||"EA");
           written++;
           setStatus(prev=>({...prev,written}));
         }catch(e){
@@ -39507,12 +39600,12 @@ async function startVendorSync(uid,dkVendor,mouserVendor){
         const dk=res.digikey||{};const mo=res.mouser||{};
         if(dk.found&&dk.price>0&&dkVendor){
           dkFound++;
-          try{await bcPushPurchasePrice(res.partNumber,dkVendor,dk.price,Date.now(),"EA");dkWritten++;}
+          try{await bcPushPurchasePrice(_bcNo(res),dkVendor,dk.price,Date.now(),"EA");dkWritten++;}
           catch(e){errors++;console.warn("DK write failed:",res.partNumber,e.message);}
         }
         if(mo.found&&mo.price>0&&mouserVendor){
           mouserFound++;
-          try{await bcPushPurchasePrice(res.partNumber,mouserVendor,mo.price,Date.now(),"EA");mouserWritten++;}
+          try{await bcPushPurchasePrice(_bcNo(res),mouserVendor,mo.price,Date.now(),"EA");mouserWritten++;}
           catch(e){errors++;console.warn("Mouser write failed:",res.partNumber,e.message);}
         }
       }
@@ -41837,7 +41930,14 @@ function SupplierPricingUploadModal({uid,onClose}){
         try{
           const compId=await bcGetCompanyId();
           if(compId){
-            const items=await _bcFetchItems(compId,`number eq '${pn.replace(/'/g,"''")}'`,1,0);
+            let items=await _bcFetchItems(compId,`number eq '${pn.replace(/'/g,"''")}'`,1,0);
+            if(!items||!items.length){
+              // #163: the v2 /items endpoint has no vendorItemNo property (filter 400s — dead).
+              // Fall back to ItemCard OData, which exposes Vendor_Item_No, so a full PN entered
+              // in the CSV still matches a backfilled item whose BC "No." is now a surrogate.
+              const viItems=await _bcFetchItemsViaItemCard(`Vendor_Item_No eq '${pn.replace(/'/g,"''")}'`,1,0);
+              if(viItems&&viItems.length)items=viItems;
+            }
             if(items&&items.length)bcItem=items[0];
           }
         }catch(e){}
@@ -41860,7 +41960,7 @@ function SupplierPricingUploadModal({uid,onClose}){
       prog.current=i+1;setProgress({...prog});
       try{
         if(row.status==='update'){
-          await bcPatchItemOData(row.partNumber,{Unit_Cost:row.newCost});
+          await bcPatchItemOData(row.bcItem?.number||row.partNumber,{Unit_Cost:row.newCost});
           prog.updated++;
         }else{
           await bcCreateItem({number:row.partNumber,displayName:row.description||row.partNumber,unitCost:row.newCost});
