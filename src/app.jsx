@@ -4341,6 +4341,20 @@ async function _resolveVendorItemNo(bcNo){
   return '';
 }
 
+// #163 (C110 3a): inverse of _resolveVendorItemNo — given a full PN, find the BC item whose
+// Vendor_Item_No matches and return its "No." (the surrogate). Used to resolve the Item_No for
+// ItemVendorCatalog lead-time writes (SQ push) when the surrogate wasn't threaded from a lookup.
+// Returns '' if not found / on error.
+async function _resolveBcNoFromVendorItemNo(fullPN){
+  if(!fullPN||!_bcToken)return '';
+  try{
+    const pn=String(fullPN).trim().replace(/'/g,"''");
+    const r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=Vendor_Item_No eq '${pn}'&$select=No,Vendor_Item_No&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.ok){const row=((await r.json()).value||[])[0];if(row)return (row.No||'').trim();}
+  }catch(e){console.warn("_resolveBcNoFromVendorItemNo error:",fullPN,e);}
+  return '';
+}
+
 async function bcLookupItem(partNumber){
   if(!_bcToken||!partNumber||!partNumber.trim())return null;
   const compId=await bcGetCompanyId();
@@ -23724,14 +23738,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(r.isLaborRow||r.isCrossed||r.isCorrection)return r;
         const pn=(r.partNumber||"").trim();
         if(!pn)return r;
-        const alt=alts.find(a=>a.autoReplace&&a.replacement&&_altMatchesPN(a,pn));
+        const alt=alts.find(a=>a.autoReplace&&a.replacement&&(_altMatchesPN(a,pn)||_altMatchesPN(a,pn.slice(0,20))));
         if(alt){
           // DECISION(v1.20.110, C5 guard): Hold back auto-cross on panel mount when manualVerifyRequired
           if(_mvr){heldAlt++;return r;}
           changed=true;appliedAlt++;
           const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
         }
-        const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn));
+        const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn)||c.badPN===pn.slice(0,20)||normPN(c.badPN)===normPN(pn.slice(0,20)));
         if(corr){
           changed=true;appliedCorr++;
           return{...r,partNumber:corr.correctedPN,isCorrection:true,correctionType:corr.type||'extraction',correctionFrom:pn};
@@ -31371,12 +31385,15 @@ ${fullText.slice(0,8000)}`;
     let pushed=0,errors=[];
     const updatedItems=[...lineItems];
     const auditItems=[];
+    // #163 (C110 3a): thread each item's resolved BC "No." (surrogate) so the lead-time loop
+    // below can write ItemVendorCatalog keyed by the surrogate, not the full PN. Keyed by ln|rawPN.
+    const bcNoByKey={};
     for(const item of toUpdate){
       setStatusMsg(`Updating ${item.partNumber}…`);
       let itemId=item.bcItemId;
       if(!itemId&&item.partNumber){
         const looked=await bcLookupItemForQuote(item.partNumber);
-        if(looked)itemId=looked.id;
+        if(looked){itemId=looked.id;if(looked.number)bcNoByKey[`${item.ln}|${item.rawPartNumber}`]=looked.number;}
       }
       const ok=itemId?await bcUpdateItemCost(itemId,item.price):false;
       const idx=updatedItems.findIndex(x=>x.ln===item.ln&&x.rawPartNumber===item.rawPartNumber);
@@ -31440,8 +31457,12 @@ ${fullText.slice(0,8000)}`;
         for(const it of toUpdate){
           if(!it.leadTimeDays||it.leadTimeDays<=0)continue;
           if(!it.partNumber||!String(it.partNumber).trim())continue;
+          // #163 (C110 3a): resolve the BC "No." (surrogate) for ItemVendorCatalog. Prefer the No.
+          // threaded from the price loop; else resolve via ItemCard-by-Vendor_Item_No; else fall
+          // back to the full PN (graceful — same as pre-fix for un-backfilled items).
+          const _ltBcNo=bcNoByKey[`${it.ln}|${it.rawPartNumber}`]||await _resolveBcNoFromVendorItemNo(it.partNumber)||it.partNumber;
           const res=await bcUpsertItemVendorLeadTime({
-            partNumber:it.partNumber,vendorNo:ltVendorNo,vendorName:quoteHeader?.supplier||'',
+            partNumber:_ltBcNo,vendorNo:ltVendorNo,vendorName:quoteHeader?.supplier||'',
             vendorItemNo:it.rawPartNumber&&it.rawPartNumber!==it.partNumber?it.rawPartNumber:'',
             leadTimeDays:+it.leadTimeDays,projectId:projectId||null,uid,cid,
           });
