@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.142 (defined in `public/index.html`; deployed at commit 0a3c7121, master tip e774ef38 with doc/test commits since). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.0 (defined in `public/index.html`; deployed at commit 43ab7b14, tag v1.21.0; master tip dba63c42 with doc/state commits since). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -242,9 +242,14 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-17)
+## Recently Active Work (as of 2026-06-27)
 
-### Shipped This Session (v1.20.139 → v1.20.142) — #153 revision reconciliation + #160 data-loss fix
+### Shipped This Session (v1.20.142 → v1.21.0) — #163 Full PN Integrity via BC Surrogate Key
+- **#163 — DONE, shipped to PRODUCTION as v1.21.0** (43ab7b14, tag v1.21.0). Decoupled BC item identity from the part number: BC "No." is now an opaque **MTX-#####** surrogate (auto-assigned by No.-Series); the full manufacturer PN lives in ARC's `partNumber` + BC's `Vendor_Item_No`. Ends the >20-char Code[20] truncation that was losing full PNs. Shipped P1–P5 + 3a/3c + C113 (cross regression: `_vinResolved` guard) + C115 (alternates-dropdown regression). Full T1–T10 passed on the test channel. **CODE-LIVE ONLY — bcEnvironment stays sandbox (MATR_SndBx_01152026), NO BC cutover** (production BC does not exist yet). Was previously "#163 logged, needs briefing" — now DONE. Coach chain **C107–C116**. Plan: `docs/163-DETAILED-PLAN.md`; review record in `docs/163-*`.
+- **GATED NEXT (production cutover):** stand up prod BC → Jon + BC dev Monday → long-PN hand-corrections → **BC mass-rename (No.→MTX) + ARC `bcNo` reconciliation IN LOCKSTEP** (BC-only orphans ARC's links). Agreed 7-step plan + 3-column mapping sheet (old BC No. = primary join, full PN = bridge) + ARC reconciliation script (Coach scopes, Marc executes, **dry-run first**) + Coach-trace open Q (is `row.bcNo` the only place ARC stores a BC No.?). Full detail in **TODO #163 / SESSION-STATE**.
+- **Separate tracks (filed on GitHub, non-gating):** GH #2 (portal per-row lead-times should satisfy submit), GH #3 (portal manual-entry without upload), GH #4 (BC price-push duplicate open-ended prices — money-correctness). **Near-term UX:** dedup-hit should WARN instead of silently routing through the cross/correct modal. **Polish:** RFQ Part# column auto-width; Print Traveler internal-print button (`docs/PRINT-TRAVELER-BUTTON-SPEC.md`, build deferred); BC Item Browser preview rows missing MFR/Vendor.
+
+### Shipped Last Session (v1.20.139 → v1.20.142) — #153 revision reconciliation + #160 data-loss fix
 - **#153 Drawing-Revision Re-Extract + BOM Reconciliation — now working end-to-end.** Drop a revised drawing set on a panel that already has a BOM → ARC re-extracts and reconciles against the worked BOM (Changed / New / Deleted / Unchanged) instead of clobbering it. Two hard defects fixed this session:
   - **Entry gate (Option A, v1.20.139, C101)** — the "revise vs add" gate was firing in a stale async window (root cause of 4 failed patches, v1.20.136–138). Moved the decision to drop time (top of `addFiles`, fresh panel prop); `confirmAndExtract` is now a pure intent-router that reads only `reconIntentRef` and does NOT re-evaluate the BOM. *Lesson: eliminate the class of bug (the async window), not the instance.* T5/T6 confirmed.
   - **Cross-masking fix (C103, v1.20.141)** — the modal compared raw extraction PNs on both sides, so a user's crossed/substituted parts would have been carried forward PRE-cross on commit — wiping their substitutions (the exact data-loss #153 exists to prevent). Fix: staging extraction now runs RAW (no auto-cross/correction in staging mode), and a cross-aware pre-pass matches crossed prior rows by their original PN (`crossedFrom`) against the raw extraction. Crosses + pricing are preserved on unchanged/qty-changed rows. Awaiting full T1–T7.

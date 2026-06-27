@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.20.142 (defined in `public/index.html`; deployed at commit 0a3c7121, master tip e774ef38 with doc/test commits since). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.0 (defined in `public/index.html`; deployed at commit 43ab7b14, tag v1.21.0; master tip dba63c42 with doc/state commits since). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -242,9 +242,14 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-17)
+## Recently Active Work (as of 2026-06-27)
 
-### Shipped This Session (v1.20.139 → v1.20.142) — #153 revision reconciliation + #160 data-loss fix
+### Shipped This Session (v1.20.142 → v1.21.0) — #163 Full PN Integrity via BC Surrogate Key
+- **#163 — DONE, shipped to PRODUCTION as v1.21.0** (43ab7b14, tag v1.21.0). Decoupled BC item identity from the part number: BC "No." is now an opaque **MTX-#####** surrogate (auto-assigned by No.-Series); the full manufacturer PN lives in ARC's `partNumber` + BC's `Vendor_Item_No`. Ends the >20-char Code[20] truncation that was losing full PNs. Shipped P1–P5 + 3a/3c + C113 (cross regression: `_vinResolved` guard) + C115 (alternates-dropdown regression). Full T1–T10 passed on the test channel. **CODE-LIVE ONLY — bcEnvironment stays sandbox (MATR_SndBx_01152026), NO BC cutover** (production BC does not exist yet). Was previously "#163 logged, needs briefing" — now DONE. Coach chain **C107–C116**. Plan: `docs/163-DETAILED-PLAN.md`; review record in `docs/163-*`.
+- **GATED NEXT (production cutover):** stand up prod BC → Jon + BC dev Monday → long-PN hand-corrections → **BC mass-rename (No.→MTX) + ARC `bcNo` reconciliation IN LOCKSTEP** (BC-only orphans ARC's links). Agreed 7-step plan + 3-column mapping sheet (old BC No. = primary join, full PN = bridge) + ARC reconciliation script (Coach scopes, Marc executes, **dry-run first**) + Coach-trace open Q (is `row.bcNo` the only place ARC stores a BC No.?). Full detail in **TODO #163 / SESSION-STATE**.
+- **Separate tracks (filed on GitHub, non-gating):** GH #2 (portal per-row lead-times should satisfy submit), GH #3 (portal manual-entry without upload), GH #4 (BC price-push duplicate open-ended prices — money-correctness). **Near-term UX:** dedup-hit should WARN instead of silently routing through the cross/correct modal. **Polish:** RFQ Part# column auto-width; Print Traveler internal-print button (`docs/PRINT-TRAVELER-BUTTON-SPEC.md`, build deferred); BC Item Browser preview rows missing MFR/Vendor.
+
+### Shipped Last Session (v1.20.139 → v1.20.142) — #153 revision reconciliation + #160 data-loss fix
 - **#153 Drawing-Revision Re-Extract + BOM Reconciliation — now working end-to-end.** Drop a revised drawing set on a panel that already has a BOM → ARC re-extracts and reconciles against the worked BOM (Changed / New / Deleted / Unchanged) instead of clobbering it. Two hard defects fixed this session:
   - **Entry gate (Option A, v1.20.139, C101)** — the "revise vs add" gate was firing in a stale async window (root cause of 4 failed patches, v1.20.136–138). Moved the decision to drop time (top of `addFiles`, fresh panel prop); `confirmAndExtract` is now a pure intent-router that reads only `reconIntentRef` and does NOT re-evaluate the BOM. *Lesson: eliminate the class of bug (the async window), not the instance.* T5/T6 confirmed.
   - **Cross-masking fix (C103, v1.20.141)** — the modal compared raw extraction PNs on both sides, so a user's crossed/substituted parts would have been carried forward PRE-cross on commit — wiping their substitutions (the exact data-loss #153 exists to prevent). Fix: staging extraction now runs RAW (no auto-cross/correction in staging mode), and a cross-aware pre-pass matches crossed prior rows by their original PN (`crossedFrom`) against the raw extraction. Crosses + pricing are preserved on unchanged/qty-changed rows. Awaiting full T1–T7.
@@ -443,75 +448,99 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# Session State — 2026-06-17 MDT
+# Session State — 2026-06-27 MDT (post-#163 close-out)
 
 ## Version
-v1.20.142 (deployed 2026-06-17). #153 Drawing-Revision Re-Extract + BOM Reconciliation now working end-to-end (Option A entry gate + C103 cross-aware reconciliation), plus #160 Reconciliation Reject/Keep-Prior with a latent silent-drop data-loss fix. Live-verified through the cross-masking fix; #160 awaiting Jon's T1–T8.
+**v1.21.0** (deployed 2026-06-27, PRODUCTION). **#163 Full PN Integrity via BC Surrogate Key** shipped.
+Decoupled BC item identity from the part number: BC "No." is now an opaque **MTX-#####** surrogate
+(auto-assigned by No.-Series); the full manufacturer PN lives in ARC's `partNumber` + BC's
+`Vendor_Item_No`. Ends the >20-char Code[20] truncation that was losing full PNs. Minor bump (data-flow
+restructure, backward-compatible — additive `bcNo` field on BOM rows, no APP_SCHEMA_VERSION change).
 
 ## Deploy State
-- Master tip: e774ef38 ("tests: #153 C103 cross pre-pass + #160 reject/keep-prior harness coverage") — doc/test commits after the v1.20.142 release stamp, no code change, no version bump
-- v1.20.142 was deployed at commit 0a3c7121; post-deploy commits are all non-deployable: 37527cdb (#163 TODO log) → e101d816 (handoff files) → e774ef38 (harness coverage — deploy.sh doesn't stage tests/, so the C103+#160 harness changes were committed separately at close-out)
-- Local master == origin/master (synced at e774ef38)
-- Latest tag: v1.20.142
-- v1.20.142 = #160 reject/keep-prior + silent-drop fix. v1.20.141 = #153 C103 cross-fix. All deployable work is live.
+- **Master tip: `43ab7b14`** ("Release v1.21.0 — #163 Full PN Integrity via BC Surrogate Key").
+- **`master == origin/master == 43ab7b14`** (in sync). **Tag `v1.21.0`** on origin.
+- **PR #1** (feat/163-surrogate-key → master) **merged via fast-forward**; branch retained on origin.
+- Production hosting: **https://matrix-arc.web.app** serving v1.21.0 (all 4 fixes verified in the live bundle).
+- **ROLLBACK POINT:** `master → 0f8a61fb`, redeploy **v1.20.142** (or roll back hosting in the Firebase console).
+- Prior release lineage: v1.20.142 = #160; v1.20.141 = #153 C103.
 
-## Recent Commits (last 15)
-- 37527cdb Log #163 (Part# >20 chars truncation — full PN lost to BC field limit)
-- 987bbdb3 Log #161 (BOM-region tip timing) and #162 (monthly counter reset) to TODO
-- 0a3c7121 Release v1.20.142
-- 218c5c1f C105: #160 Reconciliation reject/keep-prior scope for changed rows
-- d0dcd6f2 C104: #159 Copy-to-New-Quote customer selection scope
-- f3e83a4f Release v1.20.141
-- 9d83efb7 C103: #153 cross-aware reconciliation fix plan — two-part fix finalized
-- eb810ba3 Log #158: region-learning doc exceeds Firestore 1MB limit (silent prod failure)
-- ba919deb Release v1.20.140
-- 2c244a79 C102: #153 reconciliation cross trace — prior BOM shows pre-crossed PNs
-- 1853ce5e Release v1.20.139
-- 19316090 Append entry-point correction to #156 plan (C99)
-- 223b8461 C101: #153 full flow read — end-to-end revision path audit
-- 282c12c0 docs: stub 153-FULL-FLOW-READ.md for compaction durability
+## BC environment (CRITICAL CONTEXT)
+- **`bcEnvironment` = `MATR_SndBx_01152026` (SANDBOX) — the ONLY BC env that exists. There is NO production
+  BC yet.** #163 is **code-live only; NO BC cutover occurred.**
+- The `bcEnvironment` doc (`companies/{companyId}/config/bcEnvironment`) is **company-shared, NOT
+  channel-isolated** — prod and test hosting read the SAME BC env. (companyId is not exposed to the page;
+  the effective env is read from the resolved `BC_API_BASE` / `_bcConfig.env`.)
 
-## Headline: #153 revision reconciliation works end-to-end + #160 silent-drop data-loss closed
-The drawing-revision re-extract flow (#153) is now functional through its two hardest defects: the entry gate (was firing in a stale async window — fixed structurally via Option A, gate at drop with a fresh panel prop) and the cross-masking bug (the reconciliation modal compared raw PNs on both sides, so a crossed prior would have been carried forward pre-cross on commit, wiping the user's substitutions — fixed via C103's two-part fix). On top of that, #160 added Reject/Keep-Prior to the Changed bucket and, in doing so, closed a latent silent-drop bug where a non-accepted Changed row vanished from the output BOM.
+## #163 — what shipped (43ab7b14)
+P1–P5 (mutation/cross/pricing capture `bcNo`, push/read sites via `_bcNo()`, create path omits
+`body.number` → auto-surrogate + full PN to `Vendor_Item_No` + ItemCard dedup, Item Browser display,
+learning-DB `.slice(0,20)` fallback) **+ 3a** (SQ lead-time surrogate resolution) **+ 3c** (sibling
+learning-DB matcher) **+ C113** (cross-regression: `_vinResolved` guard) **+ C115** (alternates-dropdown
+synthetic `_vendorItemNo`). **Full T1–T10 passed on test.** All client-side in `src/app.jsx`; zero
+`functions/index.js` changes. Plan: `docs/163-DETAILED-PLAN.md` (C109 Rev 4). Review/trace record:
+`docs/163-MARC-REVIEW.md`, `163-BUILD-REPORT.md`, `163-COACH-REVIEW.md`, `163-CROSS-REGRESSION-TRACE.md`,
+`163-SUPPLEMENT.md`. **Coach review chain: C107–C116** (supplement, plan revs 1–4, full-diff review,
+fix re-reviews, two regression traces).
 
-## Shipped This Session — RESOLVED / LIVE
+## NEXT MILESTONES (in order) — the #163 production cutover
+1. **Stand up a production BC environment** (does not exist yet — gates everything below).
+2. **Jon + BC developer, Monday** — scope the cutover. Framing: "what to stand up for production BC +
+   what the rename touches (BC references-by-No. AND ARC `bcNo` links)."
+3. **Hand-correct long-PN items** — put the true full PN into `Vendor_Item_No` BEFORE any rename, or the
+   rename loses the full PN.
+4. **BC mass-rename ALL item No.s → MTX-##### + ARC `bcNo` reconciliation IN LOCKSTEP.** Establishes the
+   invariant "any MTX-##### in ARC's Part# field = a surrogate-leak bug." NOT a pure BC op: ARC BOM rows
+   carry `bcNo` pointing at current BC No.s — renaming synced items orphans those links unless ARC's
+   `bcNo` values are reconciled simultaneously. **Needs a Coach trace on ARC-side impact** alongside the
+   developer's BC-side review. **GATED — do not start until step 1 exists.** Full detail in TODO #163.
 
-### #153 Option A entry gate (v1.20.139) — SHIPPED, T5/T6 confirmed
-Revision gate moved from `confirmAndExtract` (async-window staleness was the root cause of 4 failed gate patches, v1.20.136–138) to drop time — top of `addFiles`, against the fresh panel prop. Decision stored in `reconIntentRef`; `confirmAndExtract` is a pure intent-router (reads only `reconIntentRef`, NO BOM re-evaluation in the confirm window — verified). Also: un-silenced the `runExtractionTask` onDone catch (line ~14876, KEEP permanently); `tagPage` syncs `pendingNewItemsRef` so type review survives; D4 staging page count. Coach C101. T5 (gate fires, 4/4 reliable Cancel) + T6 confirmed.
+### Agreed migration approach (BC mass-rename → MTX) — exact next-session plan
+Two halves of ONE operation: the BC rename + the ARC `bcNo` reconciliation (BC-only orphans ARC's links).
+Strict order: (1) prod BC exists → (2) long-PN hand-corrections into `Vendor_Item_No` FIRST → (3) dev
+BC-side assessment (what references items by No.; posted-history rename block?) → (4) Jon renames via Excel
+export/edit/reimport (No.→`MTX-#####`, `Vendor_Item_No` keeps the full PN) → (5) Jon produces a **3-column
+mapping sheet**: [ (a) old BC No. exactly as it was (may be truncated) | (b) full Part# / `Vendor_Item_No`
+| (c) new MTX# ] — **(a) is the PRIMARY join** (ARC's `bcNo` may store the truncated value), (b) is the
+fallback bridge → (6) **ARC reconciliation script** (Coach scopes, Marc executes): walk every project's
+BOM rows, match each `bcNo` to the sheet, rewrite `bcNo` → new MTX#. This is the half the Excel reimport
+does NOT cover (ARC `bcNo` lives in Firestore). **DRY-RUN FIRST** (report row count + old→new pairs, no
+writes) → Jon verifies → live run → (7) verify (mini T-suite vs renamed items).
+**Resolve FIRST — Coach trace, before scoping the script:** is `row.bcNo` the ONLY place ARC stores a BC
+No.? If anything else caches it (a lookup map, etc.), the script must update that too.
+**Next-session trigger:** Jon opens a session + provides the Excel mapping sheet → FIRST ACTION = Coach
+trace (bcNo sole-reference confirm + join-field reliability) → Coach scopes script → Marc dry-runs → Jon
+verifies → Marc runs live. **Jon brings:** the mapping sheet (3 cols), BC-rename-done confirmation (or
+whether we scope before executing), and whether long-PN hand-corrections are complete.
 
-### #153 C103 cross-aware reconciliation fix (v1.20.141) — SHIPPED, awaiting full T1–T7
-Two-part fix, ships together:
-- **Part 1** (`runExtractionTask` ~line 14581): `applyLearnedCorrections` gated behind `!cbs.stagingMode` so the staging extraction is RAW — the reconciliation engine compares what the revised drawing actually says against the user's worked BOM. Without it, the DB re-crossed both sides identically and every real diff was masked as "unchanged" (the `crossed:16` symptom).
-- **Part 2** (`reconcileBom` ~line 47334): cross-aware pre-pass runs BEFORE Pass 1 — indexes crossed prior rows by `normPart(crossedFrom)`, matches against the raw extraction's `partNumber`; equal qty → unchanged (cross preserved via carryUnchanged), differing qty → changed/qty. Pass-1 loop guards on `matchedCur/matchedExt` so pre-pass claims aren't re-matched.
-- Removed all 4 [RECON TRACE] diagnostic logs (C102) + the [#153 REVISION-GATE] log.
-- Harness: cross pre-pass synced; Scenario A/B/D/E cases added.
-- **Live-test note (Scenario B):** a genuinely changed PN relies on Pass 2 (position+description); a revision that reflows the BOM table can drop it to Pass 3 (deleted+new) instead of pn_changed — still safe, just a different classification. Coach C103.
+## Sandbox test artifacts (label for eventual cleanup)
+- BC items: **MTX-01023** (`ZZ_TEST_LONGPN_0123456789ABCDEF`, 31ch), **MTX-01024**
+  (`BL20-E-16DO-24VDC-0.5A-P`), **MTX-01025** (`BL20-E-8AI-U/I-4PT/NI/ET`), plus any `ZZ TEST #163` items
+  and scratch test projects created during T1–T10. Sandbox only; safe to leave, clean up before/at cutover.
 
-### #160 Reconciliation Reject/Keep-Prior + silent-drop fix (v1.20.142) — SHIPPED, awaiting T1–T8
-- Added Reject ⇄ "✕ Keep Prior" toggle to Changed rows (symmetric with New/Deleted) + "kept prior — differs from revision" indicator.
-- `buildReconciledBom`: rejected → `{...prior}` (prior kept EXACTLY — no position/qty/field changes; crosses+pricing+BC intact).
-- **Data-loss fix:** the explicit rejected branch closes a latent silent-drop — previously any non-"accepted" Changed row fell through and vanished from the output BOM.
-- Footer text cleanup (dropped stale "(deletions individually)").
-- Harness: reject-not-dropped, reject-pn-preserves-cross, unresolved-still-drops (gate rationale), mixed-batch. 64 passing total. Coach C105.
+## Open work queue (post-#163)
+**#163 follow-ups (full detail in TODO #163):**
+- **REQUIRED CUTOVER** (gated — see Next Milestones above).
+- **GH #2** — supplier portal: per-row lead times should satisfy submit (block missing rows via
+  non-overridable modal, not always-require-global).
+- **GH #3** — supplier portal: no manual-entry path without uploading a doc first.
+- **GH #4** — BC price-push stacks prices without end-dating the prior (duplicate open-ended Purchase
+  Prices; money-correctness). Open Q: ARC explicit end-date vs BC supersession — needs Coach trace.
+- **NEAR-TERM UX** — dedup-hit should WARN ("Part# already in use as a Vendor Part#") instead of silently
+  routing through the cross/correct modal (data already correct; feedback missing). Found T6.
+- **POLISH** — RFQ Part# column auto-width; Print Traveler internal-print button
+  (`docs/PRINT-TRAVELER-BUTTON-SPEC.md`, build deferred); BC Item Browser preview rows missing MFR/Vendor.
 
-## Coach items this session (not yet built)
-- **#158** — region_learning doc exceeds Firestore 1MB limit (silent prod failure). HIGH. **LOGGED only** (eb810ba3), no scope doc yet.
-- **#159** (C104) — Copy-to-New-Quote customer selection. **SCOPED** (`docs/159-COPY-CUSTOMER-SCOPE.md`).
-- **#160** (C105) — built this session (above).
-- **#166** — stampFn/drop-handler dedup cleanup (LOW maintenance, no data-loss). Now logged (was the item mis-remembered as "#158"; #158 was taken by region-learning). Needs scope from Coach (owns the original #153-era finding) before implementation.
-- Untracked Coach docs in working tree at close (left for Coach to commit, 5 of 7 already committed): `docs/153-REVISION-GATE-TRACE.md` (C100), `docs/156-SUPPLEMENT.md`.
-
-## Open work queue (top candidates)
-- **#164** — Reconciliation Deleted→"Keep" may strip crosses (HIGH, possible data loss in an untested branch; XT1HU3003MFF000XXX reverted to original PN after #160). THE open correctness question from today — investigate first.
-- **#165** — Accept/Reject verbs read backwards (HIGH, UX with data-loss risk: misreading "Accept All" strips crosses on a real quote via carryChangedPnChanged). Above cosmetic Revise-UX items.
-- **#160 live T-suite** (T1–T8) — Jon to run on v1.20.142.
-- **#153 C103 T1–T7** — full reconciliation cross verification on v1.20.142.
-- **#158** — Firestore 1MB region_learning limit (HIGH, silent failure; logged, not scoped).
-- **#159** — Copy-to-New-Quote customer selection (C104 scope ready).
-- **#163** — Part# >20 chars truncation / BC field spillover (MED, needs briefing).
+**Pre-#163 open items (carried forward — NOT started):**
+- **#164** — Reconciliation Deleted→"Keep" may strip crosses (HIGH, possible data loss, untested branch).
+- **#165** — Reconciliation Accept/Reject verbs read backwards (HIGH, UX with data-loss risk).
+- **#158** — region_learning doc exceeds Firestore 1MB limit (HIGH, silent prod failure; logged, not scoped).
+- **#159** — Copy-to-New-Quote customer selection (C104 scope ready: `docs/159-COPY-CUSTOMER-SCOPE.md`).
 - **#161/#162** — BOM-region tip timing; monthly counter reset (both LOW).
-- **#166** — stampFn/drop-handler dedup cleanup (LOW, needs scope from Coach).
+- **#166** — stampFn/drop-handler dedup cleanup (LOW; needs Coach scope).
+- **#167** — PRJ402124 "28 AI prices" — NO-BUG / false alarm (closed; it was AI-estimated lead times).
 
-## Working tree / TODO
-- Clean except two untracked Coach docs (above), intentionally left for Coach's close-out.
-- TODO.md OPEN findings: ~88.
+## Working tree / handoff
+- Clean. master == origin/master == `43ab7b14`. All #163 docs committed (close-out commits `e7771658`
+  [design/review docs] + the TODO/SESSION-STATE close-out commit).
+- TODO.md: #163 marked DONE with the full post-#163 backlog logged.
