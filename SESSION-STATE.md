@@ -66,7 +66,15 @@ whether we scope before executing), and whether long-PN hand-corrections are com
 ## Sandbox test artifacts (label for eventual cleanup)
 - BC items: **MTX-01023** (`ZZ_TEST_LONGPN_0123456789ABCDEF`, 31ch), **MTX-01024**
   (`BL20-E-16DO-24VDC-0.5A-P`), **MTX-01025** (`BL20-E-8AI-U/I-4PT/NI/ET`), plus any `ZZ TEST #163` items
-  and scratch test projects created during T1–T10. Sandbox only; safe to leave, clean up before/at cutover.
+  and scratch test projects created during T1–T10. Sandbox only. **Harmless and useful as reference data
+  until the rename work starts — retire them as part of CUTOVER PREP, NOT before** (Freddy, close-out).
+
+## Operational notes (environment)
+- **CCD PostToolUse hook is flaky** — threw HTTP 500 (`ccdHook`) ≥2× this session on doc writes. It did
+  NOT affect work (file writes succeed; the hook fires after). Completion pings were sent via explicit
+  `notify.ps1` / direct Pushover API as the workaround. **Next session: don't rely on the built-in
+  notification hook — use explicit notify** (P2 + receipt-poll for true delivery confirmation; see the
+  notify memory). If completion notifications go quiet, this is why.
 
 ## Open work queue (post-#163)
 **#163 follow-ups (full detail in TODO #163):**
