@@ -26318,7 +26318,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // items (Vendor_Item_No empty) — which is why BC-2 backfill must precede deploy.
     const bcSurrogate=bcItem.number;
     let bcFullPN=(bcItem._vendorItemNo||'').trim();
-    if(!bcFullPN&&bcSurrogate)bcFullPN=await _resolveVendorItemNo(bcSurrogate);
+    // #163 C113: track whether the full PN was ACTUALLY resolved from Vendor_Item_No (vs. the
+    // surrogate fallback below). The partNumber-write guard keys off this, NOT bcFullPN!==surrogate
+    // — otherwise legit crosses where the full PN equals the BC No. (short PNs, backfilled items)
+    // get suppressed. MUST be set before the `||bcSurrogate` fallback line.
+    let _vinResolved=!!bcFullPN;
+    if(!bcFullPN&&bcSurrogate){
+      bcFullPN=await _resolveVendorItemNo(bcSurrogate);
+      _vinResolved=!!bcFullPN;
+    }
     bcFullPN=bcFullPN||bcSurrogate;
     const bom=liveBom.map(r=>{
       if(r.id!==bomRowId)return r;
@@ -26340,7 +26348,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // (from Vendor_Item_No) — never with the surrogate. When Vendor_Item_No is empty
         // (bcFullPN===bcSurrogate, un-backfilled item), partNumber is left untouched.
         ...(bcSurrogate?{bcNo:bcSurrogate}:{}),
-        ...(bcFullPN&&bcFullPN!==bcSurrogate?{partNumber:bcFullPN}:{}),
+        ...(bcFullPN&&_vinResolved?{partNumber:bcFullPN}:{}),
         priceSource:"bc",
         bcVerify:{status:"in-bc",at:Date.now()},
         ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
