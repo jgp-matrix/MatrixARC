@@ -28869,7 +28869,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                 <select onChange={e=>{
                                   if(!e.target.value)return;
                                   const alt=avail.find(a=>a.replacement.partNumber===e.target.value);
-                                  if(alt)applyBcItem(row.id,{number:alt.replacement.partNumber,unitCost:alt.replacement.unitCost,displayName:alt.replacement.description});
+                                  if(alt)applyBcItem(row.id,{number:alt.replacement.partNumber,_vendorItemNo:alt.replacement.partNumber,unitCost:alt.replacement.unitCost,displayName:alt.replacement.description});
                                   e.target.value="";
                                 }} style={{fontSize:10,background:"#1a1040",border:`1px solid ${C.accent}`,borderRadius:4,color:C.accent,padding:"1px 4px",cursor:"pointer",maxWidth:"100%",boxSizing:"border-box"}}>
                                   <option value="">⇄ Alternates…</option>
