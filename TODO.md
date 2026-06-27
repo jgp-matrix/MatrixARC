@@ -2782,15 +2782,50 @@ reset that surfaced the ground-truth state.
      which is the actual cost-control gate.
      Logged: 2026-06-17 (Jon, observed during testing).
 
-163. **OPEN** [MED — data integrity / extraction] — Part# > 20 chars truncated; full PN lost. When a
-     part number exceeds BC's field length (~20 chars), ARC currently treats the TRUNCATED Part# as
-     the authoritative value, even though the FULL Part# is present in the description. This is a BC
-     field-length limitation, but there are other BC fields we can spill the overflow into rather than
-     discarding it. INVESTIGATE: (a) where extraction/BC-sync truncates the PN, (b) which BC fields
-     can hold the overflow (e.g. description, a secondary text field, ItemReference), (c) how to keep
-     the full PN authoritative in ARC while satisfying BC's limit on write. Needs briefing + review
-     before implementation — capture the BC field options and the extraction-side handling.
-     Logged: 2026-06-17 (Jon, observed during testing).
+163. **DONE** — shipped v1.21.0 (43ab7b14, tag v1.21.0), 2026-06-27. Full PN Integrity via BC Surrogate
+     Key. Original problem: Part# >20 chars truncated to BC's Code[20] "No." field → full PN lost.
+     SOLUTION: decoupled BC item identity from the part number — BC "No." is now an opaque MTX-#####
+     surrogate (auto-assigned by No.-Series); the full PN lives in ARC's `partNumber` + BC's
+     `Vendor_Item_No`. Shipped P1-P5 + 3a/3c + C113 (cross regression) + C115 (alternates-dropdown
+     regression). Full T1-T10 passed on the test channel. Code-live only — bcEnvironment stays sandbox
+     (MATR_SndBx_01152026), NO BC cutover (production BC does not exist yet). Plan:
+     docs/163-DETAILED-PLAN.md (Coach C109 Rev 4); review record: docs/163-MARC-REVIEW.md,
+     163-BUILD-REPORT.md, 163-COACH-REVIEW.md, 163-CROSS-REGRESSION-TRACE.md. Coach chain C107–C116.
+
+     ── #163 REQUIRED CUTOVER (GATED — do NOT start until a production BC environment exists) ──
+     BC mass-rename ALL item No.s → MTX-##### syntax. Establishes the invariant: "any MTX-##### appearing
+     in ARC's Part# field = a bug (surrogate leak)." Jon-run via Excel export/edit/reimport.
+     PREREQUISITES: (a) production BC environment must exist; (b) long-PN items hand-corrected (true full
+     PN into Vendor_Item_No) FIRST, or the rename loses the full PN; (c) developer assessment of what in
+     BC references items by No. (open docs, posted history, item references).
+     ARC-SIDE (CRITICAL — not a pure BC op): existing ARC BOM rows carry `bcNo` pointing at the current
+     BC No.s; renaming synced items ORPHANS those links unless ARC's bcNo values are reconciled in
+     lockstep. Needs a Coach trace on ARC-side impact alongside the developer's BC-side review.
+     Jon meeting his BC developer Monday — framing: "what to stand up production BC + what the rename
+     touches (BC refs-by-No AND ARC bcNo links)."
+
+     ── #163 SEPARATE TICKETS (filed on GitHub, non-gating, own track) ──
+     - GH #2 — Supplier portal: per-row lead times should satisfy submit; block on missing rows via a
+       non-overridable modal instead of always requiring a global lead time.
+     - GH #3 — Supplier portal: no manual-entry option without uploading a document first (suppliers
+       upload junk docs to reach manual entry).
+     - GH #4 — BC price-push stacks new vendor prices without end-dating the prior price (duplicate
+       open-ended Purchase Prices; money-correctness). Open Q: ARC explicit end-date vs BC supersession
+       by latest start date — needs a Coach trace. Lives in the bcPushPurchasePrice path.
+
+     ── #163 NEAR-TERM / CRITICAL UX (fix soon — confusing to users) ──
+     - Dedup-hit should WARN ("Part# already in use as a Vendor Part#") instead of silently routing
+       through the cross/correct modal. Data outcome already correct (no duplicate created); only the
+       user feedback is missing. Found during T6.
+
+     ── #163 POLISH (lower priority) ──
+     - RFQ Part Number column auto-width so long PNs stay on one line (cosmetic).
+     - Print Traveler internal-preview button — spec'd at docs/PRINT-TRAVELER-BUTTON-SPEC.md (button
+       between Transfer and Delete; Line/Project modal; render-on-demand, no email). Build deferred.
+     - BC Item Browser search-preview doesn't populate MFR/Vendor in result rows (data correct in BC;
+       likely the v2 /items mapper's thinner field set — §1a family). Found during T4.
+
+     Logged: 2026-06-17 (Jon). Resolved DONE: 2026-06-27 (close-out, shipped v1.21.0).
 
 164. **OPEN** [HIGH — possible data loss, untested branch] — Reconciliation Deleted→"Keep" may strip
      crosses. Surfaced after the #160 commit: a kept row (XT1HU3003MFF000XXX) reverted to its ORIGINAL
