@@ -2804,6 +2804,36 @@ reset that surfaced the ground-truth state.
      Jon meeting his BC developer Monday — framing: "what to stand up production BC + what the rename
      touches (BC refs-by-No AND ARC bcNo links)."
 
+     ── #163 AGREED MIGRATION APPROACH (BC mass-rename → MTX) — exact plan for next session ──
+     Two-system migration: the BC rename and the ARC reconciliation are two halves of ONE operation —
+     doing only the BC half ORPHANS ARC's bcNo links. PROCESS (strict order):
+     1. PREREQ: production BC environment exists (does NOT yet).
+     2. Long-PN hand-corrections FIRST — true full PN into Vendor_Item_No for the handful of long items,
+        BEFORE any rename (else the full PN is lost and the mapping breaks).
+     3. Developer BC-side assessment (Jon + BC developer, Monday) — what references items by No. (open
+        POs/orders, posted history, item references, planning lines); whether BC blocks renaming items
+        that have posted history.
+     4. BC RENAME — Jon via Excel export/edit/reimport. Every No. → MTX-#####; Vendor_Item_No retains
+        the full PN.
+     5. JON PRODUCES A MAPPING SHEET (Excel) — authoritative old→new map. AGREED COLUMNS: (a) old BC No.
+        exactly as it was in BC's No. field (may be truncated), (b) full Part# / Vendor_Item_No, (c) new
+        MTX#. Three columns so the ARC script can join on whichever field is reliable — ARC rows may store
+        bcNo as the TRUNCATED value (not the full PN), so the old-BC-No column is the PRIMARY join and the
+        full PN is the bridge/fallback.
+     6. ARC RECONCILIATION SCRIPT — walks every project's BOM rows, matches each row's bcNo to the mapping
+        sheet, rewrites bcNo → new MTX#. This is the half the Excel reimport does NOT cover (ARC's bcNo
+        lives in Firestore, not BC). Coach scopes; MARC executes (Firestore write across all projects).
+        DRY-RUN FIRST — report what it WOULD change (row count, old→new pairs), NO writes; Jon verifies the
+        mapping hits; THEN live run.
+     7. VERIFY — spot-check renamed items still price/sync correctly (mini T-suite vs renamed items).
+     OPEN QUESTION (Coach trace, BEFORE scoping the script): is `row.bcNo` the ONLY place ARC stores a BC
+     No.? If anything else caches it (a lookup map, etc.), the script must update that too. Confirm first.
+     NEXT-SESSION TRIGGER: Jon opens a session, says they're preparing the change, provides the Excel
+     mapping sheet. FIRST ACTION = Coach trace (bcNo sole-reference confirm + join-field reliability) →
+     Coach scopes the script → Marc dry-runs → Jon verifies → Marc runs live.
+     WHAT JON BRINGS: the Excel mapping sheet (3 cols above); confirmation the BC rename is done (or
+     whether we're scoping before executing); whether long-PN hand-corrections are complete.
+
      ── #163 SEPARATE TICKETS (filed on GitHub, non-gating, own track) ──
      - GH #2 — Supplier portal: per-row lead times should satisfy submit; block on missing rows via a
        non-overridable modal instead of always requiring a global lead time.

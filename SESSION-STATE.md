@@ -45,6 +45,24 @@ fix re-reviews, two regression traces).
    `bcNo` values are reconciled simultaneously. **Needs a Coach trace on ARC-side impact** alongside the
    developer's BC-side review. **GATED — do not start until step 1 exists.** Full detail in TODO #163.
 
+### Agreed migration approach (BC mass-rename → MTX) — exact next-session plan
+Two halves of ONE operation: the BC rename + the ARC `bcNo` reconciliation (BC-only orphans ARC's links).
+Strict order: (1) prod BC exists → (2) long-PN hand-corrections into `Vendor_Item_No` FIRST → (3) dev
+BC-side assessment (what references items by No.; posted-history rename block?) → (4) Jon renames via Excel
+export/edit/reimport (No.→`MTX-#####`, `Vendor_Item_No` keeps the full PN) → (5) Jon produces a **3-column
+mapping sheet**: [ (a) old BC No. exactly as it was (may be truncated) | (b) full Part# / `Vendor_Item_No`
+| (c) new MTX# ] — **(a) is the PRIMARY join** (ARC's `bcNo` may store the truncated value), (b) is the
+fallback bridge → (6) **ARC reconciliation script** (Coach scopes, Marc executes): walk every project's
+BOM rows, match each `bcNo` to the sheet, rewrite `bcNo` → new MTX#. This is the half the Excel reimport
+does NOT cover (ARC `bcNo` lives in Firestore). **DRY-RUN FIRST** (report row count + old→new pairs, no
+writes) → Jon verifies → live run → (7) verify (mini T-suite vs renamed items).
+**Resolve FIRST — Coach trace, before scoping the script:** is `row.bcNo` the ONLY place ARC stores a BC
+No.? If anything else caches it (a lookup map, etc.), the script must update that too.
+**Next-session trigger:** Jon opens a session + provides the Excel mapping sheet → FIRST ACTION = Coach
+trace (bcNo sole-reference confirm + join-field reliability) → Coach scopes script → Marc dry-runs → Jon
+verifies → Marc runs live. **Jon brings:** the mapping sheet (3 cols), BC-rename-done confirmation (or
+whether we scope before executing), and whether long-PN hand-corrections are complete.
+
 ## Sandbox test artifacts (label for eventual cleanup)
 - BC items: **MTX-01023** (`ZZ_TEST_LONGPN_0123456789ABCDEF`, 31ch), **MTX-01024**
   (`BL20-E-16DO-24VDC-0.5A-P`), **MTX-01025** (`BL20-E-8AI-U/I-4PT/NI/ET`), plus any `ZZ TEST #163` items
