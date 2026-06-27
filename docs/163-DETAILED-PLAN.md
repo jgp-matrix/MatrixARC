@@ -1,6 +1,7 @@
 # Freddy — #163 Detailed Plan: Full PN Integrity via BC Surrogate Key
 
-**Author:** Coach (Sam Wize) | **Date:** 2026-06-26 | **Tip:** `ef1e2279`
+**Author:** Coach (Sam Wize) | **Date:** 2026-06-26 | **Tip:** `586d0a7d`
+**Rev 4:** Dedup query fixed (v2 filter dead → ItemCard OData); planning line 7b dropped (BC-owned).
 **Rev 3:** Marc's implementer review (6 items) + Jon's planning-line item (1).
 **Rev 2:** Gating items 1-3 closed, framing items 4-5 folded in per Jon's review.
 **Grounding:** C107 + 163-SUPPLEMENT + Freddy Analyst Review + Jon verification
@@ -474,14 +475,23 @@ incorrect vendor display.
 
 ~8 lines.
 
-### 2I. CSV import — update path (RESOLVED)
+### 2I. CSV import — update path (RESOLVED; Rev 4 — query fixed)
 
-**Line 41840** — dual-filter lookup (same pattern as `bcLookupItemForQuote`):
+**Line 41840** — dual-filter lookup. The v2 fallback (`vendorItemNo eq`) is dead
+(same issue as §3B). Use ItemCard OData for the fallback:
 ```
 CURRENT:  const items=await _bcFetchItems(compId,`number eq '${pn.replace(/'/g,"''")}'`,1,0);
 CHANGE:   let items=await _bcFetchItems(compId,`number eq '${pn.replace(/'/g,"''")}'`,1,0);
-          if(!items||!items.length)items=await _bcFetchItems(compId,`vendorItemNo eq '${pn.replace(/'/g,"''")}'`,1,0);
+          if(!items||!items.length){
+            // v2 /items doesn't support vendorItemNo filter — use ItemCard OData
+            const viItems=await _bcFetchItemsViaItemCard(`Vendor_Item_No eq '${pn.replace(/'/g,"''")}'`,1,0);
+            if(viItems&&viItems.length)items=viItems;
+          }
 ```
+`_bcFetchItemsViaItemCard` returns items in the same shape ARC expects (mapped
+at line 4550-4569), including `_vendorItemNo`. The first lookup by `number eq`
+stays on v2 (it works for exact `No.` match). The fallback uses ItemCard only
+when the v2 lookup finds nothing.
 
 **Line 41863** — use `bcItem.number` (actual BC "No."), not `row.partNumber`:
 ```
@@ -587,7 +597,7 @@ CHANGE:   return{number:item.number||"",fullPN:number||item.number||"",...
 
 ~8 lines.
 
-### 3B. Pre-create dedup check (Rev 3 — Marc item 3)
+### 3B. Pre-create dedup check (Rev 3 — Marc item 3; Rev 4 — query fixed)
 
 **The problem:** Today, duplicate creates are caught by BC's unique constraint
 on "No." — same PN → same "No." → 409 "already exists." Post-P3, `body.number`
@@ -595,55 +605,66 @@ is omitted → BC auto-assigns a new surrogate every time → two creates for th
 same PN silently produce two BC items. CSV run twice, two users creating the same
 item, or a retry after a timeout all create duplicates.
 
-**Feasibility:** HIGH — the `vendorItemNo` dual-filter (already proven in
-`bcLookupItemForQuote`, line 8469) can detect existing items by full PN before
-creating. One extra API call per create.
+**Jon decision: dedup stays IN.** No duplicates in BC.
 
-**Fix:** Add a pre-create lookup inside `bcCreateItem`, BEFORE the POST:
+**Rev 4 fix — v2 `vendorItemNo` filter is dead.** Rev 3 used the v2 /items
+endpoint (`vendorItemNo eq '...'`). Marc's sandbox probe proved this returns 400
+("Could not find a property named…"). The rev 3 note citing `bcLookupItemForQuote`
+(line 8469) as "proven" was wrong — that filter is dead/unreachable in the same
+way. The pre-create lookup must use the **ItemCard OData path** (same endpoint
+§1A already uses for `_vendorItemNo` resolution):
 
 ```js
 // Pre-create dedup: check if an item with this Vendor_Item_No already exists
 if (number) {
   const pn = number.trim().replace(/'/g, "''");
   try {
-    const dupCheck = await bcGatedFetch(
-      `${BC_API_BASE}/companies(${compId})/items?$filter=vendorItemNo eq '${pn}'&$top=1`,
-      { headers: { "Authorization": `Bearer ${_bcToken}` } }
-    );
-    if (dupCheck.ok) {
-      const dupData = await dupCheck.json();
-      const existing = (dupData.value || [])[0];
-      if (existing && !existing.blocked) {
-        console.log(`bcCreateItem: item with Vendor_Item_No='${number}' already exists as ${existing.number}, reusing`);
-        return {
-          number: existing.number || "", fullPN: number,
-          displayName: existing.displayName || "",
-          unitCost: existing.unitCost ?? null,
-          unitPrice: existing.unitPrice ?? null,
-          inventory: existing.inventory || 0,
-          lastModifiedDateTime: existing.lastModifiedDateTime || "",
-          vendorNo: existing.vendorNo || ""
-        };
+    const allPages = await bcDiscoverODataPages();
+    const iPage = allPages.find(n => /^ItemCard$/i.test(n));
+    if (iPage) {
+      const dupCheck = await bcGatedFetch(
+        `${BC_ODATA_BASE}/${iPage}?$filter=Vendor_Item_No eq '${pn}'&$select=No,Vendor_Item_No,Description&$top=1`,
+        { headers: { "Authorization": `Bearer ${_bcToken}` } }
+      );
+      if (dupCheck.ok) {
+        const existing = ((await dupCheck.json()).value || [])[0];
+        if (existing && existing.No) {
+          console.log(`bcCreateItem: item with Vendor_Item_No='${number}' already exists as ${existing.No}, reusing`);
+          return {
+            number: existing.No || "", fullPN: number,
+            displayName: existing.Description || "",
+            unitCost: null, unitPrice: null,
+            inventory: 0, lastModifiedDateTime: "",
+            vendorNo: ""
+          };
+        }
       }
     }
   } catch (e) { console.warn("bcCreateItem: dedup check failed, proceeding with create:", e); }
 }
 ```
 
+**Key differences from rev 3:**
+- Uses `BC_ODATA_BASE/ItemCard` (OData, Pascal_Case fields) instead of
+  `BC_API_BASE/items` (v2 REST, camelCase). The ItemCard endpoint exposes
+  `Vendor_Item_No` as a filterable field — proven by the §1A resolve pattern
+  and by `enrichVendorNames` (line 22047).
+- Response fields are Pascal_Case (`No`, `Description`) not camelCase.
+- Returns less data (no `unitCost`/`inventory` from ItemCard `$select`) — callers
+  that need cost will get it on the next `bcLookupItem` or pricing pass.
+  Acceptable: the dedup's job is to prevent duplicate creation, not to return
+  full item data.
+- `bcDiscoverODataPages()` is already cached per-session — no extra round-trip.
+
 **Behavior:** If an item with the same `Vendor_Item_No` already exists, return
 it as if it were just created. The caller gets the existing surrogate + full PN.
 No duplicate. The `try/catch` ensures a failed dedup check doesn't block
-creation — worst case is a duplicate (same as today).
+creation — worst case is a duplicate (same as today's behavior).
 
-**Cost:** One additional API call per create. Creates are infrequent (~1-5 per
+**Cost:** One additional OData call per create. Creates are infrequent (~1-5 per
 project), so the overhead is negligible.
 
-**Jon decision point:** This dedup is a SHOULD, not a MUST. Without it, the
-system works but can accumulate duplicate BC items that share a Vendor_Item_No.
-These duplicates don't cause data loss — they're just messy. The dedup is ~12
-lines and self-contained. Coach recommends including it.
-
-~12 lines.
+~15 lines.
 
 ### 3C. Call site: BC Item Browser "Create in BC" (line 22375)
 
@@ -861,69 +882,21 @@ The `_fallback` object (line 3668) uses `Type:"Text"` with a combined
 `partNumber - description` string in `Description` — but the fallback only fires
 when the Item-type POST fails, and it's a Text line (no BC item link).
 
-### 7b. Expose full PN on planning line (SCOPED — Jon decides)
+### 7b. Planning line full-PN visibility — OUT OF SCOPE / BC-OWNED (Rev 4)
 
-With `No:` now showing `MTX-#####`, planning lines in BC are unreadable when
-verifying. The question is whether the BC Project Planning Line entity exposes
-a writable field where ARC can store the full PN.
+With `No:` now showing `MTX-#####`, planning lines in BC need the full PN
+visible for verification. **Jon confirmed:** this is a BC-side page/field
+exposure task, not an ARC code change. BC resolves `Vendor_Item_No` from the
+linked item master — Jon will enable that field on the planning line page
+definition in BC so it's visible in list views.
 
-**Entity: ProjectPlanningLines (BC page 1007)**
+**No ARC-side work.** ARC pushes `No:_bcNo(row)` (the surrogate) and
+`Description` (the description string). ARC does NOT write the full PN to
+any planning line field. ARC does NOT render planning lines in its own UI —
+they are pushed to BC for BC-side consumption only.
 
-ARC discovers this entity via `bcDiscoverODataPages()` (line 3552) and POSTs/
-PATCHes to it via OData. The fields ARC currently writes are:
-`No`, `Description`, `Quantity`, `Unit_Cost`, `Unit_Price`, `Line_Type`, `Type`,
-`Planning_Date`, `Location_Code`, `Unit_of_Measure_Code`, `Line_No`.
-
-**Does `Vendor_Item_No` exist on this entity?**
-
-The BC standard Job Planning Line table (T1003) does NOT have a native
-`Vendor_Item_No` field. The Item table (T27) has `Vendor_Item_No`, but it's an
-item-level field, not a planning-line-level field. Planning lines reference items
-by `No.` — BC resolves the item's vendor info from the item master.
-
-**However:** BC's planning line `Description` field IS writable and ARC already
-uses it (line 3663: `Description:desc`). And BC planning lines have a
-`Description 2` field (50 chars) on the standard table that ARC does NOT
-currently use.
-
-**Options for Jon:**
-
-**Option 1 — Append PN to Description (0 new lines, ~2 modified):**
-Prepend the full PN to the description:
-```js
-Description: `[${row.partNumber}] ${(row.description||"").slice(0,80)}`.slice(0,100)
-```
-Planning line in BC reads: `[SCE-90EL4820SSFSD000XXX] Fusible Switch 480V`.
-Pro: zero new fields, zero BC config. Con: consumes description space (100 char
-limit, PN eats 20-30 chars). The ECO description (line 3843) already uses a
-`[ECO ### op]` prefix — adding PN would crowd it.
-
-**Option 2 — Write to Description_2 (~3 lines):**
-```js
-// In the planning line payload:
-Description_2: (row.partNumber || '').slice(0, 50)
-```
-Pro: dedicated field, doesn't consume Description space, up to 50 chars.
-Con: requires the `Description_2` field to be exposed on the published OData
-page. Jon would need to verify it's in the page's field list (it's a standard
-BC field on T1003 but may not be published). If not published, Jon adds it to
-the BC web service page definition — no code change on BC side, just a page
-publish config.
-
-**Option 3 — No ARC-side change, BC lookup resolves it:**
-In BC, when viewing a planning line, the user can navigate to the item card
-from the `No.` field. The item card shows `Vendor_Item_No` (the full PN after
-BC-2 backfill). Pro: zero ARC code. Con: extra click to see the full PN; not
-visible in planning line list views.
-
-**ARC-side planning line display:** ARC does NOT render planning lines in its
-own UI. Planning lines are pushed to BC for BC-side consumption (project
-managers view them in BC). There is no ARC UI surface that shows planning line
-content — only a sync status toast.
-
-**Coach recommendation:** Option 2 if `Description_2` is published on the page;
-Option 3 as fallback. Option 1 crowds Description. Jon: check the BC page
-definition and decide.
+This is not a deferred ARC item. It is a BC admin configuration task owned
+by Jon, independent of the #163 code deploy.
 
 ---
 
@@ -1067,15 +1040,15 @@ CSV import with a full PN:
 
 ## Summary
 
-| Phase | Lines | Risk | Rev 3 changes |
-|-------|-------|------|---------------|
+| Phase | Lines | Risk | Rev 3/4 changes |
+|-------|-------|------|-----------------|
 | Utility `_bcNo` | 1 | Negligible | — |
 | P1 (mutation + cross) | ~45 | MEDIUM — core data flow | +10: `_vendorItemNo` resolve, fuzzy branch explicit |
-| P2 (push + read sites) | ~40 | MEDIUM — many sites, uniform pattern | +5: 4 missed read sites, widened grep |
-| P3 (create path + dedup) | ~25 | LOW-MEDIUM | +15: `Vendor_Item_No` gate fix, pre-create dedup |
+| P2 (push + read sites) | ~40 | MEDIUM — many sites, uniform pattern | +5: 4 missed read sites, widened grep; Rev 4: CSV fallback via ItemCard |
+| P3 (create path + dedup) | ~28 | LOW-MEDIUM | +15: `Vendor_Item_No` gate fix; Rev 4: dedup query → ItemCard OData |
 | P4 (display) | ~3 | LOW — UI text only | — |
 | P5 (learning DB) | ~6 | LOW — additive fallback | — |
-| **Total** | **~120** | | |
+| **Total** | **~123** | | |
 
 ## Follow-up Items (NOT in this build)
 
@@ -1083,10 +1056,11 @@ CSV import with a full PN:
   only if field data shows material impact.
 - **sqCrossings surrogate support:** Store `bcFullPN` alongside `bcItemNumber`,
   update Functions enrichment to key by both. Graceful failure until fixed.
-- **Planning line `Description_2`** (if Jon chooses Option 2 in §7b): Add
-  `Description_2: row.partNumber.slice(0,50)` to both planning line payloads.
-  Requires Jon to publish the field on the BC web service page.
 - **v2 mapper `vendorItemNo`:** Consider adding `vendorItemNo` to the v2
   `_bcFetchItems` mapper (line 4525-4529) so "Part # Only" searches carry it
   natively. Would eliminate the targeted ItemCard fetch in 1A/1B. Low priority
   — the resolve-on-demand approach works.
+- **`bcLookupItemForQuote` dead filter:** Line 8469 uses `vendorItemNo eq` on
+  v2 /items — same dead filter as the rev 3 dedup. Currently unreachable (the
+  `number eq` filter always matches first for existing items). Low priority —
+  cosmetic dead code, no runtime impact.
