@@ -8647,3 +8647,116 @@ Jon's proposed direction aligns well with the code. The fix has 3 layers:
 **Blast-radius caution:** The learning DB (alternates, corrections) has entries keyed by truncated PNs for affected items. A transition strategy is needed so old DB entries still match during the changeover period.
 
 ---
+
+### C108 — #158 Region Learning 1MB Scope Trace (2026-06-29)
+
+**Type:** Read-only scoping trace (pre-design)
+**Status:** COMPLETE — scope doc delivered at `docs/158-REGION-LEARNING-SCOPE.md`
+**Tip:** master `fdad5f36` (no code changes — read-only trace)
+
+---
+
+#### Root cause confirmed
+
+Single Firestore document at `config/region_learning` stores up to 30 entries in a flat
+`{examples:[...]}` array. Each entry carries an inline base64 JPEG thumbnail (30–130 KB
+encoded). The 30-entry sliding window was designed to bound the doc, but the code comment
+"thumbnails at ≤100KB give headroom" miscalculated: 30 × ~37 KB average = ~1.1 MB,
+routinely breaching the 1,048,576-byte hard limit. Company XODxZ8xJc0dQXGZI7jbo is
+frozen at 1.1–1.18 MB — all writes silently fail via `.catch(console.warn)` at lines
+13325, 13331, 13336.
+
+#### Reader enumeration (5 read sites + 1 passthrough)
+
+All readers consume `loadRegionLearning(uid)` (R1, line 13312) which returns the flat
+array. R1 is the ONLY function that touches Firestore directly. Downstream consumers:
+
+- R2: `extractBomPage` client (line 12340) — feeds AI extraction prompt
+- R3: `detectPageTypes` (line 15268) — feeds page classification prompt
+- R4: Settings UI (line 17717) — admin display/prune
+- R5: `_captureRegionForLearning` (line 21362) — dedup check before save
+- R6: CF `extractBomPage` (functions/index.js:2395) — passthrough, no Firestore read
+
+**Refactor is contained to R1.** All others consume R1's return value (array) unchanged.
+
+#### Proposed fix: subcollection per entry
+
+`config/region_learning/entries/{entryId}` — one doc per example. Individual thumbnails
+are 50–150 KB, well under the 1 MB per-doc limit. `loadRegionLearning` becomes a
+`getDocs()` subcollection query returning the same array. Five write/delete/update
+functions refactored. Backward-compatible dual-path read (subcollection-first, old-doc
+fallback). Firestore rules: add explicit `entries/{entryId}` match.
+
+#### Migration: one-time admin-triggered batch
+
+Read the frozen doc → batch write entries to subcollection → delete old doc → write
+manifest. Atomic via Firestore batch (≤32 ops). **Marc runtime pull dependency:**
+need actual entry count + thumbnail sizes from the frozen doc before finalizing.
+
+#### Gap noted
+
+`extractBomBatch` (line 12297) does not pass region learning context — pre-existing gap,
+not caused by #158, not in scope.
+
+Full detail: `docs/158-REGION-LEARNING-SCOPE.md`
+
+---
+
+### C108 Rev 1 — #158 Detailed Plan (2026-06-29)
+
+**Type:** Detailed implementation plan (read-only — no build, no deploy)
+**Status:** COMPLETE — plan delivered at `docs/158-DETAILED-PLAN.md`
+**Tip:** master `fdad5f36` (no code changes)
+
+---
+
+#### Retargeting from C108 scope
+
+Marc's runtime pull showed the frozen doc has **9 entries** (not 30) at **1,044,357
+bytes**. Thumbnails average ~115K chars each (range 58K–203K), not the ~37K the scope
+assumed. Root driver is **uncapped thumbnail height** in `cropRegionToBase64` (line
+13339): `maxWidth=800` but height proportional to region aspect ratio. A full-page BOM
+region yields a ~200K blob. The 30-entry sliding window is irrelevant — 9 entries blew
+the limit.
+
+#### Plan structure (5 phases, ordered for frozen-company safety)
+
+1. **Thumbnail cap** — step-down algorithm in `cropRegionToBase64` (line 13339): render
+   → measure → if over 250K chars, reduce quality then dimensions → re-render. Bounds
+   future entries. Does not retroactively resize existing entries.
+
+2. **Subcollection restructure** — `config/region_learning/entries/{entryId}`. Rewrite
+   `_rlPath` → `_rlDocPath`/`_rlEntriesPath`. `loadRegionLearning` (R1, the ONLY
+   Firestore-touching read) gets dual-path: subcollection-first, old-doc fallback.
+   Merges both sources during transition window (prevents split-brain between deploy
+   and migration). Write functions (W1/W2/W3) write to subcollection only. NO lazy
+   migration from the read path.
+
+3. **Loud failures + rules** — Remove `.catch(console.warn)` at lines 13325/13331/13336;
+   functions now throw. `_captureRegionForLearning` (line 21373) stays non-blocking but
+   routes failures to `logDebugEntry` (admin Debug Logs). Firestore rules: add
+   `entries/{entryId}` match under `config/region_learning`.
+
+4. **Migration** (post-deploy, admin-triggered) — Read frozen doc → batch write 9
+   entries to subcollection → overwrite old doc with slim manifest (`.set()` is
+   load-bearing — it unfreezes the doc path). 10 ops, atomic batch. Marc executes
+   per-company.
+
+5. **Verify** — Settings renders all entries; new capture writes succeed; extraction
+   feeds learning context; tall-region thumbnail ≤250K chars.
+
+#### Rollout sequence
+
+Phases 1–3 deploy together. **Phase 4 runs IMMEDIATELY after deploy, same session,
+before new captures** — shrinks the transition window to ~zero for the frozen company.
+
+#### Accepted limitation: transition-window write holes (Rev 2)
+
+Between deploy and migration, the merged read returns entries from BOTH sources, but
+writes target the subcollection only. Two non-destructive edge cases for old-doc-only
+entries during the window: (1) `.update()` on an old-doc-only entry throws (caught by
+`_captureRegionForLearning` try/catch — non-blocking); (2) `.delete()` of an old-doc-only
+entry no-ops and the entry resurrects on next merged read. Both self-clear at migration.
+Mitigated by process (immediate Phase 4), NOT by gold-plating the write path.
+
+Full detail: `docs/158-DETAILED-PLAN.md`

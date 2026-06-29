@@ -178,6 +178,12 @@ Reduce ambiguity, improve investigation velocity, and preserve a consistent comm
 
 ## Session Closeout Verification Procedure
 
+### Team Close-Out Trigger (standard op)
+
+When a session close-out is triggered, Marc initiates it by running the `/team-closeout` slash command in CCD. Freddy does not hand-author a close-out paste enumerating every commit/TODO/SESSION-STATE step — `/team-closeout` is the mechanism that runs the standard close-out checklist. Freddy's role at close-out is to hand Marc the SESSION-SPECIFIC items the command can't infer on its own: new findings to log (number + summary + status + next action), items to mark RESOLVED (with SHAs/version), and loose ends to record (deferred confirms, cleanup artifacts, parked items). Marc runs `/team-closeout` with those items folded in.
+
+The verification steps below describe WHAT gets verified; `/team-closeout` is HOW Marc executes it.
+
 Before closing and restarting Freddy, Coach, or Marc sessions, verify that critical knowledge has been preserved and can be recovered by a fresh session. Perform this before planned session resets, major investigation closeouts, or significant workflow transitions.
 
 ### Step 1: Request Coach Verification
