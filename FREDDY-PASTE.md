@@ -263,8 +263,11 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
   deleted Path A only `console.warn`'d; (b) posting-group theory — the 3 suspect items have valid posting
   groups (Jon verified); the "Inventory Posting Group read-only" 400 is ARC PATCHing an already-set field
   (noise). Failure count scales with existing BC lines (fresh = 37 fail, re-sync = 1 fail) — deterministic
-  per-item, not timing. RESUME TRIGGER: a genuinely-in-BC item flagged couldn't-sync. TODO #168;
-  evidence `docs/168-C110-RUNTIME-EVIDENCE.md`. *(Freddy endorsed this reframe.)*
+  per-item, not timing. **v1.21.2 is NOT proven to fix the symptom** — the 37→1 drop is mostly PRJ402130
+  being pre-populated; the untaken settling test is a FRESH project from the SAME drawings on v1.21.2.
+  RESUME TRIGGER (crisp): live again ONLY if a genuinely-IN-BC item is flagged couldn't-sync; a
+  legitimately-missing item failing (JOB BUYOFF) is CORRECT, not the bug. TODO #168; evidence
+  `docs/168-C110-RUNTIME-EVIDENCE.md`. *(Freddy endorsed this reframe.)*
 - **NEW #170 (LOW, land before any future #168 dig):** the primary `Type:"Item"` planning-line POST error
   is discarded at `app.jsx:~3762`; only the `Type:"Text"` fallback's "Type must not be Text" surfaces —
   which masked #168's real error all session. The Text fallback on `Project_Planning_Lines_Excel` is also
@@ -516,9 +519,13 @@ LEGITIMATE failure (JOB BUYOFF genuinely not in BC → popup correctly tells the
 - **Why it looked high-volume:** failure count scales with existing BC lines — fresh project POSTs all
   rows (PRJ402129 = 37 fail), re-sync only new/changed (PRJ402130 re-extract = 1 fail). Deterministic
   per-item, not timing.
-- **RESUME TRIGGER:** if the popup flags a genuinely IN-BC item as couldn't-sync, #168 is live again —
-  resume from `docs/168-C110-RUNTIME-EVIDENCE.md` + land **#170 first** (the diagnostics fix that reveals
-  the real primary-POST error). Full detail in TODO #168.
+- **v1.21.2 NOT proven to fix the symptom:** the 37→1 drop is mostly PRJ402130 being pre-populated, not
+  the fix. The one untaken test that would settle it: a FRESH project from the SAME drawings on v1.21.2
+  (not run — PRJ402129 was deleted). Don't mis-remember v1.21.2 as "the #168 fix."
+- **RESUME TRIGGER (crisp):** #168 is live again ONLY if the popup flags a genuinely IN-BC item as
+  couldn't-sync. A legitimately-missing item failing (JOB BUYOFF not in BC) is CORRECT behavior, not the
+  bug. When live: resume from `docs/168-C110-RUNTIME-EVIDENCE.md` + land **#170 first** (reveals the real
+  primary-POST error). Full detail in TODO #168.
 
 ## NEW residual bugs logged (both LOW, NOT started)
 - **#170** — Primary `Type:"Item"` planning-line POST error is discarded at `app.jsx:~3762`; only the

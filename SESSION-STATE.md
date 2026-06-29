@@ -32,9 +32,13 @@ LEGITIMATE failure (JOB BUYOFF genuinely not in BC → popup correctly tells the
 - **Why it looked high-volume:** failure count scales with existing BC lines — fresh project POSTs all
   rows (PRJ402129 = 37 fail), re-sync only new/changed (PRJ402130 re-extract = 1 fail). Deterministic
   per-item, not timing.
-- **RESUME TRIGGER:** if the popup flags a genuinely IN-BC item as couldn't-sync, #168 is live again —
-  resume from `docs/168-C110-RUNTIME-EVIDENCE.md` + land **#170 first** (the diagnostics fix that reveals
-  the real primary-POST error). Full detail in TODO #168.
+- **v1.21.2 NOT proven to fix the symptom:** the 37→1 drop is mostly PRJ402130 being pre-populated, not
+  the fix. The one untaken test that would settle it: a FRESH project from the SAME drawings on v1.21.2
+  (not run — PRJ402129 was deleted). Don't mis-remember v1.21.2 as "the #168 fix."
+- **RESUME TRIGGER (crisp):** #168 is live again ONLY if the popup flags a genuinely IN-BC item as
+  couldn't-sync. A legitimately-missing item failing (JOB BUYOFF not in BC) is CORRECT behavior, not the
+  bug. When live: resume from `docs/168-C110-RUNTIME-EVIDENCE.md` + land **#170 first** (reveals the real
+  primary-POST error). Full detail in TODO #168.
 
 ## NEW residual bugs logged (both LOW, NOT started)
 - **#170** — Primary `Type:"Item"` planning-line POST error is discarded at `app.jsx:~3762`; only the

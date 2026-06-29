@@ -2966,11 +2966,16 @@ reset that surfaced the ground-truth state.
      original 37-error storm was inflated by the now-removed race + a fresh-project full POST.
      **SHIPPED v1.21.2 (9c885da6) — separate improvement, NOT the #168 fix:** deleted Path A (the
      fire-and-forget post-pricing `bcSyncPanelPlanningLines`) + its premature POST. Removed a real
-     duplicate-trigger race and redundant BC traffic. Verified live: no `Post-pricing BC sync:` line,
-     single `bcSyncPlanningLines:` summary, happy path 41 created / 0 failed.
-     **RESUME TRIGGER:** if the popup ever flags a part that is genuinely IN BC as "couldn't sync,"
-     #168 is live again — resume from docs/168-C110-RUNTIME-EVIDENCE.md (raw evidence) + #170 (the
-     diagnostics fix must land FIRST so the real primary-POST error is visible).
+     duplicate-trigger race and redundant BC traffic (PROVEN). Verified live: no `Post-pricing BC sync:`
+     line, single `bcSyncPlanningLines:` summary, happy path 41 created / 0 failed.
+     **NOT proven to fix the #168 symptom — do not mis-remember v1.21.2 as "the #168 fix":** the
+     37→1 error drop is mostly explained by PRJ402130 being PRE-POPULATED in BC (re-sync POSTs only
+     new/changed rows), NOT by the fix. The one untaken test that would settle it: a FRESH project from
+     the SAME drawings on v1.21.2 (none was run — PRJ402129 was deleted).
+     **RESUME TRIGGER (crisp condition):** #168 is live again ONLY if the popup flags a part that is
+     genuinely IN BC as "couldn't sync." A legitimately-missing item failing (e.g. JOB BUYOFF not in BC)
+     is CORRECT behavior, not the bug. When live: resume from docs/168-C110-RUNTIME-EVIDENCE.md (raw
+     evidence) + land #170 FIRST (the diagnostics fix that makes the real primary-POST error visible).
      Logged: 2026-06-29 (Jon observed; re-investigated + tabled same session. Freddy endorsed reframe).
 
 ## Prior-quote recognition / cross-quote pricing consistency (2026-06-29)
