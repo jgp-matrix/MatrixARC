@@ -2718,7 +2718,7 @@ reset that surfaced the ground-truth state.
 
 ## Region-learning document exceeds Firestore 1MB hard limit (2026-06-17)
 
-158. **OPEN** [HIGH — silent production data-integrity failure] — Region-learning document exceeds
+158. **RESOLVED** [was HIGH — silent production data-integrity failure] — Region-learning document exceeds
      Firestore 1MB hard limit; learning silently broken.
      DISCOVERED: 2026-06-17 during #153 v1.20.140 testing (console, real prod data).
      `config/region_learning` for company XODxZ8xJc0dQXGZI7jbo exceeds Firestore's 1,048,576-byte
@@ -2739,6 +2739,23 @@ reset that surfaced the ground-truth state.
      `_captureRegionForLearning` ~line 4508.
      PRIORITIZE: silent, active, production, accuracy-affecting.
      Logged: 2026-06-17 (Jon, observed in console during #153 testing).
+
+     **RESOLVED 2026-06-29 (v1.21.1).** region_learning single-doc → subcollection + thumbnail cap
+     + loud failures. Commits `13787154` (P1-P3) / `f6762a79` (v1.21.1, hosting + firestore rules).
+     Frozen doc (companies/XODxZ8xJc0dQXGZI7jbo) migrated: 1,044,339 chars → 132-byte slim manifest
+     + 9 entries in `/entries`, thumbnails byte-for-byte preserved, 10-op atomic batch (dry-run
+     verified). Phase 5 V1-V4 all PASS (V3 extraction landed 76 BOM items with region-learning in
+     path). Haiku `.update()` merge confirmed on subcollection. Learning DB at 13 (4 real OVIVO
+     regions kept). Plan: docs/158-REGION-LEARNING-SCOPE.md + docs/158-DETAILED-PLAN.md (C108
+     Rev 2); review C109. No APP_SCHEMA_VERSION bump (config data). Root driver was uncapped
+     thumbnail height (9 entries blew 1MB), NOT entry count — Phase 1 cap addresses it directly.
+     LOOSE ENDS (carry forward):
+     - DEFERRED V3 DIRECT CONFIRM (LOW): `regionLearningParts` verified non-empty by invariant +
+       read-path proof, not a captured request payload. On the next catchable extraction, glance at
+       the actual request payload to close it directly.
+     - SANDBOX BC CLEANUP: scratch project PRJ402127's BC project + task structure remain in BC
+       (ARC-side deleted; "also delete from BC" left unchecked per scope). Retire alongside the
+       other #163 sandbox test artifacts (MTX-01023/24/25, ZZ_TEST items). Harmless sandbox cruft.
 
 ## Copy-to-New-Quote: add customer selection + PRJ# (2026-06-17)
 
@@ -2917,3 +2934,25 @@ reset that surfaced the ground-truth state.
      determination is lead-based and in-memory==loaded-from-Firestore, so the persisted/in-memory split
      is moot: no `priceSource:"ai"` population exists to be stale.)
      Logged: 2026-06-26 (Jon directed; Marc runtime read, v1.20.142).
+
+## Auto BC-sync vs manual BC Sync divergence (2026-06-29)
+
+168. **OPEN** [HIGH — BC matching, post-#163 surrogate-key area] — Post-extraction auto BC-sync modal
+     flags valid in-BC items as "couldn't sync." After an extraction, an auto-popup modal (one of the
+     last steps in the post-extraction auto-sequence) lists items that couldn't sync to BC. The list is
+     long and includes items that ARE valid, present-in-BC parts. Closing the modal + clicking the
+     manual "BC Sync" button syncs ALL of them successfully. Same items, same BC, two attempts,
+     different results.
+     CONFIRMED (Jon, prod v1.21.1): the auto-popup is a DIFFERENT code path from the manual BC Sync
+     button (not the same surface auto-triggered); it fires before the user can see the BOM.
+     HYPOTHESIS (NOT confirmed — needs Coach trace first): the matcher is fine (manual button matches
+     everything), so the bug is in the AUTOMATIC path, not matching logic. Likely an async-window/timing
+     issue (#153 class) — auto path firing before a dependency is ready (VIN resolution
+     `_resolveVendorItemNo`/`_vinResolved` per C113/C115, BC token per #125, populated fields, or
+     learning/cache load), OR a different lookup key than the manual path (No. vs Vendor_Item_No vs
+     partNumber), OR mis-classifying an async/not-yet-resolved result as "couldn't sync."
+     NEXT ACTION (next session): Coach evidence-first trace of BOTH sync paths to find the divergence
+     point — do NOT investigate "why don't these match BC," investigate what DIFFERS between the auto
+     and manual attempts. Full trace request is drafted and ready to route. STOP before fix design until
+     the failing layer is proven.
+     Logged: 2026-06-29 (Jon, observed in production).
