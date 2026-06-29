@@ -13308,33 +13308,72 @@ function buildLearningHint(examples){
 // projects retrieve the most relevant examples and feed them to the AI as
 // multimodal context — so the user's curation work compounds across projects.
 let _regionLearningCache=null;
-function _rlPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/region_learning";}
+// #158: region learning moved from a single {examples:[...]} doc to a one-doc-per-
+// entry subcollection. _rlDocPath = the old single-doc path (still read as a fallback
+// during the transition window + overwritten with a slim manifest at migration).
+// _rlEntriesPath = the new subcollection. See docs/158-DETAILED-PLAN.md (C108 Rev 2).
+function _rlDocPath(uid){return (_appCtx.configPath||`users/${uid}/config`)+"/region_learning";}
+function _rlEntriesPath(uid){return _rlDocPath(uid)+"/entries";}
 async function loadRegionLearning(uid){
   if(_regionLearningCache)return _regionLearningCache;
-  try{const d=await fbDb.doc(_rlPath(uid)).get();_regionLearningCache=d.exists?(d.data().examples||[]):[];}
-  catch(e){_regionLearningCache=[];}
+  try{
+    // Dual-path read: merge the new subcollection with the old single doc. During the
+    // transition window (after deploy, before migration), new captures land in the
+    // subcollection while pre-migration entries remain in the old doc — merging keeps
+    // both visible. After migration overwrites the old doc with a slim manifest (no
+    // `examples` field), oldEntries returns [] — a natural no-op. Read-only: never
+    // writes back (no lazy migration — migration is the explicit Phase 4 admin step).
+    const snap=await fbDb.collection(_rlEntriesPath(uid)).get();
+    const subEntries=snap.empty?[]:snap.docs.map(d=>d.data());
+    const d=await fbDb.doc(_rlDocPath(uid)).get();
+    const oldEntries=(d.exists&&Array.isArray(d.data().examples))?d.data().examples:[];
+    // Dedupe by id (subcollection wins on collision), then client-side sort by savedAt.
+    const byId=new Map();
+    for(const e of oldEntries)byId.set(String(e.id),e);
+    for(const e of subEntries)byId.set(String(e.id),e);
+    _regionLearningCache=[...byId.values()].sort((a,b)=>(a.savedAt||0)-(b.savedAt||0));
+  }catch(e){_regionLearningCache=[];}
   return _regionLearningCache;
 }
 async function saveRegionLearningEntry(uid,entry){
-  const examples=await loadRegionLearning(uid);
-  // Sliding window: keep the 30 most recent examples to bound the doc size
-  // (Firestore single-doc cap is 1MB; thumbnails at ≤100KB give headroom).
-  examples.push({...entry,savedAt:Date.now()});
-  while(examples.length>30)examples.shift();
-  _regionLearningCache=examples;
-  await fbDb.doc(_rlPath(uid)).set({examples}).catch(e=>console.warn("[REGION LEARNING] save failed:",e.message));
-  return entry;
+  const stamped={...entry,savedAt:Date.now()};
+  const entriesRef=fbDb.collection(_rlEntriesPath(uid));
+  await entriesRef.doc(String(stamped.id)).set(stamped);
+  // Sliding window: keep the 30 most recent by savedAt; delete the rest. Client-side
+  // sort (no .orderBy) — no server index dependency.
+  const all=await entriesRef.get();
+  const sorted=all.docs.slice().sort((a,b)=>((a.data().savedAt||0)-(b.data().savedAt||0)));
+  if(sorted.length>30){
+    const toDelete=sorted.slice(0,sorted.length-30);
+    const batch=fbDb.batch();
+    toDelete.forEach(d=>batch.delete(d.ref));
+    await batch.commit();
+  }
+  // Refresh cache from the write (avoid stale reads).
+  _regionLearningCache=sorted.slice(-Math.min(sorted.length,30)).map(d=>d.data());
+  return stamped;
 }
 async function deleteRegionLearningEntry(uid,exampleId){
-  const examples=(await loadRegionLearning(uid)).filter(e=>e.id!==exampleId);
-  _regionLearningCache=examples;
-  await fbDb.doc(_rlPath(uid)).set({examples}).catch(e=>console.warn("[REGION LEARNING] delete failed:",e.message));
+  await fbDb.collection(_rlEntriesPath(uid)).doc(String(exampleId)).delete();
+  _regionLearningCache=(_regionLearningCache||[]).filter(e=>String(e.id)!==String(exampleId));
 }
 async function updateRegionLearningEntry(uid,exampleId,patch){
-  const examples=(await loadRegionLearning(uid)).map(e=>e.id===exampleId?{...e,...patch,updatedAt:Date.now()}:e);
-  _regionLearningCache=examples;
-  await fbDb.doc(_rlPath(uid)).set({examples}).catch(e=>console.warn("[REGION LEARNING] update failed:",e.message));
+  const stamped={...patch,updatedAt:Date.now()};
+  // .update() (merge) not .set() — the background Haiku {aiAnalysis} patch merges into
+  // the existing entry doc without clobbering the thumbnail and other fields.
+  await fbDb.collection(_rlEntriesPath(uid)).doc(String(exampleId)).update(stamped);
+  _regionLearningCache=(_regionLearningCache||[]).map(e=>
+    String(e.id)===String(exampleId)?{...e,...stamped}:e
+  );
 }
+// #158 Phase 1: bound per-thumbnail size so no single entry can approach the 1 MB
+// per-doc limit. A tall full-page BOM region at the old uncapped height produced
+// ~200K-char thumbnails; 9 of those blew the single-doc ceiling. The step-down only
+// fires for oversized thumbnails — normal small regions keep full quality.
+const RL_THUMB_MAX_CHARS=250000;     // ceiling for the base64 data URL string (~183 KB decoded)
+const RL_THUMB_MIN_DIM=200;          // floor: never shrink below 200px on either axis
+const RL_THUMB_QUALITY=0.7;          // initial JPEG quality (unchanged from prior behavior)
+const RL_THUMB_QUALITY_FLOOR=0.4;    // quality floor on dimension-shrink retry passes
 // Crop a normalized region from a page image, downscale to maxWidth, return JPEG base64 data URL.
 async function cropRegionToBase64(pageDataUrl,region,maxWidth=800){
   if(!pageDataUrl||!region)return null;
@@ -13348,13 +13387,29 @@ async function cropRegionToBase64(pageDataUrl,region,maxWidth=800){
         const cropW=Math.max(1,(region.w||0)*img.width);
         const cropH=Math.max(1,(region.h||0)*img.height);
         const scale=Math.min(1,maxWidth/cropW);
-        const outW=Math.max(1,Math.round(cropW*scale));
-        const outH=Math.max(1,Math.round(cropH*scale));
+        let outW=Math.max(1,Math.round(cropW*scale));
+        let outH=Math.max(1,Math.round(cropH*scale));
         const canvas=document.createElement("canvas");
-        canvas.width=outW;canvas.height=outH;
         const ctx=canvas.getContext("2d");
-        ctx.drawImage(img,cropX,cropY,cropW,cropH,0,0,outW,outH);
-        resolve(canvas.toDataURL("image/jpeg",0.7));
+        const render=(w,h,q)=>{
+          canvas.width=w;canvas.height=h;
+          ctx.clearRect(0,0,w,h);
+          ctx.drawImage(img,cropX,cropY,cropW,cropH,0,0,w,h);
+          return canvas.toDataURL("image/jpeg",q);
+        };
+        // Pass 1: full quality, full dimensions.
+        let out=render(outW,outH,RL_THUMB_QUALITY);
+        // Pass 2: drop quality before sacrificing any pixels.
+        if(out.length>RL_THUMB_MAX_CHARS)out=render(outW,outH,0.5);
+        // Pass 3+: shrink dims 25%/iter at the quality floor until under ceiling or the
+        // dimension floor is hit (accept an over-ceiling result there — still well under
+        // 1 MB per entry). Worst case ~3-4 iterations for an extreme region.
+        while(out.length>RL_THUMB_MAX_CHARS&&outW>RL_THUMB_MIN_DIM&&outH>RL_THUMB_MIN_DIM){
+          outW=Math.max(RL_THUMB_MIN_DIM,Math.round(outW*0.75));
+          outH=Math.max(RL_THUMB_MIN_DIM,Math.round(outH*0.75));
+          out=render(outW,outH,RL_THUMB_QUALITY_FLOOR);
+        }
+        resolve(out);
       }catch(e){console.warn("[REGION LEARNING] crop failed:",e.message);resolve(null);}
     };
     img.onerror=()=>resolve(null);
@@ -17719,8 +17774,14 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   },[uid]);
   async function pruneRegionLearning(exampleId){
     if(!await arcConfirm("Delete this region example? It will no longer influence future extractions.",{kind:"warning",okLabel:"Delete"}))return;
-    await deleteRegionLearningEntry(uid,exampleId);
-    setRegionLearning(prev=>prev.filter(e=>e.id!==exampleId));
+    // #158 Phase 3: on delete failure, keep the entry in the list — don't silently
+    // remove it from the UI when the backing doc is still present.
+    try{
+      await deleteRegionLearningEntry(uid,exampleId);
+      setRegionLearning(prev=>prev.filter(e=>e.id!==exampleId));
+    }catch(e){
+      console.error("[REGION LEARNING] delete failed:",e.message);
+    }
   }
 
   // Logo upload (admin + company only)
@@ -21370,7 +21431,17 @@ function DrawingLightbox({pages,startId,onClose,onRegionsChange,onNotesChange,cu
         if(analysis)return updateRegionLearningEntry(uid,region.id,{aiAnalysis:analysis});
       }).catch(()=>{});
       console.log(`[REGION LEARNING] captured "${entry.label}" from ${pg?.name||"page"}`);
-    }catch(e){console.warn("[REGION LEARNING] capture failed:",e.message);}
+    }catch(e){
+      // #158 Phase 3: non-blocking (don't throw — would break region-drawing UX), but
+      // no longer silent. Surface to admin Debug Logs + an actionable console warning.
+      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+        window.logDebugEntry({severity:"warn",source:"regionLearning",
+          message:"Region learning save failed: "+e.message,
+          extra:{regionId:region?.id,regionType:region?.type}});
+      }
+      console.warn("[REGION LEARNING] save failed — region will not influence future extractions. "+
+        "If this persists, contact admin. Error: "+e.message);
+    }
   }
 
   // Get normalized coords from mouse event relative to image

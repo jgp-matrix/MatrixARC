@@ -461,6 +461,12 @@ service cloud.firestore {
         allow read: if isMember();
         allow write: if canWrite();
       }
+      // #158: region learning entries subcollection (the config/{configId} wildcard
+      // above covers the config/region_learning manifest doc, but NOT its subcollection).
+      match /config/region_learning/entries/{entryId} {
+        allow read: if isMember();
+        allow write: if canWrite();
+      }
 
       // Purchase Orders module
       match /purchaseOrders/{poId} {
