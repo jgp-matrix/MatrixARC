@@ -2902,6 +2902,14 @@ reset that surfaced the ground-truth state.
      to taking revisions on crossed rows at all. Verb clarity first; default-safety second.
      Logged: 2026-06-17 (Jon + Marc, identified during #160 build/testing).
 
+> **⚠ Reconciliation-cluster status caveat (#164/#165 build on #160/#153 code) — banked 2026-06-29
+> (Freddy close-out reasoning, would otherwise die with the session):** the "OPEN" status on #153/#160
+> means **built-but-unverified** — deployed to the TEST channel, awaiting T-suites, never formally
+> closed — NOT not-started. #153's TODO body text reading "Not started" is stale 2026-06-17 logging.
+> Before building #164/#165 (or any reconciliation-cluster work), have **Coach confirm the C101/C103/
+> C105 commits are actually IN MASTER** before treating that code as live — a one-line check that saves
+> a future session a confused archaeology dig.
+
 166. **OPEN** [LOW — maintenance / dedup cleanup] — stampFn / drop-handler duplicated logic in the
      #153 revision flow. A deferred cleanup item from the #153 build: the drawing-drop handling and the
      stamp/version logic carry duplicated code that should be consolidated. This was the item earlier
