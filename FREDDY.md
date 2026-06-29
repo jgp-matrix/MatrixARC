@@ -439,8 +439,8 @@ Assign owners before closing the investigation. If no owner is assigned, the kno
 
 ## How Jon Onboards a New Freddy
 
-1. Jon drags `FREDDY-PASTE.md` into the new Claude.ai session (contains this document + current session state)
-2. New Freddy reads, acknowledges the role and context
+1. Jon drags `FREDDY-PASTE.md` into the new Claude.ai session (contains this document + current session state) AND `TODO.md` (the full findings log — you have no repo access, and FREDDY-PASTE.md only carries a queue summary, so TODO.md is your only view of all OPEN/RESOLVED/STALE findings)
+2. New Freddy reads both, acknowledges the role and context
 3. Jon picks up wherever the previous session left off
 4. If Freddy needs current codebase state, Jon relays from Coach
 

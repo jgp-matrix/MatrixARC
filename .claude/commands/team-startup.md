@@ -35,7 +35,7 @@ You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
 □ Step 1 — Verify repo state (automatic — no user action)
 □ Step 2 — Generate {ARCH_SHORT} paste + {ANALYST_SHORT} file (automatic)
    → USER ACTION: Copy {ARCH_SHORT} paste into {ARCH_ENV}
-   → USER ACTION: Copy/drag {ANALYST_SHORT} file into {ANALYST_ENV}
+   → USER ACTION: Copy/drag {ANALYST_SHORT} file + TODO.md into {ANALYST_ENV}
 □ Step 3 — Open app in browser + link to CCD (automatic)
 □ Step 4 — Wait for user to confirm both sessions initialized
    → USER ACTION: Confirm "{ARCH_SHORT} is up" and "{ANALYST_SHORT} is up"
@@ -104,13 +104,14 @@ After reading, report back:
 
 The analyst paste file `{ANALYST_PASTE}` combines `{ANALYST_ONBOARDING}` + `{SESSION_STATE}` into a single file. It was last regenerated during the previous session's close out. No freshness check needed — it's only used at startup and close out keeps it current.
 
-Open Explorer with the file pre-selected so the user can drag it directly into Claude.ai:
+Open Explorer with the file pre-selected so the user can drag it directly into Claude.ai. Open a second Explorer selection for `TODO.md` so {ANALYST_SHORT} also gets the full findings log (the analyst has no repo access — SESSION-STATE.md only carries a queue summary):
 ```powershell
 Start-Process explorer.exe -ArgumentList "/select,{repo root path}\{ANALYST_PASTE}"
+Start-Process explorer.exe -ArgumentList "/select,{repo root path}\TODO.md"
 ```
 
 Tell the user:
-> **{ANALYST_SHORT} file:** Explorer opened with `{ANALYST_PASTE}` selected — drag it into Claude.ai.
+> **{ANALYST_SHORT} files:** Explorer opened with `{ANALYST_PASTE}` and `TODO.md` selected — drag BOTH into Claude.ai.
 
 **If ANALYST_HAS_FILES is true (terminal/CCD):**
 Output a code block with file paths, same format as the Architect paste:
@@ -155,7 +156,7 @@ context and report back. Come back here and tell me when both are ready.
 ```
 
 Tell the user:
-> Coach paste is ready above. {ANALYST_SHORT} file: `{ANALYST_PASTE}` — copy or drag into Claude.ai. Let me know when both are up.
+> Coach paste is ready above. {ANALYST_SHORT} files: `{ANALYST_PASTE}` + `TODO.md` — copy or drag both into Claude.ai. Let me know when both are up.
 
 **Do not proceed** until user confirms both sessions are initialized.
 
