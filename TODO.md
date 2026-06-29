@@ -2964,3 +2964,39 @@ reset that surfaced the ground-truth state.
      and manual attempts. Full trace request is drafted and ready to route. STOP before fix design until
      the failing layer is proven.
      Logged: 2026-06-29 (Jon, observed in production).
+
+## Prior-quote recognition / cross-quote pricing consistency (2026-06-29)
+
+169. **OPEN** [Brief-stage — feature, scope not finalized] — Prior-quote recognition / cross-quote
+     pricing consistency. When a new quote contains a panel (or items) ARC has quoted before, ARC
+     should recognize the match and suggest the user verify final pricing against the prior quote.
+     CUSTOMER-FACING RISK (the driver): the same panel quoted on two separate jobs can come out priced
+     slightly differently — most often via LABOR drift (ARC auto-counts labor a little differently run
+     to run). A customer who sees two quotes for the same panels at different totals will question why.
+     The goal is internal pricing consistency on identical work.
+
+     TWO PROBLEMS HIDING HERE (both must be settled at Brief time):
+       (1) DETECTION/FLAGGING — recognize the match, nudge to reconcile. Treats the symptom.
+       (2) THE DRIFT ITSELF — why does labor differ on the same BOM? If panels are genuinely identical,
+           labor SHOULD be identical. Either the panels aren't actually identical (extraction variance,
+           e.g. 54 vs 53 items) or the labor calc is non-deterministic on identical input. Treats the cause.
+
+     OPEN SCOPE DECISIONS (Jon to resolve at Brief — captured so they survive):
+       - FORK A (symptom vs cause): when two panels are the same BOM, should price be GUARANTEED
+         identical (labor determinism is expected; any drift is a bug Coach must trace), OR is some
+         labor variance legitimate (build judgment) and ARC just FLAGS it? Freddy lean: flag-first
+         either way (even perfect determinism can't catch a legitimately-different build); whether we
+         ALSO chase labor determinism is Jon's call.
+       - FORK B (match granularity): panel-level only, or also single line items (same part, different
+         price across two quotes)? Freddy lean: panel for v1, line-item as fast-follow — the panel is
+         what the customer compares.
+
+     FREDDY'S RECOMMENDED DEFAULT SHAPE (pending Jon's forks):
+       - Match unit = PANEL, via a signature (sorted PN+qty).
+       - Surface = Pre-Print Checklist (existing pre-send gate). SOFT notice, not a hard block.
+       - Scope = across all of the company's quote history; note the matching quote's customer.
+       - Action text = "This panel matches Panel X on Quote Q#### ($Y). Verify pricing." with the
+         price delta and whether labor or material is driving it.
+
+     Status: parked behind #168 (active). No Coach/Marc work until briefed.
+     Logged: 2026-06-29 (Jon, new feature concept; Freddy scoped the open questions).
