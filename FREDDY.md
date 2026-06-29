@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.1 (defined in `public/index.html`; deployed at commit f6762a79, tag v1.21.1; master tip 8320e274 with doc/state commits since). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.2 (defined in `public/index.html`; deployed at commit 9c885da6, tag v1.21.2; master tip e7cfbc81). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -250,12 +250,35 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ## Recently Active Work (as of 2026-06-29)
 
-### Shipped This Session (v1.21.0 → v1.21.1) — #158 Region-Learning Subcollection Restructure
+### Shipped This Session (v1.21.1 → v1.21.2) — #168-adjacent race removal + #168 re-investigation
+- **v1.21.2 (code `9c885da6`) — SHIPPED, but NOT the #168 fix.** Deleted Path A: the fire-and-forget
+  `bcSyncPanelPlanningLines` inside `runPricingOnPanel` + its premature post-pricing POST. Path B
+  (`useEffect → syncPlanningLinesToBC`) is now the sole foreground auto-sync (task descs sync there too,
+  V1 verified). Removed a genuine duplicate-trigger race + redundant BC traffic. Verified live on v1.21.2:
+  no `Post-pricing BC sync:` line, single `bcSyncPlanningLines:` summary, happy path 41 created / 0 failed.
+- **#168 — TABLED (likely not-a-bug-as-reported).** Re-investigated live; the reported symptom (popup
+  flags VALID in-BC items as "couldn't sync") **did not reproduce** once the race was removed. Only
+  reproduction = a LEGITIMATE failure (JOB BUYOFF genuinely not in BC → popup correct). **Disproven:**
+  (a) race-as-popup-cause — `setSyncFailedAlert` is only in the KEPT path (`syncPlanningLinesToBC`:25214),
+  deleted Path A only `console.warn`'d; (b) posting-group theory — the 3 suspect items have valid posting
+  groups (Jon verified); the "Inventory Posting Group read-only" 400 is ARC PATCHing an already-set field
+  (noise). Failure count scales with existing BC lines (fresh = 37 fail, re-sync = 1 fail) — deterministic
+  per-item, not timing. RESUME TRIGGER: a genuinely-in-BC item flagged couldn't-sync. TODO #168;
+  evidence `docs/168-C110-RUNTIME-EVIDENCE.md`. *(Freddy endorsed this reframe.)*
+- **NEW #170 (LOW, land before any future #168 dig):** the primary `Type:"Item"` planning-line POST error
+  is discarded at `app.jsx:~3762`; only the `Type:"Text"` fallback's "Type must not be Text" surfaces —
+  which masked #168's real error all session. The Text fallback on `Project_Planning_Lines_Excel` is also
+  dead logic (BC rejects Text). Coach's held Q2.
+- **NEW #171 (LOW):** JOB BUYOFF auto-cross to BUYOFF not applied to default BOM line before sync.
+- **Process lesson banked (Freddy):** a code-path trace proves a mechanism is POSSIBLE; only a runtime
+  artifact proves it is ACTIVE. Don't gate fix design on a code-read when the runtime pull is one console
+  line away. (We shipped on the race theory before pulling the raw error; the raw string was the whole game.)
+
+### Shipped Last Session (v1.21.0 → v1.21.1) — #158 Region-Learning Subcollection Restructure
 - **#158 — DONE, shipped to PRODUCTION as v1.21.1** (code commit `13787154`, release `f6762a79`). `region_learning` moved from a single `{examples:[...]}` doc — which hit Firestore's 1 MB hard ceiling and silently broke every learning write — to a **one-doc-per-entry subcollection** (`config/region_learning/entries/{id}`), plus a **thumbnail size cap** (`RL_THUMB_MAX_CHARS=250000`, step-down render) and **loud write failures** (removed 3 silent `.catch`; `logDebugEntry` + actionable warn). Root driver was uncapped thumbnail height (9 entries blew 1 MB), NOT entry count. **Migration:** the frozen company doc (XODxZ8xJc0dQXGZI7jbo) 1,044,339 chars → 132-byte slim manifest + 9 entries, thumbnails byte-for-byte preserved, 10-op atomic batch (dry-run verified first). **Phase 5 V1–V4 all PASS** (V3: live extraction landed 76 BOM items with region-learning in the path; Haiku `.update()` merge confirmed on subcollection). Learning DB at **13** (4 real OVIVO regions kept). Plan: `docs/158-DETAILED-PLAN.md` (C108 Rev 2) + `docs/158-REGION-LEARNING-SCOPE.md`; Coach review **C109 PASS**. No `APP_SCHEMA_VERSION` bump (config data).
 - **#158 loose ends (carry forward):** (1) LOW — `regionLearningParts` verified non-empty by invariant + read-path, not a captured payload; glance at a real extraction request next time to close directly. (2) SANDBOX BC CLEANUP — scratch project **PRJ402127** BC project + tasks remain in BC (ARC-side deleted; "also delete from BC" left unchecked); retire with the other #163 sandbox test artifacts.
-- **NEW #168 (HIGH, next-session Coach trace):** post-extraction auto BC-sync modal flags valid in-BC items as "couldn't sync," yet the manual "BC Sync" button syncs them ALL. Confirmed different code path, fires before the BOM is visible. Coach evidence-first trace of BOTH paths to find the divergence (investigate what DIFFERS, not "why won't it match"); stop before fix design. TODO #168.
 
-### Shipped Last Session (v1.20.142 → v1.21.0) — #163 Full PN Integrity via BC Surrogate Key
+### Shipped Earlier (v1.20.142 → v1.21.0) — #163 Full PN Integrity via BC Surrogate Key
 - **#163 — DONE, shipped to PRODUCTION as v1.21.0** (43ab7b14, tag v1.21.0). Decoupled BC item identity from the part number: BC "No." is now an opaque **MTX-#####** surrogate (auto-assigned by No.-Series); the full manufacturer PN lives in ARC's `partNumber` + BC's `Vendor_Item_No`. Ends the >20-char Code[20] truncation that was losing full PNs. Shipped P1–P5 + 3a/3c + C113 (cross regression: `_vinResolved` guard) + C115 (alternates-dropdown regression). Full T1–T10 passed on the test channel. **CODE-LIVE ONLY — bcEnvironment stays sandbox (MATR_SndBx_01152026), NO BC cutover** (production BC does not exist yet). Was previously "#163 logged, needs briefing" — now DONE. Coach chain **C107–C116**. Plan: `docs/163-DETAILED-PLAN.md`; review record in `docs/163-*`.
 - **GATED NEXT (production cutover):** stand up prod BC → Jon + BC dev Monday → long-PN hand-corrections → **BC mass-rename (No.→MTX) + ARC `bcNo` reconciliation IN LOCKSTEP** (BC-only orphans ARC's links). Agreed 7-step plan + 3-column mapping sheet (old BC No. = primary join, full PN = bridge) + ARC reconciliation script (Coach scopes, Marc executes, **dry-run first**) + Coach-trace open Q (is `row.bcNo` the only place ARC stores a BC No.?). Full detail in **TODO #163 / SESSION-STATE**.
 - **Separate tracks (filed on GitHub, non-gating):** GH #2 (portal per-row lead-times should satisfy submit), GH #3 (portal manual-entry without upload), GH #4 (BC price-push duplicate open-ended prices — money-correctness). **Near-term UX:** dedup-hit should WARN instead of silently routing through the cross/correct modal. **Polish:** RFQ Part# column auto-width; Print Traveler internal-print button (`docs/PRINT-TRAVELER-BUTTON-SPEC.md`, build deferred); BC Item Browser preview rows missing MFR/Vendor.

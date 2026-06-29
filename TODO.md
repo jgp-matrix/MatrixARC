@@ -2945,25 +2945,33 @@ reset that surfaced the ground-truth state.
 
 ## Auto BC-sync vs manual BC Sync divergence (2026-06-29)
 
-168. **OPEN** [HIGH — BC matching, post-#163 surrogate-key area] — Post-extraction auto BC-sync modal
-     flags valid in-BC items as "couldn't sync." After an extraction, an auto-popup modal (one of the
-     last steps in the post-extraction auto-sequence) lists items that couldn't sync to BC. The list is
-     long and includes items that ARE valid, present-in-BC parts. Closing the modal + clicking the
-     manual "BC Sync" button syncs ALL of them successfully. Same items, same BC, two attempts,
-     different results.
-     CONFIRMED (Jon, prod v1.21.1): the auto-popup is a DIFFERENT code path from the manual BC Sync
-     button (not the same surface auto-triggered); it fires before the user can see the BOM.
-     HYPOTHESIS (NOT confirmed — needs Coach trace first): the matcher is fine (manual button matches
-     everything), so the bug is in the AUTOMATIC path, not matching logic. Likely an async-window/timing
-     issue (#153 class) — auto path firing before a dependency is ready (VIN resolution
-     `_resolveVendorItemNo`/`_vinResolved` per C113/C115, BC token per #125, populated fields, or
-     learning/cache load), OR a different lookup key than the manual path (No. vs Vendor_Item_No vs
-     partNumber), OR mis-classifying an async/not-yet-resolved result as "couldn't sync."
-     NEXT ACTION (next session): Coach evidence-first trace of BOTH sync paths to find the divergence
-     point — do NOT investigate "why don't these match BC," investigate what DIFFERS between the auto
-     and manual attempts. Full trace request is drafted and ready to route. STOP before fix design until
-     the failing layer is proven.
-     Logged: 2026-06-29 (Jon, observed in production).
+168. **TABLED** [likely NOT-A-BUG-AS-REPORTED — re-investigated 2026-06-29] — Post-extraction auto
+     BC-sync modal "flags valid in-BC items as couldn't sync." Original report: auto-popup lists valid
+     in-BC parts as failed; closing it + clicking manual "BC Sync" syncs them all. Re-investigated live
+     this session — **the reported symptom did NOT reproduce once the duplicate-trigger race was removed
+     (v1.21.2).** The only failure that reproduced on v1.21.2 is a LEGITIMATE one: JOB BUYOFF genuinely
+     not in BC → popup correctly tells the user to act. That is the genuine-failure surface working as
+     designed, not the bug.
+     **Hypotheses DISPROVEN this session:**
+     (a) Duplicate-trigger race as the popup cause — the race was real and is now removed (v1.21.2,
+         9c885da6), but it NEVER produced the popup: `setSyncFailedAlert` lives only in the KEPT path
+         (`syncPlanningLinesToBC`, app.jsx:25214); the deleted Path A only `console.warn`'d.
+     (b) Posting-group theory — all three suspect items (CSD242010SS / A24P20 / ALD2QH211DNUG) have
+         valid `Gen_Prod_Posting_Group = INVENTORY` and `Inventory_Posting_Group = RAW MAT` in BC
+         (Jon verified). The "Inventory Posting Group is read-only" 400 is ARC pointlessly PATCHing an
+         already-set field — NOISE, not the cause.
+     **Why it LOOKED intermittent / high-volume originally:** failure count scales with how many lines
+     already exist in BC. Fresh project POSTs all rows (PRJ402129 = 37 failed); re-sync only POSTs
+     new/changed rows (PRJ402130 re-extract = 1 failed). Deterministic per-item, NOT timing. The
+     original 37-error storm was inflated by the now-removed race + a fresh-project full POST.
+     **SHIPPED v1.21.2 (9c885da6) — separate improvement, NOT the #168 fix:** deleted Path A (the
+     fire-and-forget post-pricing `bcSyncPanelPlanningLines`) + its premature POST. Removed a real
+     duplicate-trigger race and redundant BC traffic. Verified live: no `Post-pricing BC sync:` line,
+     single `bcSyncPlanningLines:` summary, happy path 41 created / 0 failed.
+     **RESUME TRIGGER:** if the popup ever flags a part that is genuinely IN BC as "couldn't sync,"
+     #168 is live again — resume from docs/168-C110-RUNTIME-EVIDENCE.md (raw evidence) + #170 (the
+     diagnostics fix must land FIRST so the real primary-POST error is visible).
+     Logged: 2026-06-29 (Jon observed; re-investigated + tabled same session. Freddy endorsed reframe).
 
 ## Prior-quote recognition / cross-quote pricing consistency (2026-06-29)
 
@@ -2998,5 +3006,28 @@ reset that surfaced the ground-truth state.
        - Action text = "This panel matches Panel X on Quote Q#### ($Y). Verify pricing." with the
          price delta and whether labor or material is driving it.
 
-     Status: parked behind #168 (active). No Coach/Marc work until briefed.
+     Status: parked at Brief-stage — needs Jon to resolve Forks A/B before any Coach/Marc work.
      Logged: 2026-06-29 (Jon, new feature concept; Freddy scoped the open questions).
+
+## BC planning-line sync — residual bugs surfaced during #168 re-investigation (2026-06-29)
+
+170. **OPEN** [LOW — diagnostics, BC sync] — Primary `Type:"Item"` planning-line POST error is
+     discarded; only the `Type:"Text"` fallback's rejection is surfaced. In `bcSyncPanelPlanningLines`
+     (app.jsx ~3762), when the primary `Type:"Item"` POST to `Project_Planning_Lines_Excel` fails, its
+     error body is read into `txt` and **thrown away**; the code then POSTs the `Type:"Text"` fallback
+     and, if that also fails, records only the fallback's error (`txt2` = "Type must not be Text") into
+     `result.failed[].error`. So ARC masks the TRUE cause of its single most important sync failure
+     behind a misleading secondary error. **This is what hid #168's real error string all session** —
+     every capture showed the fallback's "Type must not be Text," never the primary's actual 400 reason.
+     Fix: retain/log the primary error (prepend it to the failed-row error, or log it). RELATED: the
+     `Type:"Text"` fallback on `Project_Planning_Lines_Excel` can never succeed (BC rejects Text on that
+     table) — it is dead logic; replace it with a loud, accurate failure ("item <PN> rejected by BC:
+     <primary error>"). **Land this BEFORE any future #168 dig** — it's the missing instrument.
+     (Coach's held Q2.) Logged: 2026-06-29 (Marc, found in code during #168 re-investigation).
+
+171. **OPEN** [LOW — learning-application] — Auto-cross not applied to default BOM line before BC sync.
+     JOB BUYOFF has an auto-cross to BUYOFF in the learning DB, but the cross did not apply to the
+     default line before sync — ARC POSTed the pre-cross name. Cosmetic / low stakes (user manually
+     crosses), but worth a look whenever the cross-on-default-line path is touched. Surfaced as the
+     single legitimate failure during the #168 v1.21.2 repro (PRJ402130).
+     Logged: 2026-06-29 (Marc, observed during #168 re-investigation).
