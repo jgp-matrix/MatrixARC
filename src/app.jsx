@@ -25109,9 +25109,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bcCountIncreased=bcCount>bcPrevSyncCount.current;
     if(!bcCountIncreased&&!ecoChanged){bcPrevSyncCount.current=bcCount;return;}
     bcPrevSyncCount.current=bcCount;
-    // BASE trigger requires all non-labor rows priced. ECO trigger does not —
-    // the user is intentionally adding/editing tagged rows and they inherit
-    // pricing from their base row at creation time.
+    // LOAD-BEARING GUARD (#168): BASE trigger requires all non-labor rows
+    // BC/manual-priced. Prevents auto-sync of AI-estimated items to BC.
+    // ECO trigger deliberately bypasses this — ECO rows inherit base pricing.
+    // syncPlanningLinesToBC has a second-layer guard (line ~25160) that
+    // catches AI items on ALL paths including ECO. Do not remove either guard.
     if(bcCountIncreased&&!ecoChanged){
       const unpriced=bom.filter(r=>!r.isLaborRow&&r.priceSource!=="bc"&&r.priceSource!=="manual");
       if(unpriced.length>0)return;
@@ -25151,7 +25153,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       console.log("syncPlanningLinesToBC: hash unchanged, skipping sync");
       return;
     }
-    // Guard: all non-labor BOM rows (including auto-replaced) must have a BC or manual price.
+    // LOAD-BEARING GUARD (#168): All non-labor BOM rows must be BC/manual-priced.
+    // This is the sole gate preventing AI-estimated items from syncing to BC.
+    // Applies to both auto-sync (useEffect) and manual button paths.
     // DECISION(v1.19.888): Skip rows with no partNumber from the unpriced check —
     // bcSyncPanelPlanningLines / bcSyncEcoPanelPlanningLines both ignore empty
     // partNumber rows, so a freshly-added blank "+ Add Row" placeholder
@@ -27456,15 +27460,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }
     }
     pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
-    // Auto-sync to BC after pricing is complete (not during extraction)
-    if(bcProjectNumber&&_bcToken&&updatedBom.length>0){
-      bcSyncPanelPlanningLines(bcProjectNumber,idx+1,updated,projectName).then(result=>{
-        if(result.failed?.length>0)console.warn("Post-pricing BC sync: "+result.failed.length+" items failed");
-        else console.log("Post-pricing BC sync: planning lines synced");
-        bcSyncPanelTaskDescriptions(bcProjectNumber,idx+1,updated,projectName).catch(e=>console.warn("Post-pricing task desc sync failed:",e));
-      }).catch(e=>console.warn("Post-pricing BC sync failed:",e));
-      // BC drawing upload deferred until user prints quote (As-Quoted flow)
-    }
+    // #168: Path A (direct fire-and-forget bcSyncPanelPlanningLines) deleted — it
+    // raced the useEffect auto-sync (Path B) and produced spurious "BC Sync Incomplete"
+    // popups for valid in-BC items. Path B (useEffect → syncPlanningLinesToBC) is now
+    // the sole foreground auto-sync; task descriptions sync there too. See docs/168-DETAILED-PLAN.md.
   }
   async function validatePanel(){
     if(!_apiKey)return;
