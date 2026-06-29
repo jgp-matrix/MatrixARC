@@ -8760,3 +8760,134 @@ entry no-ops and the entry resurrects on next merged read. Both self-clear at mi
 Mitigated by process (immediate Phase 4), NOT by gold-plating the write path.
 
 Full detail: `docs/158-DETAILED-PLAN.md`
+
+---
+
+### C110 — #168 Auto vs Manual BC Sync Divergence Trace (2026-06-29)
+
+**Type:** Read-only trace (evidence-first)
+**Status:** RACE PROVEN + SHIPPED (v1.21.2) — race was real but was NOT the popup's cause
+**Tip:** master (no code changes — read-only trace)
+**Disposition (2026-06-29):** Race correctly identified and removed in v1.21.2 (Path A
+deleted). Runtime evidence then showed the popup originated from Path B (the path we kept),
+driven by deterministic per-item POST failures — not duplicate-record race collisions.
+Posting-group theory also dead (all three flagged items have valid posting groups in BC).
+Reported symptom did not survive once the race was removed; only reproduction is legitimately
+missing items (e.g. JOB BUYOFF not in BC), which is correct behavior. #168 tabled.
+
+---
+
+#### Root cause: concurrent execution, not lookup key or async prerequisite
+
+`runPricingOnPanel` fires `bcSyncPanelPlanningLines` directly at line 27460 (fire-and-forget,
+no guards, no popup, no `bcSyncing` interlock). The `useEffect` auto-sync at line 25098–25120
+independently detects the `priceSource:"bc"` count increase and fires `syncPlanningLinesToBC()`
+→ `bcSyncPanelPlanningLines` 3 seconds later. Both calls operate on the same BC task with the
+same panel data. No mutex exists between them.
+
+#### How the race produces the popup
+
+1. Path A (direct, line 27460) starts first — GETs 0 existing lines, enters Step 2b
+   posting-group checks (~10–25s serial).
+2. Path B (useEffect, line 25120) fires 3s later — GETs 0 existing lines (Path A hasn't
+   created any yet, still in Step 2b).
+3. Both enter Step 3 and POST the same lines (60000, 70000, …) concurrently.
+4. For each Line_No, one POST wins and one gets a BC rejection (duplicate record). The
+   loser tries `_fallback` (Type:"Text", same Line_No) → also fails. Items go into
+   Path B's `failedRows` → `setSyncFailedAlert` → **popup**.
+
+#### Why manual works
+
+By the time the user dismisses the popup and clicks "BC Sync," both calls have finished.
+BC has all lines (created by whichever POST won each Line_No). The manual sync (same
+`syncPlanningLinesToBC` function) GETs the complete state, PATCHes or skips each line,
+reports zero failures.
+
+#### Hypotheses ruled out
+
+- **Lookup key (bcNo vs partNumber):** Both paths use `_bcNo(row)` (line 4325). `bcNo` is
+  populated during pricing (line 27020). Same key, same values.
+- **VIN resolution (`_resolveVendorItemNo`):** Only used in `commitBcItem` (Item Browser
+  flow). NOT on the pricing → auto-sync path.
+- **BC token:** Both paths guard on `_bcToken`. Same token, same BC environment.
+- **Timing of `bcNo` population:** `bcNo` is set before either sync call fires (pricing
+  stamps it, `onUpdate` propagates it).
+
+#### Why Path A exists alongside the useEffect auto-sync
+
+Path A (line 27459 comment: "Auto-sync to BC after pricing is complete") appears to be a
+direct sync convenience added without awareness that the useEffect at line 25098 already
+triggers on the same state change (bcCount increase → 3s debounce → syncPlanningLinesToBC).
+Path A bypasses `syncPlanningLinesToBC` entirely — it doesn't set `bcSyncing`, doesn't set
+`bomSyncHash`, and doesn't clear the useEffect timer. Path B has no way to know Path A is
+already running.
+
+#### Marc runtime pull (confirmatory, not blocking)
+
+Capture the raw `r.error` string from `result.failed` on the next occurrence. The
+`parseBcError` helper at line 27701 classifies the error, but the raw BC response would
+confirm whether BC says "record already exists" vs another rejection. Console output from
+Path A's `"Post-pricing BC sync: N items failed"` (line 27462) would also show whether
+Path A saw concurrent failures.
+
+Full detail: `docs/168-BC-SYNC-DIVERGENCE-SCOPE.md`
+
+---
+
+### C111 — #168 Detailed Plan: Consolidate BC Auto-Sync (2026-06-29)
+
+**Type:** Detailed implementation plan (read-only — no build, no deploy)
+**Status:** SHIPPED (v1.21.2) — Path A deletion + guard comments deployed
+**Depends on:** C110 divergence trace
+**Disposition (2026-06-29):** Plan executed, v1.21.2 shipped. The race removal was a real
+improvement (eliminated duplicate-trigger + premature POST). However, #168's reported popup
+symptom was NOT caused by the race — it was deterministic per-item failures. Two surviving
+diagnostics items logged as LOW for Marc: (1) Type:"Text" fallback on
+Project_Planning_Lines_Excel is dead logic — BC always rejects it, masking the real
+Type:"Item" POST error; (2) line 3762 discards the primary POST error body (`txt` read but
+not stored), so `failedRows` only carries the misleading fallback error. Neither blocks
+current work; both are first-move if #168 ever resurfaces with a genuinely-in-BC item.
+
+---
+
+#### Decision (Jon)
+
+Delete Path A (direct fire-and-forget `bcSyncPanelPlanningLines` at line 27460).
+Path B (useEffect → `syncPlanningLinesToBC`) becomes the sole foreground auto-sync.
+Manual button (Path C) unchanged. Failure popup stays.
+
+#### Verification results (both settled before plan was written)
+
+**V1 — Task-Description Sync Coverage: NO ORPHAN.** Path A chains
+`bcSyncPanelTaskDescriptions` in its `.then()`, but `syncPlanningLinesToBC` already
+calls the same function at line 25181. Deleting Path A loses nothing.
+`runPricingBackground` (line 15191) also has its own — untouched by this fix.
+
+**V2 — Unpriced Guard Coverage: AIRTIGHT (two layers).** The useEffect guard at
+line 25115 blocks when `bcCountIncreased && !ecoChanged` and unpriced rows exist.
+ECO path deliberately bypasses this (comment at 25112-25114 — rows inherit base
+pricing). But `syncPlanningLinesToBC` has its own unpriced guard at line 25160 that
+catches AI-priced items on ALL paths including ECO. Two independent guards prevent
+AI-estimated items from auto-syncing to BC.
+
+#### Plan structure (3 phases)
+
+1. **Delete Path A** — remove lines 27459–27467 (the `if(bcProjectNumber&&_bcToken
+   &&updatedBom.length>0){...}` block inside `runPricingOnPanel`). Leave
+   `runPricingBackground` sync at line 15190 untouched (separate concern, no race).
+
+2. **Load-bearing guard comments** — mark both unpriced guard sites with `LOAD-BEARING
+   GUARD (#168)` comments to prevent future sessions from "simplifying" away the
+   gate that blocks AI-item auto-sync.
+
+3. **Verify (Marc)** — T1: race eliminated (fully priced quote, no popup, one
+   console log line); T2: task descriptions still sync; T3: AI-item quote does NOT
+   auto-sync; T4: re-sync idempotency (hash guard skips unchanged BOM).
+
+#### Scope boundary
+
+In scope: delete Path A, add guard comments, verify. Out of scope:
+`runPricingBackground` (line 15190), useEffect trigger logic, `syncPlanningLinesToBC`
+function body, failure popup.
+
+Full detail: `docs/168-DETAILED-PLAN.md`
