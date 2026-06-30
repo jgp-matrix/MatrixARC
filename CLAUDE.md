@@ -605,6 +605,19 @@ Any architecture, workflow, background task, extraction path, pricing path, or U
 
 **Origin:** TODO #86 (2026-06-03). The cross-project contamination occurred because the extraction completion path assumed the active project was the extraction's source project.
 
+### Single Source of Truth for Dual-Consumer Predicates (CRITICAL)
+
+When a validity/classification check governs BOTH a visual indicator AND a gate — or spans the BOM↔portal boundary — factor the RULE into one definition, even when the data SOURCES legitimately differ. Define one predicate; every consumer calls it. Do NOT re-inline the expression per site.
+
+- `_hasFirmLeadTime(r)` (#175) — one predicate for BOM row-color AND RFQ eligibility, so "not red" reliably means "won't be RFQ'd for lead time."
+- `_isValidPrice` / `_isValidLT` (#179) — shared helpers drive both the portal submit-block (reads post-propagation effective) AND the red indicators (reads React state). Same rule, different sources.
+- `_hasPrice(r)` (#178) — one definition, six call sites (auto-set, payload, email, PDF).
+- Cross-boundary: BOM-side `_hasPrice` ↔ portal-side `_isValidPrice` stay aligned via the `referencePrice` data flow — `_hasPrice` gates what's stored, `_isValidPrice` gates what the portal accepts.
+
+**The principle: factor the rule, not the inputs.** A change to "what counts" then happens in ONE place and can't drift. This is what caught the #178 §5/§5b pre-fill-wipe bugs and the #179 visual-vs-block drift surface. Apply it to any predicate touching color+block or doc+portal.
+
+**Origin:** TODO #175 / #178 / #179 (2026-06-30).
+
 ### Dashboard Command Center Principle
 
 The dashboard is the primary command center for concurrent project management.
