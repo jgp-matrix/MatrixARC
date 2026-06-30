@@ -106,6 +106,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-29 (Session 7, cont.)** — C117: #165 admin-only cross-strip detector scope. Predicate: `matchResult.changed.filter(m=>m.reason==="pn_changed"&&m.prior.isCrossed)`, gated `isAdmin()`, inline banner naming at-risk crossed-to PN(s). Inert — no auto-action. ~5 lines JSX. Shipped v1.21.3 (65d898e8). C118 (detector-diff verification) QUEUED for next session. Details below.
 - **2026-06-29 (Session 7, cont.)** — RFQ over-selection trace (#175 evidence): `_eligibilityReason` (app.jsx:6314) three-tier short-circuit. Lead-time check (6337-6338) is INDEPENDENT include-trigger, no cooldown gate. v1.19.815 expanded "missing" to include AI-estimated (`leadTimeSource==="ai"`). PRJ402096: items have current BC pricing but lack firm lead times → all qualify as "missingLeadTime." Predicate correct as designed; over-selection is per-item state. #175 logged as visibility fix (next session first task).
 - **2026-06-30 (Session 8)** — C119: #175 scope trace (FULL RED decision locked). Confirmed `_isBomRowFlaggedRed` (line 15771, single call site at 28715), RFQ predicate `isFirmLT` (line 6337), lead-time source enumeration (6 firm + ai + absent). Scope: ~5 lines — new `_hasFirmLeadTime(r)` shared helper + COND 4 in row-color + RFQ refactor. Deliverable: `docs/175-SUPPLEMENT.md`.
+- **2026-06-30 (Session 8, cont.)** — C120: #175 Detailed Plan. 3 sections (~5 lines), 11 test criteria. Load-bearing step: inline `isFirmLT` DELETED, replaced by shared `_hasFirmLeadTime(r)`. Exclusion-gate analysis: two divergences (manual-price, DIN rail/duct) both benign — guarantee holds. Follow-up #176 logged (DIN rail/duct red noise). Deliverable: `docs/175-DETAILED-PLAN.md`.
 
 
 ## Findings
@@ -819,3 +820,36 @@ PRJ402096-class projects (~34/64 rows with AI lead times) will see ~34 additiona
 #### Regression surface
 
 Zero behavioral regression. Single new visual condition in an existing predicate. All other lead-time consumers (pre-print checklist, budgetary auto-stamp, lead-time drivers, pricing skip guards) are independent paths — none touched.
+
+---
+
+### C120 — #175 Detailed Plan: RFQ Lead-Time Visibility (FULL RED) (2026-06-30)
+
+**Type:** Detailed implementation plan (read-only — no build, no deploy)
+**Status:** READY FOR APPROVAL
+**Deliverable:** `docs/175-DETAILED-PLAN.md`
+**Builds on:** C119 scope trace
+
+---
+
+#### Plan structure (3 sections, ~5 lines)
+
+1. **§1 — New `_hasFirmLeadTime(r)` helper** (3 lines, before `_isBuyoffOrCrate` at line 15747). Pure predicate: `leadTimeDays!=null && leadTimeSource && leadTimeSource!=="ai"`.
+
+2. **§2 — SINGLE DEFINITION (load-bearing):** Delete the inline `const isFirmLT=...` at line 6337, replace with `if(!_hasFirmLeadTime(r))return "missingLeadTime"`. Pre-deploy grep gate: `isFirmLT` → 0 hits, `leadTimeSource!=="ai"` → 0 hits in predicate context.
+
+3. **§3 — COND 4 in `_isBomRowFlaggedRed`:** Add `if(!_hasFirmLeadTime(r))return true;` inside the existing `!_isExcludedFromPriceCheck(r) && !vendorIsCustomer` gate (line 15776). Same exclusion set as stale-price check.
+
+#### Exclusion-gate analysis (§4)
+
+Full side-by-side comparison of `_isExcludedFromPriceCheck` (row-color) vs `_eligibilityReason` (RFQ) exclusion sets. Two divergences:
+
+- **`priceSource==="manual"`** (RFQ excludes, row-color doesn't): Correct — manual price doesn't imply known delivery. Row turns red, RFQ skips. Guarantee holds.
+
+- **DIN rail / duct** (RFQ excludes via `RFQ_EXCLUDE_ITEMS`, row-color doesn't): Wrong-looking red but harmless — guarantee holds (not-red ⇒ not-RFQ'd). Logged as follow-up #176.
+
+**Guarantee intact:** row-color ⊇ RFQ for lead-time flagging. "Not red" always means "won't be RFQ'd for lead time."
+
+#### Regression surface
+
+Single call site for `_isBomRowFlaggedRed` (line 28715, BOM table only). No print/PDF/export path reads it. `findIncompleteQuoteItems` (send gate) NOT touched — lead-time send-gating is a separate decision. All other `leadTimeSource` consumers are independent read/write paths — none affected. 11 test criteria (T1–T11).
