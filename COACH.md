@@ -109,7 +109,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-30 (Session 8, cont.)** — C120: #175 Detailed Plan. 3 sections (~5 lines), 11 test criteria. Load-bearing step: inline `isFirmLT` DELETED, replaced by shared `_hasFirmLeadTime(r)`. Exclusion-gate analysis: two divergences (manual-price, DIN rail/duct) both benign — guarantee holds. Follow-up #176 logged (DIN rail/duct red noise). Deliverable: `docs/175-DETAILED-PLAN.md`.
 - **2026-06-30 (Session 8, cont.)** — C121: #178 RFQ Pre-fill Fix Cluster scope trace (A/B/C). Part A: auto-checkbox bug — cooldown masks missing-price classification, `defaultLeadTimeOnly` fires on groups with priceless rows. Part B: unit price blank — data present on BOM row, deliberately excluded from normal-mode payload (`if(ltOnly)` guard). Part C: lead time blank — `referenceLeadTimeDays` stored unconditionally in Firestore but portal never reads it. ~30 lines estimated across 6 code sites. Deliverable: `docs/178-SUPPLEMENT.md`.
 - **2026-06-30 (Session 8, cont.)** — C122: #179 Supplier Portal submit validation (A/B). Part A: spurious global LT gate at line 48016 blocks submit when "Fill all" field is empty even with all per-line fields filled — delete it. Part B: zero price validation exists in normal mode — add per-line price+LT completeness check with blocking arcAlert. ~15 lines, single code site (`handleSubmit`). Deliverable: `docs/179-SUPPLEMENT.md`.
-- **2026-06-30 (Session 8, cont.)** — C123: #179 Detailed Plan (A/B/C, scope expanded). Part C pulled in per Freddy — missing LT must render red (#fca5a5 border + light red bg), matching price treatment. Shared `hasLeadTime` predicate drives both visual indicator and submit block — single definition guarantee. Also: global input's mandatory red border + asterisk removed (Part A expansion). 6 sections, 13 test criteria, ~20 lines. Deliverable: `docs/179-DETAILED-PLAN.md`.
+- **2026-06-30 (Session 8, cont.)** — C123: #179 Detailed Plan (A/B/C, scope expanded). Part C pulled in per Freddy — missing LT must render red (#fca5a5 border + light red bg), matching price treatment. Shared `hasLeadTime` predicate drives both visual indicator and submit block — single definition guarantee. Also: global input's mandatory red border + asterisk removed (Part A expansion). 6 sections, 13 test criteria, ~20 lines. C123 Rev 1: per Freddy amendment, extracted `_isValidLT(x)` / `_isValidPrice(x)` shared helpers (§1a) — one rule, two sources. Submit block and visual now call the same functions instead of duplicating the expression inline. ~22 lines. Deliverable: `docs/179-DETAILED-PLAN.md`.
 
 
 ## Findings
@@ -951,26 +951,35 @@ Part C (missing LT visual indicator) pulled in per analyst ruling: if the submit
 on missing LT, the row must show it. Without the red indicator, the supplier hits an
 invisible wall — the #175 failure mode inverted.
 
-#### Shared predicate guarantee
+#### Shared predicate guarantee (Rev 1 — per Freddy amendment)
 
-`hasLeadTime` — single definition at line 48281 (per-row rendering scope):
+Two shared validity helpers at component level (§1a):
 ```js
-const hasLeadTime=!cant&&itemLeadTimes[i]!=null&&String(itemLeadTimes[i]).trim()!==''&&(+itemLeadTimes[i]>0);
+function _isValidPrice(x){return x!==undefined&&x!=='';}
+function _isValidLT(x){return x!=null&&String(x).trim()!==''&&(+x>0);}
 ```
 
-Two consumers:
-- **Visual indicator (§3):** LT input gets `border: 1px solid #fca5a5` + `background: #fff5f5` when `!hasLeadTime`
-- **Submit block (§4):** Same expression on `_itemLeadTimesEffective[i]` (post-auto-propagation, synced to state before validation)
+Per-row computed values (§1b) call these:
+```js
+const hasPrice=!cant&&_isValidPrice(unitPrices[i]);
+const hasLeadTime=!cant&&_isValidLT(itemLeadTimes[i]);
+```
 
-Variables converge before the supplier sees the result: `setItemLeadTimes(filled)` at line 48000 fires before validation, updating React state → visual indicators update on re-render.
+Submit block (§4) calls the same functions:
+```js
+if(!_isValidPrice(unitPrices[i])||!_isValidLT(_itemLeadTimesEffective[i]))hasIncomplete=true;
+```
 
-#### Plan structure (6 sections, ~20 lines)
+One rule, two sources. The validity test is shared — can't drift even though the inputs differ (React state vs post-propagation effective). `setItemLeadTimes(filled)` at line 48000 syncs them before the supplier sees the visual post-submit.
 
-1. **§1 — `hasLeadTime` predicate** — 1 line, below `hasPrice` at 48281
+#### Plan structure (6 sections, ~22 lines)
+
+1. **§1a — `_isValidPrice` / `_isValidLT` helpers** — 2 lines, component level
+   **§1b — Per-row `hasPrice` / `hasLeadTime`** — 2 lines (1 refactored, 1 new) at 48281
 2. **§2 — Part A** — delete global gate (48015-48016) + remove red border (48238) + remove red asterisk (48239)
 3. **§3 — Part C** — red border + light red bg on LT input (48385-48391). Optional `⚠` indicator if cell layout permits (Marc's call)
-4. **§4 — Part B** — per-line price+LT check in `else` branch (replaces deleted gate). Generic arcAlert, no enumeration
-5. **§5 — Guarantee statement** — visual ⊆ submit block. Every blocked row shows red.
+4. **§4 — Part B** — per-line price+LT check in `else` branch, calls `_isValidPrice` / `_isValidLT`. Generic arcAlert, no enumeration
+5. **§5 — Guarantee statement** — one function, two inputs. visual ⊆ submit block. Every blocked row shows red.
 6. **§6 — Regression surface** — zero behavioral regression. leadTimeOnly unchanged. No payload/Firestore/ARC-side changes.
 
-13 test criteria (T1–T13).
+13 test criteria (T1–T13). No test changes from Rev 0 — the amendment is structural (shared function), not behavioral.

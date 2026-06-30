@@ -4,7 +4,7 @@
 **Date:** 2026-06-30
 **Status:** READY FOR APPROVAL
 **Builds on:** C122 scope trace (`docs/179-SUPPLEMENT.md`)
-**Tip:** master `b682243c`
+**Tip:** master `614e9489`
 
 ---
 
@@ -12,15 +12,37 @@
 
 Three changes to the supplier portal review page in `src/app.jsx`. One gate deletion
 (A), one validation addition (B), one visual indicator addition (C). All within the
-`SupplierPortal` component. ~20 lines total.
+`SupplierPortal` component. ~22 lines total.
 
 **THE GUARANTEE:** The submit-block condition (Part B) and the red-indicator condition
-(Part C) for missing lead time are driven by the SAME predicate — `hasLeadTime`. They
-can never disagree. If the submit blocks on it, the row shows it.
+(Part C) for missing lead time are driven by the SAME validity function —
+`_isValidLT(x)`. One rule, two sources. The rule can't drift even though the inputs
+differ (React state vs post-propagation effective).
 
 ---
 
-## §1 — Shared predicate: `hasLeadTime`
+## §1 — Shared validity helpers + per-row predicates
+
+### §1a — Validity helpers (component-level)
+
+**Location:** `src/app.jsx`, inside the `SupplierPortal` component body, BEFORE the
+return statement (above the `lineItems.map` render callback — e.g. near the existing
+state declarations around line 47822).
+
+**Add:**
+```js
+function _isValidPrice(x){return x!==undefined&&x!=='';}
+function _isValidLT(x){return x!=null&&String(x).trim()!==''&&(+x>0);}
+```
+
+Two pure predicates. Each takes a single value and answers "is this a valid entry?"
+No row context, no Cannot Supply logic — that stays in the callers.
+
+These are the SINGLE DEFINITIONS of what "valid price" and "valid lead time" mean.
+Both the visual indicator (§3) and the submit block (§4) call these functions. If the
+validity rule ever changes, it changes in one place.
+
+### §1b — Per-row computed values
 
 **Location:** `src/app.jsx` line 48281, inside the per-row `lineItems.map` callback.
 
@@ -29,21 +51,14 @@ can never disagree. If the submit blocks on it, the row shows it.
 const hasPrice=!cant&&unitPrices[i]!==undefined&&unitPrices[i]!=='';
 ```
 
-**After (add one line immediately below):**
+**After:**
 ```js
-const hasPrice=!cant&&unitPrices[i]!==undefined&&unitPrices[i]!=='';
-const hasLeadTime=!cant&&itemLeadTimes[i]!=null&&String(itemLeadTimes[i]).trim()!==''&&(+itemLeadTimes[i]>0);
+const hasPrice=!cant&&_isValidPrice(unitPrices[i]);
+const hasLeadTime=!cant&&_isValidLT(itemLeadTimes[i]);
 ```
 
-`hasLeadTime` answers: "does this row have a valid lead time right now?" It is `true`
-when the per-line `itemLeadTimes[i]` is defined, non-empty, and positive. It is `false`
-when the field is blank, zero, or the row is marked Cannot Supply.
-
-This is the SINGLE DEFINITION used by both the visual indicator (§3) and the submit
-block (§4). The submit block uses `_itemLeadTimesEffective[i]` (post-auto-propagation),
-which is synced to `itemLeadTimes` state via `setItemLeadTimes(filled)` at line 48000
-before validation runs — so after a submit attempt, the visual always reflects the
-post-propagation state.
+`hasPrice` is REFACTORED — same logic, now calls `_isValidPrice`. No behavioral change.
+`hasLeadTime` is NEW — drives the visual indicator (§3).
 
 ---
 
@@ -176,22 +191,20 @@ red styling, not the label, that signals the missing state.
   let hasIncomplete=false;
   _lineItems.forEach((_,i)=>{
     if(cannotSupply[i]===true)return;
-    const _hp=unitPrices[i]!==undefined&&unitPrices[i]!=='';
-    const _lt=_itemLeadTimesEffective[i];
-    const _hl=_lt!=null&&String(_lt).trim()!==''&&(+_lt>0);
-    if(!_hp||!_hl)hasIncomplete=true;
+    if(!_isValidPrice(unitPrices[i])||!_isValidLT(_itemLeadTimesEffective[i]))hasIncomplete=true;
   });
   if(hasIncomplete){arcAlert("There are rows with missing price or lead time. Please complete them before submitting.");return;}
 }
 ```
 
-**Predicate match:** The price check (`_hp`) mirrors `hasPrice` (§1, line 48281):
-`unitPrices[i]!==undefined&&unitPrices[i]!==''`. The LT check (`_hl`) mirrors
-`hasLeadTime` (§1): `_lt!=null&&String(_lt).trim()!==''&&(+_lt>0)`. The only
-difference: the submit block evaluates against `_itemLeadTimesEffective[i]`
-(post-propagation) while the visual indicator evaluates against `itemLeadTimes[i]`
-(React state). These are synced by `setItemLeadTimes(filled)` at line 48000
-before this validation runs.
+**Single-rule guarantee:** Both the visual indicator (§1b/§3) and the submit block
+call `_isValidPrice` and `_isValidLT` — the same functions from §1a. The only
+difference is the INPUT: the visual reads `itemLeadTimes[i]` (React state), the
+submit block reads `_itemLeadTimesEffective[i]` (post-propagation). These are synced
+by `setItemLeadTimes(filled)` at line 48000 before this validation runs — so after a
+submit attempt, the visual always reflects the post-propagation state.
+
+One rule, two sources. The rule can't drift.
 
 **Message:** Generic, no row enumeration. After dismissing the alert, the supplier
 returns to the review table where red borders (price + LT) guide them to the
@@ -204,13 +217,15 @@ incomplete rows.
 
 ## §5 — Shared predicate guarantee
 
-| Check | Expression | Source variable |
-|-------|-----------|----------------|
-| Visual indicator (§1/§3) | `itemLeadTimes[i]!=null && String(...).trim()!=='' && (+...>0)` | `itemLeadTimes[i]` (React state) |
-| Submit block (§4) | `_lt!=null && String(_lt).trim()!=='' && (+_lt>0)` | `_itemLeadTimesEffective[i]` (post-propagation) |
+| Check | Function called | Input |
+|-------|----------------|-------|
+| Visual indicator (§1b/§3) | `_isValidLT(itemLeadTimes[i])` | React state |
+| Submit block (§4) | `_isValidLT(_itemLeadTimesEffective[i])` | Post-propagation effective |
+| Visual price (§1b) | `_isValidPrice(unitPrices[i])` | React state |
+| Submit price (§4) | `_isValidPrice(unitPrices[i])` | Same (prices have no propagation) |
 
-The expressions are identical. The source variables converge before the supplier sees
-the visual indicator post-submit:
+One function, two inputs. The validity RULE is shared — only the SOURCE differs.
+The sources converge before the supplier sees the visual indicator post-submit:
 
 1. Supplier clicks Submit
 2. Auto-propagation fires (47990–48001), `setItemLeadTimes(filled)` queues re-render
@@ -238,7 +253,8 @@ the submit agree.
 | `handleSubmit` payload build | 48039–48057 | NONE — reads state, unaffected |
 | Global LT input styling | 48238–48239 | §2b/§2c: remove mandatory indicators |
 | Per-row LT input styling | 48385–48391 | §3a: add conditional red styling |
-| Per-row rendering scope | 48281 | §1: add `hasLeadTime` computed value |
+| Per-row rendering scope | 48281 | §1b: refactor `hasPrice`, add `hasLeadTime` |
+| Validity helpers | ~47822 | §1a: add `_isValidPrice`, `_isValidLT` (2 lines) |
 | leadTimeOnly validation | 48004–48014 | NONE — separate branch, unchanged |
 | leadTimeOnly portal load | 47857–47866 | NONE — pre-fill logic untouched |
 | Firestore write | 48065–48067 | NONE — writes submitted data |
@@ -302,4 +318,4 @@ No payload shape changes. No Firestore schema changes. No ARC-side consumer chan
 3. Marc + Jon test T1–T13 against deployed build.
 4. Coach verifies committed diff matches plan.
 
-**Total: ~20 lines changed in `src/app.jsx`. One commit. One deploy.**
+**Total: ~22 lines changed in `src/app.jsx`. One commit. One deploy.**
