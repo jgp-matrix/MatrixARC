@@ -2903,6 +2903,12 @@ reset that surfaced the ground-truth state.
      (B) **Accept-on-crossed safety**, now scoped to `pn_changed` ONLY. Needs a dedicated repro: force a
      PN change on a crossed prior row, Accept it, re-read the committed row for cross survival.
      SEVERITY: given qty-Accept is safe, (B) is arguably MEDIUM not HIGH — Jon to confirm at fix-scope.
+     DOWNGRADE BOUNDARY (Freddy — bank the reasoning, don't misread the label): it dropped to MEDIUM
+     because `carryChangedPnChanged` fires ONLY on `pn_changed` and we PROVED qty-Accept is cross-safe by
+     code, so the COMMON case can't lose a cross. It is MEDIUM because the residual (crossed + pn_changed
+     + Accepted) is RARE, **not because it's mild** — if it fires it's still SILENT cross + pricing loss.
+     Do NOT let a future session read "MEDIUM" as "low-stakes" and drop part (A) verb-relabel or the
+     eventual (B) repro. Both stay on the docket.
      Evidence: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
      Logged: 2026-06-17 (Jon + Marc, identified during #160 build/testing). Re-scoped: 2026-06-29 (Marc
      runtime; Freddy disposition).
@@ -3083,6 +3089,11 @@ reset that surfaced the ground-truth state.
      then the RFQ pulls ~47/64 rows and surprises Jon (bit him last week too). FIX DIRECTION: drive row
      warning-color off the SAME `isFirmLT` predicate the RFQ uses (`leadTimeDays!=null && leadTimeSource
      && leadTimeSource!=="ai"`), so "not red" reliably means "won't be RFQ'd for lead time."
+     DESIGN REQUIREMENT (Freddy — NOT an implementation detail): row color and RFQ inclusion MUST share
+     ONE predicate / single source of truth so they can never disagree again. "No red ⇒ won't be RFQ'd"
+     is a GUARANTEE only if both read the same check. A future session wiring red-row off a DIFFERENT
+     lead-time check reintroduces exactly the color/RFQ mismatch that bit Jon twice. Same source of truth
+     is the requirement.
      OPEN SUB-DECISION (Jon, at start): full-red vs a DISTINCT lead-time-specific marker so missing-price
      and missing-lead-time are tellable apart. Freddy's lean: same-predicate coloring, distinct marker.
      FIRST ACTION tomorrow = Coach reads what currently drives BOM row color + where to hook lead-time
@@ -3098,7 +3109,12 @@ reset that surfaced the ground-truth state.
      BC prices.
      ── PARKED (do not scope yet) ──
      The RFQ-BREADTH policy question (should a firm-priced, in-cooldown row be RFQ'd just to confirm an
-     AI lead time?) is PARKED BEHIND the visibility fix — the red-row fix may dissolve it. Do NOT scope an
-     RFQ predicate change until Jon confirms the visibility fix doesn't fully satisfy.
+     AI lead time?) is PARKED BEHIND the visibility fix. PARKING REASONING (Freddy — load-bearing): the
+     hypothesis is that #175 may DISSOLVE this entirely — once non-firm lead times turn the row RED, the
+     RFQ pulling those rows stops being a surprise and may be CORRECT as-is. So #175 must be evaluated
+     FIRST, and only if a red BOM STILL leaves Jon unhappy with RFQ breadth do we touch `_eligibilityReason`.
+     TRAP TO PREVENT: a future session sees the confirmed root cause at 6337 and "fixes" the predicate
+     before the visibility fix is proven insufficient — DON'T. No RFQ predicate change until #175 is
+     shipped AND judged insufficient.
      Evidence: runtime capture this session (per-row field values + case-a/b breakdown).
      Logged: 2026-06-29 (Marc runtime-confirm; Coach predicate trace; Freddy disposition).
