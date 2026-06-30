@@ -176,11 +176,15 @@ update. No read-only rendering changes needed (that's leadTimeOnly mode only).
 
 ---
 
-## §5 — Part B: processFile merge
+## §5 — Part B+C: processFile merge (prices AND lead times)
 
-**Location:** `src/app.jsx` lines 47936 and 47964, inside `processFile`.
+**Location:** `src/app.jsx` lines 47936–47938 and 47964–47966, inside `processFile`.
 
-**CRITICAL:** `processFile` currently does a FULL REPLACEMENT of `unitPrices` state:
+**CRITICAL:** `processFile` currently does a FULL REPLACEMENT of BOTH `unitPrices` AND
+`itemLeadTimes` state. After §4, both are pre-filled at load time from Firestore
+reference data. Without merge, AI extraction wipes pre-fills for rows it didn't match.
+
+### §5a — Price merge
 
 **Before (line 47936, success path):**
 ```js
@@ -202,20 +206,55 @@ setUnitPrices(allPrices);
 setUnitPrices(prev=>({...prev,...allPrices}));
 ```
 
-**Why this is critical:** After §4, prices are pre-filled at load time from Firestore
-reference data. Without this change, AI extraction wipes ALL pre-filled values — even
-for rows AI didn't match. `allPrices` only contains entries for rows AI successfully
-matched; unmatched rows have no key in the object.
+### §5b — Lead time merge
 
-The merge flow:
+**Before (line 47938, success path):**
+```js
+setItemLeadTimes(allLeadTimes);
+```
+
+**After:**
+```js
+setItemLeadTimes(prev=>({...prev,...allLeadTimes}));
+```
+
+**Before (line 47966, error/partial path):**
+```js
+setItemLeadTimes(allLeadTimes);
+```
+
+**After:**
+```js
+setItemLeadTimes(prev=>({...prev,...allLeadTimes}));
+```
+
+### Why both merges are critical
+
+`allPrices` and `allLeadTimes` only contain entries for rows AI successfully matched
+(line 47928–47930: entries set only when `idx >= 0`). Unmatched rows have no key in
+either object. Without merge, pre-filled reference values for unmatched rows are wiped.
+
+The merge flow (prices — same pattern applies to LTs):
 1. Load: `unitPrices = {0: "15.50", 1: "8.75", 2: "22.00"}` (from referencePrice)
 2. Upload PDF → AI extracts → `allPrices = {0: "16.00", 2: "23.50"}` (matched 2 of 3)
 3. Merge: `{0: "15.50", 1: "8.75", 2: "22.00", ...{0: "16.00", 2: "23.50"}}`
    → `{0: "16.00", 1: "8.75", 2: "23.50"}` — AI wins where it matched, reference
    preserved where it didn't.
 
-**"Start Over" unaffected:** Line 48441 does `setUnitPrices({})` — a direct state set
-(not spread-merge), correctly clears everything including pre-filled values.
+### Re-process durability
+
+**Normal mode "Start Over"** (line 48441): `setUnitPrices({}); setItemLeadTimes({})` —
+full reset clears all pre-fills. Subsequent `processFile` merges with empty state →
+`{...{}, ...allPrices}` = `allPrices`. No stale pre-fills survive. **Clean.**
+
+**leadTimeOnly "Prices not accurate?"** (line 48162): `setPhase('upload')` WITHOUT
+clearing state. Subsequent `processFile` merges with existing pre-fills → reference
+preserved for unmatched rows. **Correct** — better than blank for read-only prices.
+
+In normal mode, `processFile` is ONLY reachable via "Start Over" → upload. The drag-drop
+UI (line 48520–48533) is rendered only when `phase !== 'analyzing'` and `phase !== 'review'`
+(the render function returns early at lines 48123/48141 for those phases). No re-process
+without reset is possible in normal mode.
 
 ---
 
@@ -342,7 +381,8 @@ data flow prevents drift.
 | Component | Lines | Change |
 |-----------|-------|--------|
 | Load useEffect pre-fill | 47863–47872 | §4: all-mode price + firm LT |
-| `processFile` price state | 47936, 47964 | §5: merge replaces full set |
+| `processFile` price state | 47936, 47964 | §5a: merge replaces full set |
+| `processFile` LT state | 47938, 47966 | §5b: merge replaces full set |
 | Review table rendering | — | UNCHANGED (existing editable inputs) |
 | `handleSubmit` validation | — | UNCHANGED (#179 handles) |
 | `_isValidPrice` / `_isValidLT` | — | UNCHANGED |
@@ -400,6 +440,7 @@ consumer changes.
 | T13 | PDF reference data | Open PDF attachment from normal-mode RFQ. | Price and LT columns populated where applicable |
 | T14 | leadTimeOnly mode unchanged | Send RFQ with lead-time-only checked. Open portal. | Prices read-only, skip upload phase, existing behavior preserved |
 | T15 | Counters unchanged | Open RFQ modal, check per-vendor breakdown display. | `itemsMissingPrice`, `itemsStalePrice`, `itemsMissingLeadTime` unchanged |
+| T16 | Start Over + re-upload clears pre-fills | Pre-fills shown → click Start Over → re-upload different PDF. | AI-extracted values only; no stale reference pre-fills from first load |
 
 ---
 
@@ -407,7 +448,7 @@ consumer changes.
 
 1. Marc applies §1–§7 in a single commit (all changes in `src/app.jsx`).
 2. Deploy via `deploy.sh`.
-3. Marc + Jon test T1–T15 against deployed build.
+3. Marc + Jon test T1–T16 against deployed build.
 4. Coach verifies committed diff matches plan.
 
-**Total: ~30 lines changed in `src/app.jsx`. One commit. One deploy.**
+**Total: ~34 lines changed in `src/app.jsx`. One commit. One deploy.**
