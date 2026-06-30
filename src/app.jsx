@@ -23254,6 +23254,12 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
     return n;
   },[matchResult,resolutions]);
   const canCommit=unresolved===0;
+  // #165 (Coach C117): admin-only cross-strip detector. A crossed prior whose PN changed lands in
+  // `changed` with reason 'pn_changed'; Accept routes it through carryChangedPnChanged, which drops
+  // isCrossed/crossedFrom/pricing (silent cross + data loss). Flag for the admin so the row is
+  // Rejected, not Accepted. PURE RENDER — no resolve/commit interaction. m.prior.partNumber is the
+  // crossed-TO (replacement) value = the at-risk PN shown in the modal's Prior Part# column.
+  const crossStripCands=matchResult?matchResult.changed.filter(m=>m.reason==="pn_changed"&&m.prior&&m.prior.isCrossed):[];
   const acceptAll=()=>{ // CHANGED + NEW only — deletions resolved individually (per Brief)
     setResolutions(prev=>{
       const m=new Map(prev);
@@ -23283,6 +23289,11 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
           <div style={{fontSize:16,fontWeight:800,color:C.text}}>Reconcile Drawing Revision — {panel.name||"Panel"}</div>
           <div style={{fontSize:12,color:C.muted,marginTop:2}}>{(stagedExtraction&&stagedExtraction.reason)||"Drawing revision"} · Review changes against the existing BOM. Edits, pricing and crosses are preserved on matching items.</div>
         </div>
+        {isAdmin()&&crossStripCands.length>0&&(
+          <div style={{margin:"10px 22px 0",padding:"8px 12px",background:"rgba(220,38,38,0.12)",border:`1px solid #dc2626`,borderRadius:8,fontSize:12,color:"#fecaca",lineHeight:1.4}}>
+            <b style={{color:"#fca5a5"}}>⚠ Admin · #165 cross-strip risk:</b> {crossStripCands.length} crossed row{crossStripCands.length>1?"s":""} changed part number — choosing <b>Accept</b> will STRIP the cross + pricing on commit. Reject to keep your substitution. Affected: {crossStripCands.map(m=>m.prior.partNumber).join(", ")}.
+          </div>
+        )}
         {!matchResult?(
           <div style={{padding:40,textAlign:"center",color:C.muted}}>Analyzing…</div>
         ):(
