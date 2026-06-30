@@ -3084,7 +3084,7 @@ reset that surfaced the ground-truth state.
      code path; same project is coincidental. Needs a look at what sets the scanned-vs-native tier and
      why vector PDFs trip it. Logged: 2026-06-29 (Marc observe; Freddy disposition; PRJ402096).
 
-175. **OPEN** [TOMORROW'S FIRST TASK — HIGH-value UX/correctness; root cause runtime-proven] — RFQ
+175. **RESOLVED** [v1.21.4 / `f264dabe` — live-verified PRJ402096 2026-06-30] — RFQ
      lead-time visibility: a row missing a FIRM lead time does NOT turn red, so the BOM reads "all good,"
      then the RFQ pulls ~47/64 rows and surprises Jon (bit him last week too). FIX DIRECTION: drive row
      warning-color off the SAME `isFirmLT` predicate the RFQ uses (`leadTimeDays!=null && leadTimeSource
@@ -3122,8 +3122,10 @@ reset that surfaced the ground-truth state.
      helper is the single source of truth; both `_eligibilityReason` (6337) and `_isBomRowFlaggedRed`
      (COND 4) call it. Grep gate: `isFirmLT`=0 hits, `leadTimeSource!=="ai"`=1 hit (the helper def).
      T1–T10 harness 20/20; T9 proves RFQ refactor identical over 36 day×source combos. Plan:
-     docs/175-DETAILED-PLAN.md (Coach C120). Status flips OPEN→RESOLVED at close-out after live-visual
-     confirm on PRJ402096.
+     docs/175-DETAILED-PLAN.md (Coach C120). RESOLVED at close-out 2026-06-30: live visual on PRJ402096
+     confirmed AI-lead rows render FULL RED, firm-lead rows stay blue, existing price-reds unchanged.
+     PARKED (separate, still OPEN): the RFQ-breadth policy question pending Freddy's disposition — the
+     red-row fix may dissolve it; do NOT scope an `_eligibilityReason` change until Jon confirms otherwise.
 
 176. **OPEN** [LOW — cosmetic over-flagging, NOT a guarantee break] — DIN rail / duct rows without a firm
      lead time now turn FULL RED after #175 (shipped v1.21.4, `f264dabe`). These are bulk consumables cut
@@ -3144,3 +3146,41 @@ reset that surfaced the ground-truth state.
      manual) so a new unknown source defaults to NOT-firm (red + RFQ'd) = fail-safe. NOT a #175/#176
      change. Source: Freddy, #175 ship review.
      Logged: 2026-06-30 (Freddy hazard call; Marc logged on #175 ship).
+
+178. **RESOLVED** [v1.21.6 / `80b863c0` — live-verified PRJ402111] — RFQ pre-fill fix cluster (A/B/C).
+     Part A: lead-time-only auto-checkbox decoupled from cooldown-masked eligibility counters via new
+     `_hasPrice(r)` BOM-row predicate (non-null AND >0). Part B: `referencePrice` now written to the
+     Firestore lineItems payload in ALL modes (was leadTimeOnly-only), gated by `_hasPrice`;
+     `referencePriceSource` = real per-row source (NOT hardcoded "bc"). Part C: firm lead times pre-fill
+     the portal LT inputs + render in email/PDF (same rule as `_hasFirmLeadTime`). §5 merge: AI extraction
+     merges over pre-fills so unmatched rows keep reference values. Plan: docs/178-DETAILED-PLAN.md (Coach
+     C124). VERIFIED: harness 20/20 (T1-T3 auto-set bug fix, T9 merge, T7/T8 prefill gate); live on
+     PRJ402111 v1.21.7 — T4/T5 (Firestore: referencePrice in normal mode; source mixed bc/ai proving the
+     hardcode is gone), T6 (portal price prefill), T8 (ai-LT correctly blank), T9 (merge preserved),
+     T11/T12/T13 (email+PDF reference cells populated/blank-gated). 10/10 applicable; T7 N/A (no firm-LT
+     rows in test RFQ); T14/T15/T16/T10 code-verified untouched.
+     Logged/resolved: 2026-06-30.
+
+179. **RESOLVED** [v1.21.5 / `6036a536` — live-verified PRJ402111] — Supplier portal submit validation
+     (A/B/C). Replaced the global lead-time hard gate with per-line completeness, driven by two shared
+     validity helpers (`_isValidPrice`/`_isValidLT`) so the submit block (§4, reads post-propagation
+     effective) and the red indicators (§3, reads React state) can't drift. Part A removed the false
+     rejection (global LT no longer required); Part B added the per-line price+LT block (Cannot-Supply
+     exempt); Part C added missing-LT red border+bg+⚠. Plan: docs/179-DETAILED-PLAN.md (Coach).
+     VERIFIED: harness 19/19; live on PRJ402111 — 12/12 applicable PASS (T1 global-empty + per-line-filled
+     → proceeds = the original complaint fixed; T3/T4/T5 block; T6 CS exempt; T8/T9/T10/T12 visual). T11
+     N/A (normal-mode token). NOTE (§5 asymmetry, BY DESIGN): a row can show red yet still submit if the
+     global "Fill all" field back-fills it at submit time — "no red ⇒ won't block" holds; the reverse does
+     not. Logged/resolved: 2026-06-30.
+
+180. **RESOLVED** [v1.21.7 / `5653ccfa` — live-verified PRJ402111] — Long-lead confirmation modal never
+     fired. ROOT CAUSE: the portal submit button used `onClick={handleSubmit}`, so React passed the click
+     event as the first arg → `bypassLongLeadCheck=<SyntheticEvent>` (truthy) → `if(!bypassLongLeadCheck)`
+     always false → the >60-day check was always skipped. Diagnosed live during #179 T13 (a 70-day LT
+     submitted with no modal); traced by Coach C125. FIX: `onClick={()=>handleSubmit()}` @48451 (no arg →
+     bypassLongLeadCheck=undefined → check runs). The long-lead modal's own confirm button (48489) keeps
+     `handleSubmit(true)` — correct bypass-on-resubmit. VERIFIED live on PRJ402111 v1.21.7: modal FIRES on
+     a 70-day row (lists it), "← Go Back & Fix" returns to edit preserving values, ≤60 does NOT over-fire,
+     submit proceeds. "Confirm & Submit" modal button code-verified. CAUTION (→ COACH.md lesson): an
+     advisory review called this fix a "no-op" without tracing handleSubmit's signature — it is NOT.
+     Logged/resolved: 2026-06-30.
