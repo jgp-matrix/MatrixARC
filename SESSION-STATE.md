@@ -14,10 +14,12 @@
 - **ROLLBACK POINT:** `master → 0f8a61fb`, redeploy v1.20.142 (#160-era). Recent lineage:
   v1.21.7=#180 · v1.21.6=#178 · v1.21.5=#179 · v1.21.4=#175 · v1.21.3=#165.
 
-## ⭐ NEXT SESSION — FIRST TASK: new-supplier RFQs
-#178 was the last enabling piece. The pre-fill cluster (referencePrice in normal mode, firm-LT
-pre-fill, email/PDF reference cells) is shipped + verified, so the new-supplier RFQ workflow can
-proceed. Also surface the **parked RFQ-breadth question** (under #175) for Jon's disposition early.
+## NEXT SESSION — no carried task
+The RFQ portal cluster (#175/#178/#179/#180) is shipped, verified, and closed. "New-supplier RFQs"
+was a sequencing remark by Jon (finish #178/#179 *before* sending RFQs), NOT a work item — it has
+no build or test scope and is dead (confirmed by Jon 2026-06-30). Do NOT re-raise it. The parked
+RFQ-breadth question (under #175) was RESOLVED as DISSOLVED on 2026-06-30 (see Parked/pending below).
+Await Jon's next instruction at startup.
 
 ## What shipped + verified this session
 - **#175 (v1.21.4 / `f264dabe`) — RFQ lead-time visibility, FULL RED.** New `_hasFirmLeadTime(r)`
