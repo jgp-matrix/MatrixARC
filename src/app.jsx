@@ -48448,7 +48448,7 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
               ← Start Over
             </button>
             )}
-            <button onClick={handleSubmit} disabled={uploading}
+            <button onClick={()=>handleSubmit()} disabled={uploading}
               style={{flex:info?.leadTimeOnly?1:3,background:accent,border:"none",color:"#fff",padding:"12px",borderRadius:8,fontSize:15,fontWeight:700,cursor:uploading?"wait":"pointer",opacity:uploading?0.7:1,fontFamily:"inherit"}}>
               {uploading?"Submitting…":(info?.leadTimeOnly?"✓ Confirm Lead Times":"✓ Confirm & Submit Quote")}
             </button>
