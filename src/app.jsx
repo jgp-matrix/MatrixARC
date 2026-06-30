@@ -23302,7 +23302,7 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
         </div>
         {isAdmin()&&crossStripCands.length>0&&(
           <div style={{margin:"10px 22px 0",padding:"8px 12px",background:"rgba(220,38,38,0.12)",border:`1px solid #dc2626`,borderRadius:8,fontSize:12,color:"#fecaca",lineHeight:1.4}}>
-            <b style={{color:"#fca5a5"}}>⚠ Admin · #165 cross-strip risk:</b> {crossStripCands.length} crossed row{crossStripCands.length>1?"s":""} changed part number — choosing <b>Accept</b> will STRIP the cross + pricing on commit. Reject to keep your substitution. Affected: {crossStripCands.map(m=>m.prior.partNumber).join(", ")}.
+            <b style={{color:"#fca5a5"}}>⚠ Admin · #165 cross-strip risk:</b> {crossStripCands.length} crossed row{crossStripCands.length>1?"s":""} changed part number — choosing <b>Use Revision</b> will STRIP the cross + pricing on commit. Choose <b>Keep Mine</b> to keep your substitution. Affected: {crossStripCands.map(m=>m.prior.partNumber).join(", ")}.
           </div>
         )}
         {!matchResult?(
@@ -23322,7 +23322,7 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
                 <tbody>
                   {sec.key==="changed"&&sec.rows.map((m,i)=>{const r=resolutions.get(`changed:${i}`);return(
                     <Row key={i} k={`changed:${i}`} newPN={m.extracted.partNumber} newQty={m.extracted.qty} priorPN={m.prior.partNumber} priorQty={m.prior.qty} desc={(m.reason==="pn_changed"?"PN changed":"Qty changed")+" — "+(m.extracted.description||m.prior.description||"")} tone={sec.tone}
-                      actions={<><span style={{fontSize:10,color:C.yellow,marginRight:6}}>{m.reason==="pn_changed"?"PN changed":"qty"}</span><button style={btn("#16a34a",r==="accepted")} onClick={()=>setRes(`changed:${i}`,"accepted")}>{r==="accepted"?"✓ Accepted":"Accept"}</button><button style={btn("#dc2626",r==="rejected")} onClick={()=>setRes(`changed:${i}`,"rejected")}>{r==="rejected"?"✕ Keep Prior":"Reject"}</button>{r==="rejected"&&<span style={{fontSize:10,color:C.muted,marginLeft:4}}>kept prior — differs from revision</span>}</>}/>
+                      actions={<><span style={{fontSize:10,color:C.yellow,marginRight:6}}>{m.reason==="pn_changed"?"PN changed":"qty"}</span><button style={btn("#d97706",r==="accepted")} onClick={()=>setRes(`changed:${i}`,"accepted")}>{r==="accepted"?"✓ Using Revision":"Use Revision"}</button><button style={btn("#16a34a",r==="rejected")} onClick={()=>setRes(`changed:${i}`,"rejected")}>{r==="rejected"?"✓ Kept Mine":"Keep Mine"}</button>{r==="rejected"&&<span style={{fontSize:10,color:C.muted,marginLeft:4}}>kept mine — differs from revision</span>}</>}/>
                   );})}
                   {sec.key==="added"&&sec.rows.map((ext,i)=>{const r=resolutions.get(`added:${i}`);return(
                     <Row key={i} k={`added:${i}`} newPN={ext.partNumber} newQty={ext.qty} priorPN={null} priorQty={null} desc={ext.description||""} tone={sec.tone}
@@ -23346,7 +23346,7 @@ function ReconciliationModal({currentBom,stagedExtraction,panel,onCommit,onCance
         </div>
         )}
         <div style={{padding:"14px 22px",borderTop:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:12}}>
-          <button onClick={acceptAll} disabled={!matchResult} style={{background:"transparent",border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Accept All (Changed + New)</button>
+          <button onClick={acceptAll} disabled={!matchResult} style={{background:"transparent",border:`1px solid ${C.accent}`,color:C.accent,borderRadius:8,padding:"8px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Use All Revisions (Changed + New)</button>
           <div style={{flex:1,fontSize:12,color:canCommit?"#4ade80":C.yellow,fontWeight:700}}>{canCommit?"All rows resolved — ready to commit":`${unresolved} unresolved — resolve all to commit`}</div>
           <button onClick={onCancel} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:8,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>Cancel</button>
           <button onClick={commit} disabled={!canCommit} style={{background:canCommit?"#16a34a":"#1f2937",border:"none",color:canCommit?"#fff":"#6b7280",borderRadius:8,padding:"8px 20px",fontSize:13,fontWeight:800,cursor:canCommit?"pointer":"default"}}>Commit Reconciliation</button>
