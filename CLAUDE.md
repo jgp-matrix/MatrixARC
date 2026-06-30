@@ -273,6 +273,7 @@ Then execute each step, checking off as completed. If a step requires user input
      - Any new protocols, behavioral notes, or investigation patterns established this session.
      - If any section is stale, list the specific changes needed and **wait for Jon to approve before editing**. FREDDY.md is what a brand-new Freddy reads cold — stale content causes version drift and re-litigation of settled questions.
    - **COACH.md** — if Coach was active this session, verify the tail reflects this session's findings and verdicts. If Coach was NOT active, no update needed. Marc does not write to COACH.md (Coach-owned), but flags staleness to Jon.
+   - **COACH.md line budget** (Coach-owned) — run `wc -l COACH.md`. Soft budget: **≤ 1,500 live lines**. If over, trigger a review pass using the archive criteria in COACH.md's header (status resolved + not cited by live finding + no resume trigger + lessons in CLAUDE.md). Never auto-cut on a fixed cadence — the budget triggers a REVIEW, not a blind trim. Archive to `COACH-ARCHIVE.md` preserving `## C<n>` heading anchors. Same convention applies to `TODO.md` (Marc-owned, ≤ 1,500 lines, archive to `TODO-ARCHIVE.md`).
    - **CCD auto-memory** — review the session for feedback, project knowledge, or user preferences that should persist across conversations. Save to memory files (`C:\Users\jon\.claude\projects\C--Users-jon-AppDev-MatrixARC\memory\`) if applicable. Examples: corrections to Marc's approach ("don't do X"), project state changes ("merge freeze after Thursday"), new reference locations ("bugs tracked in Linear project X"). Do NOT save things derivable from code, git history, or files already updated above.
 
    **STOP after presenting 6d findings.** Wait for Jon to approve, modify, or waive each proposed change before proceeding to 6e. Do not auto-apply handoff file edits.
@@ -525,6 +526,8 @@ Located in `tools/`. Use these alongside development:
 - BLOCKS the commit if any staged `.js` file fails `node --check`.
 - Runs an advisory Claude review (60s timeout) on staged files matching the risk pattern `pricing|quote|margin|markup|bom|firestore|rules|deploy|functions/index`. Review is advisory only — never blocks the commit.
 
+- `node tests/extraction-baseline/h5-headless.js` — headless H5 extraction test. Renders BOM region tiles via `pdfjs-dist` + `node-canvas` (no browser needed), calls the `extractBomPage` Cloud Function with tiles, compares results. Supports `--project PRJ402101`, `--no-pad`, `--pad-floor N`, `--save-tiles ./dir`. Use for H5 regression gates, region-padding validation, and model upgrade verification.
+
 **Outstanding findings**: see `TODO.md`. Each entry tagged OPEN / RESOLVED (with commit SHA) / STALE. Update when findings change state — don't delete history, mark it.
 
 **Known toolkit gap**: hook only covers `.js`, not `.jsx`. Most of `src/app.jsx` (~2 MB, the bulk of the codebase) is unreviewed by the automated hook. Tracked as deferred toolkit improvement T1/T2 in `TODO.md`.
@@ -627,6 +630,34 @@ AI returns a classified wire list (`internal: true/false`), code filters program
 | BC Item Browser row locate | Haiku (table boundaries + math) | Image | |
 
 **Model gotcha:** Sonnet 4.6 does NOT support assistant prefill — use Haiku for prefill-based JSON extraction.
+
+### H5 High-DPI Tiling (Vision-Mode BOM Extraction)
+
+For vision-mode PDFs (scanned/vector-stroke pages where text extraction yields < 100 chars in the BOM region), the client renders the BOM region into high-DPI image tiles via pdf.js + Canvas, then sends the tiles to the API as `type: "image"` content blocks instead of native PDF. This overcomes the API's per-image resolution ceiling, achieving 600+ DPI on dense BOMs where single-image sends would be limited to ~150-300 DPI.
+
+**Key components:**
+- `classifyBomInputTier` (`src/app.jsx`) — routes pages to `text-layer` (PDF-native, bypasses H5), `vector-stroke`, or `raster` tiers based on pdf.js `getTextContent()` character count.
+- `renderBomRegionHighDpi` (`src/app.jsx`) — renders BOM region into an optimal tile grid, with edge-padding (14pt floor) to prevent clipping edge rows.
+- `findOptimalGrid` — selects tile count to maximize effective DPI within the model's `MODEL_MAX_PX` ceiling and `MAX_TILES` budget.
+- Headless test harness: `tests/extraction-baseline/h5-headless.js` (see Verification toolkit).
+
+**Model resolution ceiling (`MODEL_MAX_PX`):**
+
+| Model family | MAX_PX | H5 effective DPI (8.5"×8" BOM) |
+|-------------|--------|-------------------------------|
+| Opus 4.6 | 1568 | ~392 (3×2 grid, 6 tiles) |
+| Opus 4.7+ / Fable 5 | 2576 | ~606 (2×2 grid, 4 tiles) |
+
+Text-layer pages bypass H5 entirely — they already extract at 100% via PDF-native and are not regressed.
+
+### Model Upgrade Checklist
+
+When upgrading the Opus model constant (`ANTHROPIC_MODELS.OPUS` in `src/app.jsx` and `functions/models.js`):
+
+1. **`temperature` parameter** — models ≥ 4.7 reject `temperature` with HTTP 400. The `apiCall` wrapper must NOT include `temperature` for Opus calls. (Sonnet/Haiku may still accept it — verify per-model.)
+2. **`thinking` parameter** — Opus 4.7+ uses `thinking: {type: "adaptive"}`. Explicit `{type: "disabled"}` returns 400 on some models (Fable 5) — omit instead.
+3. **`MODEL_MAX_PX`** — H5's `findOptimalGrid` auto-selects the correct grid for the model's resolution ceiling. Verify the lookup table includes the new model.
+4. **Cost impact** — higher-tier models (Fable 5) may be 2× the cost of Opus 4.7/4.8 at identical resolution. Evaluate cost/accuracy tradeoff before switching.
 
 ### Extraction Path Change Protocol
 
