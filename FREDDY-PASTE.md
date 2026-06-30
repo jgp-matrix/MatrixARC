@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.2 (defined in `public/index.html`; deployed at commit 9c885da6, tag v1.21.2; master tip e7cfbc81). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.3 (defined in `public/index.html`; deployed at commit 65d898e8, tag v1.21.3; master tip 2fc2022d). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -250,7 +250,36 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ## Recently Active Work (as of 2026-06-29)
 
-### Shipped This Session (v1.21.1 → v1.21.2) — #168-adjacent race removal + #168 re-investigation
+### Shipped This Session (v1.21.2 → v1.21.3) — #165 cross-strip detector + reconciliation/RFQ runtime confirms
+- **v1.21.3 (code `65d898e8`) — #165 admin-only cross-strip DETECTOR (Coach C117).** Render-only,
+  `isAdmin()`-gated inline banner in ReconciliationModal that flags `pn_changed` + crossed rows (the ones
+  Accept would strip via `carryChangedPnChanged`), naming the at-risk crossed-to PN. Rode alone,
+  scope-clean, force-render verified. This is #165 TOOLING, NOT a separate finding — it arms the manual
+  Accept-on-crossed test for #165(B). (NOTE: the on-screen banner Jon saw mid-session was Marc's test-harness
+  injection into the live tab, NOT a real fire — the detector only renders inside a legitimately-opened modal.)
+- **#164 → RESOLVED / NOT-REPRODUCIBLE on master** (runtime, PRJ402096 v1.21.2). Crossed Deleted-bucket row
+  intact at modal mount across frozenBom / currentBom prop / matchResult.deleted + Coach's proven raw
+  `keptDeleted.push(r)`. RESUME only if a CLEANLY-PERSISTED cross reverts after a Deleted→Keep COMMIT.
+  Cite `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
+- **#160 / C105 reject path → VERIFIED on real production crossed data.** Both Rejected crossed ducts
+  committed with prior qty "12" + cross/BC/pricing intact via `{...m.prior}`.
+- **#165 → STAYS OPEN, re-scoped (likely DOWNGRADE HIGH→MED).** `carryChangedPnChanged` fires ONLY on
+  `pn_changed`; qty-Accept is cross-safe by code. Remaining risk = a `pn_changed` CROSSED row Accepted.
+  Parts: (A) verb relabel; (B) Accept-on-crossed-pn_changed safety — manual repro pending a real candidate.
+- **RFQ over-selection — root cause runtime-proven, predicate change PARKED.** `_eligibilityReason`
+  (app.jsx:6314) lead-time check (6337–6338) is an INDEPENDENT include-trigger; 34/36 missingLeadTime pulls
+  are `leadTimeSource==="ai"` on firm+current+in-cooldown BC-priced rows (these are AI LEAD-TIME estimates,
+  not AI prices). **NEXT SESSION FIRST TASK = #175 RFQ lead-time VISIBILITY fix** (drive BOM row red off the
+  same `isFirmLT` predicate so "not red" ⇒ "won't be RFQ'd"). The RFQ-breadth predicate change is PARKED
+  behind the visibility fix — may dissolve. Open sub-decision: full-red vs distinct lead-time marker.
+- **New residual findings (LOW/observe):** #172 flaky cross-apply (revert-on-apply 2-of-3; leading suspect
+  for the ORIGINAL #164 symptom; entangled with cross-apply BC sync), #173 drop APPENDS pages (25→50, needs
+  a Brief), #174 native vector PDFs misclassified "scanned" (benign here; NOT linked to RFQ).
+- **Method note:** runtime artifact beat code-read this session — #164 non-reproducibility and the RFQ
+  mechanism were both confirmed with live React-fiber/console captures, not source reading alone.
+- **Coach C118** (detector-diff verification on v1.21.3) is QUEUED, not done — open for Coach next session.
+
+### Shipped Last Session (v1.21.1 → v1.21.2) — #168-adjacent race removal + #168 re-investigation
 - **v1.21.2 (code `9c885da6`) — SHIPPED, but NOT the #168 fix.** Deleted Path A: the fire-and-forget
   `bcSyncPanelPlanningLines` inside `runPricingOnPanel` + its premature post-pricing POST. Path B
   (`useEffect → syncPlanningLinesToBC`) is now the sole foreground auto-sync (task descs sync there too,
@@ -277,7 +306,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
   artifact proves it is ACTIVE. Don't gate fix design on a code-read when the runtime pull is one console
   line away. (We shipped on the race theory before pulling the raw error; the raw string was the whole game.)
 
-### Shipped Last Session (v1.21.0 → v1.21.1) — #158 Region-Learning Subcollection Restructure
+### Shipped Earlier (v1.21.0 → v1.21.1) — #158 Region-Learning Subcollection Restructure
 - **#158 — DONE, shipped to PRODUCTION as v1.21.1** (code commit `13787154`, release `f6762a79`). `region_learning` moved from a single `{examples:[...]}` doc — which hit Firestore's 1 MB hard ceiling and silently broke every learning write — to a **one-doc-per-entry subcollection** (`config/region_learning/entries/{id}`), plus a **thumbnail size cap** (`RL_THUMB_MAX_CHARS=250000`, step-down render) and **loud write failures** (removed 3 silent `.catch`; `logDebugEntry` + actionable warn). Root driver was uncapped thumbnail height (9 entries blew 1 MB), NOT entry count. **Migration:** the frozen company doc (XODxZ8xJc0dQXGZI7jbo) 1,044,339 chars → 132-byte slim manifest + 9 entries, thumbnails byte-for-byte preserved, 10-op atomic batch (dry-run verified first). **Phase 5 V1–V4 all PASS** (V3: live extraction landed 76 BOM items with region-learning in the path; Haiku `.update()` merge confirmed on subcollection). Learning DB at **13** (4 real OVIVO regions kept). Plan: `docs/158-DETAILED-PLAN.md` (C108 Rev 2) + `docs/158-REGION-LEARNING-SCOPE.md`; Coach review **C109 PASS**. No `APP_SCHEMA_VERSION` bump (config data).
 - **#158 loose ends (carry forward):** (1) LOW — `regionLearningParts` verified non-empty by invariant + read-path, not a captured payload; glance at a real extraction request next time to close directly. (2) SANDBOX BC CLEANUP — scratch project **PRJ402127** BC project + tasks remain in BC (ARC-side deleted; "also delete from BC" left unchecked); retire with the other #163 sandbox test artifacts.
 
@@ -485,73 +514,75 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# Session State — 2026-06-29 MDT (post-#168 re-investigation close-out)
+# Session State — 2026-06-29 MDT (RFQ/reconciliation runtime session close-out)
 
 ## Version
-**v1.21.2** (deployed 2026-06-29, PRODUCTION). Patch bump over v1.21.1.
-Shipped: **#168-adjacent race removal** (delete Path A duplicate auto-sync trigger). Code-only change
-to `src/app.jsx` (delete + 2 guard comments). **This is NOT the #168 fix** — see #168 status below.
+**v1.21.3** (deployed 2026-06-29, PRODUCTION). Patch bump over v1.21.2.
+Shipped: **#165 admin-only cross-strip detector** (Coach C117) — render-only, zero logic change.
 
 ## Deploy State
-- **Master tip:** `e7cfbc81` ("Release v1.21.2"). #168 race-removal code commit: **`9c885da6`**.
-- **`master == origin/master`** (in sync). **Tag `v1.21.2`** on origin.
-- Production hosting: **https://matrix-arc.web.app** serving v1.21.2.
-- **ROLLBACK POINT:** `master → 0f8a61fb`, redeploy **v1.20.142** (#160). Lineage: v1.21.2 = race-removal;
-  v1.21.1 = #158; v1.21.0 = #163; v1.20.142 = #160.
+- **Master tip:** `2fc2022d` ("Session findings-log…"). Code/deploy commit: **`65d898e8`** ("Release v1.21.3").
+- **`master == origin/master`** (in sync). **Tag `v1.21.3`** on origin.
+- Production hosting: **https://matrix-arc.web.app** serving v1.21.3.
+- **ROLLBACK POINT:** `master → 0f8a61fb`, redeploy **v1.20.142** (#160-era). Lineage: v1.21.3 = #165 detector;
+  v1.21.2 = #168 race-removal; v1.21.1 = #158; v1.21.0 = #163.
 
-## What shipped this session (v1.21.2 / 9c885da6)
-Deleted Path A — the fire-and-forget `bcSyncPanelPlanningLines` inside `runPricingOnPanel` (old
-27459–27467) + its premature post-pricing POST. Path B (`useEffect → syncPlanningLinesToBC`) is now the
-sole foreground auto-sync; task descriptions still sync there (V1 verified, no orphan). Added two
-LOAD-BEARING guard comments (#168) at the unpriced-check sites (useEffect ~25115 + syncPlanningLinesToBC
-~25160). **Verified live on v1.21.2:** no `Post-pricing BC sync:` line, single `bcSyncPlanningLines:`
-summary, happy path 41 created / 0 failed, task descs synced. Removed a genuine duplicate-trigger race
-+ redundant BC traffic. Plan: `docs/168-DETAILED-PLAN.md` (Coach). Evidence: `docs/168-C110-RUNTIME-EVIDENCE.md`.
+## ⭐ NEXT SESSION — FIRST TASK: #175 RFQ lead-time visibility fix
+Root cause of today's RFQ "over-selection" is really a VISIBILITY gap: a row missing a FIRM lead time
+does NOT turn red, so the BOM reads "all good," then the RFQ pulls ~47/64 rows and surprises Jon.
+**FIX DIRECTION:** drive BOM row warning-color off the SAME `isFirmLT` predicate the RFQ uses
+(`leadTimeDays!=null && leadTimeSource && leadTimeSource!=="ai"`) so "not red" ⇒ "won't be RFQ'd for
+lead time." **OPEN SUB-DECISION for Jon at start:** full-red vs a DISTINCT lead-time marker (so
+missing-price vs missing-lead-time are tellable apart). Freddy's lean: same-predicate, distinct marker.
+**FIRST ACTION:** Coach reads what currently drives BOM row color + where to hook lead-time state in,
+then scope. Full detail + runtime evidence in TODO #175.
 
-## #168 — TABLED (likely not-a-bug-as-reported)
-Re-investigated live this session. **The reported symptom (popup flags VALID in-BC items as
-"couldn't sync") did NOT reproduce** once the race was removed. Only reproduction on v1.21.2 = a
-LEGITIMATE failure (JOB BUYOFF genuinely not in BC → popup correctly tells the user to act).
-- **Disproven:** (a) race-as-popup-cause — `setSyncFailedAlert` is only in the KEPT path
-  (`syncPlanningLinesToBC`:25214); deleted Path A only `console.warn`'d. (b) posting-group theory —
-  CSD242010SS / A24P20 / ALD2QH211DNUG all have valid `Gen_Prod=INVENTORY` / `Inv=RAW MAT` (Jon verified);
-  the "Inventory Posting Group read-only" 400 is ARC PATCHing an already-set field (noise).
-- **Why it looked high-volume:** failure count scales with existing BC lines — fresh project POSTs all
-  rows (PRJ402129 = 37 fail), re-sync only new/changed (PRJ402130 re-extract = 1 fail). Deterministic
-  per-item, not timing.
-- **v1.21.2 NOT proven to fix the symptom:** the 37→1 drop is mostly PRJ402130 being pre-populated, not
-  the fix. The one untaken test that would settle it: a FRESH project from the SAME drawings on v1.21.2
-  (not run — PRJ402129 was deleted). Don't mis-remember v1.21.2 as "the #168 fix."
-- **RESUME TRIGGER (crisp):** #168 is live again ONLY if the popup flags a genuinely IN-BC item as
-  couldn't-sync. A legitimately-missing item failing (JOB BUYOFF not in BC) is CORRECT behavior, not the
-  bug. When live: resume from `docs/168-C110-RUNTIME-EVIDENCE.md` + land **#170 first** (reveals the real
-  primary-POST error). Full detail in TODO #168.
+## What shipped this session (v1.21.3 / 65d898e8)
+#165 admin-only cross-strip detector in ReconciliationModal. Predicate
+`matchResult.changed.filter(m=>m.reason==="pn_changed" && m.prior.isCrossed)`, gated `isAdmin()`,
+inline non-blocking banner naming the at-risk crossed-to PN(s). Rode alone, scope-clean, force-render
+verified via harness, named-PN confirmed = crossed-to value. It is #165 TOOLING (not a separate finding)
+— arms the manual Accept-on-crossed test for #165(B).
 
-## NEW residual bugs logged (both LOW, NOT started)
-- **#170** — Primary `Type:"Item"` planning-line POST error is discarded at `app.jsx:~3762`; only the
-  `Type:"Text"` fallback's "Type must not be Text" is surfaced. Masked #168's real error all session.
-  The `Type:"Text"` fallback on `Project_Planning_Lines_Excel` is also dead logic (BC rejects Text).
-  **Land before any future #168 dig.** (Coach's held Q2.)
-- **#171** — JOB BUYOFF auto-cross to BUYOFF not applied to default BOM line before sync (ARC POSTs
-  pre-cross name). Cosmetic/low.
+## Reconciliation cluster — resolved/verified this session (runtime, PRJ402096)
+- **#164 → RESOLVED / NOT-REPRODUCIBLE on master.** Crossed Deleted-bucket row intact at modal mount
+  across frozenBom / currentBom prop / matchResult.deleted + Coach's proven raw `keptDeleted.push(r)`.
+  RESUME TRIGGER: only if a CLEANLY-PERSISTED cross (present in at-rest BOM before the drop) reverts
+  after a Deleted→Keep COMMIT. Cite `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
+- **#160 / C105 reject path → VERIFIED on real production crossed data.** Both Rejected crossed ducts
+  committed with prior qty "12" + cross/BC/pricing intact via `{...m.prior}`.
+- **#165 → STAYS OPEN, re-scoped (likely DOWNGRADE HIGH→MED).** `carryChangedPnChanged` fires ONLY on
+  `pn_changed`; qty-Accept is cross-safe by code. Remaining risk = a `pn_changed` CROSSED row Accepted.
+  Detector arms the manual test; NOT yet seen firing on a genuine organic case. Parts: (A) verb relabel
+  still warranted; (B) Accept-on-crossed-pn_changed safety — manual repro pending a real candidate.
 
-## Open work queue
-**Actionable HIGH (no gate):**
-- **#164** — Reconciliation Deleted→"Keep" may strip crosses (possible data loss, untested branch).
-- **#165** — Reconciliation Accept/Reject verbs read backwards (UX, data-loss risk).
-- **#159** — Copy-to-New-Quote customer selection (scope ready: `docs/159-COPY-CUSTOMER-SCOPE.md`).
-- **#160** — ReconciliationModal Changed rows offer only "Accept", no reject.
+## RFQ over-selection — root cause runtime-proven, predicate change PARKED
+`_eligibilityReason` (app.jsx:6314) lead-time check (6337–6338) is an INDEPENDENT include-trigger (no
+cooldown gate, no sole-gap guard). PRJ402096: 36 missingLeadTime pulls, **34 = `leadTimeSource==="ai"`**
+on firm+current+in-cooldown BC-priced rows (clincher 9342550; control 3044076 firm bc_vendor excluded).
+These are AI LEAD-TIME estimates, NOT AI prices (prices are real BC). **The RFQ-breadth policy question
+(should a firm-priced in-cooldown row be RFQ'd just to confirm an AI lead time?) is PARKED BEHIND the
+#175 visibility fix — the red-row fix may dissolve it. Do NOT scope an RFQ predicate change until Jon
+confirms the visibility fix doesn't fully satisfy.**
 
-**LOW / parked:** #170, #171 (this session, BC sync residuals). #169 (prior-quote recognition) parked
-at Brief-stage — needs Jon to resolve Forks A/B. #161/#162, #166 (LOW). #167 closed NO-BUG.
+## NEW residual findings logged (LOW / observe)
+- **#172** — flaky cross-apply (revert-on-apply, 2-of-3; selection modal re-fires). Leading suspect for
+  the ORIGINAL #164 symptom. LEAD: no JS error, entangled with cross-apply BC sync. Trace later.
+- **#173** — drop APPENDS pages (25→50) instead of superseding; manual re-region hazard. Needs a Brief.
+- **#174** — native vector PDFs misclassified "scanned" (PRJ402096 FLS). Benign here; gates H5/region/
+  block downstream. NOT linked to RFQ (different path). LOW.
 
-**#163 production cutover — STILL GATED:** needs a prod BC env (does not yet exist). `bcEnvironment` =
-`MATR_SndBx_01152026` (SANDBOX). Next trigger: Jon brings the Excel mapping sheet → Coach `bcNo`
-sole-reference trace → reconciliation script → dry-run → live. Full detail in TODO #163.
-**#163 follow-ups (GitHub):** GH #2/#3/#4.
+## Open work queue (after tomorrow's #175)
+- **#159** — Copy-to-New-Quote customer selection (scope: `docs/159-COPY-CUSTOMER-SCOPE.md`).
+- **#165(A/B)** — verb relabel + Accept-on-crossed-pn_changed safety (detector now in place).
+- **#170 / #171** — BC sync residuals (LOW). **#161/#162, #166** (LOW). **#169** parked at Brief-stage.
+- **#163 production cutover — STILL GATED:** needs a prod BC env. Full detail in TODO #163.
 
-## Working tree / handoff
-- v1.21.2 deployed; master == origin/master.
-- `COACH.md` + `docs/168-BC-SYNC-DIVERGENCE-SCOPE.md` + `docs/168-DETAILED-PLAN.md` modified/untracked by
-  Coach this session — **left for Coach to commit** (Coach-owned).
-- Marc committed: TODO updates (#168 reframe, #170, #171), `docs/168-C110-RUNTIME-EVIDENCE.md`, handoff files.
+## Pending / handoff notes
+- **Coach C118** — detector-diff verification on v1.21.3 (`git show 65d898e8 -- src/app.jsx`) QUEUED,
+  NOT done this session. Open for Coach next session.
+- **Coach-owned uncommitted files** (left for Coach): `CLAUDE.md`, `COACH.md` (modified), `COACH-ARCHIVE.md`
+  (new — the COACH.md bloat-trim, ~737 lines). Marc did NOT touch these.
+- Marc committed `2fc2022d`: TODO findings-log + `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md` +
+  `docs/COACH-MD-BLOAT-FREDDY-REVIEW.md`.
+- v1.21.3 deployed; master == origin/master.
