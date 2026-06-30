@@ -19099,7 +19099,7 @@ async function bcFetchVendorContacts(vendorNo,vendorName){
 }
 
 function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEmail,onClose,onSent,onPrint,onApiPriced,onApiAlternates}){
-  const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=g.vendorEmail||"";});return m;});
+  const [emails,setEmails]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=(g.vendorEmail||"").replace(/;\s*/g,"\n");});return m;});
   const [included,setIncluded]=useState(()=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;});
   // DECISION(v1.19.692): Per-vendor "Lead Times Only" mode. When checked, the vendor's RFQ
   // shows BC prices as reference and asks supplier to confirm lead times only. Email
@@ -19131,7 +19131,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           // explicit "remember" choice was silently discarded.
           groups.forEach(g=>{
             if(saved[g.vendorName]){
-              setEmails(prev=>({...prev,[g.vendorName]:saved[g.vendorName]}));
+              setEmails(prev=>({...prev,[g.vendorName]:(saved[g.vendorName]||"").replace(/;\s*/g,"\n")}));
               rem[g.vendorName]=true;
             }
           });
@@ -19165,6 +19165,9 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   const _makeRfqNum=vendor=>`${vendorCode(vendor)}-${_rfqBase}`;
   const _rfqDate=_today.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const _responseBy=new Date(_today.getTime()+14*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  // #183: canonical send/storage normalizer — raw textarea text (newlines/;/,/mixed) → "; "-delimited.
+  // Exact inverse of the §2 load-normalizer (replace(/;\s*/g,"\n")): write "; " ↔ load "\n" is lossless.
+  const _normalizeEmails=raw=>(raw||"").split(/[\n;,]+/).map(s=>s.trim()).filter(Boolean).join("; ");
   async function sendAll(shouldPrint=false){
     setSending(true);
     // Check if we have any non-API vendors that need email
@@ -19206,7 +19209,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         // OR-fallback (query both uid AND companyId, merge) so legacy docs
         // remain readable by the original sender forever, while new docs
         // are team-shared. Zero data migration; zero breaking change.
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:(emails[group.vendorName]||"").trim(),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:_normalizeEmails(emails[group.vendorName]),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
@@ -19215,7 +19218,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     for(const group of groups){
       if(!included[group.vendorName]){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"skipped"}}));
-        historyEntries.push({vendorName:group.vendorName,vendorEmail:emails[group.vendorName]||"",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:true});
+        historyEntries.push({vendorName:group.vendorName,vendorEmail:_normalizeEmails(emails[group.vendorName]),items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:true});
         continue;
       }
       // API vendors — skip email, queue for auto-fetch
@@ -19225,7 +19228,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending"}}));
         continue;
       }
-      const to=(emails[group.vendorName]||"").trim();
+      const to=_normalizeEmails(emails[group.vendorName]);
       if(!to){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:"No email address"}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:"",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:"No email address"});
@@ -19286,7 +19289,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       const emailsToSave={};
       groups.forEach(g=>{
         if(remember[g.vendorName]){
-          const emailVal=(emails[g.vendorName]||"").trim();
+          const emailVal=_normalizeEmails(emails[g.vendorName]);
           if(emailVal)emailsToSave[g.vendorName]=emailVal;
         }
       });
@@ -19458,11 +19461,11 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                   const api=isApiVendor(g.vendorName);
                   if(api)return <div style={{fontSize:11,color:"#4ade80",fontWeight:600,padding:"4px 0"}}>⚡ Pricing will be obtained automatically via {api.label}</div>;
                   const contacts=vendorContacts[g.vendorName]||[];
-                  const emailList=(emails[g.vendorName]||"").split(/[,;]\s*/).filter(e=>e.trim());
+                  const emailList=(emails[g.vendorName]||"").split(/\n/).filter(e=>e.trim());
                   const rows=Math.max(1,emailList.length);
                   return <div>
                     <div style={{display:"flex",gap:6,alignItems:"flex-start"}}>
-                      <textarea value={(emails[g.vendorName]||"").replace(/;\s*/g,";\n")} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value.replace(/\n/g,"; ")}))}
+                      <textarea value={emails[g.vendorName]||""} onChange={e=>setEmails(prev=>({...prev,[g.vendorName]:e.target.value}))}
                         placeholder={contactsLoading?"Loading contacts…":"supplier@email.com"} disabled={sending||done}
                         rows={rows}
                         style={{flex:1,boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"5px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none",resize:"vertical",lineHeight:1.6}}/>
@@ -19470,8 +19473,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                         if(!e.target.value)return;
                         const cur=(emails[g.vendorName]||"").trim();
                         const newEmail=e.target.value;
-                        if(cur&&!cur.split(/[,;]\s*/).some(x=>x.toLowerCase()===newEmail.toLowerCase())){
-                          setEmails(prev=>({...prev,[g.vendorName]:cur+"; "+newEmail}));
+                        if(cur&&!cur.split(/[\n,;]\s*/).some(x=>x.trim().toLowerCase()===newEmail.toLowerCase())){
+                          setEmails(prev=>({...prev,[g.vendorName]:cur+"\n"+newEmail}));
                         }else if(!cur){
                           setEmails(prev=>({...prev,[g.vendorName]:newEmail}));
                         }
@@ -19487,7 +19490,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                         setRemember(prev=>({...prev,[g.vendorName]:checked}));
                         const currentUid=uid||fbAuth.currentUser?.uid;
                         if(currentUid){
-                          const emailVal=(emails[g.vendorName]||"").trim();
+                          const emailVal=_normalizeEmails(emails[g.vendorName]);
                           // v1.19.996 (audit Item D follow-up): write to company-shared path
                           if(checked&&emailVal){
                             fbDb.doc(_supplierDocPath(currentUid,"vendorEmails")).set({[g.vendorName]:emailVal},{merge:true}).catch(e=>console.warn("[RFQ] vendorEmails save failed:",e.message));
