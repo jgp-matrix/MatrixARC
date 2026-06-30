@@ -2771,16 +2771,15 @@ reset that surfaced the ground-truth state.
      FUTURE: post-creation customer reassignment (broader limitation, separate ticket).
      Logged: 2026-06-17 (Jon, Coach C104 scope).
 
-160. **OPEN** [HIGH — feature, UX gap] — ReconciliationModal Changed rows offer ONLY "Accept" (take the
-     new extraction's value). No way to reject a change and keep the prior row — critical for crossed
-     rows where the prior contains the user's deliberate substitution + pricing. FIX: add Reject
-     button to changed row actions (line 23165), handle `"rejected"` resolution in
-     `buildReconciledBom` (line 47422) by carrying `{...m.prior}` (prior row exactly as-is, no
-     position update, no field changes — all crosses, pricing, BC data preserved). Existing
-     `unresolved` gating already counts changed rows without resolution — no gating changes needed.
-     ~6 lines, very low risk. Fully contained within `ReconciliationModal` + `buildReconciledBom`.
-     SCOPE: `docs/160-RECON-REJECT-SCOPE.md` (Coach C105).
-     Logged: 2026-06-17 (Jon, Coach C105 scope).
+160. **RESOLVED** [Reject path VERIFIED on real production crossed data] (2026-06-29). Reject button +
+     `"rejected"` → `{...m.prior}` carry-forward (Coach C105) confirmed live on PRJ402096 / v1.21.2:
+     both Rejected crossed ducts (DUCT,2X3,GREY / crossedFrom 3240199; DUCT,4X4,GREY / crossedFrom
+     3240200) committed with **prior qty "12" retained and cross/BC/pricing intact** — exact carry-forward,
+     no field drift. First real-data confirm of the #160 fix; the reject path is verified-on-commit.
+     (Original FIX as specified: Reject button on changed-row actions; `buildReconciledBom` handles
+     `"rejected"` by carrying `{...m.prior}` — prior row exactly as-is, all crosses/pricing/BC preserved.)
+     SCOPE: `docs/160-RECON-REJECT-SCOPE.md` (Coach C105). Evidence: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
+     Logged: 2026-06-17 (Jon, Coach C105 scope). Verified: 2026-06-29 (Marc runtime capture; Freddy disposition).
 
 ## Miscellaneous (2026-06-17)
 
@@ -2874,33 +2873,47 @@ reset that surfaced the ground-truth state.
 
      Logged: 2026-06-17 (Jon). Resolved DONE: 2026-06-27 (close-out, shipped v1.21.0).
 
-164. **OPEN** [HIGH — possible data loss, untested branch] — Reconciliation Deleted→"Keep" may strip
-     crosses. Surfaced after the #160 commit: a kept row (XT1HU3003MFF000XXX) reverted to its ORIGINAL
-     (pre-cross) Part# instead of retaining the user's crossed/substituted PN. The Deleted→Keep path
-     (`keptDeleted.push(r)` in `buildReconciledBom`, where `r` is the unmatched prior row from
-     `reconcileBom`'s `deleted` bucket) was NOT touched or tested by #160 (#160 only added the Changed→
-     Reject branch) and is NOT covered by the C103 cross pre-pass (that runs on matched rows; deleted =
-     unmatched). With C103 Part 1 the staging extraction is now RAW (original PNs), which may interact
-     with how a crossed prior lands in `deleted` and what PN the kept row carries. INVESTIGATE: confirm
-     whether the kept deleted row carries `partNumber`(replacement)+`crossedFrom`+`isCrossed` intact, or
-     whether it reverts to the original PN. Reproduce with a crossed prior that does NOT match the new
-     extraction (so it lands in Deleted), then Keep it and inspect the committed row. This is the one
-     genuinely open correctness question from the #153/#160 work — possible cross/data loss in an
-     untested branch. Add a harness case (deleted-kept preserves cross) once root cause is known.
-     Logged: 2026-06-17 (Jon + Marc, observed during #160 live testing).
+164. **RESOLVED** [NOT-REPRODUCIBLE-ON-MASTER — not "fixed", no code changed] (2026-06-29, live runtime
+     confirm on PRJ402096, v1.21.2). The Deleted→"Keep" path does NOT strip crosses on current master.
+     EVIDENCE: at ReconciliationModal mount the crossed Deleted-bucket row (DUCT,1X2,GREY / crossedFrom
+     F1X2LG6) carried `isCrossed`/`crossedFrom`/`bcNo`/`priceSource`/`unitPrice` **byte-identical across
+     `frozenBom`, the `currentBom` prop, and `matchResult.deleted`** — the exact entry Keep operates on.
+     Combined with Coach's proven raw `keptDeleted.push(r)` (no commit-side stripping), the cross reaches
+     the modal whole and Keep preserves it. The original report's "reverted to pre-cross PN" symptom is
+     now attributed to a cross that never cleanly persisted (see #172), or predates the C103 cross-aware
+     reconciliation. RESUME TRIGGER: reopens ONLY if a cross **confirmed cleanly persisted** (present in
+     the at-rest BOM BEFORE the drawing drop) reverts after a Deleted→Keep COMMIT. A cross that was never
+     cleanly applied is #172, not #164. Cite: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
+     Logged: 2026-06-17 (Jon + Marc, observed during #160 live testing). Resolved: 2026-06-29 (Marc
+     runtime capture; Freddy disposition).
 
-165. **OPEN** [HIGH — UX with data-loss risk, NOT cosmetic] — Reconciliation Accept/Reject verbs read
-     BACKWARDS. In ReconciliationModal the Changed-row verbs ("Accept" = take the revision; "Reject" /
-     "Keep Prior" = keep the user's worked row) feel inverted to the user — Marc's own instinct read
-     them the wrong way during the #160 build. RISK (why this is HIGH, not minor polish): misreading
-     "Accept All" can STRIP CROSSES on a real quote — Accept on a `pn_changed` crossed row runs
-     `carryChangedPnChanged`, which intentionally drops `isCrossed`/`crossedFrom`/pricing. A user who
-     thinks "Accept = keep my work" would silently lose their substitutions + pricing on commit. This
-     is therefore a data-loss-via-misread hazard, explicitly ABOVE the cosmetic Revise-UX items. FIX:
-     relabel for unambiguous direction (e.g. "Use Revision" vs "Keep My BOM", or split the
-     take-revision vs keep-prior intent visually), and reconsider whether "Accept All" should default
-     to taking revisions on crossed rows at all. Verb clarity first; default-safety second.
-     Logged: 2026-06-17 (Jon + Marc, identified during #160 build/testing).
+165. **OPEN** [RE-SCOPED 2026-06-29 — severity likely MEDIUM not HIGH, Jon to confirm at fix-scope] —
+     Reconciliation Accept/Reject verbs read BACKWARDS, + Accept-on-crossed safety. In ReconciliationModal
+     the Changed-row verbs ("Accept" = take the revision; "Reject" / "Keep Prior" = keep the user's worked
+     row) feel inverted — Marc's own instinct read them wrong during the #160 build.
+     ── RE-SCOPE (2026-06-29 runtime session, PRJ402096): the data-loss surface is NARROWER than logged. ──
+     Established today: `carryChangedPnChanged` (the strip path) fires **ONLY for `pn_changed` rows**.
+     All 4 Changed rows this session were `reason:"qty"`, and **qty-Accept routes through
+     `carryChangedPnSame` → does NOT strip** (cross-safe by code; the 2 Accepted rows kept correctly,
+     the 2 crossed rows were Rejected and preserved). So #165's actual data-loss risk narrows to ONE
+     untested path: **a `pn_changed` Changed row that is CROSSED, then Accepted → `carryChangedPnChanged`
+     drops `isCrossed`/`crossedFrom`/pricing.** The common qty-change case is PROVEN SAFE.
+     TWO PARTS REMAIN: (A) **verb relabel** (Accept/Reject read backwards) — still warranted regardless of
+     severity (e.g. "Use Revision" vs "Keep My BOM", or split take-revision vs keep-prior visually);
+     (B) **Accept-on-crossed safety**, now scoped to `pn_changed` ONLY. Needs a dedicated repro: force a
+     PN change on a crossed prior row, Accept it, re-read the committed row for cross survival.
+     SEVERITY: given qty-Accept is safe, (B) is arguably MEDIUM not HIGH — Jon to confirm at fix-scope.
+     Evidence: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
+     Logged: 2026-06-17 (Jon + Marc, identified during #160 build/testing). Re-scoped: 2026-06-29 (Marc
+     runtime; Freddy disposition).
+     TOOLING (shipped v1.21.3, commit 65d898e8, 2026-06-29): admin-only cross-strip detector added to
+     ReconciliationModal (Coach C117). Predicate `matchResult.changed.filter(m=>m.reason==="pn_changed"
+     && m.prior.isCrossed)`, gated `isAdmin() && cands.length>0`, non-blocking inline banner naming the
+     at-risk crossed-to PN(s). PURE RENDER — no resolve/commit interaction. Arms the manual Accept-test
+     for part (B): when a real pn_changed crossed row appears, the banner flags it so Jon can Accept it
+     and confirm whether the cross survives. Force-render verified via isolated harness; negative case
+     (no banner on non-pn_changed reconciliation) confirmed by this session's PRJ402096 commit. This is
+     #165 tooling, NOT a separate finding. Coach C118 verifies the deployed diff.
 
 > **⚠ Reconciliation-cluster status caveat (#164/#165 build on #160/#153 code) — banked 2026-06-29
 > (Freddy close-out reasoning, would otherwise die with the session):** the "OPEN" status on #153/#160
@@ -3036,3 +3049,56 @@ reset that surfaced the ground-truth state.
      crosses), but worth a look whenever the cross-on-default-line path is touched. Surfaced as the
      single legitimate failure during the #168 v1.21.2 repro (PRJ402130).
      Logged: 2026-06-29 (Marc, observed during #168 re-investigation).
+
+172. **OPEN** [observe → leading suspect — possible cross/data-loss] — Cross-apply reverts to the original
+     PN. Applying a cross reverted to the pre-cross Part# on 2 of 3 attempts (selection modal re-fired
+     each time); took on the 3rd. **Leading suspect for the ORIGINAL #164 report** — same "reverted to
+     pre-cross PN" symptom class: a cross that never cleanly persists (distinct from #164, which proved
+     a CLEANLY-persisted cross survives Keep). NEW LEAD this session: **no distinct JS error** in the
+     console buffer — the reverts were entangled with the BC sync that fires on cross-apply, so the
+     eventual trace targets the **cross-apply → BC-sync interaction**, not the cross logic alone. NOT
+     traced yet (observe-only this session per parking discipline); next trace candidate after #165's
+     fork is decided. Evidence: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md` (Side Observations).
+     Logged: 2026-06-29 (Marc observe; Freddy disposition; PRJ402096 staging).
+
+173. **OPEN** [LOW-MED — #153 flow, UX + correctness hazard] — Dropping a revised drawing set APPENDS
+     pages to the existing set instead of superseding. Observed: dropping 25 revised pages produced a
+     50-page package (mixed old + new), forcing the user to manually hand-region ONLY the new pages
+     while avoiding the old ones. Correctness hazard: region an old page by mistake and the re-extract
+     is corrupted (stale pages feed the reconciliation). Needs its own scoping/Brief on intended
+     supersede-vs-append behavior for a drawing REVISION (vs. a deliberate add-pages). Not a quick fix.
+     Evidence: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md` (Side Observations).
+     Logged: 2026-06-29 (Marc observe; Freddy disposition; PRJ402096 staging).
+
+174. **OPEN** [LOW — input-tier classifier] — Native vector PDFs misclassified as scanned. PRJ402096's
+     FLSmidth drawings are native vector PDFs but were flagged "low-level scanned drawing." Extraction
+     accuracy was UNAFFECTED here (benign on this project), but the scan-tier classification gates
+     downstream behavior (H5 / region-render / block-gate), so a false "scanned" verdict can degrade
+     those paths on other projects. EXPLICITLY NOT linked to the RFQ over-selection (#175) — different
+     code path; same project is coincidental. Needs a look at what sets the scanned-vs-native tier and
+     why vector PDFs trip it. Logged: 2026-06-29 (Marc observe; Freddy disposition; PRJ402096).
+
+175. **OPEN** [TOMORROW'S FIRST TASK — HIGH-value UX/correctness; root cause runtime-proven] — RFQ
+     lead-time visibility: a row missing a FIRM lead time does NOT turn red, so the BOM reads "all good,"
+     then the RFQ pulls ~47/64 rows and surprises Jon (bit him last week too). FIX DIRECTION: drive row
+     warning-color off the SAME `isFirmLT` predicate the RFQ uses (`leadTimeDays!=null && leadTimeSource
+     && leadTimeSource!=="ai"`), so "not red" reliably means "won't be RFQ'd for lead time."
+     OPEN SUB-DECISION (Jon, at start): full-red vs a DISTINCT lead-time-specific marker so missing-price
+     and missing-lead-time are tellable apart. Freddy's lean: same-predicate coloring, distinct marker.
+     FIRST ACTION tomorrow = Coach reads what currently drives BOM row color + where to hook lead-time
+     state in, then scope.
+     ── ROOT CAUSE (confirmed active, runtime-proven, PRJ402096 v1.21.3) ──
+     `_eligibilityReason` (app.jsx:6314): the lead-time check (6337–6338) is an INDEPENDENT include-
+     trigger — no cooldown gate, no sole-gap guard. `isFirmLT = leadTimeDays!=null && leadTimeSource &&
+     leadTimeSource!=="ai"`; any non-firm row returns "missingLeadTime" even with valid current pricing.
+     Runtime tally: 36 missingLeadTime pulls — **34 are `leadTimeSource==="ai"`** on otherwise firm +
+     current + in-cooldown BC-priced rows; 2 are `leadTimeDays==null`. Clincher: 9342550 (BC-priced, 14d
+     old, IN 30-day cooldown) still pulled solely on its AI lead time; control 3044076 (firm `bc_vendor`
+     LT) correctly excluded. IMPORTANT: these are AI LEAD-TIME estimates, NOT AI prices — prices are real
+     BC prices.
+     ── PARKED (do not scope yet) ──
+     The RFQ-BREADTH policy question (should a firm-priced, in-cooldown row be RFQ'd just to confirm an
+     AI lead time?) is PARKED BEHIND the visibility fix — the red-row fix may dissolve it. Do NOT scope an
+     RFQ predicate change until Jon confirms the visibility fix doesn't fully satisfy.
+     Evidence: runtime capture this session (per-row field values + case-a/b breakdown).
+     Logged: 2026-06-29 (Marc runtime-confirm; Coach predicate trace; Freddy disposition).
