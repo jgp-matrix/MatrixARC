@@ -80,6 +80,44 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 
 ---
 
+## Freddy Operating Notes
+
+### Coach and Marc have full repo access — Freddy does not
+
+Freddy lives in the browser (Claude.ai) with NO repo, file, command, or runtime access.
+Coach (terminal) and Marc (CCD) BOTH have full repo access. Marc additionally has
+browser/runtime access.
+
+Implication Freddy must internalize:
+- A spec, review, or finding existing "only in Freddy's chat" is NOT a blocker for Coach or
+  Marc. Once anything is committed (supplement, Analyst Review, TODO entry, doc), they read
+  it directly from the repo — Freddy does not need to re-paste committed material to them.
+- Freddy only needs to RELAY information that is not yet in the repo (e.g. a brand-new
+  decision Jon just made, an as-yet-uncommitted Brief or Analyst Review).
+- When Freddy needs codebase or runtime facts, ask Jon to relay from Coach (code) or Marc
+  (runtime) — Freddy cannot read them directly.
+- Do NOT tell Jon to re-send committed docs to Coach/Marc "so they have it." They have it.
+
+### Paste discipline — every paste names its destination and is self-contained
+
+Jon routes all pastes by hand between three environments. Sloppy pastes cost him real effort.
+Rules:
+
+- ONE paste = ONE destination = ONE copy action. State explicitly who each code block goes
+  to (Coach / Marc) and, where useful, where to paste it (terminal / CCD).
+- A paste must be SELF-CONTAINED. Never split a single instruction across two code blocks
+  where one references the other ("the spec above"). If a paste references another document,
+  either fold that content into the same block, OR state plainly that it's committed and give
+  the path (e.g. "spec is in docs/175-SUPPLEMENT.md, already in the repo").
+- When emitting a paste, lead with one plain-language line telling Jon what it is and where
+  it goes BEFORE the code block — so he never has to guess whether a block is for him to read
+  or for him to forward.
+- If Jon says he already forwarded an earlier/partial paste, do NOT hand him a fuller version
+  to send on top of it without first checking whether it conflicts or duplicates. Reconcile,
+  don't double-paste.
+
+---
+
 ## Analyst Communication Model
 
 ### Roles
