@@ -108,6 +108,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-30 (Session 8)** — C119: #175 scope trace (FULL RED decision locked). Confirmed `_isBomRowFlaggedRed` (line 15771, single call site at 28715), RFQ predicate `isFirmLT` (line 6337), lead-time source enumeration (6 firm + ai + absent). Scope: ~5 lines — new `_hasFirmLeadTime(r)` shared helper + COND 4 in row-color + RFQ refactor. Deliverable: `docs/175-SUPPLEMENT.md`.
 - **2026-06-30 (Session 8, cont.)** — C120: #175 Detailed Plan. 3 sections (~5 lines), 11 test criteria. Load-bearing step: inline `isFirmLT` DELETED, replaced by shared `_hasFirmLeadTime(r)`. Exclusion-gate analysis: two divergences (manual-price, DIN rail/duct) both benign — guarantee holds. Follow-up #176 logged (DIN rail/duct red noise). Deliverable: `docs/175-DETAILED-PLAN.md`.
 - **2026-06-30 (Session 8, cont.)** — C121: #178 RFQ Pre-fill Fix Cluster scope trace (A/B/C). Part A: auto-checkbox bug — cooldown masks missing-price classification, `defaultLeadTimeOnly` fires on groups with priceless rows. Part B: unit price blank — data present on BOM row, deliberately excluded from normal-mode payload (`if(ltOnly)` guard). Part C: lead time blank — `referenceLeadTimeDays` stored unconditionally in Firestore but portal never reads it. ~30 lines estimated across 6 code sites. Deliverable: `docs/178-SUPPLEMENT.md`.
+- **2026-06-30 (Session 8, cont.)** — C122: #179 Supplier Portal submit validation (A/B). Part A: spurious global LT gate at line 48016 blocks submit when "Fill all" field is empty even with all per-line fields filled — delete it. Part B: zero price validation exists in normal mode — add per-line price+LT completeness check with blocking arcAlert. ~15 lines, single code site (`handleSubmit`). Deliverable: `docs/179-SUPPLEMENT.md`.
 
 
 ## Findings
@@ -897,3 +898,37 @@ Infrastructure exists in leadTimeOnly mode — extend to normal mode (editable, 
 #### Regression surface
 
 6 code sites across 2 paths (ARC-side build + portal render). ~30 lines estimated. Parts are independent but share payload path — ship together. Full enumeration in `docs/178-SUPPLEMENT.md`.
+
+---
+
+### C122 — #179 Supplier Portal Submit Validation (2026-06-30)
+
+**Type:** Read-only scope trace (A/B)
+**Status:** SCOPE COMPLETE — feeds Detailed Plan
+**Deliverable:** `docs/179-SUPPLEMENT.md`
+
+---
+
+#### Part A — Spurious global lead time gate
+
+**Line 48016:** `if(!leadTime.trim()){arcAlert("Please enter the lead time in days ARO...");return;}`
+
+This is the normal-mode (non-leadTimeOnly) branch of submit validation. Requires the global "Fill all Lead Times at once" input to be non-empty — even when every per-line lead time is already filled. The global field is a convenience auto-fill tool, not an authoritative source. Auto-propagation (lines 47990–48001, which fills blank per-line entries from the global value) is preserved.
+
+**Fix:** Delete the global gate. Replace with per-line validation (Part B).
+
+#### Part B — No price validation, no per-line LT validation in normal mode
+
+Current validation in `handleSubmit`:
+- **leadTimeOnly:** Per-line LT validation (each non-cannotSupply line must have LT). No price check (prices read-only).
+- **Normal:** Global LT required. **No price check. No per-line LT check.**
+
+A supplier can submit in normal mode with entirely blank prices. No blocking.
+
+**Fix:** Per-line check — each non-cannotSupply row must have both `unitPrices[i]` (non-empty, > 0) AND `_itemLeadTimesEffective[i]` (non-empty, > 0). Blocking `arcAlert` on failure with generic message (don't enumerate rows — existing red indicators for missing prices guide the supplier).
+
+**Visual gap noted:** Missing prices render red (border `#fca5a5`, bg `#fff5f5`, `⚠ Missing`). Missing lead times have NO visual indicator. Not a blocker — follow-up cosmetic item.
+
+#### Scope
+
+~15 lines, all within `handleSubmit` (line 47978). No payload, Firestore, or ARC-side changes.
