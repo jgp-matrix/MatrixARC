@@ -102,6 +102,8 @@ Do **NOT** verify with "leave and return immediately" — that path **passes eve
 
 ## Verification (v1.21.9)
 
+**Data-loss disposition (FINAL, Jon-confirmed under v1.21.9):** No production data loss occurred — the fix shipped before any real wipe; PRJ402124 lines 1-3 and PRJ402126 were confirmed **retained** by Jon. The bug rated **HIGH** because the mechanism *could* have caused unrecoverable loss (it overwrote `drawingNo/Desc/Rev` with `""` and persisted immediately) — in this instance nothing was lost.
+
 - **PRESERVE (the fix's actual job) — live-confirmed on real opens:** Jon's PRJ402100 cross-project-nav repro (manual line survived the round-trip), plus **PRJ402124 opened under v1.21.9 with zero `[TITLE BLOCK]` events** and manual lines retained.
 - **STILL-CLEANS (T3) — code-reasoned + Coach diff-verify.** The fix is a single *additive* early-return that fires only when `extractionReport` is falsy; the report-truthy (extraction-origin) cleanup path is byte-identical to pre-fix, so it cannot have regressed. Coach confirmed the cleanup body is untouched.
 - **T4 (no double-fire) — code-reasoned:** `_titleClearRan` untouched. **T5 (grep) — PASS:** `_titleStale` = 1 definition + 3 uses.

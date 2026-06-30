@@ -3220,10 +3220,10 @@ reset that surfaced the ground-truth state.
      (access boundary: page can only write legacy users/{uid}/projects, which the app doesn't render; live
      company source rules-blocked) — do NOT retry. Legacy coverage floors at v1.19.598 (extractionReport intro);
      pre-field-era extraction panels (2026-03-04→04-21) skipped = cosmetic miss only.
-     ⚠ ALREADY-LOST-DATA WORDING HELD (Jon to confirm): PRJ402124 was opened under the FIXED build, so it may
-     never have been wiped — pending Jon's live check of whether PRJ402124 lines 1-3 / PRJ402126 actually
-     retained data, the "needs re-entry vs no loss occurred" disposition is OPEN. The fix prevents FUTURE loss
-     regardless.
+     DATA-LOSS DISPOSITION (FINAL, Jon-confirmed under v1.21.9): No production data loss occurred — fix shipped
+     before any real wipe; PRJ402124 lines 1-3 and PRJ402126 confirmed RETAINED by Jon. Rated HIGH because the
+     mechanism COULD have caused unrecoverable loss (overwrote title fields with "" + immediate Firestore save);
+     in this instance nothing was lost.
      ── ORIGINAL FINDING (as logged 2026-06-30, pre-fix) ──
      Manual DWG#/REV/DESCRIPTION on a drawing-less line is WIPED from React state + Firestore on PanelCard
      remount. CONFIRMED ACTIVE via Jon's live repro (PRJ402100): drawing-less line + manual title fields →
