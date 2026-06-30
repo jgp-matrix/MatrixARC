@@ -3204,3 +3204,28 @@ reset that surfaced the ground-truth state.
      submit proceeds. "Confirm & Submit" modal button code-verified. CAUTION (→ COACH.md lesson): an
      advisory review called this fix a "no-op" without tracing handleSubmit's signature — it is NOT.
      Logged/resolved: 2026-06-30.
+
+181. **OPEN** [HIGH — silent loss of manually-entered customer data; deterministic on cross-project nav] —
+     Manual DWG#/REV/DESCRIPTION on a drawing-less line is WIPED from React state + Firestore on PanelCard
+     remount. CONFIRMED ACTIVE via Jon's live repro (PRJ402100): drawing-less line + manual title fields →
+     leave → return IMMEDIATELY = data survives; same line → open a DIFFERENT project → return = data GONE.
+     TRIGGER is PanelCard UNMOUNT/REMOUNT (forced by cross-project navigation), NOT project re-open per se —
+     this is why field reports (PRJ402124 lines 1-3, PRJ402126 all lines) looked "intermittent" (it's
+     navigation-pattern dependent, deterministic per pattern).
+     MECHANISM (Coach path map, code-grounded): both carry DECISION(v1.19.618), intended to scrub STALE
+     title blocks left after drawing deletion. (1) State init `_titleStale=pages.length===0` forces draft
+     inputs to "" regardless of stored values (app.jsx:23613-23616). (2) useEffect `_titleClearRan`
+     (app.jsx:23524-23534): on mount, if pages=[] AND any of drawingNo/Desc/Rev populated → writes "" to all
+     three + onSaveImmediate to Firestore. `_titleClearRan` is a useRef per instance — survives "return
+     immediately" (same mount) but RESETS on real unmount → remount re-fires the wipe. Console signal:
+     `[TITLE BLOCK] Cleared stale drawingNo/Desc/Rev on panel with no drawings: <name>`.
+     ROOT FLAW: v1.19.618 conflates "stale title block (drawings deleted)" with "legitimate drawing-less
+     manual line (valid customer data)" — both are pages.length===0 — and destroys the latter.
+     NO FIX YET — fix design GATED behind Coach's v1.19.618 origin trace (the discriminator question: how
+     to tell a stale title block from a legitimate drawing-less manual line; is there a signal/flag?).
+     ⚠ REGRESSION-TEST SPEC (trap-prevention): the fix MUST be verified with the CROSS-PROJECT-NAVIGATION
+     sequence (drawing-less manual line → open a DIFFERENT project → return → data must survive). Do NOT
+     verify with "leave and return immediately" — that path PASSES on the broken build (no unmount, no
+     re-fire) and gives a FALSE all-clear.
+     Diagnostic doc: docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md.
+     Logged: 2026-06-30 (Coach mechanism trace; Jon runtime repro; Freddy analysis; Marc writeup).
