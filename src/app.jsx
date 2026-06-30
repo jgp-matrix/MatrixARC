@@ -23517,10 +23517,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       setExtracting(false);
     }
   },[bgTask?.status,extracting,bgTaskIsForThisProject]);
-  // DECISION(v1.19.618, FIX #181): Retroactive cleanup for extraction-origin panels
-  // where the drawings were deleted before the v1.19.658 cascade-clear existed. Gated
-  // on extractionReport presence so manual-entry panels (no extraction, no report) are
-  // never wiped. See docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md for root-cause analysis.
+  // DECISION(v1.19.618, FIX #181): Retroactive cleanup for extraction-origin panels left with a
+  // STALE title block by pre-v1.19.738 saves through saveProjectPanel (pages wiped to [] but
+  // drawingNo/Desc/Rev kept, with no cascade to clear them). NOT a deleted-drawing case —
+  // removePage has cascaded drawingNo since v1.10.19. Gated on extractionReport presence so
+  // manual-entry panels (no extraction, no report) are never wiped. See
+  // docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md for root-cause analysis.
   const _titleClearRan=useRef(false);
   useEffect(()=>{
     if(_titleClearRan.current)return;
@@ -23608,8 +23610,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [lightboxId,setLightboxId]=useState(null);
   const [showCompliance,setShowCompliance]=useState(false);
   const [draftName,setDraftName]=useState(panel.name||"");
-  // DECISION(v1.19.618, FIX #181): Draft inputs blank only for extraction-origin panels
-  // with no pages (stale title from deleted drawing). Manual-entry panels init from stored
+  // DECISION(v1.19.618, FIX #181): Draft inputs blank only for extraction-origin panels with no
+  // pages whose title is stale from a pre-v1.19.738 save (pages wiped, title kept; NOT a deleted
+  // drawing — removePage cascaded drawingNo since v1.10.19). Manual-entry panels init from stored
   // values. Gated on extractionReport — same discriminator as the cleanup useEffect above.
   const _titleStale=(panel.pages||[]).length===0&&!!panel.extractionReport;
   const [draftNo,setDraftNo]=useState(_titleStale?"":(panel.drawingNo||"").slice(0,25));

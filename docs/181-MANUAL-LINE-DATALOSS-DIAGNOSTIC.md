@@ -39,7 +39,7 @@ Reproduced live on **PRJ402100** (test project, real-shaped data). The trigger i
 
 ## Mechanism (Coach's path map, grounded in current code)
 
-Both mechanisms live in `PanelCard` and both carry `DECISION(v1.19.618)`. Their original intent: retroactively scrub **stale** title-block text left on panels whose drawings were deleted *before* the "clear title block on last page remove" logic existed.
+Both mechanisms live in `PanelCard` and both carry `DECISION(v1.19.618)`. Their original intent: retroactively scrub **stale** title-block text left on extraction-origin panels by **pre-v1.19.738 saves through `saveProjectPanel`** — those saves wiped `pages` to `[]` but kept `drawingNo/Desc/Rev`, with no cascade to clear them. **NOTE (Coach trace correction):** this is *not* a deleted-drawing case — `removePage` has cascaded `drawingNo` since **v1.10.19**, so deleting a drawing already clears the title. The earlier "deleted-drawing" framing was wrong.
 
 ### Mechanism 1 — draft state init forces empty ([src/app.jsx:23613-23616](../src/app.jsx))
 ```js
@@ -73,16 +73,20 @@ On mount, if `pages=[]` **and** any of `drawingNo/drawingDesc/drawingRev` is pop
 ## Root flaw
 
 `v1.19.618` conflates two states that are both `pages.length === 0`:
-1. **Stale** title block — drawings were dropped, title fields were drawing-derived, then drawings were deleted, leaving orphaned text. (The case v1.19.618 wanted to scrub.)
+1. **Stale** title block — an extraction-origin panel left with orphaned title text by a **pre-v1.19.738 save** that wiped `pages` to `[]` but kept `drawingNo/Desc/Rev` (no cascade). (The case v1.19.618 wanted to scrub. NOT a deleted-drawing case — `removePage` cascaded `drawingNo` since v1.10.19.)
 2. **Legitimate** drawing-less manual line — the user deliberately entered DWG#/REV/DESC on a line that never had, and was never meant to have, a dropped drawing. (Valid customer data.)
 
 The code cannot distinguish (2) from (1), so it destroys (2) along with (1).
 
 ---
 
-## Open question (gates the fix — DO NOT design the fix yet)
+## Discriminator — RESOLVED · fix shipped v1.21.9 (`4175ecbd`)
 
-The discriminator: **how to tell a stale title block apart from a legitimate drawing-less manual line.** This waits on **Coach's `v1.19.618` origin trace** — what exact scenario v1.19.618 was solving, and whether a distinguishing signal exists (e.g. a "title fields were drawing-derived" flag, a "manually entered" marker, or whether the scrub should be gated to the drawing-deletion event rather than running blindly on every mount). No fix is scoped until that trace lands.
+Coach's `v1.19.618` origin trace resolved the discriminator: **`extractionReport` presence.** An extraction-origin panel always has a populated `extractionReport`; a manual-entry line never does. Both mechanisms are now gated on it (FIX #181):
+- **Mechanism 2:** `if(!panel.extractionReport)return;` added before the populated-fields check (~23528).
+- **Mechanism 1:** `_titleStale = (panel.pages||[]).length===0 && !!panel.extractionReport` (~23614).
+
+The cleanup now fires ONLY on extraction-origin panels (its original target); manual-entry lines are left untouched. Resolution values and the cleanup body are unchanged. Plan: `docs/181-DETAILED-PLAN.md`.
 
 ---
 
@@ -96,9 +100,23 @@ Do **NOT** verify with "leave and return immediately" — that path **passes eve
 
 ---
 
+## Verification (v1.21.9)
+
+- **PRESERVE (the fix's actual job) — live-confirmed on real opens:** Jon's PRJ402100 cross-project-nav repro (manual line survived the round-trip), plus **PRJ402124 opened under v1.21.9 with zero `[TITLE BLOCK]` events** and manual lines retained.
+- **STILL-CLEANS (T3) — code-reasoned + Coach diff-verify.** The fix is a single *additive* early-return that fires only when `extractionReport` is falsy; the report-truthy (extraction-origin) cleanup path is byte-identical to pre-fix, so it cannot have regressed. Coach confirmed the cleanup body is untouched.
+- **T4 (no double-fire) — code-reasoned:** `_titleClearRan` untouched. **T5 (grep) — PASS:** `_titleStale` = 1 definition + 3 uses.
+
+### T3 synthetic-live: INFEASIBLE (access boundary — do NOT retry)
+
+A synthetic live T3 (stage a stale panel, open it, watch the cleanup fire) **cannot be run from the browser-session access level.** The page can only write `users/{uid}/projects` — a **legacy collection the app does not render** (confirmed: a synthetic panel staged in Test7/PRJ402042 never loaded, and a dashboard search for that PRJ# returned "No projects yet"). The **live company project source** the app actually renders is rules-blocked and its path was not resolvable from the page (`_appCtx` is module-scoped, `collectionGroup` is permission-denied). Synthesizing into a real company project is therefore both impossible (unknown path) and unsafe. **A future session should not retry the synthetic-live T3 expecting it to work** — still-cleans is covered by code-reasoning + Coach diff-verify.
+
+### Legacy coverage floor
+
+The `extractionReport` discriminator was introduced at **v1.19.598**. Extraction panels created in the pre-field era (**2026-03-04 → 2026-04-21**) lack an `extractionReport`, so the gated cleanup will **skip** them — a **cosmetic miss only** (stale title text not auto-scrubbed; no data loss), with near-zero real-world likelihood. New extraction panels always carry the report, so the cleanup covers them.
+
 ## Evidence / references
 
-- Coach's path map (mechanism trace) — terminal session 2026-06-30.
+- Coach's path map + `v1.19.618` origin trace — terminal session 2026-06-30.
 - Jon's live repro on PRJ402100 — 2026-06-30 (the runtime confirmation table above).
-- Code: `PanelCard`, `src/app.jsx:23524-23534` (Mechanism 2), `src/app.jsx:23613-23616` (Mechanism 1).
-- Cross-member docs (PRJ402124/126) were **deliberately NOT read** — opening them via the app risked triggering the very wipe under study; their populated values may still be intact in Firestore and must not be disturbed.
+- Code: `PanelCard`, `src/app.jsx:23524-23534` (Mechanism 2, gated), `src/app.jsx:23613-23616` (Mechanism 1, gated).
+- **PRJ402124** was opened under the **fixed** build (v1.21.9, by Jon) with zero wipe events — this became the live PRESERVE confirmation. **PRJ402126** was not opened. (During diagnosis, before the fix shipped, both were deliberately left untouched to avoid tripping the wipe.)

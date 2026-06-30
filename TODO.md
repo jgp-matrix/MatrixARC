@@ -3205,7 +3205,26 @@ reset that surfaced the ground-truth state.
      advisory review called this fix a "no-op" without tracing handleSubmit's signature — it is NOT.
      Logged/resolved: 2026-06-30.
 
-181. **OPEN** [HIGH — silent loss of manually-entered customer data; deterministic on cross-project nav] —
+181. **RESOLVED** [v1.21.9 / `4175ecbd` — HIGH; silent loss of manually-entered customer data, deterministic
+     on cross-project nav] — DISCRIMINATOR: `extractionReport` presence (Jon's decision; Coach v1.19.618
+     origin trace). FIX: both v1.19.618 mechanisms gated on `extractionReport` so the stale-title cleanup
+     fires ONLY on extraction-origin panels and never wipes manual-entry lines. §1 Mechanism 2 +
+     `if(!panel.extractionReport)return;` @23528; §2 Mechanism 1 `_titleStale = …===0 && !!panel.extractionReport`
+     @23614; §3 comment rewrites (corrected the FALSE deleted-drawing story — `removePage` cascaded drawingNo
+     since v1.10.19; real vector = pre-v1.19.738 saves wiping pages but keeping title). Resolution values /
+     cleanup body unchanged. Plan: docs/181-DETAILED-PLAN.md (Coach). Diagnostic: docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md.
+     VERIFIED: PRESERVE (the fix's job) live-confirmed on real opens — Jon's PRJ402100 cross-project-nav repro
+     + PRJ402124 opened under v1.21.9 with zero [TITLE BLOCK] events, manual lines retained. STILL-CLEANS (T3)
+     code-reasoned (additive early-return; extraction-origin path byte-identical) + Coach diff-verify. T4
+     code-reasoned (_titleClearRan untouched). T5 grep PASS (1 def + 3 uses). T3 synthetic-live noted INFEASIBLE
+     (access boundary: page can only write legacy users/{uid}/projects, which the app doesn't render; live
+     company source rules-blocked) — do NOT retry. Legacy coverage floors at v1.19.598 (extractionReport intro);
+     pre-field-era extraction panels (2026-03-04→04-21) skipped = cosmetic miss only.
+     ⚠ ALREADY-LOST-DATA WORDING HELD (Jon to confirm): PRJ402124 was opened under the FIXED build, so it may
+     never have been wiped — pending Jon's live check of whether PRJ402124 lines 1-3 / PRJ402126 actually
+     retained data, the "needs re-entry vs no loss occurred" disposition is OPEN. The fix prevents FUTURE loss
+     regardless.
+     ── ORIGINAL FINDING (as logged 2026-06-30, pre-fix) ──
      Manual DWG#/REV/DESCRIPTION on a drawing-less line is WIPED from React state + Firestore on PanelCard
      remount. CONFIRMED ACTIVE via Jon's live repro (PRJ402100): drawing-less line + manual title fields →
      leave → return IMMEDIATELY = data survives; same line → open a DIFFERENT project → return = data GONE.
