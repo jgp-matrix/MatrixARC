@@ -105,6 +105,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-29 (Session 7, cont.)** — Reconciliation cluster trace (#164/#165 current-state, read-only): #164 RESOLVED/not-reproducible (`keptDeleted.push(r)` preserves all fields mechanically); #160/C105 reject path VERIFIED on production crossed data (`{...m.prior}` preserves cross+pricing); #165 re-scoped (carryChangedPnChanged fires only on pn_changed; qty-Accept is cross-safe). Deliverable: `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
 - **2026-06-29 (Session 7, cont.)** — C117: #165 admin-only cross-strip detector scope. Predicate: `matchResult.changed.filter(m=>m.reason==="pn_changed"&&m.prior.isCrossed)`, gated `isAdmin()`, inline banner naming at-risk crossed-to PN(s). Inert — no auto-action. ~5 lines JSX. Shipped v1.21.3 (65d898e8). C118 (detector-diff verification) QUEUED for next session. Details below.
 - **2026-06-29 (Session 7, cont.)** — RFQ over-selection trace (#175 evidence): `_eligibilityReason` (app.jsx:6314) three-tier short-circuit. Lead-time check (6337-6338) is INDEPENDENT include-trigger, no cooldown gate. v1.19.815 expanded "missing" to include AI-estimated (`leadTimeSource==="ai"`). PRJ402096: items have current BC pricing but lack firm lead times → all qualify as "missingLeadTime." Predicate correct as designed; over-selection is per-item state. #175 logged as visibility fix (next session first task).
+- **2026-06-30 (Session 8)** — C119: #175 scope trace (FULL RED decision locked). Confirmed `_isBomRowFlaggedRed` (line 15771, single call site at 28715), RFQ predicate `isFirmLT` (line 6337), lead-time source enumeration (6 firm + ai + absent). Scope: ~5 lines — new `_hasFirmLeadTime(r)` shared helper + COND 4 in row-color + RFQ refactor. Deliverable: `docs/175-SUPPLEMENT.md`.
 
 
 ## Findings
@@ -789,3 +790,32 @@ This is #165 TOOLING, not a fix.
 
 Verify deployed diff (`git show 65d898e8 -- src/app.jsx`) matches C117 scope exactly.
 Confirm: predicate, role gate, render point, inertness — no unscoped logic changes.
+
+---
+
+### C119 — #175 RFQ Lead-Time Visibility: Scope Trace (2026-06-30)
+
+**Type:** Scope trace + supplement (pre-implementation, read-only)
+**Status:** COMPLETE — feeds Detailed Plan
+**Deliverable:** `docs/175-SUPPLEMENT.md`
+**Decision locked:** FULL RED (Jon)
+
+---
+
+#### Trace summary
+
+1. **Row-color source:** `_isBomRowFlaggedRed` at line 15771 — confirmed name, location, single call site (BOM table row bg at 28715). Three current conditions: qty=0, unitPrice=0, priceDate missing/stale. Exclusions: labor, customerSupplied, `_isExcludedFromPriceCheck`, vendor=customer.
+
+2. **Lead-time state:** `leadTimeDays` (number|null), `leadTimeSource` (6 firm values + `"ai"` non-firm + undefined), `leadTimeUpdatedAt`, `leadTimeEstimated` (legacy). Firm sources: `bc_vendor`, `bc_item`, `supplier`, `scraper`, `manual`. Non-firm: `ai`, absent.
+
+3. **RFQ predicate confirmed:** `isFirmLT = r.leadTimeDays != null && r.leadTimeSource && r.leadTimeSource !== "ai"` at line 6337 inside `_eligibilityReason` (line 6314). Lines current. Predicate is correct for factoring into a shared `_hasFirmLeadTime(r)` helper — pure function on row, orthogonal to per-caller exclusions.
+
+4. **Scope:** ~5 lines total. New `_hasFirmLeadTime(r)` helper, add COND 4 to `_isBomRowFlaggedRed` (same exclusion gate as COND 3), refactor `_eligibilityReason` to use shared helper. NOT in scope: `findIncompleteQuoteItems` (send gate), RFQ breadth policy (HARD FENCE), pre-print checklist.
+
+#### Visual-impact note
+
+PRJ402096-class projects (~34/64 rows with AI lead times) will see ~34 additional red rows. Intended per FULL RED decision. Existing italic/asterisk/muted on the lead-time cell value provides secondary signal for why.
+
+#### Regression surface
+
+Zero behavioral regression. Single new visual condition in an existing predicate. All other lead-time consumers (pre-print checklist, budgetary auto-stamp, lead-time drivers, pricing skip guards) are independent paths — none touched.
