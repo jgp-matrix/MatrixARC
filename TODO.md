@@ -2898,10 +2898,20 @@ reset that surfaced the ground-truth state.
      the 2 crossed rows were Rejected and preserved). So #165's actual data-loss risk narrows to ONE
      untested path: **a `pn_changed` Changed row that is CROSSED, then Accepted → `carryChangedPnChanged`
      drops `isCrossed`/`crossedFrom`/pricing.** The common qty-change case is PROVEN SAFE.
-     TWO PARTS REMAIN: (A) **verb relabel** (Accept/Reject read backwards) — still warranted regardless of
-     severity (e.g. "Use Revision" vs "Keep My BOM", or split take-revision vs keep-prior visually);
-     (B) **Accept-on-crossed safety**, now scoped to `pn_changed` ONLY. Needs a dedicated repro: force a
-     PN change on a crossed prior row, Accept it, re-read the committed row for cross survival.
+     PART (A) — verb relabel — SHIPPED v1.21.8 (`fef65fe8`, 2026-06-30, Freddy-routed, Jon-approved).
+     DISPLAY-ONLY change in ReconciliationModal: Changed-row buttons relabeled + recolored — "Accept"→
+     "Use Revision" (off) / "✓ Using Revision" (on), color green→amber (take-revision strips crosses on
+     pn_changed, should NOT read as safe); "Reject"→"Keep Mine" (off) / "✕ Keep Prior"→"✓ Kept Mine" (on),
+     color red→green (data-preserving). Footer "Accept All (Changed + New)"→"Use All Revisions (Changed +
+     New)". Status span "kept prior — differs"→"kept mine — differs". Admin #165 cross-strip banner verb
+     refs (Accept/Reject) updated to match (Marc judgment call, text-only, Jon accepted at close). Resolution
+     values STILL "accepted"/"rejected" (verified in bundle) — buildReconciledBom/handlers/counters untouched.
+     Added-row buttons left "Accept"/"Reject" (correct for new items, not backwards). PENDING: Jon's live
+     visual confirm at the next real reconciliation (display-only, low risk). Lines touched: 23325, 23349,
+     23305 (Coach C-trace hints held).
+     PART (B) REMAINS OPEN: **Accept-on-crossed safety**, scoped to `pn_changed` ONLY. Needs a dedicated repro:
+     force a PN change on a crossed prior row, take the revision ("Use Revision"), re-read the committed row
+     for cross survival. Deferred behind C118.
      SEVERITY: given qty-Accept is safe, (B) is arguably MEDIUM not HIGH — Jon to confirm at fix-scope.
      DOWNGRADE BOUNDARY (Freddy — bank the reasoning, don't misread the label): it dropped to MEDIUM
      because `carryChangedPnChanged` fires ONLY on `pn_changed` and we PROVED qty-Accept is cross-safe by
