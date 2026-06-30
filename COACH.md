@@ -109,6 +109,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-30 (Session 8, cont.)** — C120: #175 Detailed Plan. 3 sections (~5 lines), 11 test criteria. Load-bearing step: inline `isFirmLT` DELETED, replaced by shared `_hasFirmLeadTime(r)`. Exclusion-gate analysis: two divergences (manual-price, DIN rail/duct) both benign — guarantee holds. Follow-up #176 logged (DIN rail/duct red noise). Deliverable: `docs/175-DETAILED-PLAN.md`.
 - **2026-06-30 (Session 8, cont.)** — C121: #178 RFQ Pre-fill Fix Cluster scope trace (A/B/C). Part A: auto-checkbox bug — cooldown masks missing-price classification, `defaultLeadTimeOnly` fires on groups with priceless rows. Part B: unit price blank — data present on BOM row, deliberately excluded from normal-mode payload (`if(ltOnly)` guard). Part C: lead time blank — `referenceLeadTimeDays` stored unconditionally in Firestore but portal never reads it. ~30 lines estimated across 6 code sites. Deliverable: `docs/178-SUPPLEMENT.md`.
 - **2026-06-30 (Session 8, cont.)** — C122: #179 Supplier Portal submit validation (A/B). Part A: spurious global LT gate at line 48016 blocks submit when "Fill all" field is empty even with all per-line fields filled — delete it. Part B: zero price validation exists in normal mode — add per-line price+LT completeness check with blocking arcAlert. ~15 lines, single code site (`handleSubmit`). Deliverable: `docs/179-SUPPLEMENT.md`.
+- **2026-06-30 (Session 8, cont.)** — C123: #179 Detailed Plan (A/B/C, scope expanded). Part C pulled in per Freddy — missing LT must render red (#fca5a5 border + light red bg), matching price treatment. Shared `hasLeadTime` predicate drives both visual indicator and submit block — single definition guarantee. Also: global input's mandatory red border + asterisk removed (Part A expansion). 6 sections, 13 test criteria, ~20 lines. Deliverable: `docs/179-DETAILED-PLAN.md`.
 
 
 ## Findings
@@ -927,8 +928,49 @@ A supplier can submit in normal mode with entirely blank prices. No blocking.
 
 **Fix:** Per-line check — each non-cannotSupply row must have both `unitPrices[i]` (non-empty, > 0) AND `_itemLeadTimesEffective[i]` (non-empty, > 0). Blocking `arcAlert` on failure with generic message (don't enumerate rows — existing red indicators for missing prices guide the supplier).
 
-**Visual gap noted:** Missing prices render red (border `#fca5a5`, bg `#fff5f5`, `⚠ Missing`). Missing lead times have NO visual indicator. Not a blocker — follow-up cosmetic item.
+**Visual gap noted:** Missing prices render red (border `#fca5a5`, bg `#fff5f5`, `⚠ Missing`). Missing lead times have NO visual indicator. **Promoted to Part C in C123 Detailed Plan** — correctness hazard, not cosmetic.
 
 #### Scope
 
-~15 lines, all within `handleSubmit` (line 47978). No payload, Firestore, or ARC-side changes.
+~15 lines as scoped in C122. Expanded to ~20 lines in C123 Detailed Plan (Part C added).
+
+---
+
+### C123 — #179 Detailed Plan (2026-06-30)
+
+**Type:** Detailed Plan (A/B/C — scope expanded from C122)
+**Status:** READY FOR APPROVAL
+**Deliverable:** `docs/179-DETAILED-PLAN.md`
+**Builds on:** C122
+
+---
+
+#### Scope expansion
+
+Part C (missing LT visual indicator) pulled in per analyst ruling: if the submit blocks
+on missing LT, the row must show it. Without the red indicator, the supplier hits an
+invisible wall — the #175 failure mode inverted.
+
+#### Shared predicate guarantee
+
+`hasLeadTime` — single definition at line 48281 (per-row rendering scope):
+```js
+const hasLeadTime=!cant&&itemLeadTimes[i]!=null&&String(itemLeadTimes[i]).trim()!==''&&(+itemLeadTimes[i]>0);
+```
+
+Two consumers:
+- **Visual indicator (§3):** LT input gets `border: 1px solid #fca5a5` + `background: #fff5f5` when `!hasLeadTime`
+- **Submit block (§4):** Same expression on `_itemLeadTimesEffective[i]` (post-auto-propagation, synced to state before validation)
+
+Variables converge before the supplier sees the result: `setItemLeadTimes(filled)` at line 48000 fires before validation, updating React state → visual indicators update on re-render.
+
+#### Plan structure (6 sections, ~20 lines)
+
+1. **§1 — `hasLeadTime` predicate** — 1 line, below `hasPrice` at 48281
+2. **§2 — Part A** — delete global gate (48015-48016) + remove red border (48238) + remove red asterisk (48239)
+3. **§3 — Part C** — red border + light red bg on LT input (48385-48391). Optional `⚠` indicator if cell layout permits (Marc's call)
+4. **§4 — Part B** — per-line price+LT check in `else` branch (replaces deleted gate). Generic arcAlert, no enumeration
+5. **§5 — Guarantee statement** — visual ⊆ submit block. Every blocked row shows red.
+6. **§6 — Regression surface** — zero behavioral regression. leadTimeOnly unchanged. No payload/Firestore/ARC-side changes.
+
+13 test criteria (T1–T13).
