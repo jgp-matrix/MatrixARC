@@ -6377,7 +6377,7 @@ async function buildRfqSupplierGroups(bom){
   // (every row is in because of missingLeadTime — no price issues). Pre-populates the
   // per-vendor "Request Lead Times Only" checkbox.
   for(const g of Object.values(groupMap)){
-    g.defaultLeadTimeOnly=(g.itemsMissingPrice===0&&g.itemsStalePrice===0&&g.itemsMissingLeadTime>0);
+    g.defaultLeadTimeOnly=g.items.every(it=>_hasPrice(it))&&g.itemsMissingLeadTime>0;
   }
   const RFQ_EXCLUDE_VENDORS=/^matrix\s*systems|crate|job\s*buyoff|job\s*buy.?off/i;
   const filtered=Object.values(groupMap).filter(g=>!RFQ_EXCLUDE_VENDORS.test(g.vendorName));
@@ -6506,8 +6506,8 @@ function buildRfqEmailHtml(group,projectName,rfqNum,rfqDate,responseBy,uploadUrl
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${_esc(item.description||"—")}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0">${_esc(item.manufacturer||"—")}</td>
       <td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;text-align:center">${_esc(item.qty||1)}</td>
-      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:right">&nbsp;</td>
-      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center">&nbsp;</td>
+      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:right;color:#64748b;font-style:italic">${_hasPrice(item)?_esc(refP):"&nbsp;"}</td>
+      <td style="padding:6px 10px;border-bottom:1px dotted #94a3b8;text-align:center;color:#64748b;font-style:italic">${_hasFirmLeadTime(item)?item.leadTimeDays+"d":"&nbsp;"}</td>
     </tr>`;
   }).join("");
   const co=companyInfo||{};
@@ -8213,8 +8213,9 @@ async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,companyIn
     startY:iy+infoRows.length*6+4,
     head:[["#","Part Number","Description","Manufacturer","Qty",priceHeader,ltHeader]],
     body:group.items.map((item,i)=>{
-      const refP=(leadTimeOnly&&item.unitPrice!=null)?`$${Number(item.unitPrice).toFixed(2)}`:"";
-      return [i+1,item.partNumber||"—",item.description||"—",item.manufacturer||"—",item.qty||1,refP,""];
+      const refP=_hasPrice(item)?`$${Number(item.unitPrice).toFixed(2)}`:"";
+      const refLT=_hasFirmLeadTime(item)?`${item.leadTimeDays}d`:"";
+      return [i+1,item.partNumber||"—",item.description||"—",item.manufacturer||"—",item.qty||1,refP,refLT];
     }),
     styles:{fontSize:9,cellPadding:2.5,textColor:[30,41,59]},
     headStyles:{fillColor:[241,245,249],textColor:[30,41,59],fontStyle:"bold",lineColor:[203,213,225],lineWidth:0.3},
@@ -15746,6 +15747,11 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 function _hasFirmLeadTime(r){
   return r.leadTimeDays!=null&&r.leadTimeSource&&r.leadTimeSource!=="ai";
 }
+// DECISION(#178): BOM-row price-presence predicate. "Meaningful price" = non-null AND >0
+// (a zero unitPrice is a placeholder, not a real price). Gates the lead-time-only auto-set
+// (§2), the referencePrice payload (§3), and email/PDF reference rendering (§6/§7). Aligns
+// with portal-side _isValidPrice (#179) through the referencePrice data flow.
+function _hasPrice(r){return r.unitPrice!=null&&+r.unitPrice>0;}
 // DECISION(v1.19.1033): Unified buyoff/crate check used by crossed items filter,
 // lead time drivers, and price check exclusion. Checks partNumber, description,
 // AND crossedFrom — the crossed-from field holds the OLD part number (e.g.
@@ -19190,10 +19196,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           const base={partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""};
           if(i.leadTimeDays!=null)base.referenceLeadTimeDays=+i.leadTimeDays;
           if(i.leadTimeSource)base.referenceLeadTimeSource=i.leadTimeSource;
-          if(ltOnly){
-            base.referencePrice=i.unitPrice!=null?+i.unitPrice:null;
-            base.referencePriceSource=i.unitPrice!=null?"bc":null;
-          }
+          base.referencePrice=_hasPrice(i)?+i.unitPrice:null;
+          base.referencePriceSource=_hasPrice(i)?(i.priceSource||null):null;
           return base;
         });
         // DECISION(v1.19.994, audit Item C): Stamp companyId on every new
@@ -47860,15 +47864,16 @@ function SupplierPortalPage({token}){
         // DECISION(v1.19.700): Skip the drag-drop upload phase entirely in leadTimeOnly
         // mode — supplier lands directly on the review table with line items + lead-time
         // inputs. No PDF upload needed since prices are already locked in from BC.
-        if(data.leadTimeOnly&&Array.isArray(data.lineItems)){
+        if(Array.isArray(data.lineItems)){
           const prefillPrices={};
+          const prefillLTs={};
           data.lineItems.forEach((item,i)=>{
-            if(item.referencePrice!=null){
-              prefillPrices[i]=Number(item.referencePrice).toFixed(2);
-            }
+            if(item.referencePrice!=null)prefillPrices[i]=Number(item.referencePrice).toFixed(2);
+            if(item.referenceLeadTimeDays!=null&&item.referenceLeadTimeSource&&item.referenceLeadTimeSource!=="ai")prefillLTs[i]=String(item.referenceLeadTimeDays);
           });
           setUnitPrices(prefillPrices);
-          setPhase('review');
+          if(Object.keys(prefillLTs).length)setItemLeadTimes(prefillLTs);
+          if(data.leadTimeOnly)setPhase('review');
         }
         setLoading(false);
       })
@@ -47933,9 +47938,9 @@ function SupplierPortalPage({token}){
           }
         });
       }
-      setUnitPrices(allPrices);
+      setUnitPrices(prev=>({...prev,...allPrices}));
       setAiConfidences(allConf);
-      setItemLeadTimes(allLeadTimes);
+      setItemLeadTimes(prev=>({...prev,...allLeadTimes}));
       setSupplierPartNums(allSupplierPNs);
       setSupplierLineNums(allSupplierLineNums);
       setAllExtractedItems(collectedExtracted);
@@ -47961,9 +47966,9 @@ function SupplierPortalPage({token}){
       console.warn("ARC AI extraction failed:",e);
       const haveAny=Object.keys(allPrices).length>0||collectedExtracted.length>0;
       setAiError((e.message||String(e))+(haveAny?` — partial results from successful batches have been preserved; missing items can be filled in manually below.`:''));
-      setUnitPrices(allPrices);
+      setUnitPrices(prev=>({...prev,...allPrices}));
       setAiConfidences(allConf);
-      setItemLeadTimes(allLeadTimes);
+      setItemLeadTimes(prev=>({...prev,...allLeadTimes}));
       setSupplierPartNums(allSupplierPNs);
       setSupplierLineNums(allSupplierLineNums);
       setAllExtractedItems(collectedExtracted);
