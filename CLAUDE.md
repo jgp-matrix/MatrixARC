@@ -470,6 +470,11 @@ Every notification message MUST begin with a source prefix so Jon knows which se
 ### Shell helper:
 `done` is on the user's PATH (`C:\Users\jon\.claude\tools\done.cmd`). The user can append `&& done` to any terminal command for a notification on success. In Git Bash (e.g., `deploy.sh`), call `pwsh` directly instead of `done.cmd`.
 
+## Custom Slash Commands
+
+### `/compact` — Quick context save before `/clear`
+Located at `.claude/commands/compact.md`. Lightweight pre-clear checkpoint: commits uncommitted work, updates the memory file with current version/state, and prints a summary. Distinct from the full Close Out procedure — no deploy, no TODO updates, no role notifications, no handoff file freshness check. Use when context compaction is approaching and you need to preserve state before resetting.
+
 ## Superpowers skills available (manual-load, local)
 Jesse Vincent's `obra/superpowers` skill pack is cloned at `C:\Users\jon\superpowers\skills\`. The Claude Code plugin system isn't available in this environment, so skills are loaded on-demand via `Read` on `C:\Users\jon\superpowers\skills\<skill-name>\SKILL.md`.
 

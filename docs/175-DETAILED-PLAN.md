@@ -64,10 +64,11 @@ in one place.
 
 **Pre-deploy verification (Marc):** After applying §1+§2+§3, grep for:
 - `isFirmLT` — must return ZERO hits
-- `leadTimeSource!=="ai"` — must return ZERO hits in predicate context (the
-  `leadTimeSource==="ai"` comparisons in italic/tooltip rendering are fine — those are
-  the OPPOSITE check, testing whether to show the asterisk, not whether the lead time
-  is firm)
+- `leadTimeSource!=="ai"` — must return exactly 1 hit, and it's inside the
+  `_hasFirmLeadTime` definition (the predicate must live in the helper, not be absent).
+  The `leadTimeSource==="ai"` comparisons in italic/tooltip rendering are fine — those
+  are the OPPOSITE check, testing whether to show the asterisk, not whether the lead
+  time is firm
 
 ---
 
@@ -249,7 +250,7 @@ the visual impact post-deploy.
 | T8 | Vendor=customer row unaffected | Row where `bcVendorNo` matches `project.bcCustomerNumber`. | No red |
 | T9 | RFQ eligibility unchanged | Open RFQ modal — same rows selected as before. | No change |
 | T10 | Existing price-red rows unchanged | Row with `unitPrice:0` or stale priceDate — still red. | Still red |
-| T11 | No duplicate predicate | `grep isFirmLT src/app.jsx` → 0 hits. `grep 'leadTimeSource!=="ai"' src/app.jsx` → 0 hits in predicate context. | Zero hits |
+| T11 | No duplicate predicate | `grep isFirmLT src/app.jsx` → 0 hits (inline variable gone). `grep 'leadTimeSource!=="ai"' src/app.jsx` → exactly 1 hit, and it's inside the `_hasFirmLeadTime` definition (the predicate must live in the helper, not be absent). | 0 / 1 hit respectively |
 
 ---
 

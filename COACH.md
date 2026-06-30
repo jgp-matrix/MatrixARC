@@ -791,7 +791,7 @@ This is #165 TOOLING, not a fix.
 ### C118 — #165 Detector-Diff Verification (2026-06-29)
 
 **Type:** Code-path verification
-**Status:** QUEUED — not done this session, open for Coach next session
+**Status:** QUEUED — carried through Sessions 7, 8. Low priority. Open for Coach next session.
 **Depends on:** C117
 
 Verify deployed diff (`git show 65d898e8 -- src/app.jsx`) matches C117 scope exactly.
@@ -985,3 +985,88 @@ One rule, two sources. The validity test is shared — can't drift even though t
 6. **§6 — Regression surface** — zero behavioral regression. leadTimeOnly unchanged. No payload/Firestore/ARC-side changes.
 
 13 test criteria (T1–T13). No test changes from Rev 0 — the amendment is structural (shared function), not behavioral.
+
+---
+
+### C124 — #178 Detailed Plan (2026-06-30)
+
+**Type:** Detailed Plan (A/B/C)
+**Status:** SHIPPED (v1.21.6, commit `80b863c0`)
+**Deliverable:** `docs/178-DETAILED-PLAN.md`
+**Builds on:** C121
+
+---
+
+#### Design
+
+`_hasPrice(r)` helper (`r.unitPrice!=null&&+r.unitPrice>0`) replaces counter-based auto-set
+for the `defaultLeadTimeOnly` checkbox — decouples from cooldown-masked `_eligibilityReason`.
+Cross-boundary alignment: `_hasPrice` gates what's STORED in Firestore; portal's `_isValidPrice`
+gates what the portal ACCEPTS. Different tests, different data, consistent pipeline: a no-price
+row writes null referencePrice → no portal pre-fill → `_isValidPrice(undefined)` → false.
+
+`referencePrice` stored in ALL modes (not just leadTimeOnly). Portal pre-fills prices and firm
+LTs. `processFile` uses merge (`prev=>({...prev,...allPrices})`) instead of full replacement to
+preserve pre-filled values for AI-unmatched rows. Email/PDF show reference data (italic gray).
+
+#### Rev 1 — per Freddy review
+
+Extended §5 to cover `setItemLeadTimes` merge (same full-replacement wipe bug as prices at
+lines 47938/47966). Added T16 (Start Over + re-upload clears pre-fills). Data flow consistency
+and re-process durability confirmed.
+
+#### Plan structure (9 sections, ~34 lines)
+
+1. **§1** — `_hasPrice(r)` helper
+2. **§2** — auto-checkbox fix (uses `_hasPrice` instead of `eligibleItemCount`)
+3. **§3** — Firestore payload (remove `if(ltOnly)` guard on referencePrice)
+4. **§4** — portal pre-fill (prices in all modes, firm LTs via `_hasFirmLeadTime` inline)
+5. **§5a** — processFile merge: `setUnitPrices(prev=>({...prev,...allPrices}))`
+   **§5b** — processFile merge: `setItemLeadTimes(prev=>({...prev,...allLeadTimes}))`
+6. **§6** — email rendering (reference price/LT in normal-mode rows)
+7. **§7** — PDF rendering (reference price/LT gated by leadTimeOnly)
+8. **§8** — separation guarantee (`_hasPrice`/`_isValidPrice` alignment)
+9. **§9** — regression surface
+
+16 test criteria (T1–T16).
+
+---
+
+### C125 — #180 Long-Lead Confirmation Modal Bug (2026-06-30)
+
+**Type:** Bug trace (read-only)
+**Status:** SHIPPED (v1.21.7, commit `5653ccfa`)
+**Deliverable:** Trace note (inline — no separate doc)
+
+---
+
+#### The bug
+
+`handleSubmit(bypassLongLeadCheck)` at line 48446 bound as `onClick={handleSubmit}`.
+React passes the SyntheticEvent as the first argument → `bypassLongLeadCheck` is a
+truthy object → `!bypassLongLeadCheck` is false → the long-lead check at lines
+48034–48042 (`days > 60`) is ALWAYS skipped. The confirmation modal (lines 48454–48490)
+is fully built and wired — amber warning, row table, "Go Back & Fix" / "Confirm & Submit"
+buttons — but can never appear.
+
+The modal's own "Confirm & Submit" button correctly uses `onClick={()=>handleSubmit(true)}`.
+Only the outer submit button was wrong.
+
+#### Fix
+
+`onClick={()=>handleSubmit()}` — 1 line. Wraps in arrow function so no argument is passed,
+`bypassLongLeadCheck` defaults to `undefined` (falsy), long-lead check executes normally.
+
+---
+
+### LESSON — "No-Op" Verdict Must Trace the Function Signature
+
+An advisory "no-op" verdict must trace the function signature before dismissing a binding
+change. The #180 near-miss: a review called `onClick={()=>handleSubmit()}` a no-op compared
+to `onClick={handleSubmit}` without tracing that `handleSubmit`'s first parameter is
+`bypassLongLeadCheck`. Wrapping in an arrow function IS the fix — it changes what the
+function receives as its first argument from SyntheticEvent (truthy) to undefined (falsy).
+
+**Rule:** When a function reference is changed to/from an arrow-function wrapper, check the
+target function's parameter list. If the first parameter has semantic meaning (flag, ID,
+config), the wrapping is NOT a no-op — it's a behavioral change.
