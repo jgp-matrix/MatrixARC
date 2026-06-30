@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.3 (defined in `public/index.html`; deployed at commit 65d898e8, tag v1.21.3; master tip 2fc2022d). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.7 (defined in `public/index.html`; code commit `5653ccfa` = #180, release `c08e1108`, tag v1.21.7; master tip `07a29ee9`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -77,6 +77,44 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - Pushover notifications (Coach/Marc only, since you can't run commands): `pwsh -NoProfile -File "C:/Users/jon/.claude/tools/notify.ps1" -Message "[PREFIX]: ..." -Priority [0|1]`
 - **Do NOT overuse ask_user_input_v0** — Jon has flagged this multiple times. Give direct recommendations. Only use the input tool when there's a genuine fork in the road with meaningful tradeoffs. Default to prose.
 - **Track versions carefully.** Version drift (where you reference old line numbers or outdated code) caused several issues during Milestone E. When in doubt, ask Coach to confirm current line numbers before referencing them.
+
+---
+
+## Freddy Operating Notes
+
+### Coach and Marc have full repo access — Freddy does not
+
+Freddy lives in the browser (Claude.ai) with NO repo, file, command, or runtime access.
+Coach (terminal) and Marc (CCD) BOTH have full repo access. Marc additionally has
+browser/runtime access.
+
+Implication Freddy must internalize:
+- A spec, review, or finding existing "only in Freddy's chat" is NOT a blocker for Coach or
+  Marc. Once anything is committed (supplement, Analyst Review, TODO entry, doc), they read
+  it directly from the repo — Freddy does not need to re-paste committed material to them.
+- Freddy only needs to RELAY information that is not yet in the repo (e.g. a brand-new
+  decision Jon just made, an as-yet-uncommitted Brief or Analyst Review).
+- When Freddy needs codebase or runtime facts, ask Jon to relay from Coach (code) or Marc
+  (runtime) — Freddy cannot read them directly.
+- Do NOT tell Jon to re-send committed docs to Coach/Marc "so they have it." They have it.
+
+### Paste discipline — every paste names its destination and is self-contained
+
+Jon routes all pastes by hand between three environments. Sloppy pastes cost him real effort.
+Rules:
+
+- ONE paste = ONE destination = ONE copy action. State explicitly who each code block goes
+  to (Coach / Marc) and, where useful, where to paste it (terminal / CCD).
+- A paste must be SELF-CONTAINED. Never split a single instruction across two code blocks
+  where one references the other ("the spec above"). If a paste references another document,
+  either fold that content into the same block, OR state plainly that it's committed and give
+  the path (e.g. "spec is in docs/175-SUPPLEMENT.md, already in the repo").
+- When emitting a paste, lead with one plain-language line telling Jon what it is and where
+  it goes BEFORE the code block — so he never has to guess whether a block is for him to read
+  or for him to forward.
+- If Jon says he already forwarded an earlier/partial paste, do NOT hand him a fuller version
+  to send on top of it without first checking whether it conflicts or duplicates. Reconcile,
+  don't double-paste.
 
 ---
 
@@ -248,36 +286,41 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-29)
+## Recently Active Work (as of 2026-06-30)
 
-### Shipped This Session (v1.21.2 → v1.21.3) — #165 cross-strip detector + reconciliation/RFQ runtime confirms
-- **v1.21.3 (code `65d898e8`) — #165 admin-only cross-strip DETECTOR (Coach C117).** Render-only,
-  `isAdmin()`-gated inline banner in ReconciliationModal that flags `pn_changed` + crossed rows (the ones
-  Accept would strip via `carryChangedPnChanged`), naming the at-risk crossed-to PN. Rode alone,
-  scope-clean, force-render verified. This is #165 TOOLING, NOT a separate finding — it arms the manual
-  Accept-on-crossed test for #165(B). (NOTE: the on-screen banner Jon saw mid-session was Marc's test-harness
-  injection into the live tab, NOT a real fire — the detector only renders inside a legitimately-opened modal.)
-- **#164 → RESOLVED / NOT-REPRODUCIBLE on master** (runtime, PRJ402096 v1.21.2). Crossed Deleted-bucket row
-  intact at modal mount across frozenBom / currentBom prop / matchResult.deleted + Coach's proven raw
-  `keptDeleted.push(r)`. RESUME only if a CLEANLY-PERSISTED cross reverts after a Deleted→Keep COMMIT.
-  Cite `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
-- **#160 / C105 reject path → VERIFIED on real production crossed data.** Both Rejected crossed ducts
-  committed with prior qty "12" + cross/BC/pricing intact via `{...m.prior}`.
-- **#165 → STAYS OPEN, re-scoped (likely DOWNGRADE HIGH→MED).** `carryChangedPnChanged` fires ONLY on
-  `pn_changed`; qty-Accept is cross-safe by code. Remaining risk = a `pn_changed` CROSSED row Accepted.
-  Parts: (A) verb relabel; (B) Accept-on-crossed-pn_changed safety — manual repro pending a real candidate.
-- **RFQ over-selection — root cause runtime-proven, predicate change PARKED.** `_eligibilityReason`
-  (app.jsx:6314) lead-time check (6337–6338) is an INDEPENDENT include-trigger; 34/36 missingLeadTime pulls
-  are `leadTimeSource==="ai"` on firm+current+in-cooldown BC-priced rows (these are AI LEAD-TIME estimates,
-  not AI prices). **NEXT SESSION FIRST TASK = #175 RFQ lead-time VISIBILITY fix** (drive BOM row red off the
-  same `isFirmLT` predicate so "not red" ⇒ "won't be RFQ'd"). The RFQ-breadth predicate change is PARKED
-  behind the visibility fix — may dissolve. Open sub-decision: full-red vs distinct lead-time marker.
-- **New residual findings (LOW/observe):** #172 flaky cross-apply (revert-on-apply 2-of-3; leading suspect
-  for the ORIGINAL #164 symptom; entangled with cross-apply BC sync), #173 drop APPENDS pages (25→50, needs
-  a Brief), #174 native vector PDFs misclassified "scanned" (benign here; NOT linked to RFQ).
-- **Method note:** runtime artifact beat code-read this session — #164 non-reproducibility and the RFQ
-  mechanism were both confirmed with live React-fiber/console captures, not source reading alone.
-- **Coach C118** (detector-diff verification on v1.21.3) is QUEUED, not done — open for Coach next session.
+### Shipped This Session (v1.21.3 → v1.21.7) — RFQ portal cluster: #175 / #179 / #178 / #180
+- **#175 (v1.21.4 `f264dabe`) — RFQ lead-time VISIBILITY, FULL RED. RESOLVED.** New `_hasFirmLeadTime(r)`
+  single-source-of-truth predicate; both `_eligibilityReason` (RFQ include) and `_isBomRowFlaggedRed` (row
+  color) call it, so "not red" ⇒ "won't be RFQ'd for lead time." Jon chose FULL RED (no distinct marker).
+  Harness 20/20; live PRJ402096 (AI-lead rows red, firm-lead blue, price-reds unchanged).
+- **#179 (v1.21.5 `6036a536`) — supplier portal submit validation (A/B/C). RESOLVED.** Per-line completeness
+  replaces the global LT hard gate; shared `_isValidPrice`/`_isValidLT` drive both the submit-block (§4) and
+  the red indicators (§3). Harness 19/19; live PRJ402111 12/12 applicable. **§5 asymmetry (BY DESIGN):** a row
+  can show red yet still submit if the global "Fill all" field back-fills it at submit time — "no red ⇒ won't
+  block" holds, the reverse does NOT.
+- **#178 (v1.21.6 `80b863c0`) — RFQ pre-fill fix cluster (A/B/C). RESOLVED.** New `_hasPrice(r)`; auto-set
+  decoupled from cooldown-masked counters (Part A bug); `referencePrice` written in ALL modes with real
+  `referencePriceSource` not hardcoded "bc" (Part B); firm-LT pre-fill + email/PDF reference cells (Part C);
+  §5 merge keeps unmatched pre-fills. Harness 20/20; live PRJ402111 10/10 applicable. **Unblocks new-supplier RFQs.**
+- **#180 (v1.21.7 `5653ccfa`) — long-lead modal never fired. RESOLVED.** `onClick={handleSubmit}` passed the
+  click event as `bypassLongLeadCheck` (truthy) → the >60-day check was always skipped. Fix:
+  `onClick={()=>handleSubmit()}` @48451. Live PRJ402111: fires on a 70-day row, ≤60 no over-fire, Go-Back
+  preserves values. Diagnosed live during #179 T13; traced Coach C125.
+- **New LOW findings:** **#176** (DIN/duct rows turn red without a firm LT — cosmetic, RFQ correctly excludes
+  them; priority TBD by Jon), **#177** (denylist fail-open: `_hasFirmLeadTime` is `!=="ai"`, so a FUTURE
+  non-firm source is silently treated as firm — fix direction = allowlist of known-firm sources).
+- **PARKED (under #175, still OPEN):** RFQ-breadth policy — should a firm-priced in-cooldown row be RFQ'd just
+  to confirm an AI lead time? The red-row fix may dissolve it; do NOT touch `_eligibilityReason` until Jon
+  confirms the visibility fix is insufficient.
+- **NEXT SESSION FIRST TASK = new-supplier RFQs** (unblocked by #178). Surface the parked RFQ-breadth question
+  early for Jon's disposition.
+- **Carry forward (still OPEN):** #165 (re-scoped HIGH→MED; (A) verb relabel + (B) Accept-on-crossed-pn_changed
+  safety), #172/#173/#174 (LOW residuals), and **Coach C118** (detector-diff verification on `65d898e8` vs C117
+  scope) STILL outstanding from the prior session. Prior session also: #164 RESOLVED (not-reproducible on
+  master), #160/C105 reject path VERIFIED.
+- **Method note:** harness-for-logic + live-runtime-for-the-rest worked well — Node harnesses proved the
+  predicates/merge deterministically; live portal runs (Firestore doc reads via the page's `firebase` SDK,
+  email/PDF via Outlook) confirmed the data flow + UI behavior.
 
 ### Shipped Last Session (v1.21.1 → v1.21.2) — #168-adjacent race removal + #168 re-investigation
 - **v1.21.2 (code `9c885da6`) — SHIPPED, but NOT the #168 fix.** Deleted Path A: the fire-and-forget
@@ -514,75 +557,73 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
-# Session State — 2026-06-29 MDT (RFQ/reconciliation runtime session close-out)
+# Session State — 2026-06-30 MDT (RFQ portal cluster: #175/#179/#178/#180 shipped + live-verified)
 
 ## Version
-**v1.21.3** (deployed 2026-06-29, PRODUCTION). Patch bump over v1.21.2.
-Shipped: **#165 admin-only cross-strip detector** (Coach C117) — render-only, zero logic change.
+**v1.21.7** (deployed 2026-06-30, PRODUCTION). Four patch bumps over v1.21.3 this session.
+- v1.21.4 = #175 (RFQ lead-time visibility, FULL RED)
+- v1.21.5 = #179 (supplier portal submit validation A/B/C)
+- v1.21.6 = #178 (RFQ pre-fill fix cluster A/B/C)
+- v1.21.7 = #180 (long-lead confirmation modal fix)
 
 ## Deploy State
-- **Master tip:** `2fc2022d` ("Session findings-log…"). Code/deploy commit: **`65d898e8`** ("Release v1.21.3").
-- **`master == origin/master`** (in sync). **Tag `v1.21.3`** on origin.
-- Production hosting: **https://matrix-arc.web.app** serving v1.21.3.
-- **ROLLBACK POINT:** `master → 0f8a61fb`, redeploy **v1.20.142** (#160-era). Lineage: v1.21.3 = #165 detector;
-  v1.21.2 = #168 race-removal; v1.21.1 = #158; v1.21.0 = #163.
+- **Master tip:** `07a29ee9` ("Close out v1.21.7…"). Latest code/deploy: `5653ccfa` (#180) → release `c08e1108`.
+- **`master == origin/master`** (in sync). **Tags `v1.21.5` / `v1.21.6` / `v1.21.7`** all on origin.
+- Production hosting: **https://matrix-arc.web.app** serving v1.21.7.
+- **ROLLBACK POINT:** `master → 0f8a61fb`, redeploy v1.20.142 (#160-era). Recent lineage:
+  v1.21.7=#180 · v1.21.6=#178 · v1.21.5=#179 · v1.21.4=#175 · v1.21.3=#165.
 
-## ⭐ NEXT SESSION — FIRST TASK: #175 RFQ lead-time visibility fix
-Root cause of today's RFQ "over-selection" is really a VISIBILITY gap: a row missing a FIRM lead time
-does NOT turn red, so the BOM reads "all good," then the RFQ pulls ~47/64 rows and surprises Jon.
-**FIX DIRECTION:** drive BOM row warning-color off the SAME `isFirmLT` predicate the RFQ uses
-(`leadTimeDays!=null && leadTimeSource && leadTimeSource!=="ai"`) so "not red" ⇒ "won't be RFQ'd for
-lead time." **OPEN SUB-DECISION for Jon at start:** full-red vs a DISTINCT lead-time marker (so
-missing-price vs missing-lead-time are tellable apart). Freddy's lean: same-predicate, distinct marker.
-**FIRST ACTION:** Coach reads what currently drives BOM row color + where to hook lead-time state in,
-then scope. Full detail + runtime evidence in TODO #175.
+## ⭐ NEXT SESSION — FIRST TASK: new-supplier RFQs
+#178 was the last enabling piece. The pre-fill cluster (referencePrice in normal mode, firm-LT
+pre-fill, email/PDF reference cells) is shipped + verified, so the new-supplier RFQ workflow can
+proceed. Also surface the **parked RFQ-breadth question** (under #175) for Jon's disposition early.
 
-## What shipped this session (v1.21.3 / 65d898e8)
-#165 admin-only cross-strip detector in ReconciliationModal. Predicate
-`matchResult.changed.filter(m=>m.reason==="pn_changed" && m.prior.isCrossed)`, gated `isAdmin()`,
-inline non-blocking banner naming the at-risk crossed-to PN(s). Rode alone, scope-clean, force-render
-verified via harness, named-PN confirmed = crossed-to value. It is #165 TOOLING (not a separate finding)
-— arms the manual Accept-on-crossed test for #165(B).
+## What shipped + verified this session
+- **#175 (v1.21.4 / `f264dabe`) — RFQ lead-time visibility, FULL RED.** New `_hasFirmLeadTime(r)`
+  single-source-of-truth predicate; both `_eligibilityReason` (RFQ) and `_isBomRowFlaggedRed`
+  (row color) call it. Harness 20/20; live on PRJ402096 (AI-lead rows red, firm-lead blue,
+  price-reds unchanged). RESOLVED.
+- **#179 (v1.21.5 / `6036a536`) — supplier portal submit validation (A/B/C).** Per-line completeness
+  replaces the global LT hard gate; shared `_isValidPrice`/`_isValidLT` drive both submit-block (§4)
+  and red indicators (§3). Harness 19/19; live PRJ402111 12/12 applicable. T11 N/A. §5 asymmetry
+  noted (red row can submit via global back-fill — "no red ⇒ won't block" holds, reverse doesn't,
+  by design). RESOLVED.
+- **#178 (v1.21.6 / `80b863c0`) — RFQ pre-fill fix cluster (A/B/C).** New `_hasPrice(r)`; auto-set
+  decoupled from cooldown-masked counters (Part A bug); `referencePrice` written in ALL modes with
+  real `referencePriceSource` (Part B); firm-LT pre-fill + email/PDF reference cells (Part C); §5
+  merge preserves unmatched pre-fills. Harness 20/20; live PRJ402111 10/10 applicable (T4/T5
+  Firestore, T6/T8 portal, T9 merge, T11/T12/T13 email+PDF). T7 N/A. RESOLVED.
+- **#180 (v1.21.7 / `5653ccfa`) — long-lead modal never fired.** `onClick={handleSubmit}` passed the
+  event as `bypassLongLeadCheck` (truthy) → check always skipped. Fix: `onClick={()=>handleSubmit()}`
+  @48451. Live PRJ402111: fires on 70-day row, ≤60 no over-fire, Go-Back preserves values. Traced
+  Coach C125. RESOLVED.
 
-## Reconciliation cluster — resolved/verified this session (runtime, PRJ402096)
-- **#164 → RESOLVED / NOT-REPRODUCIBLE on master.** Crossed Deleted-bucket row intact at modal mount
-  across frozenBom / currentBom prop / matchResult.deleted + Coach's proven raw `keptDeleted.push(r)`.
-  RESUME TRIGGER: only if a CLEANLY-PERSISTED cross (present in at-rest BOM before the drop) reverts
-  after a Deleted→Keep COMMIT. Cite `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md`.
-- **#160 / C105 reject path → VERIFIED on real production crossed data.** Both Rejected crossed ducts
-  committed with prior qty "12" + cross/BC/pricing intact via `{...m.prior}`.
-- **#165 → STAYS OPEN, re-scoped (likely DOWNGRADE HIGH→MED).** `carryChangedPnChanged` fires ONLY on
-  `pn_changed`; qty-Accept is cross-safe by code. Remaining risk = a `pn_changed` CROSSED row Accepted.
-  Detector arms the manual test; NOT yet seen firing on a genuine organic case. Parts: (A) verb relabel
-  still warranted; (B) Accept-on-crossed-pn_changed safety — manual repro pending a real candidate.
+## New findings logged (LOW)
+- **#176** — DIN rail/duct rows without firm LT now turn red after #175 (cosmetic over-flag, NOT a
+  guarantee break; RFQ excludes them). Priority LOW pending Jon.
+- **#177** — DENYLIST FAIL-OPEN: `_hasFirmLeadTime` is `!=="ai"` (denylist), so a FUTURE non-firm
+  `leadTimeSource` added without updating it is silently treated as firm (under-flagging). LOW, no
+  current trigger. Fix direction: allowlist of known-firm sources.
 
-## RFQ over-selection — root cause runtime-proven, predicate change PARKED
-`_eligibilityReason` (app.jsx:6314) lead-time check (6337–6338) is an INDEPENDENT include-trigger (no
-cooldown gate, no sole-gap guard). PRJ402096: 36 missingLeadTime pulls, **34 = `leadTimeSource==="ai"`**
-on firm+current+in-cooldown BC-priced rows (clincher 9342550; control 3044076 firm bc_vendor excluded).
-These are AI LEAD-TIME estimates, NOT AI prices (prices are real BC). **The RFQ-breadth policy question
-(should a firm-priced in-cooldown row be RFQ'd just to confirm an AI lead time?) is PARKED BEHIND the
-#175 visibility fix — the red-row fix may dissolve it. Do NOT scope an RFQ predicate change until Jon
-confirms the visibility fix doesn't fully satisfy.**
+## Parked / pending
+- **RFQ-breadth policy question (under #175, OPEN):** should a firm-priced in-cooldown row be RFQ'd
+  just to confirm an AI lead time? Parked behind the #175 visibility fix — may be dissolved by it.
+  Do NOT scope an `_eligibilityReason` change until Jon confirms the red-row fix is insufficient.
 
-## NEW residual findings logged (LOW / observe)
-- **#172** — flaky cross-apply (revert-on-apply, 2-of-3; selection modal re-fires). Leading suspect for
-  the ORIGINAL #164 symptom. LEAD: no JS error, entangled with cross-apply BC sync. Trace later.
-- **#173** — drop APPENDS pages (25→50) instead of superseding; manual re-region hazard. Needs a Brief.
-- **#174** — native vector PDFs misclassified "scanned" (PRJ402096 FLS). Benign here; gates H5/region/
-  block downstream. NOT linked to RFQ (different path). LOW.
+## Coach-owned items outstanding (flagged at close-out)
+- **C118** — #165 detector-diff verification (`git show 65d898e8 -- src/app.jsx` vs C117 scope) STILL
+  outstanding from the prior session.
+- **Gate-B wording fix** in `docs/175-DETAILED-PLAN.md` — correct T11 grep-gate criterion to "exactly
+  1 hit, and it's the `_hasFirmLeadTime` def" (not "0 hits").
+- **COACH.md lesson** — an advisory "no-op" verdict must trace the function signature before
+  dismissing a binding change (the #180 near-miss).
+- **CLAUDE.md** — document the new `/compact` quick-save command (`.claude/commands/compact.md`,
+  now tracked): commits uncommitted work + snapshots version/state before a context reset; distinct
+  from `/team-closeout` (no deploy, no TODO, no notifications).
 
-## Open work queue (after tomorrow's #175)
-- **#159** — Copy-to-New-Quote customer selection (scope: `docs/159-COPY-CUSTOMER-SCOPE.md`).
-- **#165(A/B)** — verb relabel + Accept-on-crossed-pn_changed safety (detector now in place).
-- **#170 / #171** — BC sync residuals (LOW). **#161/#162, #166** (LOW). **#169** parked at Brief-stage.
-- **#163 production cutover — STILL GATED:** needs a prod BC env. Full detail in TODO #163.
-
-## Pending / handoff notes
-- **Coach C118** — detector-diff verification on v1.21.3 (`git show 65d898e8 -- src/app.jsx`) QUEUED,
-  NOT done this session. Open for Coach next session.
-- **Coach-owned uncommitted files** (left for Coach): `CLAUDE.md`, `COACH.md` (modified), `COACH-ARCHIVE.md`
-  (new — the COACH.md bloat-trim, ~737 lines). Marc did NOT touch these.
-- Marc committed `2fc2022d`: TODO findings-log + `docs/164-165-RECONCILIATION-RUNTIME-REPORT.md` +
-  `docs/COACH-MD-BLOAT-FREDDY-REVIEW.md`.
-- v1.21.3 deployed; master == origin/master.
+## Test infrastructure note
+Live portal testing pattern this session: Jon sends a test RFQ to himself → Marc pulls the portal
+link from Outlook (`outlook_email_search` + `read_resource`) → navigates the Claude-in-Chrome
+controlled tab → Jon uploads the PDF → Marc drives the review-table tests + reads the `rfqUploads`
+doc via the page's Firebase SDK (`javascript_tool`, `firebase` is global v8). Each successful submit
+consumes the token (terminal). Closing the controlled tab kills the MCP tab group — navigate, don't close.
