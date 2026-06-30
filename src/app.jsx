@@ -47840,6 +47840,12 @@ function SupplierPortalPage({token}){
   const [morePages,setMorePages]=useState(null); // {nextPage,totalPages} when PDF has >20 pages
   const [longLeadConfirm,setLongLeadConfirm]=useState(null); // {items:[{partNumber,row,days}]} when >60d items detected
   const pdfRef=useRef(null);
+  // DECISION(#179): SINGLE definition of each per-line validity rule. Both the visual
+  // indicator (§3, reads React state itemLeadTimes[i]) and the submit block (§4, reads
+  // post-propagation _itemLeadTimesEffective[i]) call these — same rule, different sources,
+  // so the block and the red styling can never drift apart.
+  function _isValidPrice(x){return x!==undefined&&x!=='';}
+  function _isValidLT(x){return x!=null&&String(x).trim()!==''&&(+x>0);}
 
   useEffect(()=>{
     fbDb.collection('rfqUploads').doc(token).get()
@@ -48013,7 +48019,17 @@ function SupplierPortalPage({token}){
       });
       if(missing.length){arcAlert("Please provide a lead time for every item — either fill in each row, or type a number into the yellow \"Fill all Lead Times at once\" box at the top.\n\nMissing on:\n"+missing.slice(0,10).join("\n")+(missing.length>10?`\n…and ${missing.length-10} more`:""));return;}
     }else{
-      if(!leadTime.trim()){arcAlert("Please enter the lead time in days ARO for this order before submitting.");return;}
+      // DECISION(#179): Per-line completeness replaces the old global-lead-time hard gate.
+      // A row is incomplete if its price OR its (post-propagation) lead time is invalid —
+      // Cannot Supply rows are exempt. Same _isValidPrice/_isValidLT used by the visual red
+      // indicators, so "no red rows" guarantees "submit won't block".
+      const _lineItems=info?.lineItems||[];
+      let hasIncomplete=false;
+      _lineItems.forEach((_,i)=>{
+        if(cannotSupply[i]===true)return;
+        if(!_isValidPrice(unitPrices[i])||!_isValidLT(_itemLeadTimesEffective[i]))hasIncomplete=true;
+      });
+      if(hasIncomplete){arcAlert("There are rows with missing price or lead time. Please complete them before submitting.");return;}
     }
     if(!bypassLongLeadCheck){
       const lineItems=info?.lineItems||[];
@@ -48235,8 +48251,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                 }}
                 onFocus={e=>e.target.select()}
                 onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                style={{width:90,...inp,border:`1px solid ${(!info?.leadTimeOnly&&!leadTime.trim())?"#fca5a5":"#d97706"}`,background:"#fff"}}/>
-              <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>days ARO {!info?.leadTimeOnly&&<span style={{color:"#dc2626"}}>*</span>}</span>
+                style={{width:90,...inp,border:"1px solid #d97706",background:"#fff"}}/>
+              <span style={{fontSize:13,color:"#92400e",fontWeight:600,whiteSpace:"nowrap"}}>days ARO</span>
               <button onClick={()=>{
                   if(!leadTime.trim())return;
                   const lineItems=info?.lineItems||[];
@@ -48278,7 +48294,8 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                 {lineItems.map((item,i)=>{
                   const conf=aiConfidences[i];
                   const cant=cannotSupply[i]===true;
-                  const hasPrice=!cant&&unitPrices[i]!==undefined&&unitPrices[i]!=='';
+                  const hasPrice=!cant&&_isValidPrice(unitPrices[i]);
+                  const hasLeadTime=!cant&&_isValidLT(itemLeadTimes[i]);
                   const confirmed=confirmedMatches[i]===true;
                   const isMatch=!cant&&(confirmed||conf==='high'||conf==='medium');
                   const isNoMatch=!cant&&!confirmed&&(conf==='low');
@@ -48381,15 +48398,16 @@ input[type=number]{-moz-appearance:textfield;}`}</style>
                             blank making it look like ARC had a bug. */}
                         {cant?(
                           <span style={{fontSize:12,color:muted,fontStyle:"italic"}}>n/a</span>
-                        ):(
+                        ):(<>
                           <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="days"
                             value={itemLeadTimes[i]??''}
                             onChange={e=>{const v=e.target.value;if(v!==''&&!/^\d*$/.test(v))return;setItemLeadTimes(prev=>({...prev,[i]:v}));}}
                             onFocus={e=>e.target.select()}
                             onKeyDown={e=>{if(e.key==='Enter')e.target.blur();}}
-                            style={{width:80,textAlign:"center",...inp}}
+                            style={{width:80,textAlign:"center",...inp,border:`1px solid ${hasLeadTime?"#e2e8f0":"#fca5a5"}`,background:hasLeadTime?"#fff":"#fff5f5"}}
                           />
-                        )}
+                          {!hasLeadTime&&<div style={{fontSize:10,color:"#dc2626",fontWeight:600,marginTop:2}}>⚠</div>}
+                        </>)}
                       </td>
                       <td style={{padding:"8px 12px",textAlign:"center"}}>
                         <label style={{display:"flex",alignItems:"center",justifyContent:"center",gap:6,cursor:"pointer",userSelect:"none"}}>
