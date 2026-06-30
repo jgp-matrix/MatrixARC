@@ -23517,14 +23517,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       setExtracting(false);
     }
   },[bgTask?.status,extracting,bgTaskIsForThisProject]);
-  // DECISION(v1.19.618): Retroactive cleanup for panels where the drawings were deleted
-  // before the "clear title block on last page remove" logic existed. If pages=[] but
-  // drawingNo/Desc/Rev are populated, clear them in Firestore too so future renders/prints
-  // don't keep showing stale title-block text.
+  // DECISION(v1.19.618, FIX #181): Retroactive cleanup for extraction-origin panels
+  // where the drawings were deleted before the v1.19.658 cascade-clear existed. Gated
+  // on extractionReport presence so manual-entry panels (no extraction, no report) are
+  // never wiped. See docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md for root-cause analysis.
   const _titleClearRan=useRef(false);
   useEffect(()=>{
     if(_titleClearRan.current)return;
     if((panel.pages||[]).length!==0)return;
+    if(!panel.extractionReport)return;
     if(!panel.drawingNo&&!panel.drawingDesc&&!panel.drawingRev)return;
     _titleClearRan.current=true;
     const cleaned={...panel,drawingNo:"",drawingDesc:"",drawingRev:""};
@@ -23607,10 +23608,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [lightboxId,setLightboxId]=useState(null);
   const [showCompliance,setShowCompliance]=useState(false);
   const [draftName,setDraftName]=useState(panel.name||"");
-  // DECISION(v1.19.618): If pages are empty but drawingNo/Desc/Rev are populated (stale from
-  // a prior extraction that was deleted before the auto-clear-on-last-page-remove existed),
-  // initialize the drafts as empty. A follow-up useEffect below also clears Firestore.
-  const _titleStale=(panel.pages||[]).length===0;
+  // DECISION(v1.19.618, FIX #181): Draft inputs blank only for extraction-origin panels
+  // with no pages (stale title from deleted drawing). Manual-entry panels init from stored
+  // values. Gated on extractionReport — same discriminator as the cleanup useEffect above.
+  const _titleStale=(panel.pages||[]).length===0&&!!panel.extractionReport;
   const [draftNo,setDraftNo]=useState(_titleStale?"":(panel.drawingNo||"").slice(0,25));
   const [draftDesc,setDraftDesc]=useState(_titleStale?"":(panel.drawingDesc||""));
   const [draftRev,setDraftRev]=useState(_titleStale?"":(panel.drawingRev||""));
