@@ -107,6 +107,7 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-29 (Session 7, cont.)** — RFQ over-selection trace (#175 evidence): `_eligibilityReason` (app.jsx:6314) three-tier short-circuit. Lead-time check (6337-6338) is INDEPENDENT include-trigger, no cooldown gate. v1.19.815 expanded "missing" to include AI-estimated (`leadTimeSource==="ai"`). PRJ402096: items have current BC pricing but lack firm lead times → all qualify as "missingLeadTime." Predicate correct as designed; over-selection is per-item state. #175 logged as visibility fix (next session first task).
 - **2026-06-30 (Session 8)** — C119: #175 scope trace (FULL RED decision locked). Confirmed `_isBomRowFlaggedRed` (line 15771, single call site at 28715), RFQ predicate `isFirmLT` (line 6337), lead-time source enumeration (6 firm + ai + absent). Scope: ~5 lines — new `_hasFirmLeadTime(r)` shared helper + COND 4 in row-color + RFQ refactor. Deliverable: `docs/175-SUPPLEMENT.md`.
 - **2026-06-30 (Session 8, cont.)** — C120: #175 Detailed Plan. 3 sections (~5 lines), 11 test criteria. Load-bearing step: inline `isFirmLT` DELETED, replaced by shared `_hasFirmLeadTime(r)`. Exclusion-gate analysis: two divergences (manual-price, DIN rail/duct) both benign — guarantee holds. Follow-up #176 logged (DIN rail/duct red noise). Deliverable: `docs/175-DETAILED-PLAN.md`.
+- **2026-06-30 (Session 8, cont.)** — C121: #178 RFQ Pre-fill Fix Cluster scope trace (A/B/C). Part A: auto-checkbox bug — cooldown masks missing-price classification, `defaultLeadTimeOnly` fires on groups with priceless rows. Part B: unit price blank — data present on BOM row, deliberately excluded from normal-mode payload (`if(ltOnly)` guard). Part C: lead time blank — `referenceLeadTimeDays` stored unconditionally in Firestore but portal never reads it. ~30 lines estimated across 6 code sites. Deliverable: `docs/178-SUPPLEMENT.md`.
 
 
 ## Findings
@@ -853,3 +854,46 @@ Full side-by-side comparison of `_isExcludedFromPriceCheck` (row-color) vs `_eli
 #### Regression surface
 
 Single call site for `_isBomRowFlaggedRed` (line 28715, BOM table only). No print/PDF/export path reads it. `findIncompleteQuoteItems` (send gate) NOT touched — lead-time send-gating is a separate decision. All other `leadTimeSource` consumers are independent read/write paths — none affected. 11 test criteria (T1–T11).
+
+---
+
+### C121 — #178 RFQ Pre-fill Fix Cluster Scope Trace (2026-06-30)
+
+**Type:** Read-only scope trace (A/B/C)
+**Status:** SCOPE COMPLETE — feeds Detailed Plan
+**Deliverable:** `docs/178-SUPPLEMENT.md`
+
+---
+
+#### Part A — "Lead Time Only" auto-checkbox bug
+
+**Root cause:** Cooldown interaction with `_eligibilityReason`'s short-circuit.
+
+When a row is in RFQ cooldown (rfqSentDate within 30 days), `_eligibilityReason` skips price checks and falls through to the lead-time check. A row with `unitPrice===0` but in cooldown returns `"missingLeadTime"` instead of `"missingPrice"`. The per-group counter `itemsMissingPrice` stays 0, so the auto-set at line 6380 fires:
+
+```js
+g.defaultLeadTimeOnly=(g.itemsMissingPrice===0&&g.itemsStalePrice===0&&g.itemsMissingLeadTime>0);
+```
+
+**Correct rule:** `defaultLeadTimeOnly = true` ONLY when every row has `unitPrice > 0` AND at least one row needs a lead time. Evaluate price presence directly, not via the reason classification.
+
+#### Part B — Unit Price column blank in normal mode
+
+**Answer to KEY QUESTION:** POPULATION DECISION, not data-fetch gap. Price IS present on `item.unitPrice` at RFQ-gen time. Deliberately excluded from normal-mode payload:
+
+- Firestore payload (line 19193): `referencePrice` gated by `if(ltOnly)`
+- Email HTML (line 6509): normal mode → `&nbsp;`
+- PDF (line 8216): normal mode → `""`
+- Portal (line 48367): blank editable input
+
+Infrastructure exists in leadTimeOnly mode — extend to normal mode (editable, not read-only).
+
+#### Part C — Lead Time column blank (conditional pre-fill)
+
+**Answer to KEY QUESTION:** RENDERING GAP. `referenceLeadTimeDays` IS stored unconditionally in Firestore (line 19191). Portal never reads it. Grep: single hit at line 19191 = write-only.
+
+**Fix:** Conditional pre-fill using `_hasFirmLeadTime` logic on stored `referenceLeadTimeSource`. Pre-fill firm sources (bc_vendor, bc_item, supplier, scraper, manual). Leave blank for AI/absent.
+
+#### Regression surface
+
+6 code sites across 2 paths (ARC-side build + portal render). ~30 lines estimated. Parts are independent but share payload path — ship together. Full enumeration in `docs/178-SUPPLEMENT.md`.
