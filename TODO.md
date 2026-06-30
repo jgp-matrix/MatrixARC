@@ -3124,8 +3124,18 @@ reset that surfaced the ground-truth state.
      T1–T10 harness 20/20; T9 proves RFQ refactor identical over 36 day×source combos. Plan:
      docs/175-DETAILED-PLAN.md (Coach C120). RESOLVED at close-out 2026-06-30: live visual on PRJ402096
      confirmed AI-lead rows render FULL RED, firm-lead rows stay blue, existing price-reds unchanged.
-     PARKED (separate, still OPEN): the RFQ-breadth policy question pending Freddy's disposition — the
-     red-row fix may dissolve it; do NOT scope an `_eligibilityReason` change until Jon confirms otherwise.
+     RFQ-BREADTH QUESTION — RESOLVED (DISSOLVED) 2026-06-30 by Jon. Disposition: the #175 red-row fix IS
+     sufficient; the question dissolves as hypothesized. Firm-priced, in-cooldown rows with AI lead times
+     stay RFQ-eligible (lead-time-only, reason "missingLeadTime") and are now VISIBLE via the shared
+     `_hasFirmLeadTime` predicate (red row ⇔ lead-time RFQ pull). `_eligibilityReason` is LEFT UNTOUCHED —
+     excluding these rows would ship quotes with unconfirmed AI lead times and no prompt to verify them, a
+     regression against #175's intent. Three reasons it's coherent, not surprising: (1) SSOT visibility —
+     any lead-time pull is red, "not red ⇒ won't be RFQ'd for lead time" holds bidirectionally; (2) targeted
+     — `"missingLeadTime"`-only auto-enables the per-vendor "Lead Times Only" checkbox (v1.19.699), so the
+     supplier confirms LT only, not re-quoting in-cooldown price; (3) price cooldown still suppresses price
+     re-asks. Code grounding: app.jsx:6314 (`_eligibilityReason`), :6337 (LT include), :15747 (`_hasFirmLeadTime`),
+     :15792 (red COND 4). Residue tracked separately as #176 (DIN/duct cosmetic over-flag) and #177
+     (denylist fail-open) — NOT part of this question.
 
 176. **OPEN** [LOW — cosmetic over-flagging, NOT a guarantee break] — DIN rail / duct rows without a firm
      lead time now turn FULL RED after #175 (shipped v1.21.4, `f264dabe`). These are bulk consumables cut

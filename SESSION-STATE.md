@@ -47,9 +47,11 @@ proceed. Also surface the **parked RFQ-breadth question** (under #175) for Jon's
   current trigger. Fix direction: allowlist of known-firm sources.
 
 ## Parked / pending
-- **RFQ-breadth policy question (under #175, OPEN):** should a firm-priced in-cooldown row be RFQ'd
-  just to confirm an AI lead time? Parked behind the #175 visibility fix — may be dissolved by it.
-  Do NOT scope an `_eligibilityReason` change until Jon confirms the red-row fix is insufficient.
+- **RFQ-breadth policy question (under #175) — RESOLVED (DISSOLVED) 2026-06-30 by Jon.** The #175
+  red-row fix is sufficient; firm-priced in-cooldown rows with AI lead times stay RFQ-eligible
+  (lead-time-only) and are now visible via shared `_hasFirmLeadTime`. `_eligibilityReason` LEFT
+  UNTOUCHED — excluding them would ship quotes with unconfirmed AI lead times. Full rationale in
+  TODO.md #175. Residue: #176/#177 (LOW, separate).
 
 ## Coach-owned items outstanding (flagged at close-out)
 - **C118** — #165 detector-diff verification (`git show 65d898e8 -- src/app.jsx` vs C117 scope) STILL
