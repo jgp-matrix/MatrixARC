@@ -6334,8 +6334,7 @@ async function buildRfqSupplierGroups(bom){
     // unverified AI estimates that the supplier should also confirm. Firm sources are
     // the only ones we trust without re-asking: BC (bc_item / bc_vendor), Supplier
     // portal submission, manual entry, web scraper.
-    const isFirmLT=r.leadTimeDays!=null&&r.leadTimeSource&&r.leadTimeSource!=="ai";
-    if(!isFirmLT)return "missingLeadTime";
+    if(!_hasFirmLeadTime(r))return "missingLeadTime";
     return null;
   }
   const eligibleWithReasons=[];
@@ -15740,6 +15739,13 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 // DECISION(v1.19.1031): Broadened job buyoff + crate matching — check both
 // partNumber and description with substring match (no ^ $ anchors). Previous
 // exact-match on partNumber-only missed data variants.
+// DECISION(#175): Single source of truth for "row has a firm lead time". Used by BOTH
+// _eligibilityReason (RFQ include logic) and _isBomRowFlaggedRed (BOM row color) so the
+// two can never disagree — "not red" ⇒ "won't be RFQ'd for lead time". Firm sources:
+// bc_vendor, bc_item, supplier, scraper, manual. Non-firm: "ai", absent, or null days.
+function _hasFirmLeadTime(r){
+  return r.leadTimeDays!=null&&r.leadTimeSource&&r.leadTimeSource!=="ai";
+}
 // DECISION(v1.19.1033): Unified buyoff/crate check used by crossed items filter,
 // lead time drivers, and price check exclusion. Checks partNumber, description,
 // AND crossedFrom — the crossed-from field holds the OLD part number (e.g.
@@ -15777,6 +15783,7 @@ function _isBomRowFlaggedRed(r,customerNo,customerName){
     if(!r.priceDate)return true;
     const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
     if((Date.now()-r.priceDate)>staleMs)return true;
+    if(!_hasFirmLeadTime(r))return true;
   }
   return false;
 }
