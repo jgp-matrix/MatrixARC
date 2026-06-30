@@ -3118,3 +3118,29 @@ reset that surfaced the ground-truth state.
      shipped AND judged insufficient.
      Evidence: runtime capture this session (per-row field values + case-a/b breakdown).
      Logged: 2026-06-29 (Marc runtime-confirm; Coach predicate trace; Freddy disposition).
+     ── SHIPPED 2026-06-30, v1.21.4 (`f264dabe`) — FULL RED chosen by Jon ── new `_hasFirmLeadTime(r)`
+     helper is the single source of truth; both `_eligibilityReason` (6337) and `_isBomRowFlaggedRed`
+     (COND 4) call it. Grep gate: `isFirmLT`=0 hits, `leadTimeSource!=="ai"`=1 hit (the helper def).
+     T1–T10 harness 20/20; T9 proves RFQ refactor identical over 36 day×source combos. Plan:
+     docs/175-DETAILED-PLAN.md (Coach C120). Status flips OPEN→RESOLVED at close-out after live-visual
+     confirm on PRJ402096.
+
+176. **OPEN** [LOW — cosmetic over-flagging, NOT a guarantee break] — DIN rail / duct rows without a firm
+     lead time now turn FULL RED after #175 (shipped v1.21.4, `f264dabe`). These are bulk consumables cut
+     from stock — lead time is irrelevant — and the RFQ CORRECTLY excludes them via `RFQ_EXCLUDE_ITEMS`,
+     so the #175 guarantee still holds ("not red ⇒ won't be RFQ'd for lead time"); the red is just visual
+     noise. FIX DIRECTION (if Jon wants it): either widen `_isExcludedFromPriceCheck` to include DIN
+     rail/duct (CAUTION: also changes price-check red behavior — may be undesirable) OR add a separate
+     `_isExcludedFromLeadTimeCheck` predicate used only by COND 4. NOT a #175 change. Priority TBD by Jon
+     after the live look at PRJ402096. Source: docs/175-DETAILED-PLAN.md §6.
+     Logged: 2026-06-30 (Freddy disposition; Marc on #175 ship).
+
+177. **OPEN** [LOW — latent under-flagging hazard; no current trigger] — Firm-lead-time predicate
+     `_hasFirmLeadTime` is a DENYLIST (`leadTimeSource!=="ai"`), so any FUTURE non-firm `leadTimeSource`
+     value added without updating the predicate is silently treated as FIRM — the row won't turn red and
+     won't be RFQ'd for lead time. This is the DANGEROUS (under-flagging) direction, opposite of #176's
+     harmless over-flagging. No current trigger — "ai" is the only non-firm source today. FIX DIRECTION
+     if ever taken: convert to an ALLOWLIST of known-firm sources (bc_vendor, bc_item, supplier, scraper,
+     manual) so a new unknown source defaults to NOT-firm (red + RFQ'd) = fail-safe. NOT a #175/#176
+     change. Source: Freddy, #175 ship review.
+     Logged: 2026-06-30 (Freddy hazard call; Marc logged on #175 ship).
