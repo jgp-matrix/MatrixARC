@@ -3304,3 +3304,24 @@ reset that surfaced the ground-truth state.
      add an "already added" affordance. RELATED DATA ARTIFACT (cleanup candidate): some saved defaults store
      duplicate emails (e.g. InterMtn = "boyd\nkevin\nkevin") — the current dedup blocks NEW dups but doesn't
      scrub existing storage; a one-time normalize-on-load-and-resave would clean them. Logged: 2026-06-30 (Marc, #183 T5 investigation).
+186. **RESOLVED** [v1.21.12 / `f87a40f0` (fix) · release `3d67163b` — locked-quote BC price-check nag] — Opening a
+     sent/locked quote (`quoteLocked` → "LOCKED REV NN" pill) fired the "💲 BC Purchase Price Updates" modal
+     (`PurchasePriceCheckModal`) on project open + a 30s poll; both Accept AND Dismiss then wrote the frozen quoted
+     BOM (Accept overwrote `unitPrice`/`priceDate`/`bcPoDate`+`priceSource:'bc'`; Dismiss stamped
+     `bcPriceCheckDismissed`). ROOT CAUSE: the price-check `useEffect` `tryCheck` (src/app.jsx ~36532) had NO
+     frozen-quote gate. FIX (Coach C126, Freddy-assigned): added `if(_fp.quoteLocked||_fp.wonAt||_fp.lostAt)return;`
+     BEFORE `priceCheckRan` is set (so an in-session unlock re-enables the check on the next poll). `quoteLocked`
+     (live frozen field, cleared at unlock) NOT `quoteSentAt` (set-once → would suppress through the whole revision
+     window). Only gates whether the check RUNS — no pricing data / modal handlers / thresholds / BC logic changed.
+     KNOWN ACCEPTED LIMITATION: an ECO edit can leave `quoteLocked` stale-true, keeping the check suppressed during
+     the ECO window (not handled). VERIFY: T1 PASS (live, decisive — PRJ402089 `quoteLocked:true`, 11 real BC diffs,
+     no modal), T2 PASS (runtime+code — non-frozen still fires), T3/T4 PASS (code-reasoned — unlock re-enables /
+     won-lost suppressed), T5 PASS (grep). Docs: docs/186-LOCKED-QUOTE-PRICECHECK-review.md.
+     **POST-SEND EXPOSURE (read-only spot-check, C127 follow-up):** found 5 candidate projects / 35 rows across 84
+     real projects (113 docs incl. ~29 `arc-` stubs; 15 frozen). Only **PRJ402091** (OVIVO, Rev 3, 11 rows,
+     ~$764 affected-row cost) is real customer-facing; the rest are internal (`noah@matrixpci.com`) or an unsent
+     in-progress revision (PRJ402092, Rev 4 > sentRev 3). Exact sell shift UNRECOVERABLE (Accept overwrote
+     `unitPrice` with no prior-value field; only `lastQuoteHash`, non-invertible). Count is a proxy — `priceSource:'bc'`
+     + post-send date can't be cleanly separated from legit refresh-pricing; the modal-Accept bug is a subset.
+     **DISPOSITION: log, no action (Jon, 2026-07-01)** — exposure too small/uncertain, v1.21.12 prevents recurrence;
+     no remediation, no data correction, no customer contact. Diagnostic: docs/186-POST-SEND-REPRICE-DIAGNOSTIC.md.
