@@ -63,7 +63,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.7 (defined in `public/index.html`; code commit `5653ccfa` = #180, release `c08e1108`, tag v1.21.7; master tip `07a29ee9`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.11 (defined in `public/index.html`; code commit `7cf55a82` = #182, tag v1.21.11; master tip `5cc930fe`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -288,7 +288,34 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ## Recently Active Work (as of 2026-06-30)
 
-### Shipped This Session (v1.21.3 → v1.21.7) — RFQ portal cluster: #175 / #179 / #178 / #180
+### Shipped This Session (v1.21.7 → v1.21.11) — #165A / #181 / #183 / #182
+- **#165(A) (v1.21.8 `fef65fe8`) — reconciliation verb relabel. BUILT, PENDING Jon eyeball.** ReconciliationModal
+  Changed-row verbs relabeled + recolored: "Use Revision" (amber) / "Keep Mine" (green), footer "Use All
+  Revisions", status span + admin cross-strip banner wording. Resolution values unchanged. Part (B)
+  Accept-on-crossed-pn_changed safety stays parked behind Coach C118.
+- **#181 (v1.21.9 `4175ecbd`) — manual-line title data-loss. RESOLVED.** `extractionReport` gate on both
+  v1.19.618 PanelCard mechanisms → stale-title cleanup fires only on extraction-origin panels, never manual
+  lines. Live PRESERVE-confirmed (PRJ402100 repro + PRJ402124 under fix). **NO production data loss** — 124/126
+  confirmed retained. Real vector was pre-v1.19.738 saves (NOT deleted drawings — removePage cascaded since v1.10.19).
+- **#183 (v1.21.10 `5043fd1c`) — RFQ email recipient infinite-loop freeze. RESOLVED.** Option A: removed the
+  non-identity textarea value transform; RAW newline state, normalize to "; " only at send/Firestore boundary.
+  Jon live-confirmed T1 (freeze gone) / T2 (one-per-line) / T5 (append). The "T5 regression" was correct dedup on
+  pre-seeded fields — NOT a bug, NO handler edit made (editing working code would risk regressing the freeze fix).
+- **#182 (v1.21.11 `7cf55a82`) — Item Vendor EntityWithSameKeyExists on Push-to-BC. RESOLVED-PENDING-T3.** PATCH
+  used a 2-part key but BC declares a 3-part key (Item_No, Vendor_No, Variant_Code) → 404 → fallthrough re-POST →
+  400 collision. Fix: 3-part PATCH key + Variant_Code in GET $select + deleted the 404→POST fallthrough. Marc
+  code-checks pass; **T3 live Push-to-BC NOT RUN** (Jon left before it).
+- **New LOW findings:** **#184** (push concurrency / Firestore "resource-exhausted" under broad Push — adjacent to
+  #182, not causal), **#185** (Contacts dropdown looks inert because saved defaults seed all contacts → correct
+  dedup; + InterMtn dup-email data artifact).
+- **⭐ NEXT SESSION FIRST TASK = #182 T3 verify** — Push to BC on PRJ402124 once → confirm the 0/0/32
+  EntityWithSameKeyExists alert is GONE (still-collides ⇒ do NOT close, roll back v1.21.11). Then **#159**
+  (Copy-to-New-Quote customerless/PRJ#-less stranding — shovel-ready HIGH, ~70 lines, Coach C104).
+- **Dispositions:** RFQ-breadth (under #175) **DISSOLVED** — `_eligibilityReason` left untouched. **#58/C15
+  re-scoped CRITICAL→MEDIUM** — 5/7 parts closed; Parts 2 (extractionVerification persist, ~1 line), 4 (L3 on
+  re-extract), 7 (shared L3 fn) remain.
+
+### Shipped Last Session (v1.21.3 → v1.21.7) — RFQ portal cluster: #175 / #179 / #178 / #180
 - **#175 (v1.21.4 `f264dabe`) — RFQ lead-time VISIBILITY, FULL RED. RESOLVED.** New `_hasFirmLeadTime(r)`
   single-source-of-truth predicate; both `_eligibilityReason` (RFQ include) and `_isBomRowFlaggedRed` (row
   color) call it, so "not red" ⇒ "won't be RFQ'd for lead time." Jon chose FULL RED (no distinct marker).
@@ -309,11 +336,10 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 - **New LOW findings:** **#176** (DIN/duct rows turn red without a firm LT — cosmetic, RFQ correctly excludes
   them; priority TBD by Jon), **#177** (denylist fail-open: `_hasFirmLeadTime` is `!=="ai"`, so a FUTURE
   non-firm source is silently treated as firm — fix direction = allowlist of known-firm sources).
-- **PARKED (under #175, still OPEN):** RFQ-breadth policy — should a firm-priced in-cooldown row be RFQ'd just
-  to confirm an AI lead time? The red-row fix may dissolve it; do NOT touch `_eligibilityReason` until Jon
-  confirms the visibility fix is insufficient.
-- **NEXT SESSION FIRST TASK = new-supplier RFQs** (unblocked by #178). Surface the parked RFQ-breadth question
-  early for Jon's disposition.
+- **RFQ-breadth (under #175): RESOLVED — DISSOLVED (2026-06-30).** The #175 red-row fix is sufficient;
+  `_eligibilityReason` left untouched. (Superseded — see "Shipped This Session" above.)
+- **"New-supplier RFQs":** was a sequencing remark (finish #178/#179 before sending RFQs), NOT a work item —
+  dead (2026-06-30). Do not re-raise.
 - **Carry forward (still OPEN):** #165 (re-scoped HIGH→MED; (A) verb relabel + (B) Accept-on-crossed-pn_changed
   safety), #172/#173/#174 (LOW residuals), and **Coach C118** (detector-diff verification on `65d898e8` vs C117
   scope) STILL outstanding from the prior session. Prior session also: #164 RESOLVED (not-reproducible on
@@ -322,7 +348,7 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
   predicates/merge deterministically; live portal runs (Firestore doc reads via the page's `firebase` SDK,
   email/PDF via Outlook) confirmed the data flow + UI behavior.
 
-### Shipped Last Session (v1.21.1 → v1.21.2) — #168-adjacent race removal + #168 re-investigation
+### Shipped Earlier (v1.21.1 → v1.21.2) — #168-adjacent race removal + #168 re-investigation
 - **v1.21.2 (code `9c885da6`) — SHIPPED, but NOT the #168 fix.** Deleted Path A: the fire-and-forget
   `bcSyncPanelPlanningLines` inside `runPricingOnPanel` + its premature post-pricing POST. Path B
   (`useEffect → syncPlanningLinesToBC`) is now the sole foreground auto-sync (task descs sync there too,
