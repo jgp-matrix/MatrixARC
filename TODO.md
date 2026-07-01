@@ -1084,6 +1084,9 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     (3) missing-from-start gap detection, (4) L3 retry/gap-fill, (5) verification in
     extractionReport, (6) L3 report fields, (7) shared L3 function. Absorbs H7
     (re-extraction path was previously tracked separately). Monday work.
+    RE-SCOPED 2026-06-30 (Freddy): severity CRITICAL→MEDIUM; 5/7 parts closed. REMAINING: Part 2
+    (read/persist the computed extractionVerification result — ~1-line fix), Part 4 (L3 retry/gap-fill
+    on the re-extract path), Part 7 (shared L3 function). Next-session candidate.
 
 59. **OPEN** [Backlog] — 4 panels with fuzzy merges but no sequence gaps (from H9 regression test).
     PRJ402091, PRJ402083, PRJ402093, PRJ402079 each have 1-3 saved fuzzy merges in
@@ -3248,3 +3251,56 @@ reset that surfaced the ground-truth state.
      re-fire) and gives a FALSE all-clear.
      Diagnostic doc: docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md.
      Logged: 2026-06-30 (Coach mechanism trace; Jon runtime repro; Freddy analysis; Marc writeup).
+
+182. **RESOLVED-PENDING-T3** [v1.21.11 — Item Vendor EntityWithSameKeyExists on Push-to-BC] — Push to BC
+     returned 0 created / 0 updated / 32 failed, all 400 Internal_EntityWithSameKeyExists on Item Vendor
+     (PRJ402124). ROOT CAUSE (Marc trace `f26ea671` + Coach probe): `bcUpsertItemVendorLeadTime` IS an upsert
+     (existence GET @4440) but the PATCH used a 2-part compound key (Item_No, Vendor_No) while BC $metadata
+     declares a 3-PART key (Item_No, Vendor_No, Variant_Code) → PATCH 404 → the 404→POST fallthrough nulled
+     existingRec → re-POST → 400 collision. One shared write fn, multiple triggers (push button + batched
+     flush + portal Apply) — NOT two paths; prior creation = earlier successful POST of the same fn.
+     FIX (v1.21.11 / `7cf55a82`): §1 add Variant_Code to GET $select; §2 build 3-part PATCH key URL (vc from
+     existingRec, '→'' + encodeURIComponent — probe Test A confirmed 200); §3 DELETE the 404→POST fallthrough
+     (PATCH failure now surfaces as auditEntry.error, no silent re-POST); §4 comment updates. GET $filter, POST
+     body, fn signature, 4 callers, odataId fallback, audit structure UNTOUCHED. Plan: docs/182-DETAILED-PLAN.md;
+     trace: docs/182-ITEMVENDOR-POST-VS-PATCH-TRACE.md; probe: docs/182-bc-probe.js.
+     MARC CHECKS PASS: T6 grep (0 "PATCH 404"), 3-part key + vc + $select in deployed bundle, JSX OK, logic
+     (PATCH fail → error, no re-POST). T5 code-reasoned (all 476 records single-variant, 0 non-empty
+     Variant_Code verified live → vc='' probe-confirmed 200 case; non-empty handled by construction).
+     ⚠ NOT FULLY CLOSED — T3 NOT RUN (Jon left before the live Push-to-BC test). FIRST ACTION NEXT SESSION:
+     Push to BC on PRJ402124 once → confirm the 0/0/32 EntityWithSameKeyExists alert is GONE (values are
+     locked/unchanged, so a clean no-op-200 / updates result = PASS; still-collides = do NOT close — investigate
+     or roll back v1.21.11). A PATCH can 200 and no-op — if a value is changed first, eyeball the persisted
+     Lead_Time_Calculation in BC.
+     Logged: 2026-06-30 (Marc trace; Coach plan+probe; Freddy routing). Fix deployed v1.21.11 (unverified).
+
+183. **RESOLVED** [v1.21.10 / `5043fd1c` — RFQ email recipient field infinite-loop freeze] — The RfqEmailModal
+     recipient <textarea> applied a non-identity value transform (";"→";\n" on display, "\n"→"; " on change)
+     that self-fed the onChange under React 18 createRoot + Windows \r\n normalization: semicolons grew every
+     cycle, synchronous full main-thread freeze. FIX (Option A, docs/183-DETAILED-PLAN.md): REMOVED both
+     transforms — plain controlled textarea, RAW newline-delimited state; normalize to "; " ONLY at consumption
+     boundaries (new `_normalizeEmails` helper at send/Firestore write); seed normalizer ";"→"\n" at load (§2);
+     contacts dropdown appends "\n" + newline-aware dedup (§3); row-count splits on \n (§5). Inverse-check
+     confirmed lossless (write "; " ↔ load /;\s*/→\n round-trip). VERIFIED: Marc 10/10 unit tests + T8 grep
+     (0 residual transforms); Jon live-confirmed T1 (freeze gone), T2 (one-per-line), T5 (append on empty field).
+     NOTE — the "T5 regression" scare was NOT a bug: the dropdown correctly de-dupes contacts already in the
+     field, and every seeded vendor's dropdown offers only already-present contacts (saved defaults seed all).
+     Marc live-proved append works (Royal/ryan synthetic + real keyboard select); NO handler edit made
+     (correctly — editing working code would risk regressing the freeze fix).
+     Logged/resolved: 2026-06-30 (Coach trace+plan; Marc impl+verify; Jon live confirm; Freddy routing).
+
+184. **OPEN** [LOW — candidate follow-up, adjacent to #182, NOT causal] — Push concurrency / Firestore
+     "resource-exhausted / Write stream exhausted" under a broad Push to BC. `bcUpsertItemVendorLeadTime`
+     writes a companies/{cid}/bcLeadTimeWrites audit entry PER ROW (~app.jsx:4508), and a broad push fires
+     concurrent bcPatchLaborPlanningLines / bcPatchProgressBilling PATCHes + panel saves — a write burst that
+     trips Firestore throttling (seen live 2026-06-30 23:07 on PRJ402124 during the #182 push). Adjacent to
+     #182 (surfaced during that trace) but NOT the cause of the 32 collisions. FIX DIRECTION (if taken):
+     batch/debounce the per-row audit writes, add a BC-call concurrency cap + backoff. Logged: 2026-06-30 (Marc).
+
+185. **OPEN** [LOW — UX papercut + data cleanup, candidate] — Send RFQ Contacts dropdown looks inert: because
+     saved defaults seed ALL of a vendor's BC contacts into the recipient field, every contact the 📇 Contacts
+     dropdown offers is already present → clicking correctly de-dupes → nothing visibly happens. NOT a defect
+     (append works; proven live under #183). FIX DIRECTION: hide already-present contacts from the dropdown, or
+     add an "already added" affordance. RELATED DATA ARTIFACT (cleanup candidate): some saved defaults store
+     duplicate emails (e.g. InterMtn = "boyd\nkevin\nkevin") — the current dedup blocks NEW dups but doesn't
+     scrub existing storage; a one-time normalize-on-load-and-resave would clean them. Logged: 2026-06-30 (Marc, #183 T5 investigation).
