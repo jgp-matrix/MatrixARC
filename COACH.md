@@ -1070,3 +1070,108 @@ function receives as its first argument from SyntheticEvent (truthy) to undefine
 **Rule:** When a function reference is changed to/from an arrow-function wrapper, check the
 target function's parameter list. If the first parameter has semantic meaning (flag, ID,
 config), the wrapping is NOT a no-op — it's a behavioral change.
+
+---
+
+### C126 — #186 Frozen-State Predicate Trace (2026-07-01)
+
+**Type:** Predicate analysis (read-only)
+**Status:** RESOLVED — informed #186 guard (v1.21.12) + #187 gate design
+**Deliverable:** Inline analysis; context in `docs/186-LOCKED-QUOTE-PRICECHECK-review.md`
+
+---
+
+Marc's candidate fix used `quoteSentAt` as the frozen-state signal. Traced both candidates:
+
+- **`quoteSentAt`** — set once at first send, never cleared on unlock/revise. Persists across
+  the revision window: user unlocks quote for revision → `quoteSentAt` is still set → guard
+  blocks the price check even though the quote is actively being revised and SHOULD accept
+  updated pricing. Wrong for the revision use case.
+
+- **`quoteLocked`** — set `true` at send, explicitly cleared on unlock. Accurately reflects
+  whether the quote is currently in a frozen/locked state vs an active revision window.
+  Correct signal.
+
+**Verdict:** `quoteLocked` is the correct frozen-state predicate. Marc's deployed fix
+(v1.21.12) uses `quoteLocked` in the tryCheck guard. The same predicate drives the #187
+expiry gate: `if((_fp.quoteLocked && !_quoteExpired) || _fp.wonAt || _fp.lostAt) return;`
+— locked AND not expired → suppress; locked AND expired → let price check run (stale
+prices need refreshing).
+
+---
+
+### C127 — #186 Expiration Gap Finding (2026-07-01)
+
+**Type:** Architectural finding (read-only)
+**Status:** RESOLVED — spawned feature #187 (Quote Validity Cascade)
+**Deliverable:** Inline finding; led to `docs/187-DETAILED-PLAN.md`
+
+---
+
+While tracing the #186 frozen-quote guard, discovered that **ARC has no quote expiration
+concept.** The `q.validUntil` field (on the quote sub-object) is a free-text display string
+used only in the print path — it drives no gate, enforces no deadline, and has no structured
+date behind it. The user types "July 31, 2026" as a string; nothing in ARC compares it to
+today or prevents a stale quote from being re-sent.
+
+Consequences:
+1. The #186 guard blocks price checks on ALL locked quotes forever — even a 6-month-old
+   quote that should be re-priced before re-sending.
+2. The printed "PRICES VALID UNTIL" date and the frozen-state guard are completely
+   decoupled — a user can type anything in the free-text field, and the guard ignores it.
+3. No send-time snapshot of the expiry date exists — reprinting a sent quote on a later
+   day shows a different "valid until" date (today+30, not the date the customer received).
+
+**This finding spawned #187** — a structured four-tier cascade that replaces the free-text
+field with a computed `quoteExpiresAt` epoch-ms timestamp, stamped at send time, driving
+both print and gate from a single source of truth.
+
+---
+
+### C128 — #187 Cascade Design Trace (2026-07-01)
+
+**Type:** Architecture / design trace (read-only)
+**Status:** SHIPPED — Phase 1 v1.21.13, Phase 2 v1.21.14; relocation fix in progress
+**Deliverable:** `docs/187-DETAILED-PLAN.md` (rev 3)
+
+---
+
+Design trace for the four-tier quote validity cascade. Key architectural decisions:
+
+**Config surface location:** `_pricingConfig` (the existing `config/pricing` Firestore doc).
+The Pricing Config modal already has a save handler that writes all fields via `.set(cfg)` —
+adding `quoteValidityDays` to the object literal is the only change needed. No new collection
+or UI surface required for the global tier.
+
+**Customer tier — BC-only, no ARC customer entity:** ARC has no customer model — projects
+carry a `bcCustomerNumber` string but there is no customer doc. Created a new
+`customerDefaults/{bcCustomerNumber}` collection keyed by that string. Firestore rules:
+read=isMember, write=isAdminMember (line 474-477). Admin CRUD via PricingConfigModal.
+
+**Single source of truth — Option A (`quoteExpiresAt` epoch-ms):** At send time, the
+cascade resolves to a day count → `sentAt + days * 86400000` → stamped as
+`project.quoteExpiresAt`. This single timestamp drives:
+- Print path: `new Date(project.quoteExpiresAt).toLocaleDateString(...)` — frozen, no drift
+- Expiry gate: `Date.now() > project.quoteExpiresAt` — same comparison point
+- Preview: when `quoteExpiresAt` is absent (unsent), falls to `Date.now() + cascade`
+
+**Rev 2 additions (Jon-directed):** Structured quote-edit tier
+(`project.quote.quoteValidityDays` as tier 1), line-number re-anchoring, Phase 2 send-time
+race guard (`_customerValidityLoadedFor` key matching to prevent cross-project bleed).
+
+**Rev 3 fix (Jon-caught defect):** Print path was reading `q.quoteExpiresAt` (quote
+sub-object, never stamped) instead of `project.quoteExpiresAt` (project-level, where send
+stamps it). Fixed to read from `project.quoteExpiresAt`. Also strengthened T4 to verify
+print==gate source location.
+
+**Phase 2 mechanism deviation (verified C129):** Plan §2.3 specified a component `useRef`
+for the customer tier cache, but `resolveQuoteValidityDays` is called from
+`buildQuotePdfDoc` — a module-level function unreachable by component refs. Marc correctly
+used module globals `_customerValidityDays` / `_customerValidityLoadedFor` (lines 2050-2051),
+house-consistent with `_pricingConfig` / `_appCtx` / `_bcToken`. All 4 call sites confirmed
+reachable. Cross-project bleed closed via the `_customerValidityLoadedFor` key-matching
+guard. Verification: `docs/187-PHASE2-VERIFICATION.md`.
+
+**Current:** Relocation fix in progress — the valid-until row emits its own "BUDGETARY - "
+prefix (doubling) and orphans across pages in the PDF (separate `arcDocCheckBreak`).
+Fix locate: `docs/187-RELOCATION-FIX-LOCATE.md`.

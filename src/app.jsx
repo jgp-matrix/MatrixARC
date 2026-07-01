@@ -7419,7 +7419,7 @@ async function buildQuotePdfDoc(doc,project){
   const _baseSubtotalPdf=_hasEcoTotalsPdf?panels.reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??1),0):_panelsSubtotalPdf;
   const _signedFmtPdf=n=>(n>=0?"+":"-")+arcFmtMoney(Math.abs(n));
   const _extraRows=(_hasEcoTotalsPdf?_ecoSubtotalsPdf.length:0)+(_servicesSubtotalPdf>0?1:0);
-  arcDocCheckBreak(ctx,25+_extraRows*7);
+  arcDocCheckBreak(ctx,31+_extraRows*7); // #187 fix: +6 reserves the combined valid-until row with the totals block (prevents page-orphan)
   const bx=ARC_DOC.W-ARC_DOC.margin.right-60;const bw=60;
   const isNonTaxable=/nontax|non.?tax/i.test(q.taxAreaCode||"");
   const totalsRows=[
@@ -7443,17 +7443,15 @@ async function buildQuotePdfDoc(doc,project){
   });
   ctx.y+=totalsRows.length*7+3;
   doc.setTextColor(...ARC_DOC.colors.black);
-  if(isBudg){
-    doc.setFontSize(11);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.red);
-    doc.text("BUDGETARY",bx+bw/2,ctx.y,{align:"center"});ctx.y+=6;
-  }
-
-  // #187 relocation — combined valid-until row directly after BUDGETARY (centered, red), replaces the old
-  // separate right-aligned block. Single source of truth: post-send frozen project.quoteExpiresAt, else live
-  // cascade preview (customer tier via _customerValidityDays). "BUDGETARY - " prefix only when budgetary.
-  arcDocCheckBreak(ctx,8);
-  doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.red);
-  doc.text((isBudg?"BUDGETARY - ":"")+"Prices Valid Until "+new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project,_customerValidityDays)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W/2,ctx.y,{align:"center"});
+  // #187 relocation FIX — ONE combined centered line. No separate BUDGETARY block (fixes the
+  // doubled word) and no separate arcDocCheckBreak (fixes the page-orphan; space is reserved with
+  // the totals block via the +6 bump above). 11pt bold when budgetary (keeps the BUDGETARY weight),
+  // 9pt normal otherwise. Centered at bx+bw/2 (totals-box center); longest string fits within margins.
+  doc.setFontSize(isBudg?11:9);
+  doc.setFont("helvetica",isBudg?"bold":"normal");
+  doc.setTextColor(...ARC_DOC.colors.red);
+  const _vuDate=new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project,_customerValidityDays)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  doc.text((isBudg?"BUDGETARY - ":"")+"Prices Valid Until "+_vuDate,bx+bw/2,ctx.y,{align:"center"});
   ctx.y+=6;
 
   // ── T&C PAGE ──
@@ -20834,11 +20832,17 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               {_servicesSubtotal>0&&<div className="qd-totals-row"><span>Professional Services</span><span>{fmtMoney(_servicesSubtotal)}</span></div>}
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
-              {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
-              {/* #187 relocation — combined valid-until row under Total/BUDGETARY (centered, red). "Prices Valid Until" always; "BUDGETARY - " prefix only when budgetary. */}
-              <div style={{textAlign:"center",padding:"4px 0",fontSize:11,fontWeight:600,color:"#dc2626"}}>
-                {isProjectBudgetary?"BUDGETARY - ":""}Prices Valid Until {defaultValidUntil}
-              </div>
+              {/* #187 relocation FIX — valid-until merged INTO the BUDGETARY element so the word appears ONCE
+                  (isProjectBudgetary stays the sole gate for "BUDGETARY"); standalone centered row when not budgetary. */}
+              {isProjectBudgetary?(
+                <div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>
+                  BUDGETARY<span style={{letterSpacing:0,textTransform:"none",fontWeight:600,fontSize:11}}>{" - Prices Valid Until "}{defaultValidUntil}</span>
+                </div>
+              ):(
+                <div style={{textAlign:"center",padding:"4px 0",fontSize:11,fontWeight:600,color:"#dc2626"}}>
+                  Prices Valid Until {defaultValidUntil}
+                </div>
+              )}
             </div>
           </div>
           </div>);
