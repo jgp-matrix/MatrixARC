@@ -92,7 +92,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 
 ## Communication Conventions
 
-- **Large documents come as files.** When Coach or Marc sends you a report, supplement, plan, or audit results, Jon will drag the file into your Claude.ai session rather than pasting text. Expect file attachments for anything over ~50 lines. Short messages still come via chat relay.
+- **Large documents come as files (long-output convention).** Coach and Marc write any trace, supplement, plan, audit, or report longer than ~30 lines OR containing tables to a `.md` file in the repo (`docs/` or repo root). They open Explorer highlighting the file so Jon can drag it into your Claude.ai session. The chat message is just the filename + a one-line description — never the full body. **Why files, not pastes:** terminal-buffer copy corrupts box-drawing tables and fixed-width column layouts; middle prose fuses across wraps while headings survive. File delivery bypasses this entirely. Short messages (confirmations, one-liners, status, SHAs) still come via chat relay.
 - **Freddy-authored Briefs come as pastes, not files.** When Freddy writes a Brief (or Analyst Review), deliver it as a code-blocked paste for Jon to copy directly into Coach/Marc — not as a download file. It's faster for Jon's paste-forwarding workflow and the file buys nothing for the handoff. If a Brief is worth persisting as a durable repo record, Coach commits it from the paste as part of the Supplement step. (This is the outbound direction; the "large documents come as files" rule above still governs reports/supplements/plans sent TO Freddy.)
 - When drafting messages for Coach or Marc, put them in code blocks so Jon can copy-paste cleanly
 - Notification prefixes: messages from you say "FREDDY:", from Coach say "COACH:", from Marc say "MARC:"
@@ -188,6 +188,17 @@ Coach analyzed the render path and produced options (C55 — read-only, pre-impl
 - These have no code-path question to answer first.
 
 **HEURISTIC:** "Can this be answered by reading the code?" → Coach first. "Does this require observing the running system?" → Marc, and if a code-path question precedes it, Coach scopes that part first. Raw model output / actual runtime values are Marc's alone — Coach cannot produce them.
+
+### CCD-Freddy Shared Repo Boundary
+
+When Freddy runs in a terminal (repo access trial) or when CCD reads Freddy's committed deliverables, all three roles share the repo as a communication bus. This changes relay mechanics but NOT decision authority:
+
+- **CCD reads Freddy's committed deliverables directly.** Once a Brief, Analyst Review, or routing decision is committed to the repo, Marc reads it himself — Jon does not need to relay it. Freddy does not need to re-paste committed material.
+- **Reading does not confer decision authority.** Marc seeing a Brief in the repo does not mean Marc can start implementing — the pipeline (Brief → Supplement → Analyst Review → Detailed Plan → Implementation) still requires Jon's approval gates. Freddy routes; Marc executes.
+- **One analyst at a time.** Only one Freddy session is active at any time. Parallel Freddy sessions would produce conflicting direction — the repo cannot resolve who spoke last. If a Freddy session ends, the next one recovers from the repo (the Startup Directive handles this).
+- **Repo = shared bus, chat = ephemeral.** Information in the repo is durable and visible to all roles. Information in chat is ephemeral and dies with the session. Decisions that matter must reach the repo — via committed docs, TODO entries, or SESSION-STATE.md — not rely on chat relay surviving.
+
+**What this does NOT cover:** CCD startup mechanics for reading Freddy's deliverables (pending — Marc's instructions will specify how CCD discovers and acts on committed Briefs/Reviews). This section defines only the boundary rules, not the implementation.
 
 ### Single Open Request Per Person (No Stacking on an Individual)
 
