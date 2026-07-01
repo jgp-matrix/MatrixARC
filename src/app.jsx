@@ -20835,13 +20835,15 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               {/* #187 relocation FIX — valid-until merged INTO the BUDGETARY element so the word appears ONCE
-                  (isProjectBudgetary stays the sole gate for "BUDGETARY"); standalone centered row when not budgetary. */}
+                  (isProjectBudgetary stays the sole gate for "BUDGETARY"); standalone row when not budgetary.
+                  Fast-follow: RIGHT-justified so the line sits under the Total Price value (Jon's call — the
+                  BUDGETARY prefix moves right with the rest). PDF stays page-centered (untouched). */}
               {isProjectBudgetary?(
-                <div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>
+                <div style={{textAlign:"right",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>
                   BUDGETARY<span style={{letterSpacing:0,textTransform:"none",fontWeight:600,fontSize:11}}>{" - Prices Valid Until "}{defaultValidUntil}</span>
                 </div>
               ):(
-                <div style={{textAlign:"center",padding:"4px 0",fontSize:11,fontWeight:600,color:"#dc2626"}}>
+                <div style={{textAlign:"right",padding:"4px 0",fontSize:11,fontWeight:600,color:"#dc2626"}}>
                   Prices Valid Until {defaultValidUntil}
                 </div>
               )}
