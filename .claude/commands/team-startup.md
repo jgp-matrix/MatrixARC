@@ -141,8 +141,9 @@ If `APP_URL` is set in the config, open it in a linked browser session so {IMPL_
 2. Create a new tab with `tabs_create_mcp`.
 3. Navigate to `{APP_URL}` in the new tab.
 4. Take a screenshot to confirm the app loaded.
+5. **Stamp the controlled tab's title** so the user can identify it among duplicate tabs: run `document.title = '🤖 CLAUDE-CONTROLLED ▸ ARC';` via the browser JS tool. Re-stamp after any reload/navigation (the app resets the title on load). See CLAUDE.md → "Mark the Claude-controlled browser tab."
 
-This tab becomes the linked browser session for live testing during the work session. All browser-based verification, runtime investigation, and UI testing should use this tab group.
+This tab becomes the linked browser session for live testing during the work session. All browser-based verification, runtime investigation, and UI testing should use this tab group. Refer to it as "the Claude-controlled tab," not the raw numeric id.
 
 Mark complete: `✓ Step 3 — App opened at {APP_URL}, browser linked`
 

@@ -6,6 +6,7 @@
 - [Session startup procedure](#session-startup-procedure)
   - [Team startup](#team-startup-default) — sequential boot: Marc → Coach paste → Freddy paste → sync check
   - [Live testing environment confirmation](#live-testing-environment-confirmation) — browser session alignment before live testing
+    - [Mark the Claude-controlled browser tab](#mark-the-claude-controlled-browser-tab-required) — stamp the tab title so it's identifiable among duplicates
 - [Diagnostic session startup (diagstartup)](#diagnostic-session-startup-diagstartup) — read-only investigation mode
 - [Session shutdown procedure](#session-shutdown-procedure) — Close Out + Closed two-step
 - [Commit destination](#commit-destination)
@@ -94,7 +95,7 @@ After reading, report back to Jon:
 
 **Step 3 — Open app in browser**
 
-Open the deployed app URL (https://matrix-arc.web.app) in a linked browser session via Claude in Chrome. This becomes the authoritative browser session for live testing.
+Open the deployed app URL (https://matrix-arc.web.app) in a linked browser session via Claude in Chrome. This becomes the authoritative browser session for live testing. Immediately stamp the controlled tab's title (`document.title = '🤖 CLAUDE-CONTROLLED ▸ ARC'`) so Jon can pick it out among duplicate tabs — see [Mark the Claude-controlled browser tab](#mark-the-claude-controlled-browser-tab-required) (re-stamp after every reload/navigation).
 
 **Step 4 — Jon pastes Coach and copies Freddy file**
 
@@ -152,6 +153,18 @@ Before any live testing, runtime validation, extraction testing, UI investigatio
 Runtime findings are only reliable when Jon's actions, Marc's observations, browser console output, Firestore sync activity, and UI state all originate from the same browser session. If browser sessions differ, investigation results may be invalid or incomplete.
 
 This confirmation should occur during session startup before live testing begins.
+
+### Mark the Claude-controlled browser tab (REQUIRED)
+
+Jon often has multiple browsers/tabs open on the same ARC page — identical headers make the Claude-driven tab impossible to pick out by eye, and the browser API only exposes numeric `tabId`/`tabGroupId` (no human-readable group name). So whenever Marc has a linked/controlled tab, **stamp its browser-tab title** so it self-identifies in the tab strip:
+
+```js
+document.title = '🤖 CLAUDE-CONTROLLED ▸ ARC';
+```
+
+- Do this right after opening/linking the tab at startup (step 3), and **re-stamp after any navigation or reload** — the app resets `document.title` to `ARC by CoreVega Software` on every page load, so the marker is lost whenever the page reloads.
+- In conversation, refer to it as **"the Claude-controlled tab"**, not the raw numeric id.
+- Marker is cosmetic (title only), reverts on reload, and affects only this session's tab. Jon confirmed this convention 2026-07-01.
 
 ## Diagnostic session startup (diagstartup)
 
