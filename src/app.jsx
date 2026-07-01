@@ -4433,11 +4433,11 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
       } else {
       const pn=String(partNumber).trim().replace(/'/g,"''");
       const vn=String(vendorNo).trim().replace(/'/g,"''");
-      // DECISION(v1.19.698): Page 114 'ItemVendorCatalog' uses legacy NAV.* metadata which
-      // does NOT expose a SystemId property. Dropped SystemId from $select (previously
-      // caused 400 BadRequest). PATCH uses the compound-key URL form, which BC accepts
-      // once the service is actually published.
-      const existing=await bcGatedFetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation`,{
+      // DECISION(v1.19.698, FIX #182): Page 114 'ItemVendorCatalog' uses legacy NAV.*
+      // metadata with a 3-part key (Item_No, Vendor_No, Variant_Code) per $metadata.
+      // No SystemId. PATCH uses the full compound-key URL; Variant_Code is read from the
+      // existing record (typically '' for non-variant items).
+      const existing=await bcGatedFetch(`${BC_ODATA_BASE}/ItemVendorCatalog?$filter=Item_No eq '${encodeURIComponent(pn)}' and Vendor_No eq '${encodeURIComponent(vn)}'&$select=Item_No,Vendor_No,Vendor_Item_No,Lead_Time_Calculation,Variant_Code`,{
         headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}
       });
       let existingRec=null,etag=null,odataId=null;
@@ -4462,10 +4462,11 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
           body.Vendor_Item_No=String(vendorItemNo).trim();
         }
         if(existingRec){
-          // DECISION(v1.19.698): Page 114 NAV.* type has no SystemId — compound-key URL is
-          // the only way to address a specific record. @odata.id fallback kept for safety.
+          // FIX #182: 3-part compound key (Item_No, Vendor_No, Variant_Code) per $metadata.
+          // @odata.id fallback kept for safety (null on this tenant but may exist on others).
           const patchUrls=[];
-          patchUrls.push(`${BC_ODATA_BASE}/ItemVendorCatalog(Item_No='${encodeURIComponent(pn)}',Vendor_No='${encodeURIComponent(vn)}')`);
+          const vc=encodeURIComponent((existingRec.Variant_Code||'').replace(/'/g,"''"));
+          patchUrls.push(`${BC_ODATA_BASE}/ItemVendorCatalog(Item_No='${encodeURIComponent(pn)}',Vendor_No='${encodeURIComponent(vn)}',Variant_Code='${vc}')`);
           if(odataId&&!patchUrls.includes(odataId))patchUrls.push(odataId);
           let lastErr=null,ok=false;
           for(const u of patchUrls){
@@ -4482,11 +4483,7 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
               if(pr.status!==404)break;
             }catch(e){lastErr=`PATCH exception: ${e.message||String(e)}`;break;}
           }
-          if(!ok&&lastErr&&/PATCH 404/.test(lastErr)){
-            // BC NAV-type compound-key 404 — record exists in filter but can't be
-            // addressed for PATCH; fall through to POST (create) instead.
-            existingRec=null;
-          }else if(!ok){
+          if(!ok){
             auditEntry.error=lastErr||"PATCH failed";
           }
         }
