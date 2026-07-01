@@ -20834,19 +20834,15 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               {_servicesSubtotal>0&&<div className="qd-totals-row"><span>Professional Services</span><span>{fmtMoney(_servicesSubtotal)}</span></div>}
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
-              {/* #187 relocation FIX — valid-until merged INTO the BUDGETARY element so the word appears ONCE
-                  (isProjectBudgetary stays the sole gate for "BUDGETARY"); standalone row when not budgetary.
-                  Fast-follow: RIGHT-justified so the line sits under the Total Price value (Jon's call — the
-                  BUDGETARY prefix moves right with the rest). PDF stays page-centered (untouched). */}
-              {isProjectBudgetary?(
-                <div style={{textAlign:"right",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>
-                  BUDGETARY<span style={{letterSpacing:0,textTransform:"none",fontWeight:600,fontSize:11}}>{" - Prices Valid Until "}{defaultValidUntil}</span>
-                </div>
-              ):(
-                <div style={{textAlign:"right",padding:"4px 0",fontSize:11,fontWeight:600,color:"#dc2626"}}>
-                  Prices Valid Until {defaultValidUntil}
-                </div>
-              )}
+              {/* #187 relocation — valid-until row, RIGHT-justified under the Total value. Take 2 (Coach's
+                  alternative): v1.21.16's textAlign:right was a no-op — bold/uppercase/letterSpacing:2 BUDGETARY
+                  filled the ~280px totals box, leaving no free space to right-align. Fix: render the WHOLE line
+                  uniform 11px/600 red (BUDGETARY drops bold/uppercase/letterSpacing — Jon's accepted trade for a
+                  guaranteed one-line fit) with padding "4px 20px" so the right edge lands under the Total dollar
+                  value. isProjectBudgetary stays the sole gate for the word. PDF unchanged (page-centered). */}
+              <div style={{textAlign:"right",padding:"4px 20px",fontSize:11,fontWeight:600,color:"#dc2626"}}>
+                {isProjectBudgetary?"BUDGETARY - ":""}Prices Valid Until {defaultValidUntil}
+              </div>
             </div>
           </div>
           </div>);
