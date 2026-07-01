@@ -17,9 +17,10 @@
     "analyst": {
       "name": "Freddy Lyst",
       "shortName": "Freddy",
-      "environment": "browser",
+      "environment": "terminal",
       "notifyPrefix": "FREDDY",
-      "hasFileAccess": false
+      "hasFileAccess": true,
+      "_trial": "TRIAL 2026-07-01 — Freddy moved browser→terminal to eliminate copy-paste relay. REVERT: environment=browser, hasFileAccess=false."
     }
   },
   "appUrl": "https://matrix-arc.web.app",
