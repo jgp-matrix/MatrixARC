@@ -2042,6 +2042,21 @@ function resolveQuoteValidityDays(project, customerDays){
   if(customerDays>0)return customerDays;
   return _pricingConfig.quoteValidityDays||30;
 }
+// #187 Phase 2 (customer tier, tier 3). MECHANISM NOTE (deviation from plan §2.3 useRef): the
+// resolver call sites span 4 scopes — two send-path components, QuoteTab, and the MODULE-LEVEL
+// buildQuotePdfDoc — so a single component ref cannot reach them all. Use a module global instead
+// (house-consistent with _pricingConfig/_appCtx/_bcToken). Multi-project-safe: the loaded flag is
+// keyed to the bcCustomerNumber it was loaded for, so a stale value can't bleed across projects.
+let _customerValidityDays=null;            // days for the currently-loaded customer, or null
+let _customerValidityLoadedFor=undefined;  // the bcCustomerNumber _customerValidityDays was loaded for
+async function _loadCustomerValidity(bcCustomerNumber){
+  if(!bcCustomerNumber||!_appCtx.companyId){_customerValidityDays=null;_customerValidityLoadedFor=bcCustomerNumber||null;return;}
+  try{
+    const cd=await fbDb.doc(`companies/${_appCtx.companyId}/customerDefaults/${bcCustomerNumber}`).get();
+    _customerValidityDays=cd.exists?(cd.data().quoteValidityDays||null):null;
+  }catch(e){_customerValidityDays=null;}
+  _customerValidityLoadedFor=bcCustomerNumber;
+}
 
 // ── LABOR RATES (admin-configurable) ──
 async function loadLaborRates(uid){
@@ -7433,14 +7448,12 @@ async function buildQuotePdfDoc(doc,project){
     doc.text("BUDGETARY",bx+bw/2,ctx.y,{align:"center"});ctx.y+=6;
   }
 
-  // ── PRICES VALID UNTIL ──
+  // #187 relocation — combined valid-until row directly after BUDGETARY (centered, red), replaces the old
+  // separate right-aligned block. Single source of truth: post-send frozen project.quoteExpiresAt, else live
+  // cascade preview (customer tier via _customerValidityDays). "BUDGETARY - " prefix only when budgetary.
   arcDocCheckBreak(ctx,8);
-  doc.setFontSize(7);doc.setFont("helvetica","bold");doc.setTextColor(...ARC_DOC.colors.grey);
-  doc.text("PRICES VALID UNTIL",ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
-  ctx.y+=3.5;
   doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.red);
-  // #187 §1.7a — single source of truth: post-send reads frozen project.quoteExpiresAt; pre-send previews the live cascade. q.validUntil retired.
-  doc.text(new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
+  doc.text((isBudg?"BUDGETARY - ":"")+"Prices Valid Until "+new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project,_customerValidityDays)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W/2,ctx.y,{align:"center"});
   ctx.y+=6;
 
   // ── T&C PAGE ──
@@ -17748,6 +17761,38 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
   const [ecoDefaultLaborRate,setEcoDefaultLaborRate]=useState(_pricingConfig.ecoDefaultLaborRate??65);
   const [quoteValidityDays,setQuoteValidityDays]=useState(_pricingConfig.quoteValidityDays??30);
+  // #187 §2.6 — customer-tier quote validity defaults (admin CRUD on companies/{cid}/customerDefaults)
+  const [custDefs,setCustDefs]=useState([]);
+  const [custNum,setCustNum]=useState("");
+  const [custName,setCustName]=useState("");
+  const [custDays,setCustDays]=useState("");
+  const [custBusy,setCustBusy]=useState(false);
+  async function _reloadCustDefs(){
+    try{
+      if(!_appCtx.companyId){setCustDefs([]);return;}
+      const s=await fbDb.collection(`companies/${_appCtx.companyId}/customerDefaults`).get();
+      const rows=[];s.forEach(d=>rows.push({id:d.id,...d.data()}));
+      rows.sort((a,b)=>(a.bcCustomerName||a.id).localeCompare(b.bcCustomerName||b.id));
+      setCustDefs(rows);
+    }catch(e){console.warn("[#187] load customerDefaults failed:",e);}
+  }
+  useEffect(()=>{if(isAdmin())_reloadCustDefs();},[]);
+  async function _saveCustDef(num,name,days){
+    const n=(num||"").trim();const dd=Math.max(1,Math.min(365,parseInt(days)||0));
+    if(!n||!dd)return;
+    setCustBusy(true);
+    try{
+      await fbDb.doc(`companies/${_appCtx.companyId}/customerDefaults/${n}`).set({bcCustomerNumber:n,bcCustomerName:(name||"").trim()||n,quoteValidityDays:dd,updatedAt:Date.now(),updatedBy:uid});
+      await _reloadCustDefs();
+    }catch(e){console.warn("[#187] save customerDefault failed:",e);alert("Save failed: "+(e.message||e));}
+    setCustBusy(false);
+  }
+  async function _delCustDef(id){
+    setCustBusy(true);
+    try{await fbDb.doc(`companies/${_appCtx.companyId}/customerDefaults/${id}`).delete();await _reloadCustDefs();}
+    catch(e){console.warn("[#187] delete customerDefault failed:",e);alert("Delete failed: "+(e.message||e));}
+    setCustBusy(false);
+  }
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
@@ -17975,6 +18020,35 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
           </div>
           <div style={{fontSize:11,color:C.muted,marginTop:4}}>Default number of days a sent quote's prices stay valid ("PRICES VALID UNTIL"). Overridable per project and per quote (default 30).</div>
         </div>
+
+        {/* #187 §2.6 — Customer quote validity defaults (admin only; tier 3 of the cascade) */}
+        {isAdmin()&&(
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Customer Quote Validity Defaults</label>
+          <div style={{fontSize:11,color:C.muted,marginBottom:10}}>Per-customer default validity days (overrides the global default; still overridden by a project or quote-level setting). Keyed by BC customer number.</div>
+          {custDefs.length>0&&(
+            <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:10}}>
+              {custDefs.map(cd=>(
+                <div key={cd.id} style={{display:"flex",alignItems:"center",gap:8,background:"#111128",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px"}}>
+                  <span style={{flex:1,fontSize:12,color:C.text,fontWeight:600,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cd.bcCustomerName||cd.id} <span style={{color:C.muted,fontWeight:400}}>({cd.id})</span></span>
+                  <input type="number" min="1" max="365" defaultValue={cd.quoteValidityDays} disabled={custBusy}
+                    onBlur={e=>{const v=+e.target.value;if(v>0&&v!==cd.quoteValidityDays)_saveCustDef(cd.id,cd.bcCustomerName,v);}}
+                    style={{...inp(),width:60,textAlign:"right"}}/>
+                  <span style={{color:C.muted,fontSize:11}}>days</span>
+                  <button onClick={()=>_delCustDef(cd.id)} disabled={custBusy} title="Delete" style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"2px 8px",fontSize:11,color:"#f87171",cursor:custBusy?"not-allowed":"pointer"}}>✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+            <input value={custNum} onChange={e=>setCustNum(e.target.value)} placeholder="BC customer #" disabled={custBusy} style={{...inp(),width:120}}/>
+            <input value={custName} onChange={e=>setCustName(e.target.value)} placeholder="Name (optional)" disabled={custBusy} style={{...inp(),width:160}}/>
+            <input type="number" min="1" max="365" value={custDays} onChange={e=>setCustDays(e.target.value)} placeholder="days" disabled={custBusy} style={{...inp(),width:70,textAlign:"right"}}/>
+            <button onClick={()=>{_saveCustDef(custNum,custName,custDays).then(()=>{setCustNum("");setCustName("");setCustDays("");});}} disabled={custBusy||!custNum.trim()||!(parseInt(custDays)>0)}
+              style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer",opacity:(custBusy||!custNum.trim()||!(parseInt(custDays)>0))?0.5:1}}>+ Add</button>
+          </div>
+        </div>
+        )}
 
         {/* ── PRICING REFRESH THRESHOLDS ── */}
         <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
@@ -20167,7 +20241,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
   function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
 
   const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const defaultValidUntil=new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project||{})*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  const defaultValidUntil=new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project||{},_customerValidityDays)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
 
   const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
@@ -20761,6 +20835,10 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               <div className="qd-totals-row"><span>Tax</span><span>$0</span></div>
               <div className="qd-totals-row qd-grand"><span>Total</span><span className="qd-amt">{hasTotalPrice?fmtMoney(totalPrice):"—"}</span></div>
               {isProjectBudgetary&&<div style={{textAlign:"center",padding:"6px 0",fontSize:14,fontWeight:800,color:"#dc2626",letterSpacing:2,textTransform:"uppercase"}}>BUDGETARY</div>}
+              {/* #187 relocation — combined valid-until row under Total/BUDGETARY (centered, red). "Prices Valid Until" always; "BUDGETARY - " prefix only when budgetary. */}
+              <div style={{textAlign:"center",padding:"4px 0",fontSize:11,fontWeight:600,color:"#dc2626"}}>
+                {isProjectBudgetary?"BUDGETARY - ":""}Prices Valid Until {defaultValidUntil}
+              </div>
             </div>
           </div>
           </div>);
@@ -20772,14 +20850,8 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               <div className="qd-footer-label">Salesperson</div>
               <div className="qd-footer-value">{q.salesperson||"—"}</div>
             </div>
-            <div style={{textAlign:"right"}}>
-              <div className="qd-footer-label">Prices Valid Until</div>
-              {/* #187 §1.3b — cascade-computed date (read-only) + narrow days-override input. Date updates live as days change (defaultValidUntil reads the cascade). */}
-              <div className="qd-footer-value" style={{display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
-                <span style={{color:"#dc2626",fontWeight:500}}>{defaultValidUntil}</span>
-                <input type="number" min="1" max="365" value={q.quoteValidityDays||""} onChange={e=>setQ({quoteValidityDays:+e.target.value||null})} placeholder={resolveQuoteValidityDays(project)+"d"} style={{...qInp({textAlign:"right",width:50})}} title="Override validity days"/>
-              </div>
-            </div>
+            {/* #187 relocation — footer valid-until date+input removed; date moved to the totals row above,
+                the single override input lives in the compact quote-fields form. Footer right side now empty. */}
           </div>
 
           {/* Bottom Bar — hidden in print, replaced by fixed qd-print-footer */}
@@ -32923,9 +32995,11 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // Sales rep needs to know "email went out but lock didn't save" vs "email never sent".
       // #117 Fix 3c: spread `populated` (not the stale closure `project`) so the post-send
       // lock-save preserves the BC-populated terms — otherwise it would clobber them blank.
-      // #187 §1.5a — stamp quoteExpiresAt (project-level) from the validity cascade at send time.
+      // #187 §1.5a/§2.4 — stamp quoteExpiresAt (project-level) from the full validity cascade at send.
+      // Race guard: if the customer default wasn't pre-loaded for THIS project's customer, fetch inline first.
       const _sentNow=Date.now();
-      const _validDays=resolveQuoteValidityDays(populated);
+      if(_customerValidityLoadedFor!==populated.bcCustomerNumber)await _loadCustomerValidity(populated.bcCustomerNumber);
+      const _validDays=resolveQuoteValidityDays(populated,_customerValidityDays);
       const upd={...populated,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
       // #133 Change 4a (D3): first-class approval-request record when the quoted BOM
       // rode along. id "bar_"-prefixed (future portal write-back key); panels = stable
@@ -36642,6 +36716,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const iv=setInterval(tryCheck,30000); // PERF: reduced from 3s to 30s — price diffs don't need rapid polling
     return()=>clearInterval(iv);
   },[]);
+  // #187 §2.3 — pre-warm the customer-tier validity default when a project (with a BC customer) is
+  // open, so pre-send previews (defaultValidUntil / PDF) reflect the customer's days. Correctness at
+  // SEND is guaranteed independently by the §2.4 race guard; this effect is UX pre-warming only.
+  useEffect(()=>{_loadCustomerValidity(project?.bcCustomerNumber);},[project?.bcCustomerNumber]);
   function applyPriceCheckDiffs(selectedDiffs){
     const diffMap={};
     selectedDiffs.forEach(d=>{
@@ -38395,9 +38473,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             try{await bcSyncPanelPlanningLines(project.bcProjectNumber,pi+1,project.panels[pi],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
                           }
                         }
-                        // #187 §1.5b — stamp quoteExpiresAt (project-level) from the validity cascade at send time.
+                        // #187 §1.5b/§2.4 — stamp quoteExpiresAt from the full cascade; race guard fetches the
+                        // customer default inline if it wasn't pre-loaded for this project's customer.
                         const _sentNow=Date.now();
-                        const _validDays=resolveQuoteValidityDays(project);
+                        if(_customerValidityLoadedFor!==project.bcCustomerNumber)await _loadCustomerValidity(project.bcCustomerNumber);
+                        const _validDays=resolveQuoteValidityDays(project,_customerValidityDays);
                         const upd={...project,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
                         onUpdate(upd);
                         if(project.bcProjectNumber&&_bcToken){

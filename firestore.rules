@@ -468,6 +468,14 @@ service cloud.firestore {
         allow write: if canWrite();
       }
 
+      // #187 §2.2 — per-customer quote validity defaults (tier 3 of the validity cascade).
+      // Keyed by bcCustomerNumber. Any member reads (cascade resolver needs it at project open);
+      // only admins write (per Jon's decision — customer-level defaults are an admin setting).
+      match /customerDefaults/{bcCustomerNumber} {
+        allow read: if isMember();
+        allow write: if isAdminMember();
+      }
+
       // Purchase Orders module
       match /purchaseOrders/{poId} {
         allow read: if isMember();
