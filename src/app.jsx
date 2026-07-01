@@ -7446,12 +7446,14 @@ async function buildQuotePdfDoc(doc,project){
   // #187 relocation FIX — ONE combined centered line. No separate BUDGETARY block (fixes the
   // doubled word) and no separate arcDocCheckBreak (fixes the page-orphan; space is reserved with
   // the totals block via the +6 bump above). 11pt bold when budgetary (keeps the BUDGETARY weight),
-  // 9pt normal otherwise. Centered at bx+bw/2 (totals-box center); longest string fits within margins.
+  // 9pt normal otherwise. Centered at ARC_DOC.W/2 (PAGE center) — NOT bx+bw/2: the locate doc's
+  // totals-box center clips the budgetary string (measured 96.4mm → right edge 219.1mm, off the
+  // 215.9mm page). Page-center keeps it 59.8–156.1mm, inside the [15,200.9] content margins.
   doc.setFontSize(isBudg?11:9);
   doc.setFont("helvetica",isBudg?"bold":"normal");
   doc.setTextColor(...ARC_DOC.colors.red);
   const _vuDate=new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project,_customerValidityDays)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  doc.text((isBudg?"BUDGETARY - ":"")+"Prices Valid Until "+_vuDate,bx+bw/2,ctx.y,{align:"center"});
+  doc.text((isBudg?"BUDGETARY - ":"")+"Prices Valid Until "+_vuDate,ARC_DOC.W/2,ctx.y,{align:"center"});
   ctx.y+=6;
 
   // ── T&C PAGE ──
