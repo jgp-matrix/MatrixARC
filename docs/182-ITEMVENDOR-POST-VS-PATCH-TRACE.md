@@ -10,6 +10,8 @@
 
 The Item Vendor write is **not** POST-only and the update branch is **not** missing. It's a real upsert (`bcUpsertItemVendorLeadTime`) with a working existence-check — but its **PATCH (update) branch 404s on BC Page 114**, and a **404-fallthrough deliberately re-POSTs a record the code already confirmed exists**, producing the 400 collision. The records pre-exist because an *earlier* run of the *same* function created them successfully (POST when they didn't yet exist).
 
+**Correction (analyst framing, banked):** #182 was initially characterized as "an upsert that lost its update branch / a missing existence-check." That framing was **wrong** — the existence-check GET (line 4440) works. The real cause is the **2-part vs 3-part key** (ARC sent `Item_No`+`Vendor_No`; BC's `$metadata` declares `Item_No`+`Vendor_No`+`Variant_Code`) *plus* the deliberate-but-wrong-by-construction 404→POST fallthrough. Future sessions: do not re-derive from the original "missing update branch" framing.
+
 ---
 
 ## Q1 — The Item Vendor write: POST-only or upsert? Exact lines + key
