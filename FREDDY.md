@@ -205,6 +205,7 @@ An incident should not be closed until:
 5. Sentinel or equivalent verification completed when applicable.
 6. Architectural implications documented (CLAUDE.md rule, incident report, TODO hardening items).
 7. Coach and Marc both report completion.
+8. **"No bug / working-as-designed / no-op" claims are confirmed with the cheapest DECISIVE test before dismissing** — never closed on assertion or reasoning alone. (2026-06-30: the #183 "T5 dropdown regression" was actually correct dedup, proven by an empty-field append test, not by accepting the reversal; #182's PATCH fix was accepted via a proof-by-construction probe. "No bug" and "no-op" are exactly where real defects hide — cf. the #180 long-lead near-miss.)
 
 Prevents future sessions from reopening resolved incidents or repeating investigation patterns already learned.
 
