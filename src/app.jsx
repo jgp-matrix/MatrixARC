@@ -2013,7 +2013,7 @@ function setTooltipsEnabled(v){
 // $65/hr — change-order rush rate, distinct from BASE shop labor at $45). The
 // rate cascades: panel.pricing.ecoLaborRate (per-panel override) → this
 // global config → ECO_LABOR_RATE_DEFAULT constant.
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65};
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30};
 // DECISION(v1.20.28, Milestone C): Cost drift threshold for restore preview.
 // buildRestorePreview flags items where |liveCost - archivedCost| / archivedCost > this value.
 const COST_DRIFT_THRESHOLD=0.05;
@@ -2021,13 +2021,26 @@ async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
   _pricingConfig=cfg;
   const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
   await fbDb.doc(path).set(cfg);
+}
+
+// #187 §1.4 — Quote-validity cascade resolver. Tier 1 quote-edit override
+// (project.quote.quoteValidityDays) → tier 2 project override (project.quoteValidityDays)
+// → tier 3 customer default (customerDays, Phase 2; undefined in Phase 1) → tier 4 global
+// (_pricingConfig.quoteValidityDays, default 30). Returns a day count; send paths stamp
+// project.quoteExpiresAt = sentAt + days*86400000 (single source of truth for print + gate).
+function resolveQuoteValidityDays(project, customerDays){
+  const q=(project&&project.quote)||{};
+  if(q.quoteValidityDays>0)return q.quoteValidityDays;
+  if(project&&project.quoteValidityDays>0)return project.quoteValidityDays;
+  if(customerDays>0)return customerDays;
+  return _pricingConfig.quoteValidityDays||30;
 }
 
 // ── LABOR RATES (admin-configurable) ──
@@ -7426,7 +7439,8 @@ async function buildQuotePdfDoc(doc,project){
   doc.text("PRICES VALID UNTIL",ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
   ctx.y+=3.5;
   doc.setFontSize(9);doc.setFont("helvetica","normal");doc.setTextColor(...ARC_DOC.colors.red);
-  doc.text(q.validUntil||new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
+  // #187 §1.7a — single source of truth: post-send reads frozen project.quoteExpiresAt; pre-send previews the live cascade. q.validUntil retired.
+  doc.text(new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"}),ARC_DOC.W-ARC_DOC.margin.right,ctx.y,{align:"right"});
   ctx.y+=6;
 
   // ── T&C PAGE ──
@@ -17733,6 +17747,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [bcStaleDays,setBcStaleDays]=useState(_pricingConfig.bcStaleDays??60);
   const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
   const [ecoDefaultLaborRate,setEcoDefaultLaborRate]=useState(_pricingConfig.ecoDefaultLaborRate??65);
+  const [quoteValidityDays,setQuoteValidityDays]=useState(_pricingConfig.quoteValidityDays??30);
   const [saving,setSaving]=useState(false);
   const [saved,setSaved]=useState(false);
 
@@ -17898,7 +17913,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -17949,6 +17964,16 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             <span style={{color:C.muted,fontSize:14}}>/hr</span>
           </div>
           <div style={{fontSize:11,color:C.muted,marginTop:4}}>Default hourly rate billed for ECO change-order CUT/LAYOUT/WIRE hours (default $65). Distinct from the BASE labor rate set per-panel in the Panel Summary.</div>
+        </div>
+
+        {/* #187 §1.1e — Quote validity (global default expiration for sent quotes) */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Quote Validity</label>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <input type="number" min="1" max="365" value={quoteValidityDays} onChange={e=>setQuoteValidityDays(Math.max(1,parseInt(e.target.value)||30))} style={{...inp(),width:140,textAlign:"right"}}/>
+            <span style={{color:C.muted,fontSize:14}}>days</span>
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Default number of days a sent quote's prices stay valid ("PRICES VALID UNTIL"). Overridable per project and per quote (default 30).</div>
         </div>
 
         {/* ── PRICING REFRESH THRESHOLDS ── */}
@@ -20142,7 +20167,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
   function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
 
   const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
-  const defaultValidUntil=new Date(Date.now()+30*24*60*60*1000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+  const defaultValidUntil=new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project||{})*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const fmtMoney=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
 
   const defaultTerms="Standard Payment Terms for Panel Builds (Order Total over $30,000): 30% ARO; 40% @ Procurement, 30% @ Readiness To Ship\nStandard Payment Terms for Engineering / Programming: 50% ARO / 50% due @ Completion of Work";
@@ -20203,7 +20228,12 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               <div style={{display:"flex",flexWrap:"wrap",gap:12}}>
                 {fld("Quantity","qty","1.00",80)}
                 {fld("Lead Time (days)","leadTime","—",100)}
-                {fld("Prices Valid Until","validUntil",defaultValidUntil,160)}
+                {/* #187 §1.3b — structured numeric validity override (replaces validUntil free-text). Placeholder shows cascade default. */}
+                <div style={{display:"flex",flexDirection:"column",gap:2,minWidth:160,flex:1}}>
+                  <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.8px",color:C.muted}}>Quote Validity (days)</label>
+                  <input type="number" min="1" max="365" value={q.quoteValidityDays||""} onChange={e=>setQ({quoteValidityDays:+e.target.value||null})} placeholder={resolveQuoteValidityDays(project)}
+                    style={{background:C.cardBg||"#181825",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text||"#e8e8f0",fontSize:13,outline:"none"}}/>
+                </div>
               </div>
               <div style={{display:"flex",flexDirection:"column",gap:2}}>
                 <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.8px",color:C.muted}}>Payment Terms Text</label>
@@ -20744,7 +20774,11 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
             </div>
             <div style={{textAlign:"right"}}>
               <div className="qd-footer-label">Prices Valid Until</div>
-              <div className="qd-footer-value"><input value={q.validUntil||""} onChange={e=>setQ({validUntil:e.target.value})} placeholder={defaultValidUntil} style={{...qInp({textAlign:"right",color:"#dc2626",fontWeight:500})}}/></div>
+              {/* #187 §1.3b — cascade-computed date (read-only) + narrow days-override input. Date updates live as days change (defaultValidUntil reads the cascade). */}
+              <div className="qd-footer-value" style={{display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
+                <span style={{color:"#dc2626",fontWeight:500}}>{defaultValidUntil}</span>
+                <input type="number" min="1" max="365" value={q.quoteValidityDays||""} onChange={e=>setQ({quoteValidityDays:+e.target.value||null})} placeholder={resolveQuoteValidityDays(project)+"d"} style={{...qInp({textAlign:"right",width:50})}} title="Override validity days"/>
+              </div>
             </div>
           </div>
 
@@ -32889,7 +32923,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // Sales rep needs to know "email went out but lock didn't save" vs "email never sent".
       // #117 Fix 3c: spread `populated` (not the stale closure `project`) so the post-send
       // lock-save preserves the BC-populated terms — otherwise it would clobber them blank.
-      const upd={...populated,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true};
+      // #187 §1.5a — stamp quoteExpiresAt (project-level) from the validity cascade at send time.
+      const _sentNow=Date.now();
+      const _validDays=resolveQuoteValidityDays(populated);
+      const upd={...populated,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
       // #133 Change 4a (D3): first-class approval-request record when the quoted BOM
       // rode along. id "bar_"-prefixed (future portal write-back key); panels = stable
       // panel IDs; status write-once "sent" — never mutated by #133 code.
@@ -34586,6 +34623,18 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl);
                 })}
               </div>
+              {/* #187 §1.2 — project-level quote validity override (tier 2). Blank = fall through to customer/global default. */}
+              <div style={{marginTop:8,marginBottom:4,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:11,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted}}>Quote Validity Override</span>
+                <input type="number" min="1" max="365" disabled={readOnly}
+                  value={project.quoteValidityDays||""}
+                  onChange={e=>persistProject({...project,quoteValidityDays:+e.target.value||null})}
+                  placeholder={(_pricingConfig.quoteValidityDays||30)+"d"}
+                  title="Per-project default quote validity in days. Blank = fall through to global default."
+                  style={{width:70,background:"#0d1526",border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 8px",color:C.text,fontSize:12,outline:"none",fontFamily:"inherit"}}/>
+                <span style={{fontSize:10,color:C.muted}}>days (blank = default)</span>
+              </div>
+
               {/* ── PROJECT RFQ DETAILS ── */}
               <div style={{marginTop:8,marginBottom:4}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>setRfqCollapsed(v=>!v)}>
@@ -36543,7 +36592,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       // poll. KNOWN LIMITATION (accepted): an ECO edit can leave quoteLocked stale-true, keeping
       // the check suppressed during the ECO window — not handled here.
       const _fp=projectRef.current||{};
-      if(_fp.quoteLocked||_fp.wonAt||_fp.lostAt)return;
+      // #187 §1.6a — expiry clause: an expired sent quote UNLOCKS the price-check (stale prices
+      // need refreshing). quoteExpiresAt is PROJECT-LEVEL (stamped by the send paths). Won/lost
+      // still block unconditionally. The #186 quoteLocked guard is otherwise intact.
+      const _quoteExpired=_fp.quoteExpiresAt&&Date.now()>_fp.quoteExpiresAt;
+      if((_fp.quoteLocked&&!_quoteExpired)||_fp.wonAt||_fp.lostAt)return;
       priceCheckRan.current=true;
       (async()=>{
         const panels=projectRef.current.panels||[];
@@ -38342,7 +38395,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             try{await bcSyncPanelPlanningLines(project.bcProjectNumber,pi+1,project.panels[pi],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
                           }
                         }
-                        const upd={...project,quoteSentAt:Date.now(),quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true};
+                        // #187 §1.5b — stamp quoteExpiresAt (project-level) from the validity cascade at send time.
+                        const _sentNow=Date.now();
+                        const _validDays=resolveQuoteValidityDays(project);
+                        const upd={...project,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
                         onUpdate(upd);
                         if(project.bcProjectNumber&&_bcToken){
                           bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
