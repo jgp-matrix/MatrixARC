@@ -36533,6 +36533,17 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(priceCheckRan.current)return;
     function tryCheck(){
       if(priceCheckRan.current||!_bcToken)return;
+      // FROZEN-QUOTE GUARD (#186 / Coach C126): skip the auto BC price-check while the quote is
+      // frozen — otherwise it nags on every open of a locked quote AND lets Accept/Dismiss
+      // silently rewrite quoted-row prices. Gate on quoteLocked (the LIVE frozen-state field:
+      // set at send, cleared at unlock, re-set at re-send) — NOT quoteSentAt, which persists
+      // set-once and would wrongly suppress the check through the entire unlock→re-send revision
+      // window (exactly when it's useful). Also freeze on won/lost. Placed BEFORE priceCheckRan
+      // is set so an in-session unlock (quoteLocked→false) re-enables the check on the next 30s
+      // poll. KNOWN LIMITATION (accepted): an ECO edit can leave quoteLocked stale-true, keeping
+      // the check suppressed during the ECO window — not handled here.
+      const _fp=projectRef.current||{};
+      if(_fp.quoteLocked||_fp.wonAt||_fp.lostAt)return;
       priceCheckRan.current=true;
       (async()=>{
         const panels=projectRef.current.panels||[];
