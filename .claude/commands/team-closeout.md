@@ -33,7 +33,7 @@ Extract config values:
 □ Step 5 — Surface TODO.md updates
    → USER ACTION: Approve, modify, or waive proposed TODO changes
 □ Step 6 — One-paragraph summary (automatic — review output)
-□ Step 6b — Regenerate {SESSION_STATE} (automatic)
+□ Step 6b — Regenerate {SESSION_STATE} incl. ⭐ NEXT UP analysis (automatic)
 □ Step 6c — Durable-record check (automatic — may surface gaps)
 □ Step 6d — Handoff file freshness ({ANALYST_ONBOARDING}, {ARCH_LOG}, memory)
    → STOP: {IMPL_SHORT} presents proposed changes and waits
@@ -127,10 +127,22 @@ Regenerate `{SESSION_STATE}` from current repo state:
 5. Count OPEN items in TODO.md
 6. Check for overnight/coordination logs
 7. Write `{SESSION_STATE}`
+8. Write the **⭐ NEXT UP analysis** into `{SESSION_STATE}` (see below) so {ANALYST_SHORT} can take the reins cold at next startup.
+
+### ⭐ NEXT UP analysis (what the analyst starts on)
+
+Write a `## ⭐ NEXT UP — {ANALYST_SHORT} leads` section into `{SESSION_STATE}`. {ANALYST_SHORT} has no repo access, so this section (+ TODO.md) is the analyst's **entire** decision input — curate it deliberately.
+
+**Always write a ranked top-ten** of the most critical open items (from TODO.md OPEN items, by priority + readiness — shovel-ready / already-scoped items rank above un-scoped ones), one line each. Then:
+
+- **If this session was focused on a specific TODO/bug** (one item dominated the work, or an item is mid-flight / pending verification): **put that item at #1 and tee it up** — one-line what, the decisive test or open question, and the pass/fail or done criteria — so it's addressed first. The rest of the ten follow as the ranked fallback.
+- **If there was no single focus** (mixed small work, or the focus item closed cleanly with nothing queued behind it): rank purely by priority and hand the choice to {ANALYST_SHORT}.
+
+Include any new bug surfaced this session that {ANALYST_SHORT} still needs to scope.
 
 Then regenerate `{ANALYST_PASTE}` — write the full content of `{ANALYST_ONBOARDING}`, then a `---` separator, then the full content of `{SESSION_STATE}`. This is the drag-and-drop file the analyst uses at next startup.
 
-Mark complete: `✓ Step 6b — {SESSION_STATE} + {ANALYST_PASTE} regenerated`
+Mark complete: `✓ Step 6b — {SESSION_STATE} (+ ⭐ NEXT UP) + {ANALYST_PASTE} regenerated`
 
 ## Step 6c — Durable-record check
 

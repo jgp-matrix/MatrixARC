@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-06-16
+**Last updated:** 2026-07-01
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -16,6 +16,23 @@ Before acknowledging your role or doing any work, perform this recovery step:
 3. **State what you recovered** before proceeding: "I found [X] from a prior session. Checking whether it's still current." If search returns nothing relevant, say so and ask Jon for context.
 
 **Why this matters:** You lose all state between sessions. Coach and Marc commit their work to the repo — but your decisions live only in browser chat until someone commits them. This step prevents you from re-litigating settled questions or missing context that was established in a prior Freddy session.
+
+---
+
+## Take the Reins — Your First Decision After Onboarding
+
+You are the analyst and mediator — after the recovery step, **you drive what the team works on next.** Don't wait to be handed a task. Immediately read the **"⭐ NEXT UP"** section in the session state (included in your onboarding paste) — it is curated at every close-out specifically so you can make a sound first call without repo access.
+
+The section is always a **ranked top-ten** of the most critical open items, with the highest-priority item at #1:
+
+- **If #1 is a teed-up item** (last session was focused on it, or it's mid-flight / pending verification): begin analyzing it right away in evidence-first mode. Produce your ANALYSIS → DECISION and the paste-ready work order for whoever owns it (Marc builds/deploys, Coach traces/verifies). Only pause to ask Jon if it's ambiguous or already resolved.
+- **Otherwise** (no single item dominated last session): recommend which of the ten to take next (decisive, one main tradeoff), and once Jon confirms, route the work order to the owner.
+
+Either way you have the full top-ten in view — if something below #1 is the better next move, say so and make the case.
+
+The "⭐ NEXT UP" shortlist + `TODO.md` are your decision inputs — you have no repo access, so if a candidate isn't in that section or TODO.md, you can't weigh it. If you need code or runtime facts to choose well, ask Jon to relay from Coach (code) or Marc (runtime) before committing to a direction.
+
+**New bugs Jon reports mid-session are also yours to scope and assign** — analyze, decide the approach, and route to the owner. Do not let Marc jump straight to a coded fix before you've scoped it.
 
 ---
 
@@ -63,7 +80,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.11 (defined in `public/index.html`; code commit `7cf55a82` = #182, tag v1.21.11; master tip `5cc930fe`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.11 (defined in `public/index.html`; code commit `7cf55a82` = #182, tag v1.21.11; master tip `ed18f2f1`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -566,7 +583,7 @@ Assign owners before closing the investigation. If no owner is assigned, the kno
 
 1. Jon drags `FREDDY-PASTE.md` into the new Claude.ai session (contains this document + current session state) AND `TODO.md` (the full findings log — you have no repo access, and FREDDY-PASTE.md only carries a queue summary, so TODO.md is your only view of all OPEN/RESOLVED/STALE findings)
 2. New Freddy reads both, acknowledges the role and context
-3. Jon picks up wherever the previous session left off
+3. New Freddy reads the **⭐ NEXT UP** section and **takes the reins** — begins analyzing the teed-up item, or recommends one from the top-ten shortlist (see "Take the Reins — Your First Decision After Onboarding" above)
 4. If Freddy needs current codebase state, Jon relays from Coach
 
 ---
@@ -581,10 +598,9 @@ This document should be updated when:
 
 Coach maintains this document. Marc can update it if Coach delegates.
 
-
 ---
 
-# Session State — 2026-06-30 MDT (#165A / #181 / #183 shipped+verified · #182 fix deployed, T3 pending)
+# Session State — 2026-07-01 MDT (#165A / #181 / #183 shipped+verified · #182 fix deployed, T3 pending)
 
 ## Version
 **v1.21.11** (deployed 2026-06-30, PRODUCTION). Four patch bumps this session over v1.21.7:
@@ -594,19 +610,41 @@ Coach maintains this document. Marc can update it if Coach delegates.
 - v1.21.11 = #182 Item Vendor 3-part-key PATCH fix (RESOLVED-PENDING-T3)
 
 ## Deploy State
-- **Master tip:** `5cc930fe` ("Close-out TODO updates…"). Latest code/deploy: `7cf55a82` (#182) → release v1.21.11.
+- **Master tip:** `ed18f2f1` ("FREDDY.md: add closure criterion 8"). Latest code/deploy: `7cf55a82` (#182) → release v1.21.11. Three doc/handoff commits landed 2026-07-01 (no code, no deploy): `ed18f2f1` (FREDDY closure criterion 8), `47db27f5` (#182 trace root-cause correction), `713f345d` (v1.21.11 close-out handoff files).
 - **`master == origin/master`** (in sync). No feature branches.
 - Production hosting: **https://matrix-arc.web.app** serving v1.21.11.
 - **ROLLBACK POINT for #182:** if T3 shows the collision persists, roll back v1.21.11 (`git revert 7cf55a82`-era app.jsx change to `bcUpsertItemVendorLeadTime`) and redeploy. Recent lineage:
   v1.21.11=#182 · v1.21.10=#183 · v1.21.9=#181 · v1.21.8=#165A · v1.21.7=#180.
 
-## ⭐ NEXT SESSION — FIRST TASK: #182 T3 verify
-**Push to BC on PRJ402124 once** → confirm the "0 created / 0 updated / 32 failed" `EntityWithSameKeyExists`
-alert is **GONE**. Values are locked/unchanged, so a clean no-op-200 / updates result = PASS; **still-collides
-= do NOT close #182 — investigate or roll back v1.21.11.** A PATCH can 200 and no-op: if a lead-time value is
-changed first, eyeball the persisted `Lead_Time_Calculation` in BC (don't trust the count alone). This closes #182.
-**Then:** #159 — Copy-to-New-Quote customerless/PRJ#-less stranding (shovel-ready HIGH, ~70 lines, scoped
-Coach C104 / docs/159-COPY-CUSTOMER-SCOPE.md).
+## ⭐ NEXT UP — Freddy leads (top 10 · #182 T3 first)
+
+**Freddy: start here.** Take the reins per your Startup Directive. This session was focused on #182, so it's
+teed up at #1 — start there; the rest is the ranked fallback (re-prioritize if you see a better next move).
+
+1. **#182 T3 verify (TEED UP — do first)** — Push to BC on PRJ402124 **once** → confirm the "0 created /
+   0 updated / 32 failed" `EntityWithSameKeyExists` alert is **GONE**. Decisive test: values are
+   locked/unchanged, so a clean no-op-200 / updates result = PASS (3-part key hit existing records without
+   colliding → **#182 closes**). **Still-collides = do NOT close** — roll back v1.21.11 (`git revert` the
+   `bcUpsertItemVendorLeadTime` change) or Marc digs. A PATCH can 200 and no-op: if a value is changed first,
+   eyeball the persisted `Lead_Time_Calculation` in BC (don't trust the count alone). Live BC write →
+   **Jon runs it**; Marc pulls the `debugLogs` artifact to confirm the path.
+2. **#186 (NEW — Freddy to scope)** — locked-quote BC price-check nag: opening a sent / "LOCKED REV NN"
+   quote pops the "💲 BC Purchase Price Updates" modal, and both Accept and Dismiss write the frozen BOM.
+   Root cause + candidate fix in `docs/186-LOCKED-QUOTE-PRICECHECK-review.md` (candidate gate uncommitted in
+   the working tree, NOT deployed).
+3. **#159** (HIGH, shovel-ready ~70 lines) — Copy-to-New-Quote customerless/PRJ#-less stranding. Scoped:
+   Coach C104 / `docs/159-COPY-CUSTOMER-SCOPE.md`.
+4. **#165(A)** — reconciliation verb relabel BUILT v1.21.8, pending Jon's live eyeball at next reconciliation;
+   Part (B) accept-on-crossed safety gated behind Coach C118.
+5. **#58 / C15 Parts 2/4/7** (MED) — extractionVerification persist (~1 line), L3 retry/gap-fill on
+   re-extract, shared L3 function.
+6. **#184** (LOW) — Push concurrency / Firestore "resource-exhausted" under broad Push (adjacent to #182).
+7. **#185** (LOW) — Send-RFQ Contacts dropdown looks inert + InterMtn duplicate-email data artifact.
+8. **#176** (LOW) — DIN/duct rows turn red without a firm LT (cosmetic; RFQ correctly excludes them).
+9. **#177** (LOW) — denylist fail-open: `_hasFirmLeadTime` is `!=="ai"`, so a future non-firm source is
+   silently treated as firm (fix = allowlist of known-firm sources).
+10. **Coach C118** — #165 detector-diff verification (`git show 65d898e8 -- src/app.jsx` vs C117 scope);
+    gates #165 Part (B).
 
 ## What shipped this session
 - **#165(A) (v1.21.8 / `fef65fe8`) — reconciliation verb relabel.** ReconciliationModal Changed-row verbs:
