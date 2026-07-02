@@ -41,91 +41,27 @@ If anything looks unexpected — wrong directory, unfamiliar branch, untracked f
 
 ### Team startup (default)
 
-When Jon types "startup", Marc boots first and orchestrates the full team. This is a five-step sequential process. Marc does NOT ask which roles — "startup" always means full team.
+**Freddy orchestrates startup.** Jon opens ONE fresh CCD session and runs `/team-startup`; that session becomes **Freddy** (the orchestrator) and coordinates the boot. (Freddy took over from Marc on 2026-07-02, once Freddy gained repo file access — previously Marc orchestrated only because he was the one who could read the handoff `.md` files and paste them to a browser-based Freddy. Orchestration is a coordination duty; it does NOT change Freddy's read-to-route lane during work.)
 
-**Before executing, display this checklist so Jon can follow along:**
+**The operative, step-by-step procedure lives in the `/team-startup` skill** (`.claude/commands/team-startup.md`) — it is orchestrator-configurable (via `orchestrator` in `.claude/team-config.json`) and is the source of truth. Do not maintain a second divergent copy here. The rest of this section is the summary any role can read without invoking the skill.
 
-```
-STARTUP CHECKLIST (Full Team)
-─────────────────────────────
-□ Step 1 — Verify repo state (automatic — no user action)
-□ Step 2 — Generate Coach paste + Freddy paste (automatic — no user action)
-   → USER ACTION: Paste Coach block into a new Coach CCD session
-   → USER ACTION: Paste Freddy block into a new Freddy CCD session
-□ Step 3 — Wait for Jon to confirm both sessions initialized
-   → USER ACTION: Confirm "Coach is up" and "Freddy is up"
-□ Step 4 — Comms-check sync (Marc messages both roles via send_message; they reply on the bus)
-   → USER ACTION: Approve the per-send "Allow Once" prompts — no manual relay needed
-□ Step 5 — Work begins
-   → USER ACTION: Give first work instruction
-```
+Startup in brief:
+1. **Freddy verifies state** — runs `./tools/startup-auto.sh`, reads `APP_VERSION`, regenerates `SESSION-STATE.md` if stale. Stops and surfaces anything unexpected (wrong dir, unfamiliar branch, untracked files) before booting the team.
+2. **Freddy generates path-based pastes for the two peers — Marc and Coach** (all roles have repo access now, so paths not inline content; each paste self-titles its session so `list_sessions` can find it). Marc's paste also tells Marc to open + stamp the live-testing browser tab in his OWN session (Claude-in-Chrome control is session-bound; Freddy is read-to-route and doesn't own the live tab).
+3. **Jon opens a new CCD session per peer**, pastes each block, confirms both are up.
+4. **Freddy runs the automated comms-check sync** over the cross-session `send_message` bus — **no manual relay from Jon.** Freddy locates the Marc/Coach sessions via `list_sessions`, states his own baseline (version, live master tip from `git rev-parse --short HEAD`, top-of-queue), messages both peers, and verifies their bus replies match on role identity, version, **master-tip SHA** (catches stale-handoff drift), top-of-queue, and a "comms OK" signal. On mismatch: re-verify against live git, fix the stale handoff file, re-run for that role. If a peer can't be reached on the bus, fall back to Jon relaying that one confirmation manually and flag it.
+5. **Work begins.**
 
-Then execute each step, checking off as completed.
-
-**Step 1 — Marc verifies state (automatic)**
-
-Run `./tools/verify-state.sh`, read `APP_VERSION` from `public/index.html`. Read `SESSION-STATE.md` — if missing or older than the latest commit, regenerate it (see generation procedure below). Display the verify-state results and current version.
-
-**Step 2 — Marc produces two paste-ready outputs**
-
-Generate both pastes and display them for Jon to copy.
-
-**Coach paste (for a Coach CCD session):**
-Coach has full repo access, so provide file paths — not inline content. Output a single code block Jon can paste into a fresh CCD session:
-
-```
-You are Sam Wize ("Coach"), Senior Development Engineer, Architecture on the Matrix ARC project at C:\Users\jon\AppDev\MatrixARC.
-
-Read these files to orient yourself (in this order):
-1. CLAUDE.md — project rules, team structure, your role definition (focus on: Multi-instance workflow, Three-role naming, Session shutdown procedure)
-2. COACH.md — your session log, findings, and verification history
-3. SESSION-STATE.md — current project state, version, work queue, open items
-4. TODO.md — open findings (skim for OPEN items, note the work queue priority)
-
-After reading, report back to Jon:
-- Your role identity (name and role)
-- Current deployed version
-- Top-of-queue work item
-- Any unresolved items from your last session (check tail of COACH.md)
-- "Coach ready"
-```
-
-**Freddy paste (for a Freddy CCD session):**
-Freddy now runs in CCD with repo READ access (2026-07-01 pivot — was browser). Output a path-based paste (like Coach's) telling Freddy to read `FREDDY.md` + `FREDDY-PASTE.md` (combined onboarding + `SESSION-STATE.md`, regenerated every Close Out) + `TODO.md`. No browser drag. Freddy reads-to-route (does NOT build/trace). ONE live analyst — terminal-Freddy REPLACES browser-Freddy, never concurrent.
-
-**★ Team comms (all three in CCD):** Marc, Coach, and Freddy all run in CCD (Desktop), so cross-session `send_message` moves messages between them directly (no copy-paste relay). Each session must be in **"Ask permissions"** mode for outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any role — it cannot receive cross-session messages. Repo (git) remains the durable fallback bus.
-
-**Step 3 — Open app in browser**
-
-Open the deployed app URL (https://matrix-arc.web.app) in a linked browser session via Claude in Chrome. This becomes the authoritative browser session for live testing. Immediately stamp the controlled tab's title (`document.title = '🤖 CLAUDE-CONTROLLED ▸ ARC'`) so Jon can pick it out among duplicate tabs — see [Mark the Claude-controlled browser tab](#mark-the-claude-controlled-browser-tab-required) (re-stamp after every reload/navigation).
-
-**Step 4 — Jon pastes Coach and copies Freddy file**
-
-Marc waits. No work begins until Jon confirms both sessions are initialized.
-
-**Step 4 — Comms-check sync (automated, over the CCD bus)**
-
-Once Jon signals that Coach and Freddy are up, Marc runs the sync check **directly over the cross-session `send_message` bus — no manual relay from Jon.** This simultaneously proves the three-way bus is live in both directions and confirms all three roles agree. Marc:
-
-1. Calls `list_sessions` and locates the Coach and Freddy sessions by title (they self-title on boot per their pastes; ask Jon which sessionId is which if a title is missing or ambiguous — never guess the target).
-2. States his own baseline — current `APP_VERSION`, live master tip (`git rev-parse --short HEAD`, must equal `origin/master`), top-of-queue from SESSION-STATE.md, "Marc Masdev, ready".
-3. Sends a comms-check `send_message` to Coach and to Freddy (each triggers an "Allow Once" prompt Jon approves), asking each to reply **on the bus** with: role identity, deployed version, their **live** master tip (from `git rev-parse`, not copied from a handoff file), top-of-queue read, and a "comms OK" signal.
-4. Waits for both replies, then verifies each against his baseline: role identity, version, **master tip SHA** (this leg catches stale-handoff drift — a role reporting an old SHA read from a file), top-of-queue, and "comms OK" (proves the bus works both ways).
-
-If any role reports a version, queue, or **master-tip** mismatch, resolve before proceeding — the usual culprit is a stale SESSION-STATE.md / FREDDY.md citing an old version or SHA. Have the role re-verify against live git, fix the stale file, and re-run the check. If a role can't be reached on the bus (no reply, or a Terminal CLI session that can't receive messages), fall back to Jon relaying that one role's confirmation manually and flag that it isn't on the bus.
-
-**Step 5 — Work begins**
-
-Jon gives the first work instruction.
+**★ Team comms (all roles in CCD):** Marc, Coach, and Freddy all run in CCD (Desktop), so cross-session `send_message` moves messages between them directly (no copy-paste relay). Each session must be in **"Ask permissions"** mode for outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any role — it cannot receive cross-session messages. Repo (git) remains the durable fallback bus.
 
 ### Startup variants
 
-| Command | Roles | Behavior |
-|---------|-------|----------|
-| `startup` | F + C + M | Full team (default). Produces both pastes, runs sync check. |
-| `startup solo` or `startup marc` | M only | Marc only. Skip paste generation, display state summary, begin work. |
-| `startup code` | C + M | Code team. Produce Coach paste only, skip Freddy. |
-| `startup custom` | varies | Marc asks which roles, generates appropriate pastes. |
+| Command | Orchestrator / Roles | Behavior |
+|---------|----------------------|----------|
+| `/team-startup` (or "startup") | Freddy orchestrates → F + C + M | Full team (default). Freddy verifies state, generates Marc + Coach pastes, runs the automated comms-check sync. |
+| `startup solo` or `startup marc` | Marc only | Marc only. Skip paste generation + comms check, display state summary, begin work. |
+| `startup code` | Marc + Coach | Code team. Freddy (if invoked) or Marc generates the Coach paste only, skips analyst. |
+| `startup custom` | varies | Orchestrator asks which roles, generates appropriate pastes. |
 
 ### SESSION-STATE.md generation procedure
 

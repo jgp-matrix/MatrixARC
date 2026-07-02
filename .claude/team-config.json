@@ -1,6 +1,7 @@
 {
   "teamName": "Matrix ARC Team",
   "guidedMode": false,
+  "orchestrator": "analyst",
   "roles": {
     "implementer": {
       "name": "Marc Masdev",
