@@ -329,6 +329,15 @@ All four sessions share **one checkout and one git index**, so an undisciplined 
 - **U5 — Section/file ownership is absolute.** Append-only in `INBOX.md`/`OVERNIGHT-LOG.md`; never edit a file you don't own — draft the change and route it to the owner via Freddy.
 - **U6 — Owner-commits under hub-and-spoke.** To change a file you don't own: draft → route to Freddy (verify) → the **owner** applies + commits.
 
+### Jon notification policy
+
+Jon steers **by exception.** He is surfaced-to / notified ONLY on three triggers:
+1. A **major code change about to be pushed** (Marc flags it through Freddy so Jon is notified *before* it lands).
+2. **Options / tradeoffs** being discussed (a decision with genuine alternatives).
+3. **Questions he must answer** (routed through Freddy per hub-and-spoke).
+
+Everything else — routine status, minor commits, doc edits, triage passes, team confirmations, verification loops — the team handles autonomously via Freddy (hub) **without** pinging Jon.
+
 ### Intake / Triage session (Dez)
 
 Dez (Dezzie Arnez) is a standing CCD session (part of the hub-and-spoke comms group — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
