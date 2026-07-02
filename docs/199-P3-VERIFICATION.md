@@ -53,3 +53,22 @@ So on a **post-approval re-arm** (a new supplier cross re-flags a line on an alr
 
 ## Bottom line
 The P3 hard gate is **mechanically correct**: synthetic issue rides the existing `_sendBlocked` on all 6 quote surfaces, the 3-way split fix is complete (T14), distinct messaging, print soft / send hard, and the two P2 follow-ups (MED-2, L4) are properly closed. **PASS on the built scope.** Before deploy, **rule MED-3** (BOM-send TR bypass — confirm intended or one-line add) and **log MED-4** (approved-state message accuracy — ship-acceptable, small follow-up). Then live T1–T17.
+
+---
+
+## MED-3 FIX RE-VERIFY (2026-07-02, commit `c46184aa`) — PASS
+
+Jon ruled "gate it." `handleBomSend` (`~33684`) now adds, immediately after the `verifyBlocks` check, a mirrored TR gate:
+```
+const trBlocks=findIncompleteQuoteItems(project).filter(i=>i.isTechReviewBlock);
+if(trBlocks.length){ const _trN=trBlocks.reduce((s,i)=>s+(i.count||1),0);
+  arcAlert("Quoted BOM send blocked — "+_trN+" line…require Technical Review sign-off…
+            Have an engineer resolve the flagged lines (or approve the project), then resend."); return; }
+```
+- **Mirrors correctly** — same `findIncompleteQuoteItems(project).filter(...)` → `.length` → `arcAlert` + early `return` shape as the `isVerificationBlock` gate directly above; placed before recipient validation and before `setBomSending(true)` (early-return, no in-flight-guard leak). ✓
+- **Predicate + count correct** — `isTechReviewBlock` filter, `reduce(count||1)` sum (consistent with the other P3 TR counts). ✓
+- **Message right — and MED-4-safe:** it directs "have an engineer resolve the flagged lines (or approve the project)" rather than "Click Send for Technical Review," so it does **not** reproduce the MED-4 absent-button phrasing on this surface. ✓
+- **No new dead-end** — resolution is the same reachable reviewer Resolve / approve-sweep. ✓
+- **Optional trivial nit (non-blocking):** two `findIncompleteQuoteItems(project)` calls now in `handleBomSend` (verify + TR); could compute once and filter twice. Harmless (send-click, not hot path) and matches the existing style — no change needed.
+
+**#199 is now FULLY code-complete — all 7 customer-facing surfaces gated on unresolved Tech Review.** Clear to live T1–T18 → deploy. MED-4 remains the logged LOW follow-up.
