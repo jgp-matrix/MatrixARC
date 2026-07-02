@@ -84,3 +84,25 @@ Marc addressed all 12 findings. Re-reviewed the v2 diff (read-only). **All 3 HIG
 2. **Title-paint timeout** — `Get-CcdWindowHandles` skips windows with a zero-length title, so a new window that hasn't painted its title within `$NewWindowTimeoutMs` (15s) would be misdiagnosed as "no new window" (H2 abort). 15s is generous and calibratable; only a concern on a very slow cold start.
 
 **Not blocking; both are calibratable.** v2 is sound to take into Jon's live calibration cycle.
+
+---
+
+## v3 RE-REVIEW (2026-07-02, commit c18a0d24 + 6bd80e63) — VERDICT: APPROVED for re-calibration
+
+v3 is a **rework for the single-window CCD model** (live calibration found CCD is single-instance / multi-session: Ctrl+N makes a session *inside* the current window; separate windows are a manual Shift+drag tear-off; the exe won't spawn windows). This correctly invalidated v2's entire window-handle-capture design. Re-reviewed read-only.
+
+**1. v2 machinery cleanly removed — CONFIRMED.** `grep` over `tools/team-boot/` for `EnumWindows | Wait-NewWindow | Get-CcdWindowHandles | Open-NewSession | NewSessionMethod | CcdExe | AutoSetTitle | DelayAppLaunch | NewWindowTimeout | paste-and-submit | set-title.ahk | send-keys.ahk | Win32Win | launch-exe` → **zero hits.** Old three libs deleted; `Get-CcdWindowHandle` (singular, `MainWindowHandle`) replaces the plural EnumWindows version; timing vars swapped cleanly. No dangling refs.
+
+**2. New flow — SOUND.** Preflight now requires CCD already open (`Get-CcdWindowHandle`=0 → fatal on a real run). Boot loop: for each of 4 sessions, `new-session-paste.ahk` activates the one window by handle → `Ctrl+N` → wait → `^v` → submit. Acting on the same `MainWindowHandle` across all 4 is correct — Ctrl+N keeps the same OS window, so the handle is stable. Clipboard is set per-block immediately before each synchronous AHK call (no clobber/race).
+
+**3. Sequencing (pause → go → comms-check) — SOUND, resolves the title-ordering hazard.** `session1-freddy.txt` verifies state, then **PAUSES** and tells Jon to tear-off + title + Ask-permissions the peers and reply "go" *before* the comms-check — explicitly because Freddy locates peers by TITLE via `list_sessions`, and titles aren't set until Jon's manual step. On "go" it runs the comms-check leg. The pause is human-gated, so even though Freddy's session is created first and starts reading while the launcher is still creating peers 2–4, there is **no race** — Freddy can't reach `list_sessions` until Jon's "go", which comes long after all 4 exist and are titled. Interlocks with the M4 peer blocks (post-in-window, wait for Freddy's ping).
+
+**4. Auto tear-off (`$AutoTearOff` + `tearoff-session.ahk`) — SAFE.** Defaults OFF; the helper ships as a guarded no-op (`ExitApp(9)` behind `Calibrated:=false`), and the ps1 treats exit 9 as "skip → do it manually." Opt-in, can't misfire until deliberately calibrated. Committed at `6bd80e63`, wired correctly — not dangling.
+
+### ⚠ Headline v3 calibration risk (MED) — the one to watch
+**There is no programmatic detection that `Ctrl+N` actually created a new session.** v3 dropped v2's `Wait-NewWindow` assert along with the window model it depended on, and the single-window model has no cheap window-count equivalent. So if `$NewSessionHotkey` is the *wrong* shortcut (Jon's block comment says "best guess is Ctrl+N — CONFIRM"), each iteration's `Send(^n)` is a no-op and all four `^v`+Enter pastes **stack into the same session** — the direct analog of the old H2 stacking failure, now silent. Mitigation is purely the calibration eyeball. **Recommend:** during Jon's `-WhatIf`→live pass, watch the CCD session list grow by exactly 4; if CCD exposes a session count anywhere queryable, a lightweight post-loop assert (count increased by 4, else warn) would restore a guard. Not a code defect — a calibration-gated risk to name so it isn't discovered as "why is everything in one session."
+
+### LOW
+- `Invoke-Ahk`'s generic failure hint (`"exited N (2=focus fail, 3=window not found)"`) also prints for the tear-off's `ExitApp(9)` "not calibrated" path, mislabeling it — cosmetic; the ps1's own line-159 message clarifies. Optional: special-case 9 in the hint.
+
+**Net: v3 is sound and internally consistent for the single-window model, v2 machinery is gone clean, and the sequencing correctly gates on titling. APPROVED for Jon's re-calibration — with the Ctrl+N "silent stack if wrong shortcut" risk named as the #1 thing to confirm live.**
