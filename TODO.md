@@ -22,10 +22,10 @@ _(none yet)_
 _(none yet)_
 
 ### 🔧 General (G###)
-- **G001 — "Remote approval of Allow-Once prompts"** [Discovery — awaiting Jon's test observation] — enable Jon to approve (or eliminate) the per-send "Allow Once" cross-session permission prompt remotely so he isn't desk-tethered to keep the CCD `send_message` bus flowing. *(source: Jon 2026-07-02, via Freddy; captured FEAT, reclassified G — dev-tooling/infra, not an ARC product feature.)*
-  - **Feasibility (Freddy scoping via CC-guide research):** (a) Native remote approval of CCD permission prompts from phone/web = **NOT supported** — Remote Control steers a running session but does not surface permission prompts to remote devices. (b) Allowlisting the tool to suppress the prompt: CC docs say generic MCP tools *can* be allowlisted, BUT the `send_message` tool's own definition says it "ALWAYS prompts".
-  - **Decisive test (2026-07-02) — FIRED, observation PENDING:** added `mcp__ccd_session_mgmt__send_message` to `.claude/settings.json` allow + fired a test send. Whether the "Allow Once" prompt still fired is **Jon's observation — AWAITING his answer** (do NOT record a result until he confirms). Allow rule left in place.
-  - **Next (on Jon's observation):** still prompted → accepted limitation, fallback = repo handoff bus; silent → allowlist works, close [Verified].
+- **G001 — "Suppress the Allow-Once prompt on cross-session sends"** [Verified — RESOLVED] — original goal: stop Jon being desk-tethered to approve the per-send "Allow Once" `send_message` prompt. *(source: Jon 2026-07-02, via Freddy; captured FEAT, reclassified G — dev-tooling/infra.)*
+  - **Feasibility scoping:** native remote approval from phone/web = not supported (Remote Control steers a session but doesn't surface permission prompts remotely). Allowlisting the tool: CC docs said yes; the tool description said "ALWAYS prompts"; the 2026-07-01 team lore said "hardcoded, not suppressible, do not re-test" → conflict.
+  - **Decisive test (2026-07-02):** added `mcp__ccd_session_mgmt__send_message` to `.claude/settings.json` allow list. First send: observation not captured. **RE-TEST after the rule was in effect: NO Allow-Once prompt fired (Jon confirmed).** → **The allowlist DOES suppress the prompt.** The "hardcoded/not-suppressible" lore was wrong — the rule just needs a session (re)load to take effect.
+  - **Resolution:** allow rule committed in `.claude/settings.json`; each session picks it up on (re)start → cross-session sends no longer prompt Jon. No remote-approval infra needed. Team-wide once all four sessions have reloaded. **Supersedes** the SESSION-STATE/CLAUDE.md "hardcoded / do-not-re-test" note (CLAUDE.md correction routed to Coach). Also makes the stuck-on-Allow-block monitor moot once all sessions adopt the rule.
 
 ## Round 1 (firestore.rules + deploy.sh diff)
 

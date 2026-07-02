@@ -1,0 +1,11 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash tools/arc-statusline.sh"
+  },
+  "permissions": {
+    "allow": [
+      "mcp__ccd_session_mgmt__send_message"
+    ]
+  }
+}
