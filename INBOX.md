@@ -21,7 +21,7 @@
 
 ---
 
-_(empty — no un-routed items)_
+- [2026-07-02] BUG — "ARC auth redirect URI carries a trailing dot" — if ARC is loaded at a trailing-dot URL (`matrix-arc.web.app.`), `window.location.origin` carries the dot into the OAuth redirect URI → Azure AADSTS50011 redirect-mismatch → BC/Microsoft sign-in fails with a cryptic error. Root cause = URL-entry artifact (NOT a code bug); clean-reload at the no-dot URL fixes it (confirmed live). Hardening: strip a trailing dot from the origin when building the auth redirect URI so a dotted load can't break BC. LOW priority. — reported via Intake (source: Jon 2026-07-02, resolved live; via Freddy)
 
 <!-- Triage log: 2026-07-02 — "Remote approval of Allow-Once prompts" promoted to TODO.md G001 [Discovery] by Freddy. -->
 
