@@ -27024,11 +27024,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     // Resolve missing vendors live (needVendorLookup) + re-resolve stale-vendor rows (#188).
     // _itemResolveCache dedupes bcGetItemVendorNo by item number across both pools.
+    // Track stale-pool outcomes separately so the confirm/summary counts stay disjoint —
+    // a healed stale row is in resolvedExtra AND came from _staleVendorRows, so counting
+    // both resolvedExtra.length and _staleVendorRows.length would double-count it.
     const resolvedExtra=[];
     const stillNoVendor=[];
-    const _allNeedResolution=[...needVendorLookup,..._staleVendorRows];
+    let _staleResolved=0;
+    const _resolvePool=[
+      ...needVendorLookup.map(r=>({row:r,stale:false})),
+      ..._staleVendorRows.map(r=>({row:r,stale:true})),
+    ];
     const _itemResolveCache=new Map();
-    for(const row of _allNeedResolution){
+    for(const {row,stale} of _resolvePool){
       try{
         const itemNo=_bcNo(row);
         let vNo=_itemResolveCache.get(itemNo);
@@ -27039,11 +27046,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(vNo){
           const vName=await bcGetVendorName(vNo).catch(()=>"");
           resolvedExtra.push({...row,bcVendorNo:vNo,bcVendorName:row.bcVendorName||vName||""});
+          if(stale)_staleResolved++;
         } else {
           stillNoVendor.push(row);
         }
       }catch(e){stillNoVendor.push(row);}
     }
+    // Rows that had NO cached vendor and were resolved live (excludes stale re-resolutions).
+    const _missingResolved=resolvedExtra.length-_staleResolved;
     const qualifying=[..._freshDirectly,...resolvedExtra];
     if(!qualifying.length){
       setPushingLeadTimes(false);
@@ -27052,7 +27062,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return;
     }
     const skippedCount=stillNoVendor.length;
-    if(!await arcConfirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${resolvedExtra.length>0?`\n\n(${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${_staleVendorRows.length>0?`\n\n(${_staleVendorRows.length} row${_staleVendorRows.length>1?"s":""} had a stale/renumbered vendor — re-resolved from the current BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`,{title:"Push Lead Times to BC"})){setPushingLeadTimes(false);return;}
+    if(!await arcConfirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${_missingResolved>0?`\n\n(${_missingResolved} row${_missingResolved>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${_staleResolved>0?`\n\n(${_staleResolved} row${_staleResolved>1?"s":""} had a stale/renumbered vendor — re-resolved from the current BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`,{title:"Push Lead Times to BC"})){setPushingLeadTimes(false);return;}
     const cid=_appCtx.companyId;
     let created=0,updated=0,failed=0;
     const failures=[];
@@ -27089,7 +27099,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const lines=[
       `Push complete: ${created} created, ${updated} updated${failed>0?`, ${failed} failed`:""}`,
     ];
-    if(resolvedExtra.length>0)lines.push(`${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.`);
+    if(_missingResolved>0)lines.push(`${_missingResolved} row${_missingResolved>1?"s":""} had vendor resolved live from BC Item Card.`);
+    if(_staleResolved>0)lines.push(`${_staleResolved} row${_staleResolved>1?"s":""} had a stale/renumbered vendor re-resolved from BC.`);
     if(stillNoVendor.length>0)lines.push(`${stillNoVendor.length} row${stillNoVendor.length>1?"s":""} skipped — no vendor on BC Item Card.`);
     if(failures.length>0)lines.push("","Failures:",...failures.slice(0,10).map(f=>"  • "+f));
     if(failures.length>10)lines.push(`  … and ${failures.length-10} more`);
