@@ -7,10 +7,11 @@
 
 ## Current
 **G002 — Automate the 4-session team startup boot**
-- Coach **APPROVED v2** for calibration; Jon's live calibration pass is **greenlit**.
-- **STATUS:** Coach v2 re-review APPROVED (`20fa8b79` — all 3 HIGH fixes sound, 2 LOW live watch-items) · Jon on **Stage A** (safe dry-run + config: `$CcdExe` / `$NewSessionMethod`) · real calibration run is NEXT · #199 (Tech-Review flag) still VERIFIED & queued for Jon's build-gate.
+- 🔴 Calibration found a **window-model mismatch** — launcher needs rework. Built for window-per-session, but CCD is actually **single-window tabbed sessions** (`Ctrl+N` switches in-place) + manual `Shift`+drag tear-off.
+- **STATUS:** Jon's live calibration revealed CCD = single-window + manual tear-off (NOT window-per-session) · Marc **REWORKING** the launcher (`Ctrl+N` + paste ×4 in one window; tear-off + titles stay manual) · then Coach re-review → Jon re-calibrates · #199 still verified & queued for build-gate.
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 14:22 MDT]** 🔴 **G002 — calibration found window-model mismatch; launcher rework needed.** Jon's live calibration revealed CCD = single-window tabbed sessions (`Ctrl+N` switches in-place) + manual `Shift`+drag tear-off, NOT window-per-session as the launcher assumed. Marc REWORKING (`Ctrl+N` + paste ×4 in one window; tear-off + titles stay manual); then Coach re-review → Jon re-calibrates. #199 still verified & queued for build-gate.
 - **[2026-07-02 14:12 MDT]** **G002 — Coach APPROVED v2; Jon's calibration greenlit.** Coach v2 re-review APPROVED (`20fa8b79` — all 3 HIGH fixes sound, 2 LOW live watch-items). Jon on Stage A (safe dry-run + config `$CcdExe` / `$NewSessionMethod`); real calibration run is NEXT. #199 still VERIFIED & queued for build-gate.
 - **[2026-07-02 14:07 MDT]** **G002 BUILT-PENDING-CALIBRATION v2** — Marc delivered v2 (`2d1cb97c`) with all 12 Coach findings fixed; Coach doing a quick v2 re-review of the diff before Jon's live calibration. Jon's calibration pass is NEXT. #199 still VERIFIED & queued for build-gate. (G004 tool-permission allowlist committed, verifies at reboot.)
 - **[2026-07-02 13:52 MDT]** **G002 — static review found 3 HIGH; Marc fixing before live calibration.** Coach static-review DONE (`docs/G002-LAUNCHER-STATIC-REVIEW.md`, `4240bd2f`); Freddy resolved the H3 design fork (session1 = trimmed Freddy "launcher-mode" block, not full `/team-startup`); Marc now fixing H1/H2/H3 + 5 MED + 4 LOW; Jon's calibration DEFERRED until "BUILT-PENDING-CALIBRATION v2"; #199 still verified & queued for build-gate.
