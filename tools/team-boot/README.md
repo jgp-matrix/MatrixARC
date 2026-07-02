@@ -102,7 +102,8 @@ in a fresh session and follow its prompts). Nothing here is load-bearing for the
 
 `onboarding/session2-coach.txt` and `session3-marc.txt` are the **peer-paste templates from
 `.claude/commands/team-startup.md`** with the placeholders filled for this team. If those
-templates change, re-fill these. `session4-dez.txt` is sourced from the **Intake/Triage (Dez)**
-subsection of `CLAUDE.md` (Dez has no template in the skill). `session1-freddy.txt` is just the
+templates change, re-fill these. `session4-dez.txt` is the **Freddy-provided Dez block** (Dez has no template in the
+skill) — covering Intake/Triage **and** the live Status Board (Dez owns `STATUS.md`); keep it
+in sync with the CLAUDE.md Intake/Triage subsection. `session1-freddy.txt` is just the
 `/team-startup` command. The blocks are intentionally **static** — each agent recovers live
 state from the repo itself on boot, so the launcher never needs fresh per-run content.
