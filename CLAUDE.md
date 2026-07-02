@@ -302,7 +302,7 @@ Four Claude instances plus Jon operate against this codebase with distinct roles
 | **Coach** (CCD) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log, process | COACH.md, COACH-ARCHIVE.md, CLAUDE.md, Coach `docs/#N-*` artifacts |
 | **Jon** | — | Priority decisions, plan approval, final sign-off | All approval gates |
 | **Freddy** (CCD, repo R+W) | **Freddy Lyst** (Freddy) | Analyst / hub-router / startup+close-out orchestrator / sole B/F/G number allocator + Inbox triage. Drafts Briefs + Analyst Reviews; reads-to-route, does NOT build/trace | SESSION-STATE.md, FREDDY.md, FREDDY-PASTE.md, FREDDY-SESSION-BRIEF.md, NUMBERING-CONVENTION.md, TODO.md, TODO-ARCHIVE.md, ARC-AUDIT-FINDINGS.md, Freddy `docs/#N-*` artifacts |
-| **Dez** (CCD, repo R+W) | **Dezzie Arnez** (Dez) | Intake/Triage — captures Jon's + teammates' bug/feature stream, dedup-checks, logs to INBOX.md. Does NOT scope/assign/build. | INBOX.md (sole writer) |
+| **Dez** (CCD, repo R+W) | **Dezzie Arnez** (Dez) | Intake/Triage + live Status Board — captures Jon's + teammates' bug/feature stream, dedup-checks, logs to INBOX.md; also displays Freddy's status pings (glanceable current-task view for Jon) and logs periodic progress to STATUS.md. Does NOT scope/assign/build. | INBOX.md, STATUS.md (sole writer) |
 
 ### File ownership boundaries
 
@@ -313,6 +313,7 @@ Four Claude instances plus Jon operate against this codebase with distinct roles
 | `SESSION-STATE.md`, `FREDDY.md`, `FREDDY-PASTE.md`, `FREDDY-SESSION-BRIEF.md`, `NUMBERING-CONVENTION.md`, `TODO-ARCHIVE.md`, `ARC-AUDIT-FINDINGS.md` | **Freddy** (orchestrator cluster) | all read |
 | `TODO.md` (tracker) | **Freddy** | Marc no longer edits TODO.md — reports status to Freddy, who updates the tracker + stamps the B/F/G number at triage |
 | `INBOX.md` | **Dez** (sole writer, append-only) | Freddy pulls/promotes into the TODO.md tracker (stamps `B###`/`F###`/`G###`); others read-only |
+| `STATUS.md` | **Dez** (sole writer) | Freddy pings Dez the status content; Dez displays it (glanceable view for Jon) + logs periodic progress. One-writer-per-file preserved. |
 | `H{N}-PLAN.md` (repo root) | **Marc** | Coach reads for review |
 | `src/app.jsx`, `functions/index.js`, all source; `docs/` subsystem reference docs | **Marc** | Coach reads for review |
 | `tests/extraction-baseline/` | **Marc** | Coach reads for review |
@@ -341,6 +342,8 @@ Everything else — routine status, minor commits, doc edits, triage passes, tea
 ### Intake / Triage session (Dez)
 
 Dez (Dezzie Arnez) is a standing CCD session (part of the hub-and-spoke comms group — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
+
+**Dez also runs the live Status Board.** Beyond intake, Dez is the team's glanceable current-task view for Jon: Freddy (hub) pings Dez the status content, and Dez **displays** it and **logs periodic progress to `STATUS.md`** (Dez sole writer). This keeps Jon's at-a-glance "who's doing what right now" in one place without pinging him. Dez still does not scope/assign/build — she displays and logs what Freddy routes, same capture-only posture as intake.
 
 **Dez owns all bug/feature intake.** **Jon reports directly to Dez.** **Teammates (Marc/Coach/Freddy)** who spot a net-new bug/feature in passing route the report **to Freddy (hub)**, who forwards it to Dez for capture — consistent with hub-and-spoke; no direct teammate→Dez sends unless Freddy authorizes. They do **not** self-log a number. This keeps a single intake funnel and one place that knows what's already been reported. (Coach `C{N}` architecture findings and in-scope work stay where they are; this rule is about *new* trackable bug/feature items.)
 
@@ -402,7 +405,7 @@ Jon's project uses a three-role workflow with named roles:
 1. **Freddy Lyst** (called "Freddy") — Analyst role, drafts Briefs and provides architectural review. Lives in a CCD session with repo READ access (2026-07-01 pivot — was Claude.ai browser). Reads-to-route; does NOT build (Marc) or trace/verify by reading code as authority (Coach/Marc).
 2. **Marc Masdev** (called "Marc") — Developer role, implements code changes. Lives in CCD with repo access. Was previously called "ARC Dev."
 3. **Sam Wize** (called "Coach") — Senior Development Engineer, Architecture. Performs codebase investigation, writes Supplements and Detailed Plans. Lives in a CCD session with repo access (2026-07-01 — moved off the Terminal CLI so cross-session comms work).
-4. **Dezzie Arnez** (called "Dez") — Intake/Triage role, captures Jon's bug/feature stream, dedup-checks, and logs to the TODO.md Inbox. Lives in a CCD session with repo R+W (added 2026-07-02). Captures only — does NOT scope, assign, or build; Freddy triages the Inbox.
+4. **Dezzie Arnez** (called "Dez") — Intake/Triage + live Status Board role, captures Jon's bug/feature stream, dedup-checks, and logs to the TODO.md Inbox; also displays Freddy's status pings and logs periodic progress to STATUS.md (sole writer). Lives in a CCD session with repo R+W (added 2026-07-02). Captures/displays only — does NOT scope, assign, or build; Freddy triages the Inbox and routes the status content.
 
 In conversation and notifications, use "Freddy", "Marc", "Coach", and "Dez". In formal document author/attribution fields, use full names "Freddy Lyst", "Marc Masdev", "Sam Wize", "Dezzie Arnez".
 
