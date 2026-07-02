@@ -11,16 +11,16 @@
     "architect": {
       "name": "Sam Wize",
       "shortName": "Coach",
-      "environment": "terminal",
+      "environment": "ccd",
       "notifyPrefix": "COACH"
     },
     "analyst": {
       "name": "Freddy Lyst",
       "shortName": "Freddy",
-      "environment": "terminal",
+      "environment": "ccd",
       "notifyPrefix": "FREDDY",
       "hasFileAccess": true,
-      "_trial": "TRIAL 2026-07-01 — Freddy moved browser→terminal to eliminate copy-paste relay. REVERT: environment=browser, hasFileAccess=false."
+      "_note": "2026-07-01: all three roles run in CCD (Claude Code Desktop) so cross-session send_message comms work between Marc/Freddy/Coach. Freddy moved browser→CCD (repo READ); Coach moved terminal→CCD. Terminal CLI can't receive cross-session messages — do NOT use it for team roles. Each session in Ask-permissions mode; per-send Allow-Once prompt is expected."
     }
   },
   "appUrl": "https://matrix-arc.web.app",

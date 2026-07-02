@@ -33,9 +33,9 @@ You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
 {TEAM} STARTUP CHECKLIST
 ─────────────────────────────
 □ Step 1 — Verify repo state (automatic — no user action)
-□ Step 2 — Generate {ARCH_SHORT} paste + {ANALYST_SHORT} file (automatic)
-   → USER ACTION: Copy {ARCH_SHORT} paste into {ARCH_ENV}
-   → USER ACTION: Copy/drag {ANALYST_SHORT} file + TODO.md into {ANALYST_ENV}
+□ Step 2 — Generate {ARCH_SHORT} + {ANALYST_SHORT} pastes (automatic; both CCD, path-based)
+   → USER ACTION: Paste {ARCH_SHORT} block into a new {ARCH_SHORT} CCD session
+   → USER ACTION: Paste {ANALYST_SHORT} block into a new {ANALYST_SHORT} CCD session
 □ Step 3 — Open app in browser + link to CCD (automatic)
 □ Step 4 — Wait for user to confirm both sessions initialized
    → USER ACTION: Confirm "{ARCH_SHORT} is up" and "{ANALYST_SHORT} is up"
@@ -157,11 +157,13 @@ context and report back. Come back here and tell me when both are ready.
 ```
 
 Tell the user:
-> Coach paste is ready above. {ANALYST_SHORT} files: `{ANALYST_PASTE}` + `TODO.md` — copy or drag both into Claude.ai. Let me know when both are up.
+> {ARCH_SHORT} paste + {ANALYST_SHORT} paste are ready above. Open a **new CCD (Claude Code Desktop) session for each** ({ARCH_SHORT} and {ANALYST_SHORT}) and paste their block in. Both have repo access (paths, not drag files). Let me know when both are up.
+
+**All three roles run in CCD (Desktop)** — Marc, {ARCH_SHORT}, {ANALYST_SHORT} — so cross-session `send_message` comms work between them (efficient message-moving, no copy-paste relay). Each session must be in **"Ask permissions"** mode for its outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any team role — it cannot receive cross-session messages; the repo (git) remains the durable fallback bus.
 
 **Do not proceed** until user confirms both sessions are initialized.
 
-Mark complete: `✓ Step 4 — {ARCH_SHORT} and {ANALYST_SHORT} initialized`
+Mark complete: `✓ Step 4 — {ARCH_SHORT} and {ANALYST_SHORT} initialized (both CCD)`
 
 ## Step 5 — Cross-reference sync check
 

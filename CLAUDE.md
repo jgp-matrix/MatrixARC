@@ -50,8 +50,8 @@ STARTUP CHECKLIST (Full Team)
 ─────────────────────────────
 □ Step 1 — Verify repo state (automatic — no user action)
 □ Step 2 — Generate Coach paste + Freddy paste (automatic — no user action)
-   → USER ACTION: Copy Coach paste into Claude Code Terminal
-   → USER ACTION: Copy Freddy paste into Claude.ai browser
+   → USER ACTION: Paste Coach block into a new Coach CCD session
+   → USER ACTION: Paste Freddy block into a new Freddy CCD session
 □ Step 3 — Wait for Jon to confirm both sessions initialized
    → USER ACTION: Confirm "Coach is up" and "Freddy is up"
 □ Step 4 — Cross-reference sync check (Marc states version/queue/role)
@@ -70,8 +70,8 @@ Run `./tools/verify-state.sh`, read `APP_VERSION` from `public/index.html`. Read
 
 Generate both pastes and display them for Jon to copy.
 
-**Coach paste (for Claude Code Terminal):**
-Coach has full repo access, so provide file paths — not inline content. Output a single code block Jon can paste into a fresh terminal session:
+**Coach paste (for a Coach CCD session):**
+Coach has full repo access, so provide file paths — not inline content. Output a single code block Jon can paste into a fresh CCD session:
 
 ```
 You are Sam Wize ("Coach"), Senior Development Engineer, Architecture on the Matrix ARC project at C:\Users\jon\AppDev\MatrixARC.
@@ -90,8 +90,10 @@ After reading, report back to Jon:
 - "Coach ready"
 ```
 
-**Freddy file (copy/drag into Claude.ai browser):**
-`FREDDY-PASTE.md` is a pre-built file combining `FREDDY.md` + `SESSION-STATE.md`. Regenerated during every Close Out (step 6b/6e). No freshness check needed at startup — close out keeps it current. Tell Jon: **Copy or drag `FREDDY-PASTE.md` into the Claude.ai browser window.**
+**Freddy paste (for a Freddy CCD session):**
+Freddy now runs in CCD with repo READ access (2026-07-01 pivot — was browser). Output a path-based paste (like Coach's) telling Freddy to read `FREDDY.md` + `FREDDY-PASTE.md` (combined onboarding + `SESSION-STATE.md`, regenerated every Close Out) + `TODO.md`. No browser drag. Freddy reads-to-route (does NOT build/trace). ONE live analyst — terminal-Freddy REPLACES browser-Freddy, never concurrent.
+
+**★ Team comms (all three in CCD):** Marc, Coach, and Freddy all run in CCD (Desktop), so cross-session `send_message` moves messages between them directly (no copy-paste relay). Each session must be in **"Ask permissions"** mode for outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any role — it cannot receive cross-session messages. Repo (git) remains the durable fallback bus.
 
 **Step 3 — Open app in browser**
 
@@ -366,9 +368,9 @@ Three Claude instances plus Jon operate against this codebase with distinct role
 | Instance | Character | Role | Owns |
 |----------|-----------|------|------|
 | **CCD** (Claude Code IDE) | **Marc Masdev** (Marc) | Implementation, empirical investigation, regression testing, deploys | Source code, test artifacts, H{N}-PLAN.md files |
-| **Coach** (Claude Code Terminal) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
+| **Coach** (CCD) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
 | **Jon** | — | Priority decisions, plan approval, final sign-off | All approval gates |
-| **Claude.ai** (browser chat) | **Freddy Lyst** (Freddy) | Analyst — drafts Briefs, architectural reviews | No file ownership |
+| **Freddy** (CCD, repo READ) | **Freddy Lyst** (Freddy) | Analyst — drafts Briefs, architectural reviews; reads-to-route, does NOT build/trace | No file ownership |
 
 ### File ownership boundaries
 
@@ -382,7 +384,9 @@ Three Claude instances plus Jon operate against this codebase with distinct role
 
 ### Delivering large content to Freddy
 
-Freddy lives in Claude.ai (browser) with no repo access. When Marc or Coach needs to send Freddy a large document (report, supplement, plan, audit results, diagnostic findings), do NOT dump it into chat for Jon to relay. Instead:
+**NOTE (2026-07-01 pivot):** Freddy now runs in CCD with repo READ access, so **committed** content is readable directly (commit it, then send Freddy the path / a `send_message` pointer) — no browser drag. The CCD delivery mechanics are still being established (FREDDY.md → "Terminal-Freddy (CCD)" says startup/hand-off mechanics are TBD for the first terminal-Freddy session). The browser-drag procedure below applies ONLY if reverting to browser-Freddy.
+
+Freddy lived in Claude.ai (browser) with no repo access. When Marc or Coach needs to send Freddy a large document (report, supplement, plan, audit results, diagnostic findings), do NOT dump it into chat for Jon to relay. Instead:
 
 1. Write the content to a file in the repo (e.g., `docs/`, repo root, or wherever the document type belongs).
 2. Open Explorer with the file pre-selected so Jon can drag it into Claude.ai:
@@ -426,9 +430,9 @@ Trivial fixes (typos, single-line config changes, report-field corrections) skip
 
 Jon's project uses a three-role workflow with named roles:
 
-1. **Freddy Lyst** (called "Freddy") — Analyst role, drafts Briefs and provides architectural review. Lives in Claude.ai chat. No repo access.
+1. **Freddy Lyst** (called "Freddy") — Analyst role, drafts Briefs and provides architectural review. Lives in a CCD session with repo READ access (2026-07-01 pivot — was Claude.ai browser). Reads-to-route; does NOT build (Marc) or trace/verify by reading code as authority (Coach/Marc).
 2. **Marc Masdev** (called "Marc") — Developer role, implements code changes. Lives in CCD with repo access. Was previously called "ARC Dev."
-3. **Sam Wize** (called "Coach") — Senior Development Engineer, Architecture. Performs codebase investigation, writes Supplements and Detailed Plans. Lives in Claude Code Terminal with repo access.
+3. **Sam Wize** (called "Coach") — Senior Development Engineer, Architecture. Performs codebase investigation, writes Supplements and Detailed Plans. Lives in a CCD session with repo access (2026-07-01 — moved off the Terminal CLI so cross-session comms work).
 
 In conversation and notifications, use "Freddy", "Marc", and "Coach". In formal document author/attribution fields, use full names "Freddy Lyst", "Marc Masdev", "Sam Wize".
 
@@ -451,7 +455,7 @@ Call `notify.ps1` directly through the Bash tool. This fires to Pushover uncondi
 ### Source prefix (REQUIRED)
 Every notification message MUST begin with a source prefix so Jon knows which session sent it and can route to the right interface:
 - **`MARC:`** — Marc Masdev / Claude Code Desktop sessions (implementation, planning documents, code writing, deploys)
-- **`COACH:`** — Sam Wize / Claude Code Terminal sessions (verification, architecture review, code audit)
+- **`COACH:`** — Sam Wize / Coach CCD sessions (verification, architecture review, code audit)
 - **`DEPLOY:`** — used by `deploy.sh` directly for deploy completions (Priority 1)
 
 ### Fire notification for (major tasks):
