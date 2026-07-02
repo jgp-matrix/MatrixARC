@@ -339,6 +339,15 @@ Jon steers **by exception.** He is surfaced-to / notified ONLY on three triggers
 
 Everything else — routine status, minor commits, doc edits, triage passes, team confirmations, verification loops — the team handles autonomously via Freddy (hub) **without** pinging Jon.
 
+### Hybrid work routing (2026-07-02)
+
+Freddy (hub) routes each task by **stakes**:
+
+- **LOW-stakes mechanical work** — small/LOW fixes, doc updates, research, the stuck-session monitor, consistency checks — runs as friction-free **SUBAGENTS** (Task/Agent tool; no Allow-Once prompts; orchestrator-run).
+- **HIGH-stakes cross-checked work** — features, money-path (pricing/Firestore/extraction/BC), real decisions, anything needing independent review + Jon's judgment + accumulated role context — goes to the **4 standing CCD sessions** with the full cross-check pipeline.
+
+**Rationale:** the #17 trial proved subagents are capable + friction-free, but their cross-check is orchestrator-framed, drops Jon from the per-step loop, and lacks accumulated context — so independent verification is preserved for high-stakes work. The Allow-Once friction (hardcoded, G001) then only occurs where the cross-check earns it. The G002 launcher stays relevant (still boot the 4 sessions for the high-stakes lane).
+
 ### Intake / Triage session (Dez)
 
 Dez (Dezzie Arnez) is a standing CCD session (part of the hub-and-spoke comms group — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
