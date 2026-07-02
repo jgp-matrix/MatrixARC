@@ -6,13 +6,16 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — LIVE PASS UNBLOCKED (tab-control snag resolved) → T1–T18 running**
-- **#199 Tech-Review flag** — code-complete + verified; in **live acceptance**. Tab-control snag resolved: **no re-auth needed** (ARC login persists across tabs + BC auto-connects), so Marc opens a fresh CONTROLLED tab in his own session → matrix-arc-test ARC (clean URL, **no trailing dot per B001**) → auto-auth + BC → runs **T1–T18** (P1 stamp/save-reload · P2 Resolve/approve-sweep · P3+MED-3 send-block on all 7 surfaces).
+**#199 — LIVE PASS STARTED on TEST target (prod untouched) · ⚠ some tests need Jon**
+- **Env:** #199 deployed to **matrix-arc-test only** (prod untouched), controlled tab authenticated + BC green, **v1.21.24**.
+- **#199 Tech-Review flag** — Marc driving the fully-drivable set now (visual/behavioral verification — JS field-reads blocked by the harness auth-token filter, so **behavior is the proof**): **T4/T5/T6/T13–T17/T2-reload-proxy**.
+- **👤 JON — gates on the remaining tests:** **T8–T12** pending Jon's **admin/reviewer role confirm** · **T1/T3/T18** held pending a **supplier-submission fixture** (Jon's call).
 - **📥 Intake:** INBOX empty (B001/B002 triaged). **MED-4** = LOW follow-up.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → opening controlled tab + **running live T1–T18** · Coach → standby for results verify · Freddy hub-coordinating. (ALL-PASS → deploy (#199 + #17) → SHIPPED.)
+- **STATUS:** Marc → running the drivable T-set · Coach → standby for results verify · Jon → role confirm + fixture call · Freddy hub-coordinating. (**Deploy only on FULL-suite pass.**)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 17:47 MDT]** **#199 live pass STARTED (test target).** Env: #199 deployed to matrix-arc-test only (prod untouched), controlled tab authenticated + BC green, v1.21.24. Marc driving the fully-drivable set (visual/behavioral — JS field-reads blocked by harness auth-token filter, so behavior is the proof): T4/T5/T6/T13–T17/T2-reload-proxy. T8–T12 pending Jon's admin/reviewer role confirm; T1/T3/T18 held pending a supplier-submission fixture (Jon's call). Deploy only on FULL-suite pass; Coach standby for results verify.
 - **[2026-07-02 17:29 MDT]** **#199 live pass UNBLOCKED — tab-control snag resolved.** No re-auth needed (ARC login persists across tabs + BC auto-connects), so Marc opens a fresh CONTROLLED tab in his own session → matrix-arc-test ARC (clean URL, no trailing dot per B001) → auto-auth + BC → runs T1–T18. Coach standby for results verify; ALL-PASS → deploy (#199 + #17) → SHIPPED. G002 full run deferred.
 - **[2026-07-02 17:24 MDT]** **#199 → LIVE ACCEPTANCE PASS underway (Jon linked the ARC tab).** Marc running live T1–T18 in the controlled ARC tab (matrix-arc-test + scratch): P1 stamp/save-reload, P2 Resolve/approve-sweep, P3+MED-3 send-block on all 7 surfaces. ALL-PASS → deploy (#199 + #17). Coach on standby for results verify; on all-pass → deploy → #199 SHIPPED. G002 full run deferred to clean boot.
 - **[2026-07-02 17:23 MDT]** **#199 FULLY CODE-COMPLETE + Coach-verified (MED-3 PASS, `75ecfd46`).** All 7 customer-facing surfaces gated on unresolved Tech Review. P1✓ P2✓ P3✓ + MED-1/2/3 ✓, cross-check GREEN. Jon pinged to connect the controlled ARC tab → Marc runs live T1–T18 → deploy (#199 + #17). Marc + Coach on standby for the live pass. MED-4 = LOW follow-up. G002 full run deferred to clean boot.
