@@ -348,6 +348,8 @@ Freddy (hub) routes each task by **stakes**:
 
 **Rationale:** the #17 trial proved subagents are capable + friction-free, but their cross-check is orchestrator-framed, drops Jon from the per-step loop, and lacks accumulated context — so independent verification is preserved for high-stakes work. The Allow-Once friction (hardcoded, G001) then only occurs where the cross-check earns it. The G002 launcher stays relevant (still boot the 4 sessions for the high-stakes lane).
 
+**Guardrails (subagent model is ON PROBATION):** (1) Subagent spawning is HUB-ONLY — only Freddy (orchestrator) spawns them; Coach/Marc/Dez don't (one coordinator, no sprawl). (2) Freddy ASKS Jon before each subagent spawn — subagent use is Jon-gated per-use, not autonomous; Freddy decides High-vs-Low stakes, Jon greenlights the spawn. (3) ALL subagent activity is logged to STATUS.md + TODO.md (pull-based sync so the standing sessions + Jon stay in sync without messaging/Allow-friction). (4) Reversible — Jon monitors subagent output and may reverse the whole subagent model if results aren't solid; treat it as a trial, not a settled default.
+
 ### Intake / Triage session (Dez)
 
 Dez (Dezzie Arnez) is a standing CCD session (part of the hub-and-spoke comms group — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
