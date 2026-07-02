@@ -16,7 +16,8 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 > Freddy is sole allocator. Legacy `#1–#198` remain in the Round-N sections below (kept, not renumbered).
 
 ### 🐛 Bugs (B###)
-_(none yet)_
+- **B001 — "Auth redirect URI carries a trailing dot"** [Backlog · LOW] — a trailing-dot ARC URL (`matrix-arc.web.app.`) makes `window.location.origin` carry the dot into the OAuth redirect URI → Azure AADSTS50011 redirect-mismatch → BC/Microsoft sign-in fails cryptically. NOT a code bug (URL-entry artifact; clean-reload at the no-dot URL fixes it — confirmed live 2026-07-02). Hardening: strip a trailing dot from the origin when building the auth redirect URI. *(source: Jon 2026-07-02, resolved live.)*
+- **B002 — "Approved-state TR block message names an absent button"** [Backlog · LOW] — on a post-approval re-arm (#199 Tech-Review), the send-block message says "Click Send for Technical Review" but that button isn't rendered in the approved state (reviewer per-row Resolve still works — NO hard dead-end). Fix: state-aware block message when approved ("have an engineer Resolve the flagged line(s)"), or a re-submit affordance by the approved banner. *(source: Coach #199 P3 verify, 2026-07-02.)*
 
 ### ✨ Features (F###)
 _(none yet)_
