@@ -73,9 +73,14 @@ Coach C118 (#165 detector-diff).
   approval step (renumbered from #191). See TODO.md for full text.
 
 ## Team workflow state (2026-07-01)
-- **Terminal-Freddy trial:** config flipped (`analyst.environment=terminal`, `hasFileAccess=true`) but **NOT yet
-  in use** — Freddy still runs in the browser (Claude.ai); deliver Freddy-bound content as files + Explorer
-  `/select`. See the cross-session-messaging lesson below (keep all roles in CCD Desktop, not Terminal).
+- **★ ANALYST PIVOT — browser-Freddy → terminal-Freddy (CCD), effective NEXT SESSION:** Freddy now runs in CCD
+  (Claude Code Desktop) with repo-READ access and boots from THIS SESSION-STATE, **REPLACING** browser-Freddy —
+  **ONE live analyst, no overlap** (never both concurrent; handoff is clean via this file). Boundary unchanged
+  (reads-to-route, does NOT build/trace); onboarding = FREDDY.md + FREDDY-PASTE.md (both). **CCD startup mechanics
+  are TBD — Marc establishes them with the first terminal-Freddy session** (launch/command, how pastes+reports
+  flow, how Freddy receives Coach/Marc outputs). See the "Terminal-Freddy (CCD) role addition" section in FREDDY.md.
+  NOTE: "terminal-Freddy" = CCD **Desktop** (not the Terminal CLI, which per the cross-session lesson below cannot
+  receive messages).
 - **Controlled-tab title marker:** the Claude-driven tab is stamped `🤖 CLAUDE-CONTROLLED ▸ ARC`
   (`document.title`), re-stamped after every reload/navigation (app resets it). Per CLAUDE.md.
 
