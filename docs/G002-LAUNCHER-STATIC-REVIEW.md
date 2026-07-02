@@ -66,3 +66,21 @@
 
 ## Suggested order for Jon's calibration pass
 Resolve **H2** (does the exe spawn new windows?) and **H3** (which boot path) *first* — they gate everything. Then **H1** (window targeting) and **M1/M3** (title mechanics) before trusting `set-title.ahk`. **M2/M4/M5** and the LOWs are cleanups.
+
+---
+
+## v2 RE-REVIEW (2026-07-02, commit 2d1cb97c) — VERDICT: APPROVED for calibration
+
+Marc addressed all 12 findings. Re-reviewed the v2 diff (read-only). **All 3 HIGH fixes are sound in approach; no new blocking issue crept in.**
+
+- **H1 — FIXED (sound).** `Win32Win.ForPids` (EnumWindows, PID-filtered, visible + non-empty-title) → `Wait-NewWindow` diffs the handle set before/after each launch and returns the exact new `hwnd`; all three AHK helpers now take `ahk_id <hwnd>` and `ExitApp(3)` if the handle is gone. The ambiguous `ahk_exe`-match is gone → no cross-wired pastes. `$before` is recomputed per iteration, so the incremental (1→2→3→4) case diffs correctly.
+- **H2 — FIXED (sound).** `Wait-NewWindow` returns 0 on timeout → `exit 2` with explicit "switch to hotkey mode / raise timeout" guidance. Single-instance CCD aborts loudly instead of stacking.
+- **H3 — FIXED (sound).** `session1-freddy.txt` is now a launcher-mode block: adopt identity → `startup-auto.sh` verify → **comms-check leg only**, explicitly "do NOT run full /team-startup, skip peer-paste generation and wait-for-Jon." Interlocks cleanly with the M4 peer-block change (peers post readiness in-window and wait for Freddy's ping) — the two halves form one coherent comms-check.
+- **MED all sound:** M1 `$AutoSetTitle=$false` default + early-return by-hand path (residual palette risk contained behind the OFF gate + documented warning); M2 title staged via clipboard + `^v` (emoji-safe); M3 `Set-Title` now precedes `Paste-Block` (input idle); M4 all three peer blocks post-in-window; M5 README knob table reconciled.
+- **LOW all sound:** L1 Coach block carries the U1 pathspec reminder; L2 Dez self-title line dropped (blocks consistent); L3 window-count assert = `Wait-NewWindow`; L4 `Sleep2` skips under `-WhatIf`.
+
+**Two LOW calibration watch-items (do NOT block calibration — surface naturally in Jon's live pass):**
+1. **Transient/splash-window race** — `Wait-NewWindow` returns the *first* new visible+titled window. If CCD paints a short-lived splash/loader window (with a title) before the real session window, the launcher could capture the splash handle and paste into a window that then vanishes. Unknown without the live build. Watch: if a block's paste "disappears," this is why → match on an expected title substring, or wait for window stability.
+2. **Title-paint timeout** — `Get-CcdWindowHandles` skips windows with a zero-length title, so a new window that hasn't painted its title within `$NewWindowTimeoutMs` (15s) would be misdiagnosed as "no new window" (H2 abort). 15s is generous and calibratable; only a concern on a very slow cold start.
+
+**Not blocking; both are calibratable.** v2 is sound to take into Jon's live calibration cycle.
