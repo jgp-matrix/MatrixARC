@@ -6864,7 +6864,7 @@ function arcDocOpen(doc,filename){
     if(typeof logDebugEntry==="function"){
       try{logDebugEntry({severity:"warn",source:"arcDocOpen",message:"PDF preview popup blocked",extra:{filename:fname}});}catch(_){}
     }
-    _showPopupBlockedFallback(blob,fname);
+    _showPopupBlockedFallback(blob,fname).catch(()=>{});
     return;
   }
   // 60s window covers the time the browser may need to render the PDF
