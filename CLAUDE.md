@@ -556,7 +556,7 @@ This app is used for real production projects. **No user data may ever be lost d
 
 3. **Always include `schemaVersion: APP_SCHEMA_VERSION`** in project saves (both `saveProject` and `saveProjectPanel`). If the schema changes, bump `APP_SCHEMA_VERSION` and add migration code in `loadProjects`.
 
-4. **Only strip `dataUrl` on Firestore save** (1MB limit). Never strip any other fields. All metadata flags (`isCrossed`, `crossedFrom`, `isCorrection`, `correctionType`, `priceSource`, `bcFuzzySuggestions`, `bomVerification`, `extractionFeedbackLog`, `cannotSupply`, etc.) must be preserved.
+4. **Only strip `dataUrl` on Firestore save** (1MB limit). Never strip any other fields. All metadata flags (`isCrossed`, `crossedFrom`, `isCorrection`, `correctionType`, `priceSource`, `bcFuzzySuggestions`, `bomVerification`, `extractionFeedbackLog`, `cannotSupply`, `techReviewFlag`, `techReviewFlagSource`, `techReviewResolved`, `techReviewResolvedBy`, `techReviewResolvedAt`, etc.) must be preserved.
 
 5. **Test backward compatibility** after every change: load an existing project and verify all data renders correctly.
 
