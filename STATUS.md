@@ -6,11 +6,13 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**HYBRID team model ADOPTED — HOLD LIFTED · back to G002 v3 re-calibration**
-- Subagent trial complete: **#17 fixed friction-free via subagents** (Marc-subagent applied the `.catch` fix; Coach-subagent + pre-commit review both APPROVE; committed `0651a73c`). Decision: **HYBRID** — subagents for LOW-stakes/mechanical, the 4 standing sessions for HIGH-stakes/cross-checked.
-- **STATUS:** HOLD LIFTED · **#17 RESOLVED** (subagent lane) · hybrid rule → Coach documenting in CLAUDE.md · back to **G002 v3 re-calibration** (Jon, when ready) + **#199** (Jon's build-gate) · #199 (Tech-Review flag) still VERIFIED & queued.
+**TWO ITEMS RUNNING IN PARALLEL (Jon: "run both")**
+- **#199 Tech-Review flag — BUILDING** (HIGH-stakes lane): Marc building phased in the standing session (P1 data+capture → P2 resolution → P3 hard gate; R2-enforced); Coach verifies each phase.
+- **G002 v3 — LIVE CALIBRATION**: Jon running the `Ctrl+N` + paste flow on his desktop; #1 risk = does `Ctrl+N` create+focus a new session and does the paste land right.
+- **STATUS:** Marc → **#199 P1** · Coach → #199 §2.3 doc-note, then phase-verify on-deck · Jon → **G002 calibration** · Freddy hub-coordinating. (#199 now BUILDING — no longer queued.)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 15:22 MDT]** **BOTH queued items now RUNNING (Jon: "run both").** #199 Tech-Review flag BUILD STARTED — Marc building phased in the standing session (P1 data+capture → P2 resolution → P3 hard gate; R2-enforced), Coach verifies each phase (HIGH-stakes lane). G002 v3 — Jon running the live calibration (`Ctrl+N` + paste flow) on his desktop; #1 risk = `Ctrl+N` create+focus + paste landing. Marc → #199 P1; Coach → #199 §2.3 doc-note then phase-verify on-deck; Jon → G002 calibration; Freddy hub-coordinating. #199 now BUILDING (no longer queued).
 - **[2026-07-02 15:05 MDT]** **HYBRID team model ADOPTED (Jon); subagent trial complete; HOLD LIFTED.** #17 fixed friction-free via subagents (Marc-subagent applied `.catch`; Coach-subagent + pre-commit both APPROVE; committed `0651a73c`) → **#17 RESOLVED**. Decision: HYBRID — subagents for LOW-stakes/mechanical, 4 standing sessions for HIGH-stakes/cross-checked. Coach documenting the rule in CLAUDE.md. Back to G002 v3 re-calibration (Jon, when ready) + #199 (Jon's build-gate).
 - **[2026-07-02 14:56 MDT]** **SUBAGENT TRIAL — all other work HELD.** Jon testing whether role-subagents (zero Allow-Once friction) behave as well as separate sessions. Dez suggested trial candidate **#17** (fire-and-forget `_showPopupBlockedFallback` in `arcDocOpen` — LOW, single-line `.catch` fix, no pricing/Firestore surface, Coach-reviewable in seconds). G002 re-calibration + #199 paused until the trial runs.
 - **[2026-07-02 14:45 MDT]** **G002 v3 REWORKED for single-window CCD.** Marc delivered v3 (`c18a0d24`) — `Ctrl+N` + paste ×4 in one window, window-handle machinery dropped; session1 pauses for Jon to tear-off + title peers then runs comms-check. Coach doing quick v3 re-review; Jon re-calibrates next (new risk: `Ctrl+N` create+focus + paste landing). #199 still verified & queued for build-gate.
