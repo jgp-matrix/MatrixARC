@@ -6,11 +6,12 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**G002 — Automate the 4-session team startup boot**
-- **v3 REWORKED** for the single-window CCD model (`Ctrl+N` + paste ×4 in one window; window-handle machinery dropped); Coach re-reviewing before Jon re-calibrates.
-- **STATUS:** Marc delivered **v3** (`c18a0d24`) — single-window flow; session1 pauses for Jon to tear-off + title peers, then runs the comms-check · Coach doing a quick v3 re-review · Jon re-calibrates NEXT (new risk: does `Ctrl+N` create+focus and does paste land right) · #199 (Tech-Review flag) still VERIFIED & queued for Jon's build-gate.
+**HYBRID team model ADOPTED — HOLD LIFTED · back to G002 v3 re-calibration**
+- Subagent trial complete: **#17 fixed friction-free via subagents** (Marc-subagent applied the `.catch` fix; Coach-subagent + pre-commit review both APPROVE; committed `0651a73c`). Decision: **HYBRID** — subagents for LOW-stakes/mechanical, the 4 standing sessions for HIGH-stakes/cross-checked.
+- **STATUS:** HOLD LIFTED · **#17 RESOLVED** (subagent lane) · hybrid rule → Coach documenting in CLAUDE.md · back to **G002 v3 re-calibration** (Jon, when ready) + **#199** (Jon's build-gate) · #199 (Tech-Review flag) still VERIFIED & queued.
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 15:05 MDT]** **HYBRID team model ADOPTED (Jon); subagent trial complete; HOLD LIFTED.** #17 fixed friction-free via subagents (Marc-subagent applied `.catch`; Coach-subagent + pre-commit both APPROVE; committed `0651a73c`) → **#17 RESOLVED**. Decision: HYBRID — subagents for LOW-stakes/mechanical, 4 standing sessions for HIGH-stakes/cross-checked. Coach documenting the rule in CLAUDE.md. Back to G002 v3 re-calibration (Jon, when ready) + #199 (Jon's build-gate).
 - **[2026-07-02 14:56 MDT]** **SUBAGENT TRIAL — all other work HELD.** Jon testing whether role-subagents (zero Allow-Once friction) behave as well as separate sessions. Dez suggested trial candidate **#17** (fire-and-forget `_showPopupBlockedFallback` in `arcDocOpen` — LOW, single-line `.catch` fix, no pricing/Firestore surface, Coach-reviewable in seconds). G002 re-calibration + #199 paused until the trial runs.
 - **[2026-07-02 14:45 MDT]** **G002 v3 REWORKED for single-window CCD.** Marc delivered v3 (`c18a0d24`) — `Ctrl+N` + paste ×4 in one window, window-handle machinery dropped; session1 pauses for Jon to tear-off + title peers then runs comms-check. Coach doing quick v3 re-review; Jon re-calibrates next (new risk: `Ctrl+N` create+focus + paste landing). #199 still verified & queued for build-gate.
 - **[2026-07-02 14:22 MDT]** 🔴 **G002 — calibration found window-model mismatch; launcher rework needed.** Jon's live calibration revealed CCD = single-window tabbed sessions (`Ctrl+N` switches in-place) + manual `Shift`+drag tear-off, NOT window-per-session as the launcher assumed. Marc REWORKING (`Ctrl+N` + paste ×4 in one window; tear-off + titles stay manual); then Coach re-review → Jon re-calibrates. #199 still verified & queued for build-gate.
