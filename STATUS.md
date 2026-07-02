@@ -6,12 +6,13 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — P2 PASS → P3 AUTHORIZED (final build phase in progress)**
-- **#199 Tech-Review flag** — **P2 verified PASS** (Coach, `docs/199-P2-VERIFICATION.md`, `10920f61`). **P3 (hard gate — LAST phase) BUILDING** + folding in Coach's **MED-2 fix** (approve-sweep partial-write guard — protects gate integrity) + L4/L5. Coach verifies P3 next.
-- **G002 v3** — `Ctrl+N` mechanic **CONFIRMED**; full run **deferred to a clean boot**.
-- **STATUS:** Marc → building **#199 P3** (last build phase) + MED-2 fix · Coach → on-deck to verify P3 · Jon → runs session tests after P3-complete · Freddy hub-coordinating. (#199: **P1✓ P2✓ P3-building**; after P3 code+verify → browser **T1–T17** + deploy.)
+**#199 — CODE-COMPLETE (P1+P2+P3) → Coach final verify**
+- **#199 Tech-Review flag** — **P3 (hard gate) = BUILT-PENDING-VERIFY** (Marc, `a0e39335`): 6-surface send-block + distinct message + TR-bucket label fix + MED-2 fix + L4/L5 (dead-end audit PASS). **#199 now code-complete.**
+- **G002 v3** — full run still **deferred to a clean boot**.
+- **STATUS:** Marc → P3 done, holding · Coach → **final-verifying #199 P3** (money-path gate) · Freddy hub-coordinating. (#199: **P1✓ P2✓ P3-verify**; on Coach PASS → Freddy pings Jon for the session-test window → live browser **T1–T17** → deploy.)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 16:31 MDT]** **#199 CODE-COMPLETE (P1+P2+P3) → Coach final verify.** P3 (hard gate) = BUILT-PENDING-VERIFY (Marc, `a0e39335`): 6-surface send-block + distinct message + TR-bucket label fix + MED-2 fix + L4/L5 (dead-end audit PASS). #199: P1✓ P2✓ P3-verify. Coach final-verifying P3 (money-path gate); on PASS → Freddy pings Jon (session-test window) → live browser T1–T17 → deploy. G002 full run still deferred to a clean boot.
 - **[2026-07-02 15:57 MDT]** **#199 P2 PASS → P3 AUTHORIZED.** P2 verified PASS (Coach, `docs/199-P2-VERIFICATION.md` `10920f61`). Marc now building P3 (hard gate — last phase) + folding in Coach's MED-2 fix (approve-sweep partial-write guard, protects gate integrity) + L4/L5. Coach verifies P3 next. #199: P1✓ P2✓ P3-building; after P3 code+verify → browser T1–T17 + deploy; Jon runs session tests after P3-complete.
 - **[2026-07-02 15:51 MDT]** **#199 P2 BUILT → Coach verify.** P2 (Resolution) = BUILT-PENDING-VERIFY (Marc, `a5253d42`): MED-1 lock + indicator-through-predicate + per-row Resolve (stamps who/when) + approve-sweep across all panels. L3 decided (TR show-set broader than red = dead-end guard; Marc+Freddy concur, Coach confirming). Marc holding P3 for Coach-clear + Freddy GO; Coach verifying P2; #199: P1✓ / P2-verify / P3-next; Jon runs session tests after P3; runtime T1–T12 batched for browser pass.
 - **[2026-07-02 15:44 MDT]** **#199 — MED-1 DECIDED → P2 AUTHORIZED.** Jon locked MED-1: supplier flags clear only via audited Resolve. Marc now building P2 (Resolution): MED-1 P1-lock fix + indicator-through-predicate refinement → `_isTechReviewer` repoint (26308 only) → per-row Resolve control (stamps who/when) → approve-sweep. Coach verifies P2 when it lands. #199 BUILDING (P1 done, P2 in progress, P3 next); live T1–T7 pending browser; G002 mechanic confirmed / full run deferred.
