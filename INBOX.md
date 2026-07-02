@@ -21,4 +21,7 @@
 
 ---
 
-- [2026-07-02] FEAT — "Remote approval of Allow-Once prompts" — enable Jon to approve the per-send "Allow Once" cross-session permission prompts remotely (e.g. from his phone) so he isn't tethered to the desk to keep the CCD `send_message` bus flowing. — reported via Intake (source: Jon, via Freddy) [Freddy: may reclassify as G###/General — dev-tooling/infra; feasibility scoping in parallel]
+_(empty — no un-routed items)_
+
+<!-- Triage log: 2026-07-02 — "Remote approval of Allow-Once prompts" promoted to TODO.md G001 [Discovery] by Freddy. -->
+

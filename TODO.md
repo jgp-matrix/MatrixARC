@@ -1,6 +1,6 @@
 # ARC Review Findings
 
-> Work item numbering follows NUMBERING-CONVENTION.md: #N — description [Status].
+> Work item numbering follows NUMBERING-CONVENTION.md (authoritative). New items: `<B|F|G>### — "<short title>" — description [Status]` (each category its own ranked list, in the B/F/G Tracker below). Legacy `#1–#198` keep their `#N` IDs (no renumber) in the Round-N sections.
 
 Captured: Thu May  7 10:54:16 MDT 2026
 Source: ./tools/review.sh first runs
@@ -9,6 +9,22 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 **STALE** (no longer matches current code — kept as a record of what was checked and why).
 
 ---
+
+## 🆕 B/F/G Tracker (new taxonomy, 2026-07-02+)
+
+> New items since the B/F/G cutover. Each category is its own ranked list (top = highest priority);
+> Freddy is sole allocator. Legacy `#1–#198` remain in the Round-N sections below (kept, not renumbered).
+
+### 🐛 Bugs (B###)
+_(none yet)_
+
+### ✨ Features (F###)
+_(none yet)_
+
+### 🔧 General (G###)
+- **G001 — "Remote approval of Allow-Once prompts"** [Discovery] — enable Jon to approve (or eliminate) the per-send "Allow Once" cross-session permission prompt remotely so he isn't desk-tethered to keep the CCD `send_message` bus flowing. *(source: Jon 2026-07-02, via Freddy; captured FEAT, reclassified G — dev-tooling/infra, not an ARC product feature.)*
+  - **Feasibility (Freddy scoping via CC-guide research):** (a) Native remote approval of CCD permission prompts from phone/web = **NOT supported** — Remote Control steers a running session but does not surface permission prompts to remote devices. (b) Allowlisting the tool to suppress the prompt: CC docs say generic MCP tools *can* be allowlisted, BUT the `send_message` tool's own definition says it "ALWAYS prompts" AND the team's 2026-07-01 live test found it non-suppressible → **conflict.**
+  - **Next:** decisive test pending Jon — add `mcp__ccd_session_mgmt__send_message` to `.claude/settings.json` allow, send once, observe whether the prompt still fires. If it persists (expected), fallback = repo-commit handoff bus for unattended stretches. Then set final status.
 
 ## Round 1 (firestore.rules + deploy.sh diff)
 
