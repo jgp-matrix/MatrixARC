@@ -77,7 +77,7 @@ and report back. All roles have repo access now, so these are path-based
 pastes — no drag-and-drop files.
 ```
 
-Emit one path-based paste **for each peer role** (every role except {ORCH_SHORT}). Use the matching template below; skip the template for {ORCH_ROLE}. Each paste's first line self-titles the session so `list_sessions` can locate it in Step 5.
+Emit one path-based paste **for each peer role** (every role except {ORCH_SHORT}). Use the matching template below; skip the template for {ORCH_ROLE}. Each paste's first line ASKS the session to self-title — but **in CCD the agent usually cannot set its own session name**, so tell Jon to **set each session's title manually** (rename it to the role's `sessionTitle`) after pasting. Confirm titles are set before the Step 5 comms-check; if one wasn't, locate that peer by elimination in `list_sessions` (the ids of the already-known sessions rule themselves out, leaving the new/renamed one).
 
 **Implementer paste** (emit if implementer is a peer):
 
