@@ -12,7 +12,7 @@
 - (v1.21.12/.13 earlier = #186 guard / #187 Phase 1)
 
 ## Deploy State
-- **Master tip:** `1e9129c2` ("Release v1.21.23"). **`master == origin/master`** (in sync). No feature branches.
+- **Master tip:** `966f3055` (close-out doc/config commits; release = `1e9129c2` v1.21.23). **`master == origin/master`** (in sync). No feature branches.
 - Production hosting: **https://matrix-arc.web.app** serving v1.21.23. All session code committed + deployed.
 - **#192 instrumentation is LIVE** (temporary, tagged "#192 TEMP INSTRUMENTATION" — the `_redReasonBreakdown`
   helper + the "[#192 REVERT-FIRE]" log at ~app.jsx:37246). STRIP it after the #192 regression fix.
