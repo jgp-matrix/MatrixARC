@@ -26323,8 +26323,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const rev=project.preReviewRev||0;
     const preSt=project.preReviewStatus;
     const postSt=project.postReviewStatus;
-    const _me=_appCtx.uid;
-    const isReviewer=_appCtx.role==="admin"||hasPermission("reviewer")||(project.preReviewAssignedTo?project.preReviewAssignedTo===_me:!!(project.bcDesignerUid&&project.bcDesignerUid===_me));
+    const isReviewer=_isTechReviewer(project); // #199 P2: factored to the shared reviewer helper (was the inline _me expression). Sites with the extra bcDesignerCode fallback are intentionally left inline (Coach L1).
     const _pn=panel.name||("Panel "+(idx+1));
     if(isReviewer&&(preSt==="pending"||postSt==="pending")){
       _logQvHistory(project.id,{type:"review_edit",reviewType:postSt==="pending"?"post_review":"pre_review",reviewQv:rev,editType:entry.type,panelId:panel.id,panelName:_pn,rowId:entry.rowId||null,partNumber:entry.partNumber||"",description:entry.description||"",from:entry.from!=null?String(entry.from):"",to:entry.to!=null?String(entry.to):""});
@@ -28966,10 +28965,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const _trFlagged=!!row.techReviewFlag;
                     const _trResolved=!!row.techReviewResolved;
                     const _trSupplier=row.techReviewFlagSource==="supplier";
+                    const _trUnresolved=_isUnresolvedTechReviewRow(row); // #199: composite rule via the shared predicate (no inline re-expression)
+                    // #199 L3 (decided): show-set is broader than the red priceable-set — only labor/
+                    // contingency excluded — so a flag can never land on a hidden row and become
+                    // un-resolvable (dead-end guard, R2 spirit). Real parts incl. customer-supplied /
+                    // Matrix-Systems can carry + clear a flag.
                     const _trShow=!row.isLaborRow&&!row.isContingency;
-                    // Sales cannot uncheck a supplier-sourced flag; resolved rows are read-only in P1
-                    // (reviewer re-open + per-row Resolve arrive in P2). Manual flags stay toggleable.
-                    const _trDisabled=readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier&&!_trIsReviewer);
+                    // #199 MED-1 (Jon): supplier flags are checked+DISABLED for EVERYONE (Sales AND
+                    // reviewers) — clearable ONLY via the audited Resolve (stamps resolved/By/At), never
+                    // an unaudited uncheck. Manual flags stay toggleable; resolved rows are read-only.
+                    const _trDisabled=readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier);
                     const _trTitle=!_trFlagged?"Flag this line for Technical Review"
                       :_trResolved?"Technical Review resolved"
                       :_trSupplier?"Supplier substitution — requires engineer sign-off"
@@ -28989,6 +28994,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       onUpdate(_u);
                       // Guard both a sync throw and an async rejection (onSaveImmediate is a
                       // Firestore write → returns a Promise; a bare try/catch misses rejections).
+                      try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
+                    };
+                    // #199 P2 — reviewer-only Resolve: audited engineer sign-off that clears the flag
+                    // (the ONLY way to clear a supplier flag post-MED-1). Stamps resolved/By/At.
+                    const _onTrResolve=()=>{
+                      if(!_trIsReviewer||!_trUnresolved)return;
+                      const _lp=latestPanelRef.current||panel;
+                      const _newBom=(_lp.bom||[]).map(r=>String(r.id)===String(row.id)
+                        ?{...r,techReviewResolved:true,techReviewResolvedBy:_appCtx.uid,techReviewResolvedAt:Date.now()}
+                        :r);
+                      const _u={..._lp,bom:_newBom};
+                      latestPanelRef.current=_u;
+                      onUpdate(_u);
                       try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
                     };
                     const _rowEl=(()=>{
@@ -29013,8 +29031,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           {_trShow&&(_trFlagged||!readOnly)&&(
                             <label title={_trTitle} style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5}}>
                               <input type="checkbox" checked={_trFlagged} disabled={_trDisabled} onChange={_onTrToggle} style={{width:12,height:12,margin:0,accentColor:"#f59e0b",cursor:_trDisabled?"default":"pointer"}} />
-                              {_trFlagged&&<span style={{fontSize:9,fontWeight:800,color:_trResolved?C.muted:"#f59e0b",lineHeight:1}}>{_trResolved?"TR✓":"TR"}</span>}
+                              {_trFlagged&&<span style={{fontSize:9,fontWeight:800,color:_trUnresolved?"#f59e0b":C.muted,lineHeight:1}}>{_trUnresolved?"TR":"TR✓"}</span>}
                             </label>
+                          )}
+                          {/* #199 P2 — reviewer-only Resolve (audited sign-off); shown only on unresolved flagged rows */}
+                          {_trShow&&_trUnresolved&&_trIsReviewer&&(
+                            <button title="Resolve — engineer sign-off for this Technical Review line" onClick={_onTrResolve}
+                              style={{background:"#052e16",border:"1px solid #4ade80",color:"#4ade80",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>✓</button>
                           )}
                           {/* #141 (C84): confidence "C" circle — mirrors the blue BC circle EXACTLY
                              (24×24, borderRadius 50%, fontSize 9, weight 800, padding 0). Color carries
@@ -34329,10 +34352,21 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
                     _logQvHistory(project.id,{type:"review_approve"});
                     delete _pendingPreReviewOverrides[project.id];
-                    onUpdate({...project,...reviewFields});
+                    // #199 P2 — approve-sweep: approval IS the engineer's affirmative sign-off on the
+                    // whole project incl. flagged lines, so resolve every unresolved Tech-Review row
+                    // across ALL panels (guarantees an approved project is never permanently un-sendable).
+                    const _trNow=Date.now();
+                    const _trSweptPanels=(project.panels||[]).map(p=>(
+                      (p.bom||[]).some(_isUnresolvedTechReviewRow)
+                        ?{...p,bom:p.bom.map(r=>_isUnresolvedTechReviewRow(r)?{...r,techReviewResolved:true,techReviewResolvedBy:_appCtx.uid,techReviewResolvedAt:_trNow}:r)}
+                        :p));
+                    const _trChangedPanels=_trSweptPanels.filter((p,i)=>p!==(project.panels||[])[i]);
+                    onUpdate({...project,...reviewFields,panels:_trSweptPanels});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
                     try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
                     catch(e){console.error("Pre-review approve save failed:",e);onUpdate({...project});}
+                    // Persist swept panels via the proper panel save (dataUrl-strip + cross-user guards)
+                    for(const _p of _trChangedPanels){try{await saveProjectPanel(uid,project.id,_p.id,_p,true);}catch(e){console.warn("[#199] TR approve-sweep panel save failed:",e);}}
                     if(bcUploadRef?.current){
                       try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
                     }
