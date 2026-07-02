@@ -33684,6 +33684,18 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
         +verifyBlocks.map(v=>"  • "+v.panelName+": "+v.description).join("\n"));
       return;
     }
+    // #199 MED-3: the standalone "Send Quoted BOM to Customer" path is the 7th customer-facing
+    // surface — gate it on unresolved Tech-Review flags too (mirrors the verification gate above).
+    // Resolution is the same reachable path as the quote gate: reviewer per-row Resolve or the
+    // pre-review approve-sweep (no new dead-end).
+    const trBlocks=findIncompleteQuoteItems(project).filter(i=>i.isTechReviewBlock);
+    if(trBlocks.length){
+      const _trN=trBlocks.reduce((s,i)=>s+(i.count||1),0);
+      arcAlert("Quoted BOM send blocked — "+_trN+" line"+(_trN>1?"s":"")
+        +" require Technical Review sign-off before sending to the customer.\n\n"
+        +"Have an engineer resolve the flagged lines (or approve the project), then resend.");
+      return;
+    }
     if(!m.to.trim()){arcAlert("Enter a recipient email.");return;}
     const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
     const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
