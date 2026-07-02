@@ -85,7 +85,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.11 (defined in `public/index.html`; code commit `7cf55a82` = #182, tag v1.21.11; master tip `ed18f2f1`). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.23 (defined in `public/index.html`; master tip `1e9129c2`, 2026-07-01). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -320,9 +320,26 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-06-30)
+## Recently Active Work (as of 2026-07-01)
 
-### Shipped This Session (v1.21.7 → v1.21.11) — #165A / #181 / #183 / #182
+### Shipped 2026-07-01 (v1.21.12 → v1.21.23)
+- **#182 — Item Vendor 3-part-key fix. RESOLVED, T3 VERIFIED LIVE (32 collisions → 0).**
+- **#186 (v1.21.12) — locked-quote BC price-check nag. RESOLVED** (`quoteLocked` gate). Post-send exposure
+  spot-check: log-no-action (only PRJ402091 real customer-facing, ~$764; sell shift unrecoverable).
+- **#187 (v1.21.13→.18) — quote-validity cascade + valid-until relocation + PDF right-justify. RESOLVED.**
+  4-tier cascade, single-source `project.quoteExpiresAt`; Phase 2 added `customerDefaults` + admin CRUD.
+- **#189 — global default won't persist. RESOLVED (not a defect** — "Save Defaults" not clicked). Relabel → #190.
+- **#191 (v1.21.20 + v1.21.22) — quote # missing. RESOLVED.** New idempotent `ensureQuoteNumber`; all 4
+  quote-PDF paths assign before build; subject recompute. Backfilled PRJ402119/402118.
+- **#192 (v1.21.19) — widened BUDGETARY auto-set to all red rows.** DONE, but 🔴 **REGRESSION** (auto-revert
+  false-clears on open) — TOP PRIORITY next session; instrumentation live (v1.21.21).
+- **#193 (v1.21.23) — Send-To-Sales tab. DONE-PENDING-VERIFY** (Jon + Coach).
+- **New/carry findings:** #188 (validate-at-push vendor, plan approved), #190/#194/#195/#196/#197/#198 — see TODO.md.
+- **⭐ NEXT SESSION #1 = #192 REGRESSION** — confirm via the "[#192 REVERT-FIRE]" instrumentation on Noah's
+  repro, then fix (stable-clean re-check before auto-revert) + strip instrumentation.
+- **Infra note:** the mid-session prod load failure was a Fastly Denver POP edge timeout (not ARC); confirm-and-wait.
+
+### Shipped Prior Session (v1.21.7 → v1.21.11) — #165A / #181 / #183 / #182
 - **#165(A) (v1.21.8 `fef65fe8`) — reconciliation verb relabel. BUILT, PENDING Jon eyeball.** ReconciliationModal
   Changed-row verbs relabeled + recolored: "Use Revision" (amber) / "Keep Mine" (green), footer "Use All
   Revisions", status span + admin cross-strip banner wording. Resolution values unchanged. Part (B)

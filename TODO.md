@@ -3252,7 +3252,8 @@ reset that surfaced the ground-truth state.
      Diagnostic doc: docs/181-MANUAL-LINE-DATALOSS-DIAGNOSTIC.md.
      Logged: 2026-06-30 (Coach mechanism trace; Jon runtime repro; Freddy analysis; Marc writeup).
 
-182. **RESOLVED-PENDING-T3** [v1.21.11 — Item Vendor EntityWithSameKeyExists on Push-to-BC] — Push to BC
+182. **RESOLVED** [v1.21.11 `7cf55a82` — Item Vendor EntityWithSameKeyExists on Push-to-BC · T3 VERIFIED LIVE
+     2026-07-01: 32 collisions → 0] — Push to BC
      returned 0 created / 0 updated / 32 failed, all 400 Internal_EntityWithSameKeyExists on Item Vendor
      (PRJ402124). ROOT CAUSE (Marc trace `f26ea671` + Coach probe): `bcUpsertItemVendorLeadTime` IS an upsert
      (existence GET @4440) but the PATCH used a 2-part compound key (Item_No, Vendor_No) while BC $metadata
@@ -3325,10 +3326,64 @@ reset that surfaced the ground-truth state.
      + post-send date can't be cleanly separated from legit refresh-pricing; the modal-Accept bug is a subset.
      **DISPOSITION: log, no action (Jon, 2026-07-01)** — exposure too small/uncertain, v1.21.12 prevents recurrence;
      no remediation, no data correction, no customer contact. Diagnostic: docs/186-POST-SEND-REPRICE-DIAGNOSTIC.md.
-191. **OPEN** [MED — Client Review has no completion/approval step; project stuck edits-locked] —
-     After a Client Review, there is no "Approval" action, so the project gets STUCK on "Client
-     Review In Progress — Edits Locked" with no way to complete or reset it. Need to review the
-     client-review flow and add an "Approved" button (client-facing) that resets/completes the
-     review — clearing the edits-lock and advancing the project state (approve → unlock/complete).
-     Investigate the customer-review path (onCustomerReviewSubmitted / engineering review module +
-     the review-lock state that drives "In Progress — Edits Locked"). Reported by Jon 2026-07-01.
+187. **RESOLVED** [v1.21.13→v1.21.18 — quote-validity cascade + valid-until relocation + PDF right-justify] —
+     Four-tier cascade (quote-edit → project → customer → global default 30d), single-source `project.quoteExpiresAt`
+     drives the printed "PRICES VALID UNTIL" date AND the #186 expiry gate. Phase 1 (global+project+quote-edit+expiry
+     gate) v1.21.13 `543e1700`; Phase 2 (customer tier `customerDefaults/{bcCustomerNumber}` + admin CRUD +
+     firestore.rules) v1.21.14 `ee085025`. Relocation: combined "{BUDGETARY - }Prices Valid Until <date>" row under
+     Total — fixed doubling + PDF page-orphan (v1.21.18 `da6b9da2`), on-screen right-justified (v1.21.16/17), PDF
+     right-aligned at bx+bw-2 (v1.21.18). Plans: docs/187-DETAILED-PLAN.md, docs/187-VALID-UNTIL-RELOCATION-TRACE.md,
+     docs/187-RELOCATION-FIX-LOCATE.md, docs/187-RIGHT-JUSTIFY-COMPUTED-TRACE.md.
+188. **OPEN** [MED — stale/phantom bcVendorNo sent to BC on Push Lead Times; plan APPROVED, build not started] —
+     PRJ402124 rows SY50M-26-1A / SY5100-5U1 push vendor V00102 (nonexistent in BC; correct = V00111 SMCUSA). ROOT
+     CAUSE: `bcVendorNo` cached at pricing time (runPricingOnPanel ~app.jsx:15064), never revalidated; BC renumbered
+     SMCUSA V00102→V00111 after caching; pushAllLeadTimesToBc sends the stored value verbatim. FIX (two-tier
+     validate-at-push, #184-safe: Tier1 free cached-name check, Tier2 live re-resolve only on dead vendors, deduped;
+     self-heals via resolvedExtra). KNOWN LIMITATION: renumber-to-live-DIFFERENT-vendor silent (per-row live compare
+     declined to protect #184). Heals PRJ402124 on next push. Traces: docs/188-VENDOR-NO-STALE-TRACE.md,
+     docs/188-VENDOR-PROVENANCE-TRACE.md; plan: docs/188-VALIDATE-AT-PUSH-PLAN.md.
+189. **RESOLVED** [not a defect] — Global default `quoteValidityDays` "won't persist" = Jon hadn't clicked "Save
+     Defaults" (button reads like a reset). Read-only runtime trace confirmed bundle/path/write all correct. Relabel
+     → #190. Trace: docs/189-GLOBAL-DEFAULT-ROUNDTRIP-TRACE.md.
+190. **OPEN** [LOW — relabel "Save Defaults" → "Save"] — Config modal's "Save Defaults" button reads like a reset;
+     rename to "Save". Pending Coach confirm it commits the FULL modal (not just defaults). From #189.
+191. **RESOLVED** [v1.21.20 `896c2e6e` + v1.21.22 `6ed639b5` — quote # missing from sent PDF/filename/subject] —
+     Quote # was assigned only by View/Print + Copy, never by the send paths → sending without viewing first
+     produced a blank quote # (PDF), "Quote" (filename), "Quote Quote" (subject). FIX: new idempotent
+     `ensureQuoteNumber`; ALL 4 quote-PDF paths assign BEFORE build (Print/GenPDF soft-fail warn+proceed; modal-send
+     + inline-send hard-fail); subject recompute ("Quote Quote"→"Quote <n>"); #187 stamp ordering preserved.
+     Backfilled PRJ402119→MTX-Q202030, PRJ402118→MTX-Q202031. Noah confirms send-flow (backstop, not gate).
+     Trace/plan/verify: docs/191-QUOTE-NUMBER-MISSING-TRACE.md, docs/191-QUOTE-NUMBER-FIX-PLAN.md, docs/191-FIX-VERIFICATION.md.
+192. **OPEN — 🔴 REGRESSION (TOP PRIORITY next session)** [widen shipped v1.21.19 `a30d975c`; regression followed] —
+     WIDEN (DONE): BUDGETARY auto-setter widened from `leadTimeSource==="ai"` to the full red-row predicate
+     `_isBomRowFlaggedRed` across 14 sites (any red row → auto-budgetary). REGRESSION: the auto-revert CLEARS
+     BUDGETARY on red-row projects on OPEN (Noah watched it uncheck). Mechanism strong-inferred (NOT directly
+     observed): background reprice on open transiently drives all-non-red ≥600ms → `_hasRedRows(latest)` false at the
+     debounced fire (~app.jsx:37246) → false "Remove Budgetary?" dialog. INSTRUMENTATION LIVE (v1.21.21 `e8b01526`,
+     "[#192 REVERT-FIRE]" log at the fire point — the log appearing AT ALL confirms the transient). Awaiting Noah's
+     intermittent repro w/ console open. FIX DIRECTION: don't auto-revert on the initial-open/bg-reprice re-fire;
+     require a STABLE clean state (re-check after settle) before prompting. STRIP instrumentation (tagged "#192 TEMP
+     INSTRUMENTATION") after fix. Traces: docs/192-ISBUDGETARY-AUTO-SET-TRACE.md, docs/192-BUDGETARY-REVERT-REGRESSION-TRACE.md.
+193. **DONE-PENDING-VERIFY** [v1.21.23 `39c8d6ac` — Send-To-Sales tab] — QuoteSendModal defaults to a new
+     📩 Send To Sales tab (recipient pre-fills the current user's OWN email, editable); 3-tab bar (Sales/New/Reply)
+     swaps the recipient on tab switch (Sales→own email, New→stashed customer email, Reply→thread). Real-send
+     semantics apply (handleSend is mode-agnostic → sendGraphEmail); writes a `quote_send` entry to
+     `project.qvHistory[]` (feeds #194). Dead inline-send log skipped (amendment B). NEEDS Jon verify + Coach verify.
+     Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md; supplement: docs/193-SEND-TO-SALES-SUPPLEMENT.md.
+194. **OPEN** [feature placeholder — global ARC email/metrics + click-tracing] — #193's per-send `quote_send`
+     qvHistory log is the first data feed. Needs a Brief.
+195. **OPEN** [LOW — cosmetic, pre-existing since v1.19.1028] — Print-as-Firm: when an admin overrides the budgetary
+     flip (`_skipBudgFlip=true`), the pre-print checklist still shows an "auto-flagged BUDGETARY" entry (false — the
+     flip was skipped). Cosmetic; guard/strip that checklist entry on override.
+196. **OPEN** [LOW — latent, not a regression] — the locked-quote overlay covers the Receive PO button; a lock
+     shouldn't gate FORWARD workflow (PO receipt). Workaround: unlock. Trace not run. Fix intent: lock gates edits,
+     not forward steps like PO receipt.
+197. **OPEN** [MED — ship-date on PO Received modal + mismatch messaging] — ANCHOR (decided): estimated ship date =
+     PO received date + lead time. ARC must COMPUTE the calendar date (today it stores only lead-time DURATION, not a
+     date). PO date manually entered. On mismatch: OA message "PO date ≠ Quoted Ship Date, Quoted applies" + request
+     updated PO. PREREQ: Coach reads the lead-time formula → Brief → build.
+198. **OPEN** [MED — Client Review has no completion/approval step; project stuck edits-locked] — (renumbered from
+     #191 to resolve a collision with the Quote#-missing work; content unchanged.) After a Client Review there is no
+     "Approval" action, so the project STUCKs on "Client Review In Progress — Edits Locked" with no way to
+     complete/reset it. Add a client-facing "Approved" button that clears the edits-lock and advances state.
+     Investigate `onCustomerReviewSubmitted` / engineering review module + the review-lock state. Reported by Jon 2026-07-01.
