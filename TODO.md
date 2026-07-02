@@ -10,6 +10,18 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 
 ---
 
+## 📥 Inbox — awaiting Freddy triage
+
+> Dez (Dezzie Arnez, Intake) drops raw bug/feature captures here — timestamped, **un-numbered**.
+> Freddy pulls from this section, dedup-confirms, assigns the next `#N`, and moves the item into
+> the numbered tracker below (deleting the Inbox bullet once routed). Do NOT assign `#N` at capture
+> time — that avoids multi-session number collisions. Dez dedup-checks against existing `#N` before
+> adding, and commits + pushes each capture immediately.
+
+_(empty — no un-routed items)_
+
+---
+
 ## Round 1 (firestore.rules + deploy.sh diff)
 
 1. **RESOLVED** [Verified] — `701d693` (2026-05-07). Firestore rules: `rfqUploads` write access not role-gated.

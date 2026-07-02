@@ -292,7 +292,7 @@ The user runs **two Claude sessions in parallel** against this codebase:
 
 ## Multi-instance workflow
 
-Three Claude instances plus Jon operate against this codebase with distinct roles.
+Four Claude instances plus Jon operate against this codebase with distinct roles.
 
 ### Roles
 
@@ -302,6 +302,7 @@ Three Claude instances plus Jon operate against this codebase with distinct role
 | **Coach** (CCD) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
 | **Jon** | — | Priority decisions, plan approval, final sign-off | All approval gates |
 | **Freddy** (CCD, repo READ) | **Freddy Lyst** (Freddy) | Analyst — drafts Briefs, architectural reviews; reads-to-route, does NOT build/trace | No file ownership |
+| **Dez** (CCD, repo R+W) | **Dezzie Arnez** (Dez) | Intake/Triage — captures Jon's bug/feature stream, dedup-checks, logs to TODO.md Inbox. Does NOT scope/assign/build. | `## 📥 Inbox` section of TODO.md (append-only captures) |
 
 ### File ownership boundaries
 
@@ -312,6 +313,16 @@ Three Claude instances plus Jon operate against this codebase with distinct role
 | `src/app.jsx`, `functions/index.js`, all source | CCD | Coach reads for review |
 | `tests/extraction-baseline/` | CCD | Coach reads for review |
 | `TODO.md` | CCD (during Close Out) | Coach references |
+| `TODO.md` → `## 📥 Inbox` section | Dez (append captures) | Freddy pulls/promotes; CCD leaves it alone |
+
+### Intake / Triage session (Dez)
+
+Dez (Dezzie Arnez) is a standing CCD session Jon fires **bug and feature ideas** at mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
+
+Per bug/feature message from Jon:
+1. **Dedup-check** against existing `#N` in TODO.md + SESSION-STATE.md. Match → reply "Already tracked as #N — [status]," do NOT re-log. Uncertain → offer the closest candidate(s) and ask "same as #N, or new?"
+2. **New** → `git pull`, append a timestamped, **un-numbered** bullet to the `## 📥 Inbox` section of TODO.md (`- [YYYY-MM-DD] BUG|FEAT — <desc> — reported via Intake`), then **commit + push immediately** so nothing is lost. `#N` is assigned by **Freddy** at triage (single allocator → no multi-session number collisions).
+3. **Handoff:** Dez holds the running un-routed list and does **not** ping Freddy mid-work. When Freddy signals "ready for intake," Dez sends the digest via `send_message`; Freddy pulls, scopes, assigns `#N`, and clears the Inbox bullet. Proactive ping only if Jon marks something URGENT.
 
 ### Delivering large content to Freddy
 
@@ -364,10 +375,11 @@ Jon's project uses a three-role workflow with named roles:
 1. **Freddy Lyst** (called "Freddy") — Analyst role, drafts Briefs and provides architectural review. Lives in a CCD session with repo READ access (2026-07-01 pivot — was Claude.ai browser). Reads-to-route; does NOT build (Marc) or trace/verify by reading code as authority (Coach/Marc).
 2. **Marc Masdev** (called "Marc") — Developer role, implements code changes. Lives in CCD with repo access. Was previously called "ARC Dev."
 3. **Sam Wize** (called "Coach") — Senior Development Engineer, Architecture. Performs codebase investigation, writes Supplements and Detailed Plans. Lives in a CCD session with repo access (2026-07-01 — moved off the Terminal CLI so cross-session comms work).
+4. **Dezzie Arnez** (called "Dez") — Intake/Triage role, captures Jon's bug/feature stream, dedup-checks, and logs to the TODO.md Inbox. Lives in a CCD session with repo R+W (added 2026-07-02). Captures only — does NOT scope, assign, or build; Freddy triages the Inbox.
 
-In conversation and notifications, use "Freddy", "Marc", and "Coach". In formal document author/attribution fields, use full names "Freddy Lyst", "Marc Masdev", "Sam Wize".
+In conversation and notifications, use "Freddy", "Marc", "Coach", and "Dez". In formal document author/attribution fields, use full names "Freddy Lyst", "Marc Masdev", "Sam Wize", "Dezzie Arnez".
 
-Pushover notification prefixes: `FREDDY:`, `MARC:`, `COACH:`.
+Pushover notification prefixes: `FREDDY:`, `MARC:`, `COACH:`, `DEZ:`.
 
 ## Pushover notification behavior
 
