@@ -31,6 +31,10 @@ the rest is the ranked fallback (re-prioritize if you see a better next move).
    log appearing AT ALL confirms the transient. **Awaiting Noah's intermittent repro w/ console open.** FIX
    DIRECTION: don't auto-revert on the initial-open / bg-reprice re-fire; require a STABLE clean state (re-check
    after settle) before prompting. Then STRIP the instrumentation. Trace: docs/192-BUDGETARY-REVERT-REGRESSION-TRACE.md.
+   **⚠ #192 is #1 but EVIDENCE-GATED** — not team-actionable until the "[#192 REVERT-FIRE]" log appears on Noah's
+   repro. **First UNBLOCKED team action = #188 build (#3 below); run it in PARALLEL so #192's #1 priority doesn't
+   idle Marc.** Routing state at close: Marc FREE (queue #188 build → #196 trace); Coach IDLE (#192 fix-plan
+   blocked on the capture). (Full analyst hand-off: docs/2026-07-01-FREDDY-BROWSER-FINAL-DUMP.md.)
 2. **#193 Send-To-Sales — VERIFY** (v1.21.23, done-pending) — Jon verify + Coach verify: default tab = Send To
    Sales, recipient pre-fills own email (editable), tab-switch swaps recipient, real-send semantics, writes
    `quote_send` to `qvHistory[]`. Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md.

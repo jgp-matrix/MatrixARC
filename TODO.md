@@ -3369,7 +3369,11 @@ reset that surfaced the ground-truth state.
      swaps the recipient on tab switch (Sales→own email, New→stashed customer email, Reply→thread). Real-send
      semantics apply (handleSend is mode-agnostic → sendGraphEmail); writes a `quote_send` entry to
      `project.qvHistory[]` (feeds #194). Dead inline-send log skipped (amendment B). NEEDS Jon verify + Coach verify.
-     Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md; supplement: docs/193-SEND-TO-SALES-SUPPLEMENT.md.
+     VERIFY = "pass" looks like: modal opens defaulting to Send To Sales; recipient = logged-in user's own email,
+     editable; tab-switch swaps recipient (Sales↔customer via stashed `_customerTo`); a sales-send is a REAL send
+     (locks + #187 stamps + #191 quote # + writes `quote_send` to qvHistory[]). ACCEPTED QUIRK (not a bug, do not
+     re-raise): on a Send-To-Sales the body may still read "Dear [customer]" though it goes to the sales user —
+     fine (user forwards/saves). Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md; supplement: docs/193-SEND-TO-SALES-SUPPLEMENT.md.
 194. **OPEN** [feature placeholder — global ARC email/metrics + click-tracing] — #193's per-send `quote_send`
      qvHistory log is the first data feed. Needs a Brief.
 195. **OPEN** [LOW — cosmetic, pre-existing since v1.19.1028] — Print-as-Firm: when an admin overrides the budgetary
@@ -3379,9 +3383,11 @@ reset that surfaced the ground-truth state.
      shouldn't gate FORWARD workflow (PO receipt). Workaround: unlock. Trace not run. Fix intent: lock gates edits,
      not forward steps like PO receipt.
 197. **OPEN** [MED — ship-date on PO Received modal + mismatch messaging] — ANCHOR (decided): estimated ship date =
-     PO received date + lead time. ARC must COMPUTE the calendar date (today it stores only lead-time DURATION, not a
-     date). PO date manually entered. On mismatch: OA message "PO date ≠ Quoted Ship Date, Quoted applies" + request
-     updated PO. PREREQ: Coach reads the lead-time formula → Brief → build.
+     PO received date + lead time. RATIONALE: the lead-time clock industrially starts at ORDER PLACEMENT (PO
+     received), not quote date. DEEPER FINDING: ARC does NOT compute a calendar ship date at all today — only a
+     lead-time DURATION (days); #197 must CREATE the date calc. PO date is MANUALLY ENTERED in the Receive PO modal
+     (structured → auto-compare feasible). On mismatch: OA message "PO date ≠ Quoted Ship Date, Quoted applies" +
+     request updated PO. PREREQ: Coach reads the lead-time formula → Brief → build.
 198. **OPEN** [MED — Client Review has no completion/approval step; project stuck edits-locked] — (renumbered from
      #191 to resolve a collision with the Quote#-missing work; content unchanged.) After a Client Review there is no
      "Approval" action, so the project STUCKs on "Client Review In Progress — Edits Locked" with no way to
