@@ -1581,6 +1581,7 @@ if(typeof window!=="undefined"){
   window._markProjectBudgetaryForRedRows=_markProjectBudgetaryForRedRows;
   window._clearAutoBudgetary=_clearAutoBudgetary;
   window._hasArcAutoBudgetary=_hasArcAutoBudgetary;
+  window.ensureQuoteNumber=ensureQuoteNumber; // #191: for console backfill
 }
 
 // Load MSAL on demand — not at page load (avoids conflict with Firebase Microsoft auth)
@@ -2367,6 +2368,23 @@ async function getNextQuoteNumber(uid){
     return next;
   });
   return "MTX-Q"+String(num);
+}
+// #191: idempotent quote-number assigner. Assigns MTX-Q###### when missing/invalid; returns
+// {project, assigned, number}. Does NOT persist or setState — the caller handles that (save
+// mechanism varies per path). THROWS on counter failure (no internal try/catch) so the caller
+// decides policy: print soft-fails (warn+proceed), both sends hard-fail (warn+return). Fire-and-
+// forget BC "Quote N" note, same as the old inline print block.
+async function ensureQuoteNumber(project, uid){
+  const q=project.quote||{};
+  if(q.number&&/^MTX-Q\d{6}$/.test(String(q.number))){
+    return {project, assigned:false};
+  }
+  const qNum=await getNextQuoteNumber(uid);
+  const updated={...project,quote:{...q,number:qNum}};
+  if(updated.bcProjectNumber&&_bcToken){
+    bcPatchJobOData(updated.bcProjectNumber,{Description_2:"Quote "+qNum}).catch(e=>console.warn("BC quote note failed:",e));
+  }
+  return {project:updated, assigned:true, number:qNum};
 }
 
 // ── CPD (Control Panel Design) DATABASE ──
@@ -32895,8 +32913,20 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
     // no human glance — a silent blank-terms send is the worst-case outcome. Runs before
     // setSending(true) so the user sees no spinner during the BC fetch (matches modal UX).
     const _pop=await ensureQuoteFieldsPopulated(project,uid);
-    const populated=_pop.project;
+    let populated=_pop.project;
     if(populated!==project)await persistProject(populated);
+    // #191: ensure the quote number is assigned BEFORE any PDF/filename build. HARD-fail — never
+    // send a customer a numberless quote (blank doc + "Quote" filename). Downstream reads use
+    // `populated` (which now carries the number).
+    let _assignedQuoteNumber=null;
+    try{
+      const{project:_withNum,assigned:_numAssigned,number:_qn}=await ensureQuoteNumber(populated,uid);
+      if(_numAssigned){populated=_withNum;_assignedQuoteNumber=_qn;await persistProject(populated);}
+    }catch(e){
+      console.error("[QUOTE SEND] Quote number assignment failed:",e);
+      arcAlert("Could not assign a quote number. Check your connection and retry.");
+      return;
+    }
     const _sq=populated.quote||{};
     if(_pop.warnings.length>0||!_sq.paymentTerms||!_sq.shippingMethod){
       const missing=[];
@@ -32949,10 +32979,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const extraAttachments=[];
       if(withBom){
         const bomDoc=new jsPDF({unit:"mm",format:"letter",orientation:"landscape"});
-        await buildBomReportPdfDoc(bomDoc,project);
+        await buildBomReportPdfDoc(bomDoc,populated);
         const bomBase64=bomDoc.output("datauristring").split(",")[1];
         console.log("[SEND QUOTE] BOM Report PDF generated, base64 length:",bomBase64?.length||0);
-        const _q2=project.quote||{};
+        const _q2=populated.quote||{};
         const _rev2=project.quoteRev||0;
         const _company2=(_q2.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
         const _proj2=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
@@ -32978,15 +33008,18 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         const cont=await arcConfirm(`Warning: the email attachments total ${mb} MB. Microsoft 365 sendMail inline attachments are limited to ~4 MB. Sending may fail.\n\nCancel to reduce the attachments (remove drawing pages, drop the BOM Report / Quoted BOM attachment, or contact engineering to compress images).`,{kind:"warning",okLabel:"Send Anyway"});
         if(!cont){setSending(false);return;}
       }
-      const q=project.quote||{};
+      const q=populated.quote||{};
       const rev=project.quoteRev||0;
       const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
       const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
       const pdfName=`QTE_C-[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
+      // #191 addition: if we just assigned the number, recompute the subject so the customer never
+      // sees "Quote Quote" (the modal pre-fills the subject on OPEN, before assignment).
+      const _subject=_assignedQuoteNumber?String(m.subject||"").replace("Quote Quote","Quote "+_assignedQuoteNumber):m.subject;
       if(sendMode==="reply"){
         await graphReplyToMessage(graphToken,selectedThread.id,html,pdfBase64,pdfName,extraAttachments);
       }else{
-        await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName,extraAttachments);
+        await sendGraphEmail(graphToken,m.to,_subject,html,pdfBase64,pdfName,extraAttachments);
       }
       // DECISION(v1.19.368): For reply mode, show who the reply went to (the original thread participants),
       // not just the original sender. For new email, show the To field. Always save to Firestore.
@@ -37482,17 +37515,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     }
     setQuotePrinting(true);
     try{
-    // Auto-assign quote number if not yet set
-    if(!proj.quote?.number||!/^MTX-Q\d{6}$/.test(String(proj.quote.number))){
-      try{
-        const qNum=await getNextQuoteNumber(uid);
-        proj={...proj,quote:{...(proj.quote||{}),number:qNum}};
+    // #191: Auto-assign quote number if not yet set (shared idempotent helper). SOFT-fail on print
+    // — warn but proceed (print is a preview; the user may want it even without a number). Replaces
+    // the old silently-swallowed console.warn.
+    try{
+      const{project:_withNum,assigned:_numAssigned}=await ensureQuoteNumber(proj,uid);
+      if(_numAssigned){
+        proj=_withNum;
         setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
-        // Note in BC
-        if(proj.bcProjectNumber&&_bcToken){
-          bcPatchJobOData(proj.bcProjectNumber,{Description_2:"Quote "+qNum}).catch(e=>console.warn("BC quote note failed:",e));
-        }
-      }catch(e){console.warn("Auto quote number failed:",e);}
+      }
+    }catch(e){
+      console.error("[QUOTE] Quote number assignment failed:",e);
+      try{await arcAlert("Could not assign a quote number — check your connection and retry. The quote will print without a number.",{kind:"warning"});}catch(_){}
     }
     // #117 (C59, Fix 1+2a): populate quote fields via the shared gate, then PERSIST
     // (awaited) before the checklist/print. This flushes any RAM-only setQ edits and the
@@ -38441,6 +38475,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     // (Send / Send w/BOM) without duplicating logic.
                     const _doInlineQuoteSend=async(withBom)=>{
                       const m=quoteSendModal;
+                      let _proj=project; // #191: mutable so the assigned quote number flows to PDF/filename/stamps
                       // DECISION(v1.19.663): Guard on incomplete BOM rows.
                       const incomplete=findIncompleteQuoteItems(project);
                       if(incomplete.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
@@ -38454,40 +38489,52 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       }
                       const graphToken=await acquireGraphToken();
                       if(!graphToken){arcAlert("Could not get Microsoft 365 token.");return;}
+                      // #191: ensure quote number BEFORE PDF/filename. HARD-fail — don't send a numberless quote.
+                      let _assignedQuoteNumber=null;
+                      try{
+                        const{project:_withNum,assigned:_numAssigned,number:_qn}=await ensureQuoteNumber(_proj,uid);
+                        if(_numAssigned){_proj=_withNum;_assignedQuoteNumber=_qn;onUpdate(_proj);await safeSave(uid,_proj);}
+                      }catch(e){
+                        console.error("[INLINE SEND] Quote number assignment failed:",e);
+                        arcAlert("Could not assign a quote number. Check your connection and retry.");
+                        return;
+                      }
                       const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
                       const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
                       try{
                         const jsPDF=await ensureJsPDF();
                         const pdfDoc=new jsPDF({unit:"mm",format:"letter"});
-                        await buildQuotePdfDoc(pdfDoc,project);
+                        await buildQuotePdfDoc(pdfDoc,_proj);
                         const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
-                        const qq=project.quote||{};
-                        const rev=project.quoteRev||0;
-                        const co=(qq.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
-                        const pn=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                        const qq=_proj.quote||{};
+                        const rev=_proj.quoteRev||0;
+                        const co=(qq.company||_proj.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
+                        const pn=(_proj.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
                         const pdfName=`QTE_C-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
+                        // #191 addition: recompute subject if we just assigned the number (avoid "Quote Quote").
+                        const _subject=_assignedQuoteNumber?String(m.subject||"").replace("Quote Quote","Quote "+_assignedQuoteNumber):m.subject;
                         // Build BOM Report PDF when withBom flag is set.
                         const _extraAtts=[];
                         if(withBom){
                           const bomDoc=new jsPDF({unit:"mm",format:"letter",orientation:"landscape"});
-                          await buildBomReportPdfDoc(bomDoc,project);
+                          await buildBomReportPdfDoc(bomDoc,_proj);
                           const bomBase64=bomDoc.output("datauristring").split(",")[1];
                           const bomFilename=`BOM_REPORT-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
                           _extraAtts.push({pdfBase64:bomBase64,pdfFilename:bomFilename});
                         }
-                        await sendGraphEmail(graphToken,m.to,m.subject,html,pdfBase64,pdfName,_extraAtts);
+                        await sendGraphEmail(graphToken,m.to,_subject,html,pdfBase64,pdfName,_extraAtts);
                         // Full BC sync before locking
-                        if(project.bcProjectNumber&&_bcToken){
-                          for(let pi=0;pi<(project.panels||[]).length;pi++){
-                            try{await bcSyncPanelPlanningLines(project.bcProjectNumber,pi+1,project.panels[pi],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
+                        if(_proj.bcProjectNumber&&_bcToken){
+                          for(let pi=0;pi<(_proj.panels||[]).length;pi++){
+                            try{await bcSyncPanelPlanningLines(_proj.bcProjectNumber,pi+1,_proj.panels[pi],_proj.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
                           }
                         }
                         // #187 §1.5b/§2.4 — stamp quoteExpiresAt from the full cascade; race guard fetches the
                         // customer default inline if it wasn't pre-loaded for this project's customer.
                         const _sentNow=Date.now();
-                        if(_customerValidityLoadedFor!==project.bcCustomerNumber)await _loadCustomerValidity(project.bcCustomerNumber);
-                        const _validDays=resolveQuoteValidityDays(project,_customerValidityDays);
-                        const upd={...project,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
+                        if(_customerValidityLoadedFor!==_proj.bcCustomerNumber)await _loadCustomerValidity(_proj.bcCustomerNumber);
+                        const _validDays=resolveQuoteValidityDays(_proj,_customerValidityDays);
+                        const upd={..._proj,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
                         onUpdate(upd);
                         if(project.bcProjectNumber&&_bcToken){
                           bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
