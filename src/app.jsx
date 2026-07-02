@@ -1524,25 +1524,32 @@ if(typeof window!=="undefined"){
   window._refreshLeadDriversInQuote=_refreshLeadDriversInQuote;
 }
 
-// DECISION(v1.19.740): AI lead times present → quote is not firm. Helpers to detect
-// AI-sourced lead times, auto-flip panels into "Budgetary" when the user tries to print
-// or send a quote, and offer to revert the Budgetary flag once every AI estimate has
-// been replaced with a firm (manual/supplier/BC/scraper) lead time.
+// DECISION(v1.19.740; #192 widened 2026-07-01): RED rows present → quote is not firm. Helpers to
+// detect red BOM rows (incomplete pricing OR non-firm lead times), auto-flip panels into "Budgetary"
+// when the user tries to print or send a quote, and offer to revert once NO rows are red (all prices
+// valid + non-stale, all lead times firm, all qtys nonzero).
+// #192: the trigger was widened from leadTimeSource==="ai" to the FULL red-row predicate
+// _isBomRowFlaggedRed (the same predicate that drives BOM row background color). Any red row → auto
+// budgetary. Excluded categories (labor, customer-supplied, contingency, buyoff/crate, Matrix
+// Systems vendor, customer-vendor) stay excluded via _isBomRowFlaggedRed's own internal guards.
 //
-// The auto-set leaves a sentinel `isBudgetaryAiAutoSet: true` on panel.pricing so we can
-// tell ARC-set budgetary apart from a user-set one — we only propose to clear the flag
-// when ARC was the one that set it. A manually-checked Budgetary box is never touched.
-function _hasAiLeadTimes(project){
+// The auto-set leaves a sentinel `isBudgetaryAiAutoSet: true` on panel.pricing so we can tell
+// ARC-set budgetary apart from a user-set one — we only propose to clear the flag when ARC set it.
+// A manually-checked Budgetary box is never touched. NOTE: the "Ai" in `isBudgetaryAiAutoSet` is
+// LEGACY (kept to avoid a Firestore migration) — the trigger is now ALL red rows, not AI-only.
+function _hasRedRows(project){
+  const cNo=project?.bcCustomerNumber, cName=project?.bcCustomerName;
   return (project?.panels||[]).some(p=>
-    (p.bom||[]).some(r=>!r.isLaborRow&&r.leadTimeSource==="ai")
+    (p.bom||[]).some(r=>_isBomRowFlaggedRed(r,cNo,cName))
   );
 }
-function _countAiLeadTimes(project){
+function _countRedRows(project){
+  const cNo=project?.bcCustomerNumber, cName=project?.bcCustomerName;
   return (project?.panels||[]).reduce((n,p)=>
-    n+(p.bom||[]).filter(r=>!r.isLaborRow&&r.leadTimeSource==="ai").length,0);
+    n+(p.bom||[]).filter(r=>_isBomRowFlaggedRed(r,cNo,cName)).length,0);
 }
 // Mark every panel as budgetary and record that ARC did it. Returns {updatedProject, changed}.
-function _markProjectBudgetaryForAiLeads(project){
+function _markProjectBudgetaryForRedRows(project){
   let changed=false;
   const panels=(project.panels||[]).map(p=>{
     const pr=p.pricing||{};
@@ -1553,7 +1560,7 @@ function _markProjectBudgetaryForAiLeads(project){
   return{updatedProject:changed?{...project,panels}:project,changed};
 }
 // Clear the auto-set budgetary flag (and the sentinel). Only affects panels where ARC
-// auto-set the flag — user-marked budgetary panels are left alone.
+// auto-set the flag — user-marked budgetary panels are left alone. (Sentinel name "Ai" is legacy.)
 function _clearAutoBudgetary(project){
   let changed=false;
   const panels=(project.panels||[]).map(p=>{
@@ -1569,9 +1576,9 @@ function _hasArcAutoBudgetary(project){
   return (project?.panels||[]).some(p=>(p.pricing||{}).isBudgetaryAiAutoSet);
 }
 if(typeof window!=="undefined"){
-  window._hasAiLeadTimes=_hasAiLeadTimes;
-  window._countAiLeadTimes=_countAiLeadTimes;
-  window._markProjectBudgetaryForAiLeads=_markProjectBudgetaryForAiLeads;
+  window._hasRedRows=_hasRedRows;
+  window._countRedRows=_countRedRows;
+  window._markProjectBudgetaryForRedRows=_markProjectBudgetaryForRedRows;
   window._clearAutoBudgetary=_clearAutoBudgetary;
   window._hasArcAutoBudgetary=_hasArcAutoBudgetary;
 }
@@ -32838,27 +32845,25 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       arcAlert(formatIncompleteQuoteAlert(incompleteItems));
       return;
     }
-    // DECISION(v1.19.740): AI-lead-time warning + auto-budgetary flip. If any BOM row
-    // is sourced from AI, the ship-date math is an estimate — force the quote into
-    // Budgetary mode (with an ARC-set sentinel) before the PDF is generated so the
-    // BUDGETARY banner renders. One confirm dialog gives the user a chance to cancel
-    // and replace the AI values first.
-    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary
-    // flip and send as FIRM despite AI-estimated lead times. Two-step confirm:
-    // first dialog offers Budgetary or Cancel; if admin cancels, second dialog
-    // offers "Override (Send as Firm)".
-    const aiCount=_countAiLeadTimes(project);
-    if(aiCount>0){
+    // DECISION(v1.19.740; #192 widened 2026-07-01): red-row warning + auto-budgetary flip. If any
+    // BOM row is RED (incomplete pricing OR non-firm lead time — _isBomRowFlaggedRed), the quote
+    // isn't firm — force it into Budgetary mode (with an ARC-set sentinel) before the PDF is
+    // generated so the BUDGETARY banner renders. One confirm dialog lets the user cancel and fix.
+    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary flip and send as
+    // FIRM despite red rows. Two-step confirm: first dialog offers Budgetary or Cancel; if admin
+    // cancels, second dialog offers "Override (Send as Firm)".
+    const redCount=_countRedRows(project);
+    if(redCount>0){
       const proceed=await arcConfirm(
-        `This quote contains ${aiCount} AI-estimated lead time${aiCount>1?"s":""}.\n\n`+
-        "Sending will mark the quote as BUDGETARY until those lead times are replaced with firm values.\n\n"+
-        "OK to continue, or Cancel to review the Lead column first.",
+        `This quote contains ${redCount} item${redCount>1?"s":""} with incomplete pricing or lead time data.\n\n`+
+        "Sending will mark the quote as BUDGETARY until those items are resolved (firm price + lead time).\n\n"+
+        "OK to continue, or Cancel to review the red rows first.",
         {kind:"warning",okLabel:"Continue (Budgetary)"}
       );
       if(!proceed){
         if(isAdmin()){
           const override=await arcConfirm(
-            `Admin Override: Send as FIRM despite ${aiCount} AI-estimated lead time${aiCount>1?"s":""}?\n\n`+
+            `Admin Override: Send as FIRM despite ${redCount} incomplete item${redCount>1?"s":""}?\n\n`+
             "This bypasses the budgetary safeguard. The quote will NOT be marked Budgetary.",
             {kind:"warning",okLabel:"Override (Send as Firm)",destructive:true}
           );
@@ -32866,7 +32871,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           // Skip budgetary marking — proceed as firm
         }else{return;}
       }else{
-        const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(project);
+        const{updatedProject,changed}=_markProjectBudgetaryForRedRows(project);
         if(changed){
           onUpdate(updatedProject);
           try{await safeSave(uid,updatedProject);}catch(e){console.warn("[BUDGETARY AUTO] save failed:",e);}
@@ -37184,19 +37189,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     return()=>{if(_leadDriversRefreshTimer.current)clearTimeout(_leadDriversRefreshTimer.current);};
   },[_leadDriversSig]);
 
-  // DECISION(v1.19.740): When every AI lead time has been replaced with a firm value AND
-  // the only reason Budgetary was on was because ARC auto-flipped it (sentinel: isBudgetaryAiAutoSet),
-  // offer to clear the flag. Runs off the same signature as the lead-drivers refresh,
-  // debounced separately. Only prompts once per "transition" — we guard with a ref so the
-  // question doesn't re-fire on every keystroke inside the lead column.
+  // DECISION(v1.19.740; #192 widened 2026-07-01): When NO rows are red anymore (all prices valid +
+  // non-stale, all lead times firm, all qtys nonzero) AND the only reason Budgetary was on was
+  // because ARC auto-flipped it (sentinel: isBudgetaryAiAutoSet), offer to clear the flag. Runs off
+  // the same signature as the lead-drivers refresh, debounced separately. Only prompts once per
+  // "transition" — guarded with a ref so it doesn't re-fire on every keystroke.
   const _budgPromptShownRef=useRef(false);
   useEffect(()=>{
     const cur=projectRef.current;
     if(!cur)return;
-    const hasAi=_hasAiLeadTimes(cur);
+    const hasRed=_hasRedRows(cur);
     const hasAutoBudg=_hasArcAutoBudgetary(cur);
-    if(hasAi){
-      // AI leads are back (user re-ran extraction, etc.) — reset the one-shot prompt gate.
+    if(hasRed){
+      // Red rows are back (re-extract, price went stale, etc.) — reset the one-shot prompt gate.
       _budgPromptShownRef.current=false;
       return;
     }
@@ -37206,10 +37211,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // Debounce a beat so the prompt fires once per transition, not on every character.
     const t=setTimeout(async()=>{
       const latest=projectRef.current;
-      if(!latest||_hasAiLeadTimes(latest)||!_hasArcAutoBudgetary(latest))return;
+      if(!latest||_hasRedRows(latest)||!_hasArcAutoBudgetary(latest))return;
       const ok=await arcConfirm(
-        "All AI-estimated lead times on this quote have been replaced with firm values.\n\n"+
-        "ARC had automatically marked the panel(s) as Budgetary because of the AI estimates.\n\n"+
+        "All items on this quote now have complete pricing and firm lead times (no red rows).\n\n"+
+        "ARC had automatically marked the panel(s) as Budgetary because of the incomplete items.\n\n"+
         "Remove the Budgetary flag now?"
       );
       if(!ok)return;
@@ -37504,25 +37509,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       console.error("[QUOTE] Populate/save before print failed:",e);
       arcAlert("Failed to save quote before printing. Your edits may not persist. Retry or check your connection.");
     }
-    // DECISION(v1.19.740): AI lead times in the BOM mean the ship-date math is built on
-    // estimates. Flip every panel into Budgetary (with an auto-set sentinel) before the
-    // pre-print checklist so the quote PDF renders with the BUDGETARY banner. The user
-    // is warned about the auto-flip via a checklist entry below.
-    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary
-    // flip and print as FIRM despite AI-estimated lead times.
-    if(_hasAiLeadTimes(projectRef.current)){
+    // DECISION(v1.19.740; #192 widened 2026-07-01): RED rows (incomplete pricing or non-firm lead
+    // times — _isBomRowFlaggedRed) mean the quote isn't firm. Flip every panel into Budgetary (with
+    // an auto-set sentinel) before the pre-print checklist so the quote PDF renders with the
+    // BUDGETARY banner. The user is warned about the auto-flip via a checklist entry below.
+    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary flip and print as
+    // FIRM despite red rows.
+    if(_hasRedRows(projectRef.current)){
       let _skipBudgFlip=false;
       if(isAdmin()){
-        const _aiC=_countAiLeadTimes(projectRef.current);
+        const _redC=_countRedRows(projectRef.current);
         const doBudg=await arcConfirm(
-          `This quote has ${_aiC} AI-estimated lead time${_aiC>1?"s":""}.\n\n`+
+          `This quote has ${_redC} item${_redC>1?"s":""} with incomplete pricing or lead time data.\n\n`+
           "Mark as BUDGETARY (recommended) or cancel to print as FIRM?",
           {kind:"warning",okLabel:"Mark Budgetary",cancelLabel:"Print as Firm (Admin)"}
         );
         if(!doBudg)_skipBudgFlip=true;
       }
       if(!_skipBudgFlip){
-        const{updatedProject,changed}=_markProjectBudgetaryForAiLeads(projectRef.current);
+        const{updatedProject,changed}=_markProjectBudgetaryForRedRows(projectRef.current);
         if(changed){
           setProject(updatedProject);projectRef.current=updatedProject;onChange(updatedProject);
           safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] save failed:",e));
@@ -37537,12 +37542,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
     // DECISION(v1.19.740): Show the auto-flip as a checklist entry so the user sees it.
     // Not dismissible — informational. The print proceeds with BUDGETARY stamped.
-    const aiLeadCount=_countAiLeadTimes(projectRef.current);
-    if(aiLeadCount>0){
+    const redRowCount=_countRedRows(projectRef.current);
+    if(redRowCount>0){
       issues.push({
         type:"ailead",
-        label:`${aiLeadCount} AI-estimated lead time${aiLeadCount>1?"s":""}`,
-        detail:"Quote auto-flagged BUDGETARY until these are replaced with firm lead times.",
+        label:`${redRowCount} item${redRowCount>1?"s":""} with incomplete pricing or lead times`,
+        detail:"Quote auto-flagged BUDGETARY until these red rows are resolved (firm price + lead time).",
         checked:true,
       });
     }
