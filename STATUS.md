@@ -7,10 +7,11 @@
 
 ## Current
 **G002 — Automate the 4-session team startup boot**
-- Launcher DELIVERED (`tools/team-boot/`, commit `1ba33d58`) — needs ONE calibration + test pass on Jon's desktop.
-- **STATUS:** G002 **BUILT-PENDING-CALIBRATION** — Marc delivered · Coach queued to static-review the script · Jon to run the calibration pass · #199 (Tech-Review flag) still VERIFIED & queued behind the launcher test for Jon's build-gate.
+- Launcher built; Coach's static review found **3 HIGH** — Marc fixing before any live calibration.
+- **STATUS:** Coach static-review DONE (`docs/G002-LAUNCHER-STATIC-REVIEW.md`, `4240bd2f`) · Freddy resolved the H3 design fork (session1 = trimmed Freddy "launcher-mode" block, not full `/team-startup`) · Marc now fixing H1/H2/H3 + 5 MED + 4 LOW · Jon's calibration pass DEFERRED until "BUILT-PENDING-CALIBRATION v2" · #199 (Tech-Review flag) still verified & queued for Jon's build-gate.
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 13:52 MDT]** **G002 — static review found 3 HIGH; Marc fixing before live calibration.** Coach static-review DONE (`docs/G002-LAUNCHER-STATIC-REVIEW.md`, `4240bd2f`); Freddy resolved the H3 design fork (session1 = trimmed Freddy "launcher-mode" block, not full `/team-startup`); Marc now fixing H1/H2/H3 + 5 MED + 4 LOW; Jon's calibration DEFERRED until "BUILT-PENDING-CALIBRATION v2"; #199 still verified & queued for build-gate.
 - **[2026-07-02 13:43 MDT]** **G002 BUILT-PENDING-CALIBRATION** — Marc DELIVERED the launcher (`tools/team-boot/`, commit `1ba33d58`); needs one calibration + test pass on Jon's desktop. Coach queued to static-review the script; Jon to run calibration; #199 still VERIFIED & queued behind the launcher test for Jon's build-gate.
 - **[2026-07-02 13:41 MDT]** Status ping — **G002** in progress: Marc BUILDING the launcher (PowerShell+AutoHotkey, ~6 one-time clicks); Coach idle (verifies after build); Freddy hub-monitoring; #199 (Tech-Review flag) VERIFIED & queued behind G002 for Jon's build-gate.
 - **[2026-07-02]** G003 board stood up. G001 CLOSED (Allow-Once prompt hardcoded, accepted limitation). G002 [Decided] Option A → Marc building launcher. #199 verified, queued for Jon's build-gate. Plan: finish G002 → close-out → teardown → fresh boot via launcher (startup test) → #199.
