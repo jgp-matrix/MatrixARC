@@ -6,13 +6,14 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — FINISH LINE: Jon's tests DONE, MED-3 fix in progress**
-- **#199 Tech-Review flag** — **P1✓ P2✓ P3✓**; Jon's session tests DONE. **MED-3 fix (gate the Quoted-BOM send, one-line add) BUILDING** (Marc) → Coach re-verify → #199 fully code-complete → live **T1–T17** → deploy.
-- **📥 Intake:** **B001** (trailing-dot redirect URI, LOW) + **B002** (approved-state TR block message, LOW) promoted to TODO Bugs list — **INBOX now empty.**
+**#199 — FULLY CODE-COMPLETE → Coach re-verifying MED-3 (final piece)**
+- **#199 Tech-Review flag** — **MED-3 (gate the Quoted-BOM send) BUILT** (Marc, `c46184aa`): `handleBomSend` now blocks on unresolved TR (mirrors the verification gate). **#199 FULLY CODE-COMPLETE** (P1+P2+P3 + MED-1/2/3 + L-items). T18 added to the live batch.
+- **📥 Intake:** INBOX empty (B001/B002 triaged).
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → building **MED-3 fix** · Coach → on-deck to re-verify · Freddy hub-coordinating. (After MED-3: live tests → **deploy (#199 + #17)**.)
+- **STATUS:** Marc → MED-3 done, holding · Coach → **re-verifying MED-3** (final piece) · Freddy hub-coordinating. (On Coach PASS → Freddy pings Jon to connect the ARC tab → live **T1–T18** → deploy (#199 + #17).)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 17:21 MDT]** **#199 MED-3 fix BUILT → Coach re-verify (final piece).** MED-3 (gate the Quoted-BOM send) = BUILT (Marc, `c46184aa`) — `handleBomSend` now blocks on unresolved TR (mirrors verification gate). #199 FULLY CODE-COMPLETE (P1+P2+P3 + MED-1/2/3 + L-items). T18 added to live batch. Marc holding; Coach re-verifying MED-3; on PASS → Freddy pings Jon to connect ARC tab → live T1–T18 → deploy (#199 + #17). G002 full run deferred to clean boot.
 - **[2026-07-02 17:19 MDT]** **Jon's session tests DONE → #199 finish line kicked off.** MED-3 fix (gate the Quoted-BOM send) routed to Marc (one-line add) → Coach re-verify → then #199 fully code-complete → live T1–T17 → deploy (#199 + #17). Triage: B001 (trailing-dot redirect URI, LOW) + B002 (approved-state TR block message, LOW) promoted to TODO Bugs list; INBOX now empty. Marc → building MED-3 fix; Coach → on-deck to re-verify; #199: P1✓ P2✓ P3✓, MED-3 in progress. G002 full run deferred to clean boot.
 - **[2026-07-02 17:16 MDT]** **#199 — MED-3 ruled; team held CLEAR for Jon's session tests.** MED-3 ruled by Jon = GATE the Quoted-BOM send too (one-line add) — QUEUED + HELD so the team stays idle for Jon's tests. MED-4 = LOW follow-up (captured). TEAM CLEAR (Marc + Coach idle); Jon running session tests now; Freddy holding MED-3. After Jon's tests: MED-3 fix (Marc) → Coach re-verify → live T1–T17 (controlled ARC tab) → deploy (#199 + #17). G002 full run still deferred to a clean boot.
 - **[2026-07-02 17:13 MDT]** **#199 P3 = code-verify PASS (Coach, `docs/199-P3-VERIFICATION.md` `30995eb9`) → CODE-COMPLETE, all phases verified.** Team CLEAR (Marc + Coach idle). 2 pre-deploy items for Jon: MED-3 (customer-facing Send-Quoted-BOM bypass) → Jon's ruling (gates deploy); MED-4 → LOW follow-up. Jon pinged (P3 complete — session-test window open). Next after MED-3: live browser T1–T17 → deploy. (Also captured 2 LOW bugs to INBOX this update: trailing-dot redirect + approved-state TR block message.)
