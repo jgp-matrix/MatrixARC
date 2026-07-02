@@ -10,11 +10,13 @@
 - **Env:** #199 on **matrix-arc-test only** (prod untouched), controlled tab authenticated + BC green, **v1.21.24**.
 - **✅ Jon unblocked the rest:** admin/reviewer confirmed on test (**T8–T12 drivable**) + any test project is fair game for the supplier fixture (**T1/T3/T18**).
 - **#199 Tech-Review flag** — Marc now running the **FULL T1–T18** in the controlled tab (visual/behavioral verification). **FULL-pass → deploy (#199 + #17) → SHIPPED.**
-- **📥 Intake:** INBOX empty (B001/B002 triaged). **MED-4** = LOW follow-up.
+- **✅ Data-Retention block lifted:** Jon confirmed PRJ402xxx are all test data (pre-launch). Marc running FULL T1–T18 on **one contained test project**.
+- **📥 Intake:** 1 un-routed — GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" — infra follow-up to fix before launch (safe now, pre-launch). (B001/B002 triaged.) **MED-4** = LOW follow-up.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → **running full T1–T18** · Coach → standby for results verify · Freddy hub-coordinating. (Deploy gated on FULL-suite pass incl. T1 supplier auto-stamp.)
+- **STATUS:** Marc → **running full T1–T18** · Coach → standby for results verify · Freddy hub-coordinating. (FULL-pass → deploy (#199 + #17).)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 17:54 MDT]** **#199 live pass UNBLOCKED — Data-Retention block lifted.** Jon confirmed PRJ402xxx are all test data (pre-launch). Marc running FULL T1–T18 on one contained test project. FULL-pass → deploy (#199 + #17); Coach standby for results verify. Also captured GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" to INBOX — infra follow-up to fix before launch (safe now, pre-launch; source Marc).
 - **[2026-07-02 17:51 MDT]** **#199 live pass FULLY UNBLOCKED.** Jon confirmed admin/reviewer on test (T8–T12 drivable) + any test project is fair game for the supplier fixture (T1/T3/T18). Marc now running the FULL T1–T18 in the controlled tab (visual/behavioral). FULL-pass → deploy (#199 + #17) → SHIPPED. Coach standby for results verify; deploy gated on FULL-suite pass (incl. T1 supplier auto-stamp). G002 full run deferred.
 - **[2026-07-02 17:47 MDT]** **#199 live pass STARTED (test target).** Env: #199 deployed to matrix-arc-test only (prod untouched), controlled tab authenticated + BC green, v1.21.24. Marc driving the fully-drivable set (visual/behavioral — JS field-reads blocked by harness auth-token filter, so behavior is the proof): T4/T5/T6/T13–T17/T2-reload-proxy. T8–T12 pending Jon's admin/reviewer role confirm; T1/T3/T18 held pending a supplier-submission fixture (Jon's call). Deploy only on FULL-suite pass; Coach standby for results verify.
 - **[2026-07-02 17:29 MDT]** **#199 live pass UNBLOCKED — tab-control snag resolved.** No re-auth needed (ARC login persists across tabs + BC auto-connects), so Marc opens a fresh CONTROLLED tab in his own session → matrix-arc-test ARC (clean URL, no trailing dot per B001) → auto-auth + BC → runs T1–T18. Coach standby for results verify; ALL-PASS → deploy (#199 + #17) → SHIPPED. G002 full run deferred.
