@@ -108,5 +108,8 @@ Coach C118 (#165 detector-diff).
   with a keystroke. So **keep all team roles in CCD (Desktop) windows, not Terminal.** Each session must be in
   **"Ask permissions"** mode for its OUTBOUND sends to fire — Auto/Bypass disables the tool entirely (that's
   why sessions boot unable to send: global `defaultMode` is `bypassPermissions`). The per-send **"Allow Once"
-  prompt is HARDCODED** — NOT suppressible by permission allowlist or any mode. Accepted as the cost of the
-  three-independent-window workflow; do NOT re-test. For unattended runs, fall back to repo-commit handoff.
+  prompt IS suppressible** (corrected 2026-07-02 via G001 — the earlier "hardcoded / do-not-re-test" claim was
+  WRONG): add `mcp__ccd_session_mgmt__send_message` to `permissions.allow` in `.claude/settings.json` (committed
+  `a1e786d3`) and the prompt stops firing once the session **reloads** to pick up the rule (Jon-confirmed on
+  re-test). Until a session reloads, its outbound sends still prompt. For unattended runs before adoption, fall
+  back to the repo-commit handoff bus.
