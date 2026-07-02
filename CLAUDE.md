@@ -1,6 +1,6 @@
 # MatrixARC — Development Rules
 
-> Work item numbering follows NUMBERING-CONVENTION.md: #N — description [Status].
+> Work item numbering follows NUMBERING-CONVENTION.md (authoritative). New items: `<B|F|G>### — "<short title>" — description [Status]` (B=bug, F=feature, G=general; each its own sequence + ranking). Legacy `#1–#198` keep their `#N` IDs (no renumber).
 
 ## Table of Contents
 - [Session startup procedure](#session-startup-procedure)
@@ -301,7 +301,7 @@ Four Claude instances plus Jon operate against this codebase with distinct roles
 | **CCD** (Claude Code IDE) | **Marc Masdev** (Marc) | Implementation, empirical investigation, regression testing, deploys | Source code, test artifacts, H{N}-PLAN.md files |
 | **Coach** (CCD) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log, process | COACH.md, COACH-ARCHIVE.md, CLAUDE.md, Coach `docs/#N-*` artifacts |
 | **Jon** | — | Priority decisions, plan approval, final sign-off | All approval gates |
-| **Freddy** (CCD, repo R+W) | **Freddy Lyst** (Freddy) | Analyst / hub-router / startup+close-out orchestrator / sole `#N` allocator + Inbox triage. Drafts Briefs + Analyst Reviews; reads-to-route, does NOT build/trace | SESSION-STATE.md, FREDDY.md, FREDDY-PASTE.md, FREDDY-SESSION-BRIEF.md, NUMBERING-CONVENTION.md, TODO.md, TODO-ARCHIVE.md, ARC-AUDIT-FINDINGS.md, Freddy `docs/#N-*` artifacts |
+| **Freddy** (CCD, repo R+W) | **Freddy Lyst** (Freddy) | Analyst / hub-router / startup+close-out orchestrator / sole B/F/G number allocator + Inbox triage. Drafts Briefs + Analyst Reviews; reads-to-route, does NOT build/trace | SESSION-STATE.md, FREDDY.md, FREDDY-PASTE.md, FREDDY-SESSION-BRIEF.md, NUMBERING-CONVENTION.md, TODO.md, TODO-ARCHIVE.md, ARC-AUDIT-FINDINGS.md, Freddy `docs/#N-*` artifacts |
 | **Dez** (CCD, repo R+W) | **Dezzie Arnez** (Dez) | Intake/Triage — captures Jon's + teammates' bug/feature stream, dedup-checks, logs to INBOX.md. Does NOT scope/assign/build. | INBOX.md (sole writer) |
 
 ### File ownership boundaries
@@ -311,8 +311,8 @@ Four Claude instances plus Jon operate against this codebase with distinct roles
 | `CLAUDE.md` | **Coach** | Any role drafts changes → routes to Freddy (hub) to verify → Coach commits. Single writer. |
 | `COACH.md`, `COACH-ARCHIVE.md` | **Coach** only | Marc/Freddy/Jon read-only |
 | `SESSION-STATE.md`, `FREDDY.md`, `FREDDY-PASTE.md`, `FREDDY-SESSION-BRIEF.md`, `NUMBERING-CONVENTION.md`, `TODO-ARCHIVE.md`, `ARC-AUDIT-FINDINGS.md` | **Freddy** (orchestrator cluster) | all read |
-| `TODO.md` (numbered tracker) | **Freddy** | Marc no longer edits TODO.md — reports status to Freddy, who updates the tracker + assigns `#N` at close-out/triage |
-| `INBOX.md` | **Dez** (sole writer, append-only) | Freddy pulls/promotes to TODO.md `#N`; others read-only |
+| `TODO.md` (tracker) | **Freddy** | Marc no longer edits TODO.md — reports status to Freddy, who updates the tracker + stamps the B/F/G number at triage |
+| `INBOX.md` | **Dez** (sole writer, append-only) | Freddy pulls/promotes into the TODO.md tracker (stamps `B###`/`F###`/`G###`); others read-only |
 | `H{N}-PLAN.md` (repo root) | **Marc** | Coach reads for review |
 | `src/app.jsx`, `functions/index.js`, all source; `docs/` subsystem reference docs | **Marc** | Coach reads for review |
 | `tests/extraction-baseline/` | **Marc** | Coach reads for review |
@@ -333,12 +333,14 @@ All four sessions share **one checkout and one git index**, so an undisciplined 
 
 Dez (Dezzie Arnez) is a standing CCD session (part of the hub-and-spoke comms group — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
 
-**Dez owns all bug/feature intake.** **Jon reports directly to Dez.** **Teammates (Marc/Coach/Freddy)** who spot a net-new bug/feature in passing route the report **to Freddy (hub)**, who forwards it to Dez for capture — consistent with hub-and-spoke; no direct teammate→Dez sends unless Freddy authorizes. They do **not** self-log a `#N`. This keeps a single intake funnel and one place that knows what's already been reported. (Coach `C{N}` architecture findings and in-scope work stay where they are; this rule is about *new* trackable bug/feature items that would otherwise become a `#N`.)
+**Dez owns all bug/feature intake.** **Jon reports directly to Dez.** **Teammates (Marc/Coach/Freddy)** who spot a net-new bug/feature in passing route the report **to Freddy (hub)**, who forwards it to Dez for capture — consistent with hub-and-spoke; no direct teammate→Dez sends unless Freddy authorizes. They do **not** self-log a number. This keeps a single intake funnel and one place that knows what's already been reported. (Coach `C{N}` architecture findings and in-scope work stay where they are; this rule is about *new* trackable bug/feature items.)
 
-Per bug/feature report reaching Dez:
-1. **Dedup-check** against existing `#N` in TODO.md + SESSION-STATE.md. Match → reply "Already tracked as #N — [status]," do NOT re-log. Uncertain → offer the closest candidate(s) and ask "same as #N, or new?"
-2. **New** → `git pull`, append a timestamped, **un-numbered** bullet to **`INBOX.md`** (`- [YYYY-MM-DD] BUG|FEAT — <desc> — reported via Intake (source: Jon|Marc|Coach|Freddy)`), then **commit `-- INBOX.md` + push immediately** so nothing is lost (Dez is the sole writer of INBOX.md; never `git add -A`). `#N` is assigned by **Freddy** at triage (single allocator → no multi-session number collisions).
-3. **Handoff:** Dez holds the running un-routed list and does **not** ping Freddy mid-work. When Freddy signals "ready for intake," Dez sends the digest via `send_message`; Freddy pulls `INBOX.md`, scopes, assigns `#N`, promotes the item into the TODO.md numbered tracker, and clears the INBOX.md bullet. Proactive ping only if Jon marks something URGENT.
+New intake is classified **B**ug / **F**eature / **G**eneral, each its own number sequence + priority ranking, and every item carries a **short identifying title**. Freddy is the sole allocator (`B###`/`F###`/`G###`); Dez captures **category + title only**, never numbers. **`NUMBERING-CONVENTION.md` is the authoritative scheme** — this section does not restate it.
+
+Per bug/feature/general report reaching Dez:
+1. **Dedup-check** against existing items in TODO.md + SESSION-STATE.md. Match → reply "Already tracked as <id> — [status]," do NOT re-log. Uncertain → offer the closest candidate(s) and ask "same as <id>, or new?"
+2. **New** → classify B/F/G, `git pull`, and append a timestamped, **un-numbered** bullet to **`INBOX.md`** carrying a short title: `- [YYYY-MM-DD] BUG|FEAT|GEN — "<short title>" — <desc> — reported via Intake (source: Jon|Marc|Coach|Freddy)`. Then **commit `-- INBOX.md` + push immediately** so nothing is lost (Dez is the sole writer of INBOX.md; never `git add -A`). The number (`B###`/`F###`/`G###`) is stamped by **Freddy** at triage (sole allocator → no multi-session collisions).
+3. **Handoff:** Dez holds the running un-routed list and does **not** ping Freddy mid-work. When Freddy signals "ready for intake," Dez sends the digest via `send_message`; Freddy pulls `INBOX.md`, dedup-confirms, stamps the category number, promotes the item into the TODO.md tracker, and clears the INBOX.md bullet. Proactive ping only if Jon marks something URGENT.
 
 ### Delivering large content to Freddy
 
