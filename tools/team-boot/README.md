@@ -18,8 +18,11 @@ Confirmed by live calibration (2026-07-02):
 - **CCD is single-window / multi-session.** "New Session" (**Ctrl+N** — confirm on your build)
   creates a session **inside the current window** and switches to it. It does **not** open a
   new OS window.
-- **Separate windows are a manual tear-off:** click a session, then **Shift+drag its tab** out
-  into its own window. Too position-fragile to automate reliably — left to the human.
+- **Separate windows come from a tear-off**, two ways: the **⋯ (three-dots) → "Open In" →
+  "New Window"** menu next to the session (deterministic — recommended), or **Shift+drag** the
+  tab out (free-form). Default is **manual**; an opt-in experimental auto path drives the menu
+  (see `$AutoTearOff` — ships as a no-op until calibrated, because reliably locating the
+  per-session ⋯ across runs is the fragile part).
 - **CCD is a single-instance Store app** (WindowsApps) — relaunching the exe won't spawn a
   window. So the launcher does **not** launch CCD; **open CCD yourself first.**
 
@@ -74,6 +77,7 @@ Run `-WhatIf` first (safe — no keystrokes). Then confirm these in `team-boot.p
 | `$ClickInputFirst` | Set `$true` if the paste lands in the *previous* session instead of the new one (clicks the input box first). |
 | `$DelayAfterNewSession` | Raise if the paste races ahead of the new session's input being ready. |
 | `$DelayAfterPaste` / `$DelayBetweenSessions` | Timing cushions — raise on a slow machine. |
+| `$AutoTearOff` | EXPERIMENTAL, default `$false`. Opt-in auto tear-off via the ⋯→Open In→New Window menu. Requires calibrating `lib/tearoff-session.ahk` (no-op until you flip its `Calibrated` guard) — keep manual until you've confirmed it live. |
 
 **The key live risk (replaces the old window-handle concern):** does `Ctrl+N` reliably
 **create AND focus** a new session, and does the paste land in the **new** session (not the
@@ -111,7 +115,9 @@ hand and paste the blocks from `onboarding/`. Nothing here is load-bearing for t
 
 ## Files & keeping onboarding in sync
 
-- `lib/new-session-paste.ahk` — the one AutoHotkey v2 helper: focus window → Ctrl+N → paste → submit.
+- `lib/new-session-paste.ahk` — the core AutoHotkey v2 helper: focus window → Ctrl+N → paste → submit.
+- `lib/tearoff-session.ahk` — EXPERIMENTAL, opt-in (`$AutoTearOff`): ⋯→Open In→New Window menu
+  tear-off. Ships as a safe no-op until its `Calibrated` guard is flipped.
 - `onboarding/session2-coach.txt`, `session3-marc.txt` — the peer-paste templates from
   `.claude/commands/team-startup.md`, filled for this team; re-fill if those templates change.
 - `onboarding/session4-dez.txt` — the Freddy-provided Dez block (Intake/Triage + live Status

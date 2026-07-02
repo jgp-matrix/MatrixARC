@@ -47,6 +47,13 @@ $NewSessionHotkey = "^n"
 # input box first) and/or raise $DelayAfterNewSession.
 $ClickInputFirst = $false
 
+# EXPERIMENTAL — opt-in auto tear-off of peers into their own windows via the menu path
+# (⋯ → Open In → New Window). Default OFF = you tear off + title by hand (safe). The helper
+# lib/tearoff-session.ahk ships as a no-op until calibrated; enabling this before calibrating
+# it just logs "not calibrated" and falls back to manual. Locating the per-session ⋯ reliably
+# is the risky part — only enable once you've confirmed the sequence live.
+$AutoTearOff = $false
+
 # Timing (ms). Raise if steps race the UI (most flakiness is timing).
 $DelayAfterNewSession = 1500      # wait after Ctrl+N for the new session's input to be ready
 $DelayAfterPaste      = 700       # wait after paste before pressing Enter
@@ -141,13 +148,30 @@ foreach ($s in $Sessions) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# OPTIONAL (EXPERIMENTAL) — auto tear-off peers via the ⋯ → Open In → New Window menu
+# ─────────────────────────────────────────────────────────────────────────────
+if ($AutoTearOff) {
+  Write-Host "=== EXPERIMENTAL: auto tear-off (⋯ → Open In → New Window) ===" -ForegroundColor White
+  foreach ($s in ($Sessions | Where-Object { $_.Role -notlike 'Freddy*' })) {
+    Write-Step "Tear off $($s.Role) → new window (select its session first, then menu)"
+    Invoke-Ahk "tearoff-session.ahk" @("$hwnd", "$($s.Role)")
+    if (-not $WhatIfPreference -and $LASTEXITCODE -eq 9) {
+      Write-Warn2 "tearoff-session.ahk is not calibrated — skipping auto tear-off; do it manually."
+      break
+    }
+    Sleep2 $DelayBetweenSessions
+  }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # OPERATOR CHECKLIST — the manual steps (tear-off + title + Allow-Once)
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host "=== NEXT (manual) ===" -ForegroundColor White
 @(
   "All 4 sessions now live in the ONE CCD window (session list). To split + label them:"
-  "1. For each of Coach / Marc / Dez: click its session, then SHIFT+DRAG the tab out into"
-  "   its own window. (Freddy can stay put or be torn off too — your preference.)"
+  "1. For each of Coach / Marc / Dez, move it to its own window. Recommended: click the ⋯"
+  "   next to the session → 'Open In' → 'New Window' (deterministic menu). Or SHIFT+DRAG the"
+  "   tab out. (Freddy can stay put or be torn off too.)  [auto: set `$AutoTearOff once calibrated]"
   "2. Title the four windows/sessions by hand:"
   "      🟥Freddy - ARC   🏈Coach - ARC   🟩Marc - ARC   🟪Dez - ARC"
   "3. Put each session in 'Ask permissions' mode (needed for send_message to fire)."
