@@ -22,6 +22,7 @@
 ---
 
 - [2026-07-02] BUG — "ARC auth redirect URI carries a trailing dot" — if ARC is loaded at a trailing-dot URL (`matrix-arc.web.app.`), `window.location.origin` carries the dot into the OAuth redirect URI → Azure AADSTS50011 redirect-mismatch → BC/Microsoft sign-in fails with a cryptic error. Root cause = URL-entry artifact (NOT a code bug); clean-reload at the no-dot URL fixes it (confirmed live). Hardening: strip a trailing dot from the origin when building the auth redirect URI so a dotted load can't break BC. LOW priority. — reported via Intake (source: Jon 2026-07-02, resolved live; via Freddy)
+- [2026-07-02] BUG — "Approved-state TR block message names an absent button" — on a post-approval re-arm, the send-block message says "Click Send for Technical Review" but that button isn't rendered in the approved state (reviewer per-row Resolve still works — no hard dead-end). Fix: state-aware block message when approved ("have an engineer Resolve the flagged line(s)") or a re-submit affordance by the approved banner. LOW. — reported via Intake (source: Coach P3 verify 2026-07-02; via Freddy)
 
 <!-- Triage log: 2026-07-02 — "Remote approval of Allow-Once prompts" promoted to TODO.md G001 [Discovery] by Freddy. -->
 
