@@ -1,118 +1,72 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  G002 — Boot the 4-session CCD dev team (Freddy · Coach · Marc · Dez) with minimal clicks.
+  G002 — Create + onboard the 4 CCD team sessions (Freddy · Coach · Marc · Dez) in ONE window.
 
 .DESCRIPTION
-  Option A automation: launches four Claude Code Desktop sessions, pastes each role's
-  onboarding block into the CORRECT window, and (optionally) sets each session title.
-  The ~6 one-time "Allow Once" prompts at the comms-check are approved by the human
-  (hardcoded security gate — not automatable).
+  Live calibration established that Claude Code Desktop is SINGLE-WINDOW / MULTI-SESSION:
+  "New Session" (Ctrl+N) creates a session INSIDE the current window; separate OS windows
+  happen only when a human Shift+drags a session tab out (tear-off). CCD is also a
+  single-instance Store app — relaunching the exe won't spawn a window.
+
+  So this launcher automates the tedious part only: focus the CCD window, then per session
+  Ctrl+N → paste the onboarding block → submit, ×4 in the one window. The human does the
+  tear-off into separate windows and the titling afterward (Shift+drag to a screen position
+  is too fragile to automate reliably).
 
   Dev tooling only. No git ops, nothing under src/ or functions/. Never deploys.
 
-  Window targeting (H1 fix): each new window's handle is captured via Win32 EnumWindows
-  right after it spawns, and every keystroke/paste is directed at that exact handle —
-  not an ambiguous "ahk_exe" match across 4 identical windows.
-
-  Single-instance guard (H2 fix): if a launch produces no NEW window, the run aborts with
-  guidance to switch $NewSessionMethod to 'hotkey' — rather than silently stacking all
-  four blocks into one session.
-
 .PARAMETER WhatIf
-  Dry run: prints every planned action but performs NO launches, keystrokes, or paste.
+  Dry run: prints every planned action but performs NO keystrokes or paste.
 
 .NOTES
-  ⚙ CALIBRATE the CONFIG block on the target machine before first real use.
-  Most flakiness is timing — raise the $Delay* / $NewWindowTimeoutMs values if steps race.
+  ⚙ CALIBRATE the CONFIG block on the target machine. The key risks to confirm live:
+    - Does the new-session shortcut ($NewSessionHotkey) create AND focus a new session?
+    - Does the paste land in the NEW session (not the previous one)? If it races, raise
+      $DelayAfterNewSession and/or set $ClickInputFirst=$true.
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
 param()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIG — ⚙ CALIBRATE THESE ON JON'S DESKTOP (see README "CALIBRATION")
+# CONFIG — ⚙ CALIBRATE THESE (see README "CALIBRATION")
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Full path to the Claude Code Desktop executable (Start-menu shortcut → Properties → Target).
-$CcdExe = "$env:LOCALAPPDATA\Programs\claude-code-desktop\Claude Code Desktop.exe"
-
-# Process name (no .exe) used to enumerate CCD windows. Confirm with: Get-Process *claude*
+# Process name (no .exe) used to locate the CCD window. Confirm with: Get-Process *claude*
+# (CCD is a single-instance Store app under WindowsApps — there's exactly one window.)
 $CcdProcName = "Claude Code Desktop"
 
 # AutoHotkey v2 executable (full path if not on PATH).
 $AhkExe = "AutoHotkey64.exe"
 
-# How a NEW session/window opens:
-#   "launch-exe" → run $CcdExe again to spawn a new window (works only if CCD is multi-window).
-#   "hotkey"     → CCD already open; a shortcut opens a new session — set $NewSessionHotkey.
-$NewSessionMethod = "launch-exe"
-$NewSessionHotkey = "^n"          # AHK Send syntax; used only when $NewSessionMethod = "hotkey"
+# The new-session shortcut INSIDE CCD (creates a session in the current window).
+# Jon's best guess is Ctrl+N — CONFIRM on the target build.
+$NewSessionHotkey = "^n"
 
-# Paste into the input box. If paste misses the input, set $true (clicks input first).
+# If the paste lands in the previous session instead of the new one, set $true (clicks the
+# input box first) and/or raise $DelayAfterNewSession.
 $ClickInputFirst = $false
 
-# Auto-set session titles? Default OFF (M1): a mis-calibrated rename sequence would inject
-# "Rename"+title as CHAT PROMPTS. Leave $false and set titles by hand until the rename
-# sequence in lib/set-title.ahk is confirmed on this build; then flip to $true.
-$AutoSetTitle = $false
-
-# Timing (ms). Raise on slower machines.
-$DelayAfterLaunch    = 1500       # settle time before we start polling for the new window
-$NewWindowTimeoutMs  = 15000      # how long to wait for a new CCD window to appear
-$NewWindowPollMs     = 400        # poll interval while waiting
-$DelayBeforePaste    = 700        # settle after focusing the target window
-$DelayAfterTitle     = 800        # settle after a title set
+# Timing (ms). Raise if steps race the UI (most flakiness is timing).
+$DelayAfterNewSession = 1500      # wait after Ctrl+N for the new session's input to be ready
+$DelayAfterPaste      = 700       # wait after paste before pressing Enter
+$DelayBetweenSessions = 1200      # settle between sessions
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SESSION PLAN — session 1 becomes Freddy (launcher-mode: verify state + comms-check,
-# NOT the full /team-startup skill — see H3). Peers: Coach, Marc, Dez.
+# SESSION PLAN — all created in ONE window (order per Freddy). Session 1 is Freddy in
+# launcher mode: verify state, then PAUSE for Jon to tear-off + title the peers and reply
+# "go" before running the comms-check (peers aren't titled until Jon does it — see block).
 # ─────────────────────────────────────────────────────────────────────────────
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $OnboardDir = Join-Path $ScriptDir "onboarding"
 $LibDir     = Join-Path $ScriptDir "lib"
 
 $Sessions = @(
-  [pscustomobject]@{ Role="Freddy (orchestrator)"; Title="🟥Freddy - ARC"; File="session1-freddy.txt" }
-  [pscustomobject]@{ Role="Coach";                 Title="🏈Coach - ARC";  File="session2-coach.txt"  }
-  [pscustomobject]@{ Role="Marc";                  Title="🟩Marc - ARC";   File="session3-marc.txt"   }
-  [pscustomobject]@{ Role="Dez";                   Title="🟪Dez - ARC";    File="session4-dez.txt"    }
+  [pscustomobject]@{ Role="Freddy (launcher mode)"; Title="🟥Freddy - ARC"; File="session1-freddy.txt" }
+  [pscustomobject]@{ Role="Coach";                  Title="🏈Coach - ARC";  File="session2-coach.txt"  }
+  [pscustomobject]@{ Role="Marc";                   Title="🟩Marc - ARC";   File="session3-marc.txt"   }
+  [pscustomobject]@{ Role="Dez";                    Title="🟪Dez - ARC";    File="session4-dez.txt"    }
 )
-
-# ─────────────────────────────────────────────────────────────────────────────
-# WIN32 — enumerate visible top-level windows for the CCD process(es)
-# ─────────────────────────────────────────────────────────────────────────────
-if (-not ("Win32Win" -as [type])) {
-  Add-Type @"
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-public class Win32Win {
-  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr p);
-  public delegate bool EnumWindowsProc(IntPtr h, IntPtr p);
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
-  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
-  [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr h);
-  public static List<long> ForPids(HashSet<uint> pids){
-    var res = new List<long>();
-    EnumWindows((h,p)=>{
-      if(!IsWindowVisible(h)) return true;
-      if(GetWindowTextLength(h)==0) return true;
-      uint pid; GetWindowThreadProcessId(h, out pid);
-      if(pids.Contains(pid)) res.Add((long)h);
-      return true;
-    }, IntPtr.Zero);
-    return res;
-  }
-}
-"@
-}
-
-function Get-CcdWindowHandles {
-  $pids = [System.Collections.Generic.HashSet[uint]]::new()
-  foreach ($p in Get-Process -Name $CcdProcName -ErrorAction SilentlyContinue) { [void]$pids.Add([uint]$p.Id) }
-  if ($pids.Count -eq 0) { return @() }
-  return [Win32Win]::ForPids($pids)
-}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -120,74 +74,39 @@ function Get-CcdWindowHandles {
 function Write-Step($m){ Write-Host "  → $m" -ForegroundColor Cyan }
 function Write-Ok($m)  { Write-Host "  ✓ $m" -ForegroundColor Green }
 function Write-Warn2($m){ Write-Host "  ⚠ $m" -ForegroundColor Yellow }
-function Sleep2([int]$ms){ if ($ms -gt 0 -and -not $WhatIfPreference){ Start-Sleep -Milliseconds $ms } }  # L4: no sleeps in dry run
+function Sleep2([int]$ms){ if ($ms -gt 0 -and -not $WhatIfPreference){ Start-Sleep -Milliseconds $ms } }
+
+function Get-CcdWindowHandle {
+  # Single-window app → MainWindowHandle is the one window. Returns 0 if CCD isn't open.
+  $p = Get-Process -Name $CcdProcName -ErrorAction SilentlyContinue |
+       Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
+  if ($p) { return [long]$p.MainWindowHandle }
+  return 0
+}
 
 function Invoke-Ahk {
   param([string]$Script,[string[]]$AhkArgs=@())
   $full = Join-Path $LibDir $Script
   if ($PSCmdlet.ShouldProcess("$Script $($AhkArgs -join ' ')","AutoHotkey")) {
     & $AhkExe $full @AhkArgs
-    if ($LASTEXITCODE -ne 0) { Write-Warn2 "AHK '$Script' exited $LASTEXITCODE" }
+    if ($LASTEXITCODE -ne 0) { Write-Warn2 "AHK '$Script' exited $LASTEXITCODE (2=focus fail, 3=window not found)" }
   }
 }
 
-function Open-NewSession {
-  param([long]$LastHwnd)
-  if ($NewSessionMethod -eq "launch-exe") {
-    Write-Step "Launch CCD ($CcdExe)"
-    if ($PSCmdlet.ShouldProcess($CcdExe,"Start-Process")) { Start-Process -FilePath $CcdExe | Out-Null }
-  } else {
-    # hotkey mode assumes CCD is already open. For the first session $LastHwnd is 0 —
-    # target the first existing CCD window so the shortcut has somewhere to land.
-    $target = $LastHwnd
-    if ($target -eq 0) { $target = [long](@(Get-CcdWindowHandles) | Select-Object -First 1) }
-    if (-not $target) { Write-Warn2 "hotkey mode needs CCD already open, but no window was found." }
-    Write-Step "New session via hotkey '$NewSessionHotkey' (on hwnd $target)"
-    Invoke-Ahk "send-keys.ahk" @("$target",$NewSessionHotkey)
-  }
-}
-
-function Wait-NewWindow {
-  param([long[]]$Before)
-  # H2/L3: returns the newly-appeared CCD window handle, or 0 if none within the timeout.
-  if ($WhatIfPreference) { return 0 }
-  $deadline = (Get-Date).AddMilliseconds($NewWindowTimeoutMs)
-  while ((Get-Date) -lt $deadline) {
-    $now = Get-CcdWindowHandles
-    $new = $now | Where-Object { $_ -notin $Before }
-    if ($new) { return ([long]($new | Select-Object -First 1)) }
-    Start-Sleep -Milliseconds $NewWindowPollMs
-  }
-  return 0
-}
-
-function Paste-Block {
+function New-SessionAndPaste {
   param([long]$Hwnd,[string]$Text)
   if ($PSCmdlet.ShouldProcess("clipboard","Set onboarding text ($($Text.Length) chars)")) { Set-Clipboard -Value $Text }
   $clickArg = if ($ClickInputFirst) { "1" } else { "0" }
-  Invoke-Ahk "paste-and-submit.ahk" @("$Hwnd",$clickArg)
-}
-
-function Set-Title {
-  param([long]$Hwnd,[string]$Title)
-  if (-not $AutoSetTitle) { Write-Warn2 "Title '$Title' — set by hand (auto-title OFF; see README M1)."; return }
-  Write-Step "Set title → '$Title' (hwnd $Hwnd)"
-  if ($PSCmdlet.ShouldProcess("clipboard","Set title text")) { Set-Clipboard -Value $Title }   # M2: title via clipboard
-  Invoke-Ahk "set-title.ahk" @("$Hwnd")
-  Sleep2 $DelayAfterTitle
+  Invoke-Ahk "new-session-paste.ahk" @("$Hwnd", $NewSessionHotkey, $clickArg, "$DelayAfterNewSession", "$DelayAfterPaste")
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PREFLIGHT
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host "`n=== team-boot (G002) ===" -ForegroundColor White
-if ($WhatIfPreference) { Write-Warn2 "DRY RUN (-WhatIf): no launches, keystrokes, or paste will occur.`n" }
+if ($WhatIfPreference) { Write-Warn2 "DRY RUN (-WhatIf): no keystrokes or paste will occur.`n" }
 
 $fatal = $false
-if (-not (Test-Path $CcdExe)) {
-  Write-Warn2 "CCD exe not found at: $CcdExe  → set `$CcdExe (README ⚙ CALIBRATION)."
-  if ($NewSessionMethod -eq "launch-exe" -and -not $WhatIfPreference) { $fatal = $true }
-}
 if (-not (Get-Command $AhkExe -ErrorAction SilentlyContinue) -and -not (Test-Path $AhkExe)) {
   Write-Warn2 "AutoHotkey v2 ('$AhkExe') not found → install AHK v2 or set `$AhkExe."
   if (-not $WhatIfPreference) { $fatal = $true }
@@ -196,62 +115,45 @@ foreach ($s in $Sessions) {
   $p = Join-Path $OnboardDir $s.File
   if (-not (Test-Path $p)) { Write-Warn2 "Missing onboarding file: $p"; $fatal = $true }
 }
+
+$hwnd = Get-CcdWindowHandle
+if ($hwnd -eq 0) {
+  if ($WhatIfPreference) { Write-Warn2 "CCD window not found (fine for dry run) — OPEN CCD before a real run." }
+  else { Write-Warn2 "CCD window not found. OPEN Claude Code Desktop first, then re-run."; $fatal = $true }
+} else {
+  Write-Ok "CCD window found (hwnd $hwnd)."
+}
 if ($fatal) { Write-Host "`nPreflight failed — resolve the above and re-run.`n" -ForegroundColor Red; exit 1 }
-if (-not $AutoSetTitle) { Write-Warn2 "Auto-title is OFF — you'll set the 4 titles by hand (safe default; see README)." }
 Write-Ok "Preflight passed.`n"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BOOT — capture each new window handle, act only on THAT window (H1)
+# BOOT — one window; per session: Ctrl+N → paste block → submit
 # ─────────────────────────────────────────────────────────────────────────────
-$i = 0; $lastHwnd = 0
+$i = 0
 foreach ($s in $Sessions) {
   $i++
   Write-Host "[$i/4] $($s.Role)" -ForegroundColor White
   $text = (Get-Content -Raw -Path (Join-Path $OnboardDir $s.File)).TrimEnd()
-
-  $before = @(Get-CcdWindowHandles)
-  Open-NewSession -LastHwnd $lastHwnd
-  Sleep2 $DelayAfterLaunch
-
-  if ($WhatIfPreference) {
-    Write-Step "(WhatIf) would capture the new CCD window handle and act on it"
-    $hwnd = 0
-  } else {
-    $hwnd = Wait-NewWindow -Before $before
-    if ($hwnd -eq 0) {
-      Write-Host "`n  ✗ No NEW CCD window appeared for '$($s.Role)'." -ForegroundColor Red
-      Write-Host "    H2: CCD may be single-instance. Set `$NewSessionMethod='hotkey' with the real" -ForegroundColor Red
-      Write-Host "    new-session shortcut, or increase `$NewWindowTimeoutMs. Aborting to avoid stacking." -ForegroundColor Red
-      exit 2
-    }
-    Write-Ok "New window captured: hwnd $hwnd"
-  }
-
-  # M3: title while the input is idle (before the block submits and the agent starts a turn).
-  Set-Title -Hwnd $hwnd -Title $s.Title
-  Sleep2 $DelayBeforePaste
-  Write-Step "Paste onboarding block ($($s.File)) + submit → hwnd $hwnd"
-  Paste-Block -Hwnd $hwnd -Text $text
-  $lastHwnd = $hwnd
-  Write-Ok "$($s.Role) onboarded.`n"
+  Write-Step "Ctrl+N (new session) → paste $($s.File) → submit"
+  New-SessionAndPaste -Hwnd $hwnd -Text $text
+  Sleep2 $DelayBetweenSessions
+  Write-Ok "$($s.Role) created + onboarded (in the shared CCD window).`n"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# OPERATOR CHECKLIST — the accepted ~5% manual step
+# OPERATOR CHECKLIST — the manual steps (tear-off + title + Allow-Once)
 # ─────────────────────────────────────────────────────────────────────────────
-Write-Host "=== NEXT (manual — one-time) ===" -ForegroundColor White
-$checklist = @()
-if (-not $AutoSetTitle) {
-  $checklist += "0. Set each session's title by hand (auto-title is OFF):"
-  $Sessions | ForEach-Object { $checklist += "      session $([array]::IndexOf($Sessions,$_)+1) → $($_.Title)" }
-}
-$checklist += @(
-  "1. In EACH session, confirm it's in 'Ask permissions' mode (needed for send_message to fire)."
-  "2. Freddy (session 1) runs in LAUNCHED mode — it verifies state and runs the comms-check"
-  "   directly against the already-booted peers (it does NOT re-generate pastes or wait)."
-  "3. Approve the ~6 one-time 'Allow Once' prompts as Freddy messages Coach/Marc/Dez."
-  "   (One approval per sender→target pair, remembered for the session — NOT per message.)"
-  "4. Confirm all four report 'ready / comms OK'. Team is up."
-)
-$checklist | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+Write-Host "=== NEXT (manual) ===" -ForegroundColor White
+@(
+  "All 4 sessions now live in the ONE CCD window (session list). To split + label them:"
+  "1. For each of Coach / Marc / Dez: click its session, then SHIFT+DRAG the tab out into"
+  "   its own window. (Freddy can stay put or be torn off too — your preference.)"
+  "2. Title the four windows/sessions by hand:"
+  "      🟥Freddy - ARC   🏈Coach - ARC   🟩Marc - ARC   🟪Dez - ARC"
+  "3. Put each session in 'Ask permissions' mode (needed for send_message to fire)."
+  "4. In the FREDDY session, reply 'go' — Freddy verified state and is waiting for the"
+  "   peers to be titled before it runs the comms-check (it locates peers by title)."
+  "5. Approve the ~6 one-time 'Allow Once' prompts as Freddy messages Coach/Marc/Dez."
+  "   Confirm all four report 'ready / comms OK'. Team is up."
+) | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
 Write-Host ""
