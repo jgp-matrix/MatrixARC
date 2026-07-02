@@ -28987,7 +28987,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       const _u={..._lp,bom:_newBom};
                       latestPanelRef.current=_u;
                       onUpdate(_u);
-                      try{onSaveImmediate(_u);}catch(e){}
+                      // Guard both a sync throw and an async rejection (onSaveImmediate is a
+                      // Firestore write → returns a Promise; a bare try/catch misses rejections).
+                      try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
                     };
                     const _rowEl=(()=>{
                   return(
