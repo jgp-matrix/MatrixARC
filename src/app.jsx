@@ -32817,7 +32817,7 @@ function createBomApprovalTokenDoc(project,barId,sentTo){
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
 function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
-  const [sendMode,setSendMode]=useState("new");
+  const [sendMode,setSendMode]=useState("sales"); // #193: default to Send-To-Sales tab
   const [threadSearch,setThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
   const [threadResults,setThreadResults]=useState([]);
   const [threadSearching,setThreadSearching]=useState(false);
@@ -32918,12 +32918,12 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         }
       }
     }
-    if(sendMode==="new"&&!m.to.trim()){arcAlert("Enter a recipient email.");return;}
+    if((sendMode==="new"||sendMode==="sales")&&!m.to.trim()){arcAlert("Enter a recipient email.");return;}
     if(sendMode==="reply"&&!selectedThread){arcAlert("Select an email thread to reply to.");return;}
     // DECISION(v1.19.667): Validate recipient emails before send. Catches typos like
     // `jon@matrixpci,com` (comma instead of dot) which would otherwise split into two
     // malformed addresses and get rejected by Graph API with a generic error.
-    if(sendMode==="new"){
+    if(sendMode==="new"||sendMode==="sales"){
       const emailRe=/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/;
       const recipients=m.to.split(/[,;]\s*/).map(e=>e.trim()).filter(Boolean);
       const bad=recipients.filter(e=>!emailRe.test(e));
@@ -33077,6 +33077,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           quoteRev:rev,status:"sent",bomApprovalToken:approvalToken};
         upd.bomApprovalRequests=[...(upd.bomApprovalRequests||[]),req];
       }
+      // #193/#194: minimal per-send log — durable facts per send (email confirmed sent above).
+      // Fire-and-forget (arrayUnion into project.qvHistory[]).
+      _logQvHistory(project.id,{type:"quote_send",sendMode,to:sentTo,quoteNumber:(populated.quote||{}).number||null,quoteRev:rev,withBom:!!withBom});
       try{
         persistProject(upd);
       }catch(saveErr){
@@ -33098,8 +33101,14 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"95%",maxWidth:640,maxHeight:"90vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
         <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:12}}>✉ Send Quote</div>
         <div style={{display:"flex",gap:0,marginBottom:14,borderRadius:8,overflow:"hidden",border:`1px solid ${C.border}`}}>
-          <button onClick={()=>setSendMode("new")}
+          {/* #193: Send-To-Sales tab (default). Tab switch swaps the recipient to the tab's default. */}
+          <button onClick={()=>{setSendMode("sales");setModalData(prev=>({...prev,to:fbAuth.currentUser?.email||""}));}}
             style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",
+              background:sendMode==="sales"?"#1a1a2e":"transparent",color:sendMode==="sales"?"#f59e0b":C.muted}}>
+            📩 Send To Sales
+          </button>
+          <button onClick={()=>{setSendMode("new");setModalData(prev=>({...prev,to:prev._customerTo||""}));}}
+            style={{flex:1,padding:"8px 12px",fontSize:12,fontWeight:700,cursor:"pointer",border:"none",borderLeft:`1px solid ${C.border}`,
               background:sendMode==="new"?C.accentDim:"transparent",color:sendMode==="new"?C.accent:C.muted}}>
             ✉ New Email
           </button>
@@ -33110,7 +33119,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           </button>
         </div>
         <div style={{flex:1,overflow:"auto"}}>
-        {sendMode==="new"?(
+        {(sendMode==="new"||sendMode==="sales")?(
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             <div><label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>To</label>
             <input value={modalData.to} onChange={e=>setModalData(prev=>({...prev,to:e.target.value}))} style={{...inp({fontSize:13})}}/></div>
@@ -35897,7 +35906,8 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   const spEmail=spCached?.E_Mail||q.salesEmail||fbAuth.currentUser?.email||"";
                   const spPhone=spCached?.Phone_No||q.salesPhone||"";
                   setQuoteSendModalPLV({
-                    to:toEmail,
+                    to:fbAuth.currentUser?.email||"",
+                    _customerTo:toEmail,
                     subject:`${isBudg?"Budgetary ":""}Quote ${q.number||"Quote"}${rev>0?" Rev "+String(rev).padStart(2,"0"):""} — ${project.name||"Project"}`,
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
