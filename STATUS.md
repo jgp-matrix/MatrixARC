@@ -6,13 +6,14 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — LIVE ACCEPTANCE PASS UNDERWAY (Jon linked the ARC tab)**
-- **#199 Tech-Review flag** — code-complete + verified; now in **live acceptance**. Marc running **T1–T18** in the controlled ARC tab (matrix-arc-test + scratch): P1 stamp/save-reload · P2 Resolve/approve-sweep · P3+MED-3 send-block on all 7 surfaces. **ALL-PASS → deploy (#199 + #17) → #199 SHIPPED.**
+**#199 — LIVE PASS UNBLOCKED (tab-control snag resolved) → T1–T18 running**
+- **#199 Tech-Review flag** — code-complete + verified; in **live acceptance**. Tab-control snag resolved: **no re-auth needed** (ARC login persists across tabs + BC auto-connects), so Marc opens a fresh CONTROLLED tab in his own session → matrix-arc-test ARC (clean URL, **no trailing dot per B001**) → auto-auth + BC → runs **T1–T18** (P1 stamp/save-reload · P2 Resolve/approve-sweep · P3+MED-3 send-block on all 7 surfaces).
 - **📥 Intake:** INBOX empty (B001/B002 triaged). **MED-4** = LOW follow-up.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → **running live T1–T18** · Coach → standby for results verify · Jon → ARC tab linked · Freddy hub-coordinating.
+- **STATUS:** Marc → opening controlled tab + **running live T1–T18** · Coach → standby for results verify · Freddy hub-coordinating. (ALL-PASS → deploy (#199 + #17) → SHIPPED.)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 17:29 MDT]** **#199 live pass UNBLOCKED — tab-control snag resolved.** No re-auth needed (ARC login persists across tabs + BC auto-connects), so Marc opens a fresh CONTROLLED tab in his own session → matrix-arc-test ARC (clean URL, no trailing dot per B001) → auto-auth + BC → runs T1–T18. Coach standby for results verify; ALL-PASS → deploy (#199 + #17) → SHIPPED. G002 full run deferred.
 - **[2026-07-02 17:24 MDT]** **#199 → LIVE ACCEPTANCE PASS underway (Jon linked the ARC tab).** Marc running live T1–T18 in the controlled ARC tab (matrix-arc-test + scratch): P1 stamp/save-reload, P2 Resolve/approve-sweep, P3+MED-3 send-block on all 7 surfaces. ALL-PASS → deploy (#199 + #17). Coach on standby for results verify; on all-pass → deploy → #199 SHIPPED. G002 full run deferred to clean boot.
 - **[2026-07-02 17:23 MDT]** **#199 FULLY CODE-COMPLETE + Coach-verified (MED-3 PASS, `75ecfd46`).** All 7 customer-facing surfaces gated on unresolved Tech Review. P1✓ P2✓ P3✓ + MED-1/2/3 ✓, cross-check GREEN. Jon pinged to connect the controlled ARC tab → Marc runs live T1–T18 → deploy (#199 + #17). Marc + Coach on standby for the live pass. MED-4 = LOW follow-up. G002 full run deferred to clean boot.
 - **[2026-07-02 17:21 MDT]** **#199 MED-3 fix BUILT → Coach re-verify (final piece).** MED-3 (gate the Quoted-BOM send) = BUILT (Marc, `c46184aa`) — `handleBomSend` now blocks on unresolved TR (mirrors verification gate). #199 FULLY CODE-COMPLETE (P1+P2+P3 + MED-1/2/3 + L-items). T18 added to live batch. Marc holding; Coach re-verifying MED-3; on PASS → Freddy pings Jon to connect ARC tab → live T1–T18 → deploy (#199 + #17). G002 full run deferred to clean boot.
