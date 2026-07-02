@@ -122,7 +122,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
 
 ## Round 4 (caught during pre-commit review of merge resolution, 2026-05-08)
 
-17. **OPEN** [Backlog] — Fire-and-forget call to async `_showPopupBlockedFallback` from the synchronous
+17. **RESOLVED** [Verified] — `0651a73c` (2026-07-02, subagent-lane trial: Marc-subagent applied `.catch(()=>{})` @app.jsx:6867, Coach-subagent + pre-commit review both APPROVE; ships on next deploy). Fire-and-forget call to async `_showPopupBlockedFallback` from the synchronous
     `arcDocOpen` helper in `src/app.jsx`. Source commit `3fd29f6`
     ("arcDocOpen: drop features string so window.open returns a normal tab"). The fallback is
     invoked without `await` from a non-async caller, so any rejection inside it (e.g. an
