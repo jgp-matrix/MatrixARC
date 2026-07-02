@@ -15963,6 +15963,21 @@ function findIncompleteQuoteItems(project){
         });
       }
     }
+    // #199 P3 — hard gate: any unresolved Tech-Review row blocks the quote. Adds a synthetic
+    // issue so _sendBlocked (findIncompleteQuoteItems(...).length>0) trips on all 6 consuming
+    // surfaces automatically — zero new call sites. Resolution: per-row Resolve (reviewer) or
+    // the pre-review approve-sweep (never a dead-end — see #199 L3/L5).
+    const _trUnresolvedRows=bom.filter(_isUnresolvedTechReviewRow);
+    if(_trUnresolvedRows.length){
+      issues.push({
+        panelName:pan.name||`Panel ${pi+1}`,
+        partNumber:"(Technical Review)",
+        description:`${_trUnresolvedRows.length} line(s) require Technical Review sign-off`,
+        missing:["Technical Review sign-off"],
+        isTechReviewBlock:true,
+        count:_trUnresolvedRows.length,
+      });
+    }
   }
   return issues;
 }
@@ -15970,11 +15985,17 @@ function formatIncompleteQuoteAlert(issues){
   if(!issues.length)return"";
   // DECISION(v1.20.108): Split verification blocks from pricing issues for distinct messaging.
   const verifyIssues=issues.filter(i=>i.isVerificationBlock);
-  const pricingIssues=issues.filter(i=>!i.isVerificationBlock);
+  const techReviewIssues=issues.filter(i=>i.isTechReviewBlock); // #199 P3
+  const pricingIssues=issues.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock);
   const parts=[];
   if(verifyIssues.length){
     const panelNames=verifyIssues.map(v=>v.panelName).join(", ");
     parts.push(`⚠ ${panelNames}: This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending.`);
+  }
+  if(techReviewIssues.length){
+    // #199 P3 — distinct Tech-Review message (Analyst Q2/R2 wording).
+    const _n=techReviewIssues.reduce((s,i)=>s+(i.count||1),0);
+    parts.push(`${_n} line${_n>1?"s":""} require${_n===1?"s":""} Technical Review sign-off before this quote can be sent. Click "Send for Technical Review", or have an engineer resolve the flagged lines.`);
   }
   if(pricingIssues.length){
     const maxShow=12;
@@ -28980,8 +29001,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       :_trSupplier?"Supplier substitution — requires engineer sign-off"
                       :"Flagged for Technical Review (manual)";
                     const _onTrToggle=()=>{
-                      if(_trDisabled)return;
-                      if(_trFlagged&&_trSupplier&&!_trIsReviewer)return; // defensive: supplier flag not clearable by Sales
+                      if(_trDisabled)return; // MED-1: _trDisabled already includes (_trFlagged&&_trSupplier) and _trResolved, so supplier/resolved rows never reach the toggle
                       const _lp=latestPanelRef.current||panel;
                       const _newBom=(_lp.bom||[]).map(r=>{
                         if(String(r.id)!==String(row.id))return r;
@@ -32996,7 +33016,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   // are reflected.
   const incompleteItems=findIncompleteQuoteItems(project);
   const _hasVerifyBlock=incompleteItems.some(i=>i.isVerificationBlock);
-  const _pricingIssueCount=incompleteItems.filter(i=>!i.isVerificationBlock).length;
+  const _hasTechReviewBlock=incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
+  const _trLineCount=incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
+  const _pricingIssueCount=incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
   const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
   async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
@@ -33321,7 +33343,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <div style={{marginTop:12,padding:"10px 12px",background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,flexShrink:0}}>
             <div style={{fontSize:12,fontWeight:700,color:C.yellow,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
               <span>⚠</span>
-              <span>Send disabled{_hasVerifyBlock?" — BOM verification required":""}{_pricingIssueCount>0?(_hasVerifyBlock?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
+              <span>Send disabled{_hasVerifyBlock?" — BOM verification required":""}{_hasTechReviewBlock?(_hasVerifyBlock?" + ":" — ")+_trLineCount+" line"+(_trLineCount>1?"s":"")+" need Technical Review":""}{_pricingIssueCount>0?((_hasVerifyBlock||_hasTechReviewBlock)?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
             </div>
             <div style={{fontSize:11,color:"#fde68a",lineHeight:1.5,maxHeight:140,overflow:"auto"}}>
               {incompleteItems.slice(0,8).map((i,k)=>(
@@ -34363,10 +34385,13 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     const _trChangedPanels=_trSweptPanels.filter((p,i)=>p!==(project.panels||[])[i]);
                     onUpdate({...project,...reviewFields,panels:_trSweptPanels});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
-                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
+                    let _trApproveOk=false;
+                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);_trApproveOk=true;}
                     catch(e){console.error("Pre-review approve save failed:",e);onUpdate({...project});}
-                    // Persist swept panels via the proper panel save (dataUrl-strip + cross-user guards)
-                    for(const _p of _trChangedPanels){try{await saveProjectPanel(uid,project.id,_p.id,_p,true);}catch(e){console.warn("[#199] TR approve-sweep panel save failed:",e);}}
+                    // #199 MED-2: persist the swept-resolved panels ONLY if the approval write
+                    // succeeded — else we'd leave resolved TR flags on a NOT-approved project → the P3
+                    // gate reads "no unresolved" → sendable WITHOUT approval. No partial write on error.
+                    if(_trApproveOk){for(const _p of _trChangedPanels){try{await saveProjectPanel(uid,project.id,_p.id,_p,true);}catch(e){console.warn("[#199] TR approve-sweep panel save failed:",e);}}}
                     if(bcUploadRef?.current){
                       try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
                     }
@@ -35978,14 +36003,16 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 {!readOnly&&(()=>{
                   const _incompleteItems=findIncompleteQuoteItems(project);
                   const _hasVerify=_incompleteItems.some(i=>i.isVerificationBlock);
-                  const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock).length;
+                  const _hasTechReview=_incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
+                  const _trCount=_incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
+                  const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
                   // DECISION(v1.19.681): Owner Priority Mode extends the send-block reasons.
                   const _sendBlocked=_incompleteItems.length>0||!!ownerPriorityActive;
                   return(<>
                     {_sendBlocked&&(
                       <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
-                        <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked{_hasVerify?" — BOM verification required":""}{_pricingCount>0?(_hasVerify?" + ":` — `)+_pricingCount+" item"+(_pricingCount>1?"s":"")+" incomplete":""}</div>
-                        <div style={{marginBottom:8}}>{_hasVerify?"This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending.":"Fix the red rows in the BOM below (missing price, qty, or priced date). Once fixed, the Send button will enable."}{_hasVerify&&_pricingCount>0?" Also fix "+_pricingCount+" red row"+(_pricingCount>1?"s":"")+" with incomplete pricing.":""}</div>
+                        <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked{_hasVerify?" — BOM verification required":""}{_hasTechReview?(_hasVerify?" + ":" — ")+_trCount+" line"+(_trCount>1?"s":"")+" need Technical Review":""}{_pricingCount>0?((_hasVerify||_hasTechReview)?" + ":` — `)+_pricingCount+" item"+(_pricingCount>1?"s":"")+" incomplete":""}</div>
+                        <div style={{marginBottom:8}}>{_hasVerify&&"This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending. "}{_pricingCount>0&&((_hasVerify?"Also fix ":"Fix ")+_pricingCount+" red row"+(_pricingCount>1?"s":"")+" with incomplete pricing (missing price, qty, or priced date). ")}{_hasTechReview&&(_trCount+" line"+(_trCount>1?"s":"")+" require Technical Review sign-off — click 'Send for Technical Review', or have an engineer resolve the flagged lines.")}{(!_hasVerify&&!_hasTechReview&&_pricingCount===0)?"Fix the red rows in the BOM below. Once fixed, the Send button will enable.":""}</div>
                         {/* DECISION(v1.19.670): Just Print button lives directly in the banner so
                            users aren't blocked from printing a review copy when Send is disabled.
                            Previously the banner said "use Just Print from the Send dialog" — but the
@@ -35998,7 +36025,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       </div>
                     )}
                 <button data-tour="print-quote-btn" disabled={_sendBlocked}
-                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_sendBlocked?`Send disabled${_hasVerify?" — BOM verification required":""}${_pricingCount>0?(_hasVerify?" + ":` — `)+_pricingCount+" incomplete item"+(_pricingCount>1?"s":"")+". Fix red rows in the BOM.":""}`:"")}
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:(_sendBlocked?`Send disabled${_hasVerify?" — BOM verification required":""}${_hasTechReview?(_hasVerify?" + ":" — ")+_trCount+" line"+(_trCount>1?"s":"")+" need Technical Review":""}${_pricingCount>0?((_hasVerify||_hasTechReview)?" + ":` — `)+_pricingCount+" incomplete item"+(_pricingCount>1?"s":"")+". Fix red rows in the BOM.":""}`:"")}
 
                   onClick={async()=>{
                   if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
@@ -37674,11 +37701,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const _printIssues=findIncompleteQuoteItems(proj);
     if(_printIssues.length){
       const _vb=_printIssues.filter(i=>i.isVerificationBlock);
-      const _pi=_printIssues.filter(i=>!i.isVerificationBlock);
+      const _tr=_printIssues.filter(i=>i.isTechReviewBlock); // #199 P3
+      const _pi=_printIssues.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock);
+      const _trN=_tr.reduce((s,i)=>s+(i.count||1),0);
       let msg="";
       if(_vb.length)msg+=_vb.map(v=>v.panelName).join(", ")+": BOM needs manual verification (extracted from low-quality source).";
-      if(_vb.length&&_pi.length)msg+="\n\n";
+      if(_vb.length&&(_pi.length||_tr.length))msg+="\n\n";
       if(_pi.length)msg+=_pi.length+" item"+(_pi.length>1?"s":"")+" have incomplete pricing or stale prices.";
+      if(_pi.length&&_tr.length)msg+="\n\n";
+      if(_tr.length)msg+=_trN+" line"+(_trN>1?"s":"")+" require Technical Review sign-off.";
       msg+="\n\nQuote may contain gaps. Print anyway?";
       const proceed=await arcConfirm(msg,{kind:"warning",okLabel:"Print Anyway"});
       if(!proceed)return;
