@@ -22,10 +22,10 @@ _(none yet)_
 _(none yet)_
 
 ### 🔧 General (G###)
-- **G001 — "Remote approval of Allow-Once prompts"** [Resolved — accepted limitation] — enable Jon to approve (or eliminate) the per-send "Allow Once" cross-session permission prompt remotely so he isn't desk-tethered to keep the CCD `send_message` bus flowing. *(source: Jon 2026-07-02, via Freddy; captured FEAT, reclassified G — dev-tooling/infra, not an ARC product feature.)*
+- **G001 — "Remote approval of Allow-Once prompts"** [Discovery — awaiting Jon's test observation] — enable Jon to approve (or eliminate) the per-send "Allow Once" cross-session permission prompt remotely so he isn't desk-tethered to keep the CCD `send_message` bus flowing. *(source: Jon 2026-07-02, via Freddy; captured FEAT, reclassified G — dev-tooling/infra, not an ARC product feature.)*
   - **Feasibility (Freddy scoping via CC-guide research):** (a) Native remote approval of CCD permission prompts from phone/web = **NOT supported** — Remote Control steers a running session but does not surface permission prompts to remote devices. (b) Allowlisting the tool to suppress the prompt: CC docs say generic MCP tools *can* be allowlisted, BUT the `send_message` tool's own definition says it "ALWAYS prompts".
-  - **Decisive test (2026-07-02):** added `mcp__ccd_session_mgmt__send_message` to `.claude/settings.json` allow, fired a test send → **prompt STILL fired** (Jon confirmed). Allowlist does not suppress it in-session, matching the tool's "ALWAYS prompts" definition + the 2026-07-01 live test. Allow rule left in place in case it activates on a fresh session reload (unconfirmed, low-value to chase).
-  - **Disposition:** native/remote suppression unavailable; **accepted limitation.** For unattended stretches, use the **repo-commit handoff bus** (documented fallback). Reopen only if a session-reload retest shows the allow rule suppresses the prompt.
+  - **Decisive test (2026-07-02) — FIRED, observation PENDING:** added `mcp__ccd_session_mgmt__send_message` to `.claude/settings.json` allow + fired a test send. Whether the "Allow Once" prompt still fired is **Jon's observation — AWAITING his answer** (do NOT record a result until he confirms). Allow rule left in place.
+  - **Next (on Jon's observation):** still prompted → accepted limitation, fallback = repo handoff bus; silent → allowlist works, close [Verified].
 
 ## Round 1 (firestore.rules + deploy.sh diff)
 
