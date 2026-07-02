@@ -3325,3 +3325,10 @@ reset that surfaced the ground-truth state.
      + post-send date can't be cleanly separated from legit refresh-pricing; the modal-Accept bug is a subset.
      **DISPOSITION: log, no action (Jon, 2026-07-01)** — exposure too small/uncertain, v1.21.12 prevents recurrence;
      no remediation, no data correction, no customer contact. Diagnostic: docs/186-POST-SEND-REPRICE-DIAGNOSTIC.md.
+191. **OPEN** [MED — Client Review has no completion/approval step; project stuck edits-locked] —
+     After a Client Review, there is no "Approval" action, so the project gets STUCK on "Client
+     Review In Progress — Edits Locked" with no way to complete or reset it. Need to review the
+     client-review flow and add an "Approved" button (client-facing) that resets/completes the
+     review — clearing the edits-lock and advancing the project state (approve → unlock/complete).
+     Investigate the customer-review path (onCustomerReviewSubmitted / engineering review module +
+     the review-lock state that drives "In Progress — Edits Locked"). Reported by Jon 2026-07-01.
