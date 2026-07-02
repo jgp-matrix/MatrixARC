@@ -6,12 +6,14 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**TWO ITEMS RUNNING IN PARALLEL (Jon: "run both")**
-- **#199 Tech-Review flag — BUILDING** (HIGH-stakes lane): **P1 (Data + capture, inert) = BUILT-PENDING-VERIFY** (Marc, `13f06fcf` + `66494253`); §5 pre-build gate PASS. Coach code-verifying P1 → then **P2 (Resolution)**. Live T1–T7 batch when the browser's up.
-- **G002 v3 — LIVE CALIBRATION**: Jon running the `Ctrl+N` + paste flow on his desktop (ongoing); #1 risk = does `Ctrl+N` create+focus a new session and does the paste land right.
-- **STATUS:** Marc → P1 done, holding for Coach's verdict to start P2 · Coach → verifying **#199 P1** · Jon → **G002 calibration** · Freddy hub-coordinating. (#199 BUILDING — P1 done, P2 gated on Coach.)
+**#199 P1 code-verify PASS — ⚠ JON DECISION gates P2**
+- **👤 JON DECISION NEEDED (gates #199 P2):** **MED-1** — P1 lets a reviewer clear a supplier flag with **no audit stamp**. Policy call → Jon's decision unblocks P2.
+- **#199 Tech-Review flag** — P1 (Data + capture, inert) **code-verify PASS** (Coach, `docs/199-P1-VERIFICATION.md`, `310c9246`). P2 (Resolution) **HELD** on MED-1. Live T1–T7 pending browser.
+- **G002 v3** — `Ctrl+N` mechanic **CONFIRMED**; full run **deferred to a clean boot**.
+- **STATUS:** Marc → holding for **P2 GO** · Coach → P1-verify done, on-deck for P2 · Jon → **MED-1 policy decision** · Freddy hub-coordinating.
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 15:42 MDT]** **#199 P1 = code-verify PASS (Coach, `docs/199-P1-VERIFICATION.md` `310c9246`).** One MED policy item now with Jon, GATES P2: **MED-1** — P1 lets a reviewer clear a supplier flag with no audit stamp. P2 HELD; Marc holding for P2 GO; Coach P1-verify done, on-deck for P2; live T1–T7 pending browser. G002 `Ctrl+N` mechanic CONFIRMED, full run deferred to a clean boot.
 - **[2026-07-02 15:32 MDT]** **#199 P1 BUILT — now in Coach code-verify.** P1 (Data + capture, inert) = BUILT-PENDING-VERIFY (Marc, `13f06fcf` + `66494253`); §5 pre-build gate PASS. Coach code-verifying P1, then P2 (Resolution); live T1–T7 batch when browser's up. G002 v3 — Jon's live calibration (`Ctrl+N` flow) ongoing. Marc holding for Coach's verdict to start P2; #199 BUILDING (P1 done, P2 gated on Coach).
 - **[2026-07-02 15:22 MDT]** **BOTH queued items now RUNNING (Jon: "run both").** #199 Tech-Review flag BUILD STARTED — Marc building phased in the standing session (P1 data+capture → P2 resolution → P3 hard gate; R2-enforced), Coach verifies each phase (HIGH-stakes lane). G002 v3 — Jon running the live calibration (`Ctrl+N` + paste flow) on his desktop; #1 risk = `Ctrl+N` create+focus + paste landing. Marc → #199 P1; Coach → #199 §2.3 doc-note then phase-verify on-deck; Jon → G002 calibration; Freddy hub-coordinating. #199 now BUILDING (no longer queued).
 - **[2026-07-02 15:05 MDT]** **HYBRID team model ADOPTED (Jon); subagent trial complete; HOLD LIFTED.** #17 fixed friction-free via subagents (Marc-subagent applied `.catch`; Coach-subagent + pre-commit both APPROVE; committed `0651a73c`) → **#17 RESOLVED**. Decision: HYBRID — subagents for LOW-stakes/mechanical, 4 standing sessions for HIGH-stakes/cross-checked. Coach documenting the rule in CLAUDE.md. Back to G002 v3 re-calibration (Jon, when ready) + #199 (Jon's build-gate).
