@@ -6,16 +6,16 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — LIVE PASS FULLY UNBLOCKED → FULL T1–T18 running (test target)**
-- **Env:** #199 on **matrix-arc-test only** (prod untouched), controlled tab authenticated + BC green, **v1.21.24**.
-- **✅ Jon unblocked the rest:** admin/reviewer confirmed on test (**T8–T12 drivable**) + any test project is fair game for the supplier fixture (**T1/T3/T18**).
-- **#199 Tech-Review flag** — Marc now running the **FULL T1–T18** in the controlled tab (visual/behavioral verification). **FULL-pass → deploy (#199 + #17) → SHIPPED.**
-- **✅ Data-Retention block lifted:** Jon confirmed PRJ402xxx are all test data (pre-launch). Marc running FULL T1–T18 on **one contained test project**.
-- **📥 Intake:** 1 un-routed — GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" — infra follow-up to fix before launch (safe now, pre-launch). (B001/B002 triaged.) **MED-4** = LOW follow-up.
+**#199 — LIVE PASS SPLIT: non-supplier set running on scratch · ⚠ supplier fixture needs Jon**
+- **Env:** #199 on **matrix-arc-test** (prod untouched), **v1.21.24**. Mutation tests on a **FRESH scratch project** (contained; T10 BC upload → sandbox task).
+- **NOW (Marc):** non-supplier set on scratch — **T2/T4/T6/T8–T12/T13–T17**. Incidental positive: existing PRICING send-block banner still renders correctly with the #199 build (**no-regression signal**).
+- **👤 HELD on Jon:** **T1/T3/T5/T18** (supplier auto-stamp etc.) need a **pending supplier submission** — Jon's **fixture call pending**.
+- **📥 Intake:** 1 un-routed — GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" — infra follow-up before launch (safe now). (B001/B002 triaged.) **MED-4** = LOW.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → **running full T1–T18** · Coach → standby for results verify · Freddy hub-coordinating. (FULL-pass → deploy (#199 + #17).)
+- **STATUS:** Marc → running non-supplier T-set on scratch · Jon → **supplier-fixture decision** · Coach → standby · Freddy hub-coordinating. (Deploy on FULL-suite pass.)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 17:57 MDT]** **#199 live pass — split to unblock.** Marc using a FRESH scratch project for mutation tests (contained; T10 BC upload → sandbox task). NOW running the non-supplier set on scratch: T2/T4/T6/T8–T12/T13–T17. Incidental positive: existing PRICING send-block banner still renders correctly with the #199 build (no-regression signal). HELD: T1/T3/T5/T18 (supplier auto-stamp etc.) need a pending supplier submission — Jon's fixture call pending. Deploy on FULL-suite pass; Coach standby.
 - **[2026-07-02 17:54 MDT]** **#199 live pass UNBLOCKED — Data-Retention block lifted.** Jon confirmed PRJ402xxx are all test data (pre-launch). Marc running FULL T1–T18 on one contained test project. FULL-pass → deploy (#199 + #17); Coach standby for results verify. Also captured GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" to INBOX — infra follow-up to fix before launch (safe now, pre-launch; source Marc).
 - **[2026-07-02 17:51 MDT]** **#199 live pass FULLY UNBLOCKED.** Jon confirmed admin/reviewer on test (T8–T12 drivable) + any test project is fair game for the supplier fixture (T1/T3/T18). Marc now running the FULL T1–T18 in the controlled tab (visual/behavioral). FULL-pass → deploy (#199 + #17) → SHIPPED. Coach standby for results verify; deploy gated on FULL-suite pass (incl. T1 supplier auto-stamp). G002 full run deferred.
 - **[2026-07-02 17:47 MDT]** **#199 live pass STARTED (test target).** Env: #199 deployed to matrix-arc-test only (prod untouched), controlled tab authenticated + BC green, v1.21.24. Marc driving the fully-drivable set (visual/behavioral — JS field-reads blocked by harness auth-token filter, so behavior is the proof): T4/T5/T6/T13–T17/T2-reload-proxy. T8–T12 pending Jon's admin/reviewer role confirm; T1/T3/T18 held pending a supplier-submission fixture (Jon's call). Deploy only on FULL-suite pass; Coach standby for results verify.
