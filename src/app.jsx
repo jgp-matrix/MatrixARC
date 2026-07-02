@@ -15864,6 +15864,25 @@ function _isBomRowFlaggedRed(r,customerNo,customerName){
   }
   return false;
 }
+// #199 — Per-line Tech Review flag. One rule, two altitudes (dual-consumer: row indicator +
+// send gate) — placed next to _isBomRowFlaggedRed, the other dual-consumer row predicate.
+// Every consumer calls these; never re-inline `techReviewFlag && !techReviewResolved`
+// (CLAUDE.md single-source-of-truth rule). Legacy rows lack the fields → reads falsy →
+// treated as unflagged, so no migration is needed.
+const _isUnresolvedTechReviewRow=r=>!!r&&!!r.techReviewFlag&&!r.techReviewResolved;
+function _hasUnresolvedTechReview(project){
+  return (((project&&project.panels))||[]).some(p=>(p.bom||[]).some(_isUnresolvedTechReviewRow));
+}
+// #199 — reviewer test, factored from the inline expression used at the approve/review sites
+// (app.jsx ~26307-26308, where `_me===_appCtx.uid`). P1 defines it here for the row checkbox
+// guard; repointing the two existing inline sites to this helper is deferred to P2 to keep
+// P1's blast radius minimal (the expression is duplicated identically for now).
+function _isTechReviewer(project){
+  return _appCtx.role==="admin"||hasPermission("reviewer")
+    ||(project&&project.preReviewAssignedTo
+        ?project.preReviewAssignedTo===_appCtx.uid
+        :!!(project&&project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid));
+}
 // DECISION(v1.19.678): Owner Priority Mode — shared lock message for button tooltips + alerts.
 const _OWNER_PRIORITY_ALERT="This action is disabled while the owner is working this project. Wait until they leave, or ask an admin to Take Over.";
 const _OWNER_PRIORITY_TOOLTIP="Disabled — owner is working this project. Wait until they leave or ask an admin to Take Over.";
@@ -28942,6 +28961,34 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // action column. Rows tagged for prior approved ECOs are also
                     // read-only here.
                     const _baseLockedInEco=_isBaseRowInEcoScope(row);
+                    // #199 P1 — Tech Review control state for this row (dual-consumer predicate).
+                    const _trIsReviewer=_isTechReviewer(project);
+                    const _trFlagged=!!row.techReviewFlag;
+                    const _trResolved=!!row.techReviewResolved;
+                    const _trSupplier=row.techReviewFlagSource==="supplier";
+                    const _trShow=!row.isLaborRow&&!row.isContingency;
+                    // Sales cannot uncheck a supplier-sourced flag; resolved rows are read-only in P1
+                    // (reviewer re-open + per-row Resolve arrive in P2). Manual flags stay toggleable.
+                    const _trDisabled=readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier&&!_trIsReviewer);
+                    const _trTitle=!_trFlagged?"Flag this line for Technical Review"
+                      :_trResolved?"Technical Review resolved"
+                      :_trSupplier?"Supplier substitution — requires engineer sign-off"
+                      :"Flagged for Technical Review (manual)";
+                    const _onTrToggle=()=>{
+                      if(_trDisabled)return;
+                      if(_trFlagged&&_trSupplier&&!_trIsReviewer)return; // defensive: supplier flag not clearable by Sales
+                      const _lp=latestPanelRef.current||panel;
+                      const _newBom=(_lp.bom||[]).map(r=>{
+                        if(String(r.id)!==String(row.id))return r;
+                        return _trFlagged
+                          ? {...r,techReviewFlag:false}  // uncheck (only manual reaches here) — clears the flag
+                          : {...r,techReviewFlag:true,techReviewFlagSource:"manual",techReviewResolved:false,techReviewResolvedBy:null,techReviewResolvedAt:null};
+                      });
+                      const _u={..._lp,bom:_newBom};
+                      latestPanelRef.current=_u;
+                      onUpdate(_u);
+                      try{onSaveImmediate(_u);}catch(e){}
+                    };
                     const _rowEl=(()=>{
                   return(
                   <tr key={row.id} data-row-id={String(row.id)} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":(ecoFlashRowId&&String(ecoFlashRowId)===String(row.id)?"eco-row-flash":undefined)} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity,...(row.restoreSkipped?{borderLeft:"3px solid #f59e0b"}:{})}}>
@@ -28958,6 +29005,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       f==="_bc"?(
                         <td key="_bc" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
                           <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>  {/* #141 (C86): fill the _bc cell + right-anchor the pair — BC keeps its pre-#141 right edge, "C" extends leftward into the widened column */}
+                          {/* #199 P1 — Tech Review flag control. Amber "TR" glyph, separate from the red price-flag row bg (R1).
+                             Shows on real part rows; unflagged+editable shows a faint checkbox (manual set); supplier flags are
+                             checked+disabled for Sales. Per-row Resolve affordance arrives in P2. */}
+                          {_trShow&&(_trFlagged||!readOnly)&&(
+                            <label title={_trTitle} style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5}}>
+                              <input type="checkbox" checked={_trFlagged} disabled={_trDisabled} onChange={_onTrToggle} style={{width:12,height:12,margin:0,accentColor:"#f59e0b",cursor:_trDisabled?"default":"pointer"}} />
+                              {_trFlagged&&<span style={{fontSize:9,fontWeight:800,color:_trResolved?C.muted:"#f59e0b",lineHeight:1}}>{_trResolved?"TR✓":"TR"}</span>}
+                            </label>
+                          )}
                           {/* #141 (C84): confidence "C" circle — mirrors the blue BC circle EXACTLY
                              (24×24, borderRadius 50%, fontSize 9, weight 800, padding 0). Color carries
                              severity (amber=medium, red=low); "C" carries type. <span>/cursor:help —
@@ -38838,7 +38894,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     if(crosses.length>0){
                       const updatedPanels=(projectRef.current.panels||[]).map(p=>({...p,bom:(p.bom||[]).map(r=>{
                         const cross=crosses.find(c=>c.bomRowId===r.id);
-                        if(cross)return{...r,partNumber:cross.supplierItem.supplierPartNumber||cross.supplierItem.partNumber,crossedFrom:cross.bomPartNumber,isCrossed:true};
+                        if(cross)return{...r,partNumber:cross.supplierItem.supplierPartNumber||cross.supplierItem.partNumber,crossedFrom:cross.bomPartNumber,isCrossed:true,
+                          /* #199 P1: a supplier substitution auto-arms Tech Review (re-crossing a resolved row re-arms — a new substitution needs fresh sign-off) */
+                          techReviewFlag:true,techReviewFlagSource:"supplier",techReviewResolved:false,techReviewResolvedBy:null,techReviewResolvedAt:null};
                         return r;
                       })}));
                       update({...projectRef.current,panels:updatedPanels});
