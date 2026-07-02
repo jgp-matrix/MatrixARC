@@ -1548,6 +1548,28 @@ function _countRedRows(project){
   return (project?.panels||[]).reduce((n,p)=>
     n+(p.bom||[]).filter(r=>_isBomRowFlaggedRed(r,cNo,cName)).length,0);
 }
+// #192 TEMP INSTRUMENTATION (strip after diagnosis) — per-reason breakdown of red rows, mirroring
+// _isBomRowFlaggedRed's short-circuit order, so the auto-revert fire-time log shows WHICH red
+// reasons are present (and whether reds momentarily vanished during a background reprice).
+function _redReasonBreakdown(project){
+  const cNo=project?.bcCustomerNumber, cName=project?.bcCustomerName;
+  const b={total:0,qty0:0,price0:0,noPriceDate:0,stale:0,noFirmLT:0};
+  const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
+  (project?.panels||[]).forEach(p=>(p.bom||[]).forEach(r=>{
+    if(!r||r.isLaborRow)return;
+    const vic=_vendorMatchesCustomer(r.bcVendorNo,r.bcVendorName,cNo,cName);
+    let reason=null;
+    if(!r.customerSupplied&&+r.qty===0)reason="qty0";
+    else if(!r.customerSupplied&&!vic&&+r.unitPrice===0)reason="price0";
+    else if(!_isExcludedFromPriceCheck(r)&&!vic){
+      if(!r.priceDate)reason="noPriceDate";
+      else if((Date.now()-r.priceDate)>staleMs)reason="stale";
+      else if(!_hasFirmLeadTime(r))reason="noFirmLT";
+    }
+    if(reason){b.total++;b[reason]++;}
+  }));
+  return b;
+}
 // Mark every panel as budgetary and record that ARC did it. Returns {updatedProject, changed}.
 function _markProjectBudgetaryForRedRows(project){
   let changed=false;
@@ -37244,6 +37266,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // Debounce a beat so the prompt fires once per transition, not on every character.
     const t=setTimeout(async()=>{
       const latest=projectRef.current;
+      // #192 TEMP INSTRUMENTATION (strip after diagnosis) — capture the deciding read at the
+      // auto-revert fire-time to confirm the transient-reprice mechanism. No behavior change.
+      try{
+        const _bg=(typeof _bgTasks!=="undefined"&&_bgTasks)?Object.keys(_bgTasks):[];
+        console.log("[#192 REVERT-FIRE]",{
+          projectId:(latest&&(latest.bcProjectNumber||latest.id))||"?",
+          at:new Date().toISOString(),
+          hasRedRows:latest?_hasRedRows(latest):null,
+          redBreakdown:latest?_redReasonBreakdown(latest):null,
+          hasAutoBudgetary:latest?_hasArcAutoBudgetary(latest):null,
+          bgTasksInFlight:_bg.length,bgTaskKeys:_bg,
+          willPrompt:!!(latest&&!_hasRedRows(latest)&&_hasArcAutoBudgetary(latest))
+        });
+      }catch(_e){console.log("[#192 REVERT-FIRE] log-error",_e&&_e.message);}
       if(!latest||_hasRedRows(latest)||!_hasArcAutoBudgetary(latest))return;
       const ok=await arcConfirm(
         "All items on this quote now have complete pricing and firm lead times (no red rows).\n\n"+
