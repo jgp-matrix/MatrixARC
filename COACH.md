@@ -13,6 +13,17 @@ Freddy-bound deliverables (analyst review requests, verdicts, supplements, plans
 When producing a supplement, Brief response, or any analysis artifact in docs/, commit it to git as part of creating it — do not leave it untracked in the working tree. The reasoning behind a spec must be in version control before the work it informs gets built, so the record survives independent of the working tree or conversation. Write → commit → then open/surface for relay.
 
 
+## Verification Standard: Runtime-Sequence Bugs
+
+Code-read / pure-function verification PASSES runtime-sequence bugs. A function trace proves inputs → outputs are correct, but cannot detect timing-dependent failures (state overwritten between calls, race conditions, stale closures fired after re-render). When verifying a fix for an intermittent or timing-related symptom:
+
+1. Trace the function logic (standard Coach verification) — necessary but not sufficient.
+2. Then observe the running SEQUENCE: in what order are the functions called? What state can change between calls? Can another path overwrite the result before it's consumed?
+
+If the function under test is correct but its caller is a fire-and-forget inside a debounced/batched save, the save can land AFTER a subsequent write and silently undo the fix. Verify the temporal ordering, not just the transformation.
+
+**Origin:** #192 (`_markProjectBudgetaryForAiLeads`) — the function was correct (Coach verified); the bug was that `saveProject` overwrote its write ~200ms later. Function trace: PASS. Sequence trace: FAIL. Marc instrumented, Jon observed the race, fix shipped.
+
 ## Archive & Maintenance
 
 > **Soft budget:** ≤1,500 lines. When exceeded, review pass using archive criteria below.
@@ -112,6 +123,11 @@ When producing a supplement, Brief response, or any analysis artifact in docs/, 
 - **2026-06-30 (Session 8, cont.)** — C123: #179 Detailed Plan (A/B/C, scope expanded). Part C pulled in per Freddy — missing LT must render red (#fca5a5 border + light red bg), matching price treatment. Shared `hasLeadTime` predicate drives both visual indicator and submit block — single definition guarantee. Also: global input's mandatory red border + asterisk removed (Part A expansion). 6 sections, 13 test criteria, ~20 lines. C123 Rev 1: per Freddy amendment, extracted `_isValidLT(x)` / `_isValidPrice(x)` shared helpers (§1a) — one rule, two sources. Submit block and visual now call the same functions instead of duplicating the expression inline. ~22 lines. Deliverable: `docs/179-DETAILED-PLAN.md`.
 - **2026-06-30 (Session 8, cont.)** — C124: #178 Detailed Plan (A/B/C). Part A: `_hasPrice(r)` helper (BOM-row price presence) replaces counter-based auto-set — decouples from cooldown-masked `_eligibilityReason`. Part B: remove `if(ltOnly)` guard on referencePrice, portal pre-fills prices in ALL modes (editable), `processFile` merge preserves pre-fill for AI-unmatched rows. Part C: portal pre-fills firm LTs (`_hasFirmLeadTime` rule inline on portal side), email/PDF show reference data in normal mode (italic gray). Key guarantees: auto-set vs eligibility decoupled; `_hasPrice`/`_isValidPrice` aligned cross-boundary via referencePrice data flow; #175 predicates no-fight confirmed. 9 sections, 16 test criteria, ~34 lines. C124 Rev 1: per Freddy review — confirmed data flow consistency (no-price row → null referencePrice → no portal pre-fill → `_isValidPrice(undefined)` → false, no false positive possible); extended §5 to merge `setItemLeadTimes` (same full-replacement wipe bug as prices); confirmed re-process durability (normal mode resets via Start Over, leadTimeOnly re-upload preserves reference for unmatched rows); added T16 (Start Over + re-upload clears pre-fills). Deliverable: `docs/178-DETAILED-PLAN.md`.
 - **2026-06-30 (Session 8, cont.)** — C125: #180 Long-lead confirmation modal — BUG (never fires). `handleSubmit(bypassLongLeadCheck)` at line 48446 bound as `onClick={handleSubmit}` — React passes SyntheticEvent as first arg → `bypassLongLeadCheck` is truthy → `!bypassLongLeadCheck` is false → long-lead check (48034–48042) always skipped. Modal (48454–48490) is fully built and wired (amber warning, row table, "Go Back & Fix" / "Confirm & Submit"), confirm button correctly uses `onClick={()=>handleSubmit(true)}` — but the modal can never appear. Fix: `onClick={()=>handleSubmit()}` at line 48446. 1 line. Predates #179 — onClick binding was never wrapped. #180 logged. Details below.
+- **2026-07-01 (Session 9)** — C126-C128: #186 frozen-state predicate trace (`quoteLocked` vs `quoteSentAt`), #186 expiration gap finding → spawned #187, #187 cascade design trace (4-tier, send-time stamp, print/gate single source). Details below.
+- **2026-07-01 (Session 9, cont.)** — C129: #188 Validate-at-Push Plan. Two-tier vendor validation for `pushAllLeadTimesToBc()`: Tier 1 validates unique vendors via `bcGetVendorName` (cached=free), Tier 2 re-resolves dead-vendor rows via `bcGetItemVendorNo`. Deliverable: `docs/188-VALIDATE-AT-PUSH-PLAN.md`.
+- **2026-07-01 (Session 9, cont.)** — C130: #191 Fix Verification (v1.21.20). All 5 checks PASS: ensureQuoteNumber helper verified, 3 call sites confirmed, Flag-1 BOM filename fix, #187 ordering safe, subject recompute + error surfacing correct. handleGeneratePdf placement specified for Marc. Deliverable: `docs/191-FIX-VERIFICATION.md`.
+- **2026-07-01 (Session 9, cont.)** — C131: #192 isBudgetary Auto-Set Trace + Fix Verification. Traced `_markProjectBudgetaryForAiLeads` — function correct, runtime sequence bug (saveProject overwrites ~200ms later). #192 lesson promoted to verification standard. Deliverables: `docs/192-ISBUDGETARY-AUTO-SET-TRACE.md`, `docs/192-FIX-VERIFICATION.md`.
+- **2026-07-01 (Session 9, cont.)** — C132: #193 Send-To-Sales Supplement + Build Plan. Full codebase verification of QuoteSendModal tabs, recipient wiring, send path zero-divergence. 8-change build plan (~25 lines), including `_logQvHistory` send log. Deliverables: `docs/193-SEND-TO-SALES-SUPPLEMENT.md`, `docs/193-SEND-TO-SALES-BUILD-PLAN.md`.
 
 
 ## Findings
@@ -1175,3 +1191,71 @@ guard. Verification: `docs/187-PHASE2-VERIFICATION.md`.
 **Current:** Relocation fix in progress — the valid-until row emits its own "BUDGETARY - "
 prefix (doubling) and orphans across pages in the PDF (separate `arcDocCheckBreak`).
 Fix locate: `docs/187-RELOCATION-FIX-LOCATE.md`.
+
+---
+
+### C129 — #188 Validate-at-Push Plan (2026-07-01)
+
+**Type:** Implementation plan (read-only — no build)
+**Status:** READY FOR APPROVAL → Marc build
+**Deliverable:** `docs/188-VALIDATE-AT-PUSH-PLAN.md`
+
+---
+
+Two-tier vendor validation for `pushAllLeadTimesToBc()` (line 26952). Root cause: `directlyQualifying` rows use cached `bcVendorNo` WITHOUT revalidation — a vendor renumbered in BC (V00102→V00111) stays stale via the preserve-stale pricing mechanism (`bcVendorNo: item.vendorNo || row.bcVendorNo || ""`).
+
+**Tier 1:** Validate unique vendor numbers via `bcGetVendorName` (uses `_vendorMapCache` — free after first call). Dead vendors identified in O(unique vendors) ≈ 3-6 calls typical.
+
+**Tier 2:** Re-resolve dead-vendor rows via `bcGetItemVendorNo` deduped by item number. Updates `bcVendorNo` in-memory; existing persist-back block (lines 27025-27036) writes corrected values to Firestore. PRJ402124 self-heals on next push.
+
+~25 lines added, 3 modified. Normal case: zero additional network calls (vendors cached). Stale case: ~2-4 calls. Worst case: ~36 calls. All within `bcGatedFetch` capacity.
+
+---
+
+### C130 — #191 Fix Verification (v1.21.20) (2026-07-01)
+
+**Type:** Post-deploy code-path verification
+**Status:** ALL 5 CHECKS PASS
+**Deliverable:** `docs/191-FIX-VERIFICATION.md`
+
+---
+
+Marc shipped `ensureQuoteNumber` helper + assign-before-PDF on all send paths + subject recompute (commits 896c2e6e / c6e12319).
+
+1. **HELPER** — `ensureQuoteNumber(project, uid)` at line 2377. Idempotent: checks `MTX-Q\d{6}`, throws on failure, does NOT persist. ✓
+2. **CALL SITES** — 3 confirmed: print (37522, soft-fail), modal send (32923, hard-fail), inline send (38495, hard-fail). ✓
+3. **#187 ORDERING** — Quote number assigned BEFORE `buildQuotePdfDoc` on all paths. Stamps cascade runs after, cannot overwrite. ✓
+4. **SUBJECT RECOMPUTE** — Both modal (33018) and inline (38515) replace "Quote Quote" with "Quote MTX-Q######". ✓
+5. **ERROR SURFACING** — Print: arcAlert warning, continues. Send: arcAlert + return (blocks). ✓
+
+**handleGeneratePdf (line 36353):** NO `ensureQuoteNumber` yet. Placement specified for Marc: `const`→`let populated`, insert after line 36358, soft-fail matching print path. ~8 lines.
+
+---
+
+### C131 — #192 isBudgetary Auto-Set Trace + Fix Verification (2026-07-01)
+
+**Type:** Trace + verification
+**Status:** TRACE COMPLETE — instrumentation live, regression next
+**Deliverables:** `docs/192-ISBUDGETARY-AUTO-SET-TRACE.md`, `docs/192-FIX-VERIFICATION.md`
+
+---
+
+`_markProjectBudgetaryForAiLeads` — function is correct (fires `saveProject` with `{isBudgetary:true}`). Runtime bug: the pricing path's own `saveProject` call lands ~200ms later and overwrites the budgetary stamp with the project's pre-stamp state.
+
+**Lesson promoted to verification standard** (see top of COACH.md): code-read/pure-function verification PASSES runtime/timing bugs. Must observe the running sequence, not just trace the logic.
+
+---
+
+### C132 — #193 Send-To-Sales Supplement + Build Plan (2026-07-01)
+
+**Type:** Codebase verification + implementation plan (read-only — no build)
+**Status:** READY FOR APPROVAL → Marc build
+**Deliverables:** `docs/193-SEND-TO-SALES-SUPPLEMENT.md`, `docs/193-SEND-TO-SALES-BUILD-PLAN.md`
+
+---
+
+Full codebase verification of `QuoteSendModal` (line 32796). 8 sections: tab structure, user email source (`fbAuth.currentUser?.email`), recipient wiring (pre-filled-but-editable — existing pattern), send path zero-divergence (21-step walkthrough), #194 hook (no sent-email log exists today), #187/#191 interactions (safe), structural map, 3 open decisions.
+
+**Build plan:** 8 changes, ~25 lines. Default `sendMode:"sales"`, 3-button tab bar with swap handlers, shared form rendering, 2 guard extensions, modal-open init with `_customerTo` stash, `_logQvHistory({type:"quote_send",...})` send log (1 line, fire-and-forget). Dead inline modal gets matching log line for hygiene.
+
+**Key finding:** `sendMode==="sales"` falls through existing `else` branch at send dispatch (line 33019) → `sendGraphEmail`. Zero new send logic. All #187 stamps, #191 quote number, BC sync, PDF build apply uniformly.
