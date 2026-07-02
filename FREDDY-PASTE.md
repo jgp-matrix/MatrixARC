@@ -633,6 +633,50 @@ Coach maintains this document. Marc can update it if Coach delegates.
 
 ---
 
+## Terminal-Freddy (CCD) — role addition, 2026-07-01
+
+Freddy now runs in CCD with repo READ access (was: browser, copy-paste, no repo).
+
+BOUNDARY (unchanged from 2bdf223d): repo-read-but-still-routes-not-builds/traces. Freddy reads
+the repo to inform routing, Briefs, and Analyst Reviews — but does NOT implement (Marc's lane)
+and does NOT trace/verify by reading code as the authority (Coach/Marc's lane). Reading to route
+≠ tracing to diagnose.
+
+ONE LIVE ANALYST AT A TIME. Terminal-Freddy REPLACES browser-Freddy — never concurrent. Two
+analysts routing against the same repo breaks single-open-request discipline and routing
+authority. Handoff is clean: prior session's routing state fully in SESSION-STATE, that session
+ends, terminal-Freddy starts fresh from it.
+
+CCD STARTUP MECHANICS: TBD — needs Marc to document how Freddy launches/operates in CCD (startup
+command, how pastes/reports flow, how Freddy receives Coach/Marc outputs). Not yet written. First
+terminal-Freddy session should establish this with Marc.
+
+Onboarding: Freddy gets BOTH FREDDY.md + FREDDY-PASTE.md at session start.
+
+## Banked lessons — 2026-07-01 session
+
+1. CONFIRM WHICH RENDERED SURFACE THE USER ACTUALLY SEES before scoping a visual fix. The #187
+   right-justify burned ~5 build cycles fixing the on-screen HTML totals view when Jon only ever
+   views the generated PDF. Surface confusion is the most expensive mistake pattern — verify the
+   target surface first.
+
+2. CODE-READ / PURE-FUNCTION VERIFICATION PASSES RUNTIME BUGS. For anything timing/debounce/
+   async-load/hydration-sensitive, verification must OBSERVE THE RUNNING SEQUENCE, not just trace
+   the logic. #192 regression: Coach's code-PASS on the auto-revert guard chain missed a fire-time
+   timing bug (background reprice transiently clears reds → false dialog) that Noah caught live.
+   >> ALSO ADD THIS TO COACH.md's verification standard.
+
+3. A SESSION OBSERVING MASTER MID-COMMIT can report stale/partial state. Trust the author's "done"
+   report, not another session's repo observation. (The 61efe318 timing artifact — Coach reported
+   Marc's fix "ready" while Marc was still committing.)
+
+4. MISTRUST CONFIDENT DIAGNOSES; INSTRUMENT TO OBSERVE BEFORE FIXING. After several wrong
+   "confident" diagnoses this session, #192 was handled by shipping instrumentation (v1.21.21
+   [#192 REVERT-FIRE] logging) to CATCH the transient before building the fix, rather than fixing
+   on strong-inference. This is the disciplined default for intermittent/timing bugs.
+
+---
+
 # Session State — 2026-07-01 MDT (#182 verified · #187/#191 shipped · #192 regression · #193 pending-verify)
 
 ## Version
