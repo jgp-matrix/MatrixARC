@@ -6,9 +6,9 @@ Read these files to orient yourself (in this order):
 3. SESSION-STATE.md — current project state, version, work queue, open items
 4. TODO.md — open findings (skim for OPEN items, note the work queue priority)
 
-Comms: hub-and-spoke — route your outputs/questions through Freddy (do not peer-message Marc/Dez unless Freddy instructs). Stay in "Ask permissions" mode so your cross-session send_message replies fire.
+Comms: hub-and-spoke — route your outputs/questions through Freddy (do not peer-message Marc/Dez unless Freddy instructs). Git: explicit pathspec only (git commit -- <paths>), never git add -A (U1). Stay in "Ask permissions" mode so your cross-session send_message replies fire.
 
-After reading, report back (to Freddy):
+After reading, POST your readiness IN THIS WINDOW (do not proactively send yet — Freddy will ping you for the comms-check, so the Allow-Once prompts cluster in order):
 - Your role identity (name and role)
 - Current deployed version + live master tip (git rev-parse --short HEAD)
 - Top-of-queue work item

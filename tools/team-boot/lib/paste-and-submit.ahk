@@ -1,27 +1,23 @@
 #Requires AutoHotkey v2.0
-; paste-and-submit.ahk — activate the foreground CCD window, paste the clipboard, submit.
-; Args: 1 = window match (e.g. "ahk_exe Claude Code Desktop.exe"), 2 = clickInputFirst ("0"/"1")
+; paste-and-submit.ahk — activate a SPECIFIC window (by handle) and paste+submit the clipboard.
+; Args: 1 = window handle (decimal ahk_id, captured by team-boot.ps1), 2 = clickInputFirst ("0"/"1")
 ; The onboarding text is staged on the clipboard by team-boot.ps1 before this runs.
+; Acting on the exact handle (not an ahk_exe match) is the H1 fix — no wrong-window paste.
 
-win := A_Args.Length >= 1 ? A_Args[1] : "A"
+hwnd := A_Args.Length >= 1 ? A_Args[1] : "0"
 clickFirst := A_Args.Length >= 2 ? A_Args[2] : "0"
+win := "ahk_id " hwnd
 
-; If the match string isn't calibrated yet, fall back to the active (newest) window —
-; the launcher acts on each session right after launching it, so it's foreground.
-if (win != "A" && !WinExist(win))
-    win := "A"
-
+if !WinExist(win)
+    ExitApp(3)              ; handle not found — bail rather than paste into the wrong window
 WinActivate(win)
-if !WinWaitActive(win, , 5) {
-    ; Couldn't confirm focus — bail rather than paste into the wrong window.
-    ExitApp(2)
-}
-Sleep 400
+if !WinWaitActive(win, , 5)
+    ExitApp(2)             ; couldn't confirm focus — bail
+Sleep 300
 
 if (clickFirst = "1") {
-    ; Click into the input area (bottom-center) before pasting — some builds need focus there.
     WinGetPos(&x, &y, &w, &h, win)
-    MouseMove(x + w // 2, y + h - 60)
+    MouseMove(x + w // 2, y + h - 60)   ; click into the bottom-center input area
     Click
     Sleep 200
 }

@@ -7,9 +7,9 @@ Read these files to orient yourself (in this order):
 
 You own live testing. If a live browser is needed, open https://matrix-arc.web.app in a linked Claude-in-Chrome tab IN THIS SESSION (browser MCP control is session-bound — it must be your session, not the orchestrator's), then stamp the tab title: document.title = '🤖 CLAUDE-CONTROLLED ▸ ARC'; (re-stamp after any reload). See CLAUDE.md → "Mark the Claude-controlled browser tab."
 
-Comms: hub-and-spoke — route your outputs/questions through Freddy (do not peer-message Coach/Dez unless Freddy instructs). Git: explicit pathspec only (git commit -- <paths>), never git add -A. Stay in "Ask permissions" mode so your cross-session send_message replies fire.
+Comms: hub-and-spoke — route your outputs/questions through Freddy (do not peer-message Coach/Dez unless Freddy instructs). Git: explicit pathspec only (git commit -- <paths>), never git add -A (U1). Stay in "Ask permissions" mode so your cross-session send_message replies fire.
 
-After reading, report back (to Freddy):
+After reading, POST your readiness IN THIS WINDOW (do not proactively send yet — Freddy will ping you for the comms-check):
 - Your role identity (name and role)
 - Current deployed version + live master tip (git rev-parse --short HEAD)
 - Top-of-queue work item
