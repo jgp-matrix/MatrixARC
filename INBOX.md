@@ -13,8 +13,12 @@
 > item into the TODO.md numbered tracker, then delete the bullet here. (Freddy edits this file
 > only to clear routed bullets; Dez owns all appends.)
 >
-> Capture format: `- [YYYY-MM-DD] BUG|FEAT — <desc> — reported via Intake`
+> Capture format: `- [YYYY-MM-DD] BUG|FEAT|GEN — "<short title>" — <desc> — reported via Intake (source: Jon|Marc|Coach|Freddy)`
+>
+> Category (B/F/G taxonomy, replace-going-forward, approved 2026-07-02 — Freddy stamps the number at triage):
+> `BUG → B###` · `FEAT → F###` · `GEN` (General — neither bug nor feature) `→ G###`. Every item carries a short
+> identifying title. Existing `#1–#198` keep their numbers (no retroactive renumber; open items get tagged in Freddy's triage pass).
 
 ---
 
-_(empty — no un-routed items)_
+- [2026-07-02] FEAT — "Remote approval of Allow-Once prompts" — enable Jon to approve the per-send "Allow Once" cross-session permission prompts remotely (e.g. from his phone) so he isn't tethered to the desk to keep the CCD `send_message` bus flowing. — reported via Intake (source: Jon, via Freddy) [Freddy: may reclassify as G###/General — dev-tooling/infra; feasibility scoping in parallel]
