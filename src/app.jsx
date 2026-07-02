@@ -36375,9 +36375,19 @@ function QuoteView({project,uid,onBack,onUpdate}){
   async function handleGeneratePdf(){
     try{
       const _pop=await ensureQuoteFieldsPopulated(project,uid);
-      const populated=_pop.project;
+      let populated=_pop.project;
       onUpdate(populated);
       await saveProject(uid,populated);
+      // #191 4th-path closer: assign the quote number before generating the PDF so this download/
+      // preview path never produces a numberless PDF. SOFT-fail (warn+proceed) — it's a download,
+      // not a customer send. Idempotent: no-op when a number already exists.
+      try{
+        const{project:_withNum,assigned:_numAssigned}=await ensureQuoteNumber(populated,uid);
+        if(_numAssigned){populated=_withNum;onUpdate(populated);await saveProject(uid,populated);}
+      }catch(e){
+        console.error("[QUOTE PDF] Quote number assignment failed:",e);
+        try{await arcAlert("Could not assign a quote number — the PDF will generate without one. Check your connection and retry.",{kind:"warning"});}catch(_){}
+      }
       await generateQuotePdf({...aggregated,quote:populated.quote});
       const hash=computeBomHash(populated.panels);
       const printed={...populated,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:populated.quoteRev||0};
