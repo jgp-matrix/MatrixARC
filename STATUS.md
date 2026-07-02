@@ -6,13 +6,13 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — P1 PASS + MED-1 DECIDED → P2 AUTHORIZED (building)**
-- **✅ MED-1 locked (Jon):** supplier flags clear **only via audited Resolve** (who/when stamped).
-- **#199 Tech-Review flag** — **P2 (Resolution) BUILDING**: MED-1 P1-lock fix + indicator-through-predicate refinement → `_isTechReviewer` repoint (26308 only) → per-row **Resolve** control (stamps who/when) → approve-sweep. Coach verifies P2 when it lands. Live T1–T7 pending browser.
+**#199 — P2 BUILT → Coach verify (P1✓ / P2-verify / P3-next)**
+- **#199 Tech-Review flag** — **P2 (Resolution) = BUILT-PENDING-VERIFY** (Marc, `a5253d42`): MED-1 lock + indicator-through-predicate + per-row **Resolve** (stamps who/when) + approve-sweep across all panels. L3 decided (TR show-set broader than red = dead-end guard; Marc+Freddy concur, Coach confirming).
 - **G002 v3** — `Ctrl+N` mechanic **CONFIRMED**; full run **deferred to a clean boot**.
-- **STATUS:** Marc → building **#199 P2** · Coach → on-deck to verify P2 · Freddy hub-coordinating. (#199 BUILDING — P1 done, P2 in progress, P3 next.)
+- **STATUS:** Marc → P2 done, holding **P3** for Coach-clear + Freddy GO · Coach → verifying **P2** · Jon → runs his session tests after P3 · Freddy hub-coordinating. (#199: **P1✓ / P2-verify / P3-next**; runtime T1–T12 batched for the browser pass.)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 15:51 MDT]** **#199 P2 BUILT → Coach verify.** P2 (Resolution) = BUILT-PENDING-VERIFY (Marc, `a5253d42`): MED-1 lock + indicator-through-predicate + per-row Resolve (stamps who/when) + approve-sweep across all panels. L3 decided (TR show-set broader than red = dead-end guard; Marc+Freddy concur, Coach confirming). Marc holding P3 for Coach-clear + Freddy GO; Coach verifying P2; #199: P1✓ / P2-verify / P3-next; Jon runs session tests after P3; runtime T1–T12 batched for browser pass.
 - **[2026-07-02 15:44 MDT]** **#199 — MED-1 DECIDED → P2 AUTHORIZED.** Jon locked MED-1: supplier flags clear only via audited Resolve. Marc now building P2 (Resolution): MED-1 P1-lock fix + indicator-through-predicate refinement → `_isTechReviewer` repoint (26308 only) → per-row Resolve control (stamps who/when) → approve-sweep. Coach verifies P2 when it lands. #199 BUILDING (P1 done, P2 in progress, P3 next); live T1–T7 pending browser; G002 mechanic confirmed / full run deferred.
 - **[2026-07-02 15:42 MDT]** **#199 P1 = code-verify PASS (Coach, `docs/199-P1-VERIFICATION.md` `310c9246`).** One MED policy item now with Jon, GATES P2: **MED-1** — P1 lets a reviewer clear a supplier flag with no audit stamp. P2 HELD; Marc holding for P2 GO; Coach P1-verify done, on-deck for P2; live T1–T7 pending browser. G002 `Ctrl+N` mechanic CONFIRMED, full run deferred to a clean boot.
 - **[2026-07-02 15:32 MDT]** **#199 P1 BUILT — now in Coach code-verify.** P1 (Data + capture, inert) = BUILT-PENDING-VERIFY (Marc, `13f06fcf` + `66494253`); §5 pre-build gate PASS. Coach code-verifying P1, then P2 (Resolution); live T1–T7 batch when browser's up. G002 v3 — Jon's live calibration (`Ctrl+N` flow) ongoing. Marc holding for Coach's verdict to start P2; #199 BUILDING (P1 done, P2 gated on Coach).
