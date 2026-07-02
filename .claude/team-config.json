@@ -6,13 +6,15 @@
       "name": "Marc Masdev",
       "shortName": "Marc",
       "environment": "ccd",
-      "notifyPrefix": "MARC"
+      "notifyPrefix": "MARC",
+      "sessionTitle": "🟩Marc - ARC"
     },
     "architect": {
       "name": "Sam Wize",
       "shortName": "Coach",
       "environment": "ccd",
-      "notifyPrefix": "COACH"
+      "notifyPrefix": "COACH",
+      "sessionTitle": "🏈Coach - ARC"
     },
     "analyst": {
       "name": "Freddy Lyst",
@@ -20,6 +22,7 @@
       "environment": "ccd",
       "notifyPrefix": "FREDDY",
       "hasFileAccess": true,
+      "sessionTitle": "🟥Freddy - ARC",
       "_note": "2026-07-01: all three roles run in CCD (Claude Code Desktop) so cross-session send_message comms work between Marc/Freddy/Coach. Freddy moved browser→CCD (repo READ); Coach moved terminal→CCD. Terminal CLI can't receive cross-session messages — do NOT use it for team roles. Each session in Ask-permissions mode; per-send Allow-Once prompt is expected."
     }
   },

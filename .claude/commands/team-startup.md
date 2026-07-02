@@ -11,9 +11,10 @@ Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/tea
 Extract these values from the config (use throughout this skill):
 - `TEAM` = teamName
 - `GUIDED` = guidedMode (if true, show tips; if false or missing, skip tips)
-- `IMPL_NAME` / `IMPL_SHORT` = roles.implementer.name / shortName
-- `ARCH_NAME` / `ARCH_SHORT` = roles.architect.name / shortName
-- `ANALYST_NAME` / `ANALYST_SHORT` = roles.analyst.name / shortName
+- `IMPL_NAME` / `IMPL_SHORT` / `IMPL_TITLE` = roles.implementer.name / shortName / sessionTitle
+- `ARCH_NAME` / `ARCH_SHORT` / `ARCH_TITLE` = roles.architect.name / shortName / sessionTitle
+- `ANALYST_NAME` / `ANALYST_SHORT` / `ANALYST_TITLE` = roles.analyst.name / shortName / sessionTitle
+  (if a `sessionTitle` is missing, fall back to a title containing the role short name)
 - `ARCH_ENV` = roles.architect.environment
 - `ANALYST_ENV` = roles.analyst.environment
 - `ANALYST_HAS_FILES` = roles.analyst.hasFileAccess
@@ -39,8 +40,8 @@ You are **{IMPL_NAME}** ("{IMPL_SHORT}"). Adopt this identity for the session.
 □ Step 3 — Open app in browser + link to CCD (automatic)
 □ Step 4 — Wait for user to confirm both sessions initialized
    → USER ACTION: Confirm "{ARCH_SHORT} is up" and "{ANALYST_SHORT} is up"
-□ Step 5 — Cross-reference sync check ({IMPL_SHORT} states version/queue/role)
-   → USER ACTION: Relay {ARCH_SHORT}'s and {ANALYST_SHORT}'s confirmations back
+□ Step 5 — Comms-check sync ({IMPL_SHORT} messages both roles via send_message; they reply on the bus)
+   → USER ACTION: Approve the per-send "Allow Once" prompts — no manual relay needed
 □ Step 6 — Work begins
    → USER ACTION: Give first work instruction
 ```
@@ -82,6 +83,8 @@ drag it into the Claude.ai browser window. Much faster than pasting.
 The Architect has file access. Output a code block with file paths and orientation instructions:
 
 ```
+Set this session's name to "{ARCH_TITLE}".
+
 You are {ARCH_NAME} ("{ARCH_SHORT}"), Senior Development Engineer, Architecture on the {TEAM} project at {repo root path}.
 
 Read these files to orient yourself (in this order):
@@ -117,6 +120,8 @@ Tell the user:
 Output a code block with file paths, same format as the Architect paste:
 
 ```
+Set this session's name to "{ANALYST_TITLE}".
+
 You are {ANALYST_NAME} ("{ANALYST_SHORT}"), Senior Analyst on the {TEAM} project at {repo root path}.
 
 Read these files to orient yourself (in this order):
@@ -157,7 +162,9 @@ context and report back. Come back here and tell me when both are ready.
 ```
 
 Tell the user:
-> {ARCH_SHORT} paste + {ANALYST_SHORT} paste are ready above. Open a **new CCD (Claude Code Desktop) session for each** ({ARCH_SHORT} and {ANALYST_SHORT}) and paste their block in. Both have repo access (paths, not drag files). Let me know when both are up.
+> {ARCH_SHORT} paste + {ANALYST_SHORT} paste are ready above. Open a **new CCD (Claude Code Desktop) session for each** ({ARCH_SHORT} and {ANALYST_SHORT}) and paste their block in. Both have repo access (paths, not drag files). **Name each session so it's identifiable in the session list** — include the role short name (e.g. a title containing "{ARCH_SHORT}" and one containing "{ANALYST_SHORT}"); {IMPL_SHORT}'s Step 5 comms check locates them by title via `list_sessions`. Let me know when both are up.
+
+The paste blocks in Step 2 already include a first-line "Set this session's name to …" instruction so each role self-titles on boot.
 
 **All three roles run in CCD (Desktop)** — Marc, {ARCH_SHORT}, {ANALYST_SHORT} — so cross-session `send_message` comms work between them (efficient message-moving, no copy-paste relay). Each session must be in **"Ask permissions"** mode for its outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any team role — it cannot receive cross-session messages; the repo (git) remains the durable fallback bus.
 
@@ -165,33 +172,46 @@ Tell the user:
 
 Mark complete: `✓ Step 4 — {ARCH_SHORT} and {ANALYST_SHORT} initialized (both CCD)`
 
-## Step 5 — Cross-reference sync check
+## Step 5 — Comms-check sync (automated, over the CCD bus)
+
+{IMPL_SHORT} runs the sync check directly over the cross-session messaging bus — **no manual relay from the user.** This simultaneously verifies (a) the three-way `send_message` bus is live in both directions and (b) all three roles agree on version, queue, and master tip.
 
 **Guided tip (only if GUIDED):**
 ```
-💡 TIP: This is a quick sanity check — all three roles confirm they see the
-same version number and the same next work item. If someone reports a mismatch,
-it usually means a handoff file is stale. We fix it before starting work so
-nobody operates on wrong assumptions.
-
-Copy each role's confirmation back to me. It should look like:
-  "{name}, version v1.X.Y, top of queue: {item}, ready"
+💡 TIP: Instead of you copying each role's report back to me, I now message
+{ARCH_SHORT} and {ANALYST_SHORT} directly over the CCD bus and they reply on it.
+You'll just approve an "Allow Once" prompt per send. If anyone reports a
+mismatch (version, queue, or master tip SHA), it usually means a handoff file
+is stale — we fix it before starting work.
 ```
 
-State the Implementer's sync report:
-- **Version:** current version
-- **Top of queue:** first item from {SESSION_STATE} work queue
-- **Role:** "{IMPL_NAME}, ready"
+1. **Locate the target sessions.** Call `list_sessions` and match the Architect and Analyst sessions by title (they self-titled to `{ARCH_TITLE}` / `{ANALYST_TITLE}` on boot, per the Step 2 pastes). If a title isn't found or is ambiguous (e.g. duplicates), ask the user which sessionId is which before sending — never guess the target.
 
-Ask user to relay the other roles' confirmations. Each must confirm:
-- Role identity (character name + role)
-- Version matches
-- Top-of-queue item matches
-- "Ready" signal
+2. **State {IMPL_SHORT}'s own sync baseline** so the reply comparison has a reference:
+   - **Version:** current version
+   - **Master tip:** `git rev-parse --short HEAD` (must equal `origin/master`)
+   - **Top of queue:** first item from {SESSION_STATE} work queue
+   - **Role:** "{IMPL_NAME}, ready"
 
-If any mismatch: identify cause (stale file?), fix, re-paste if needed.
+3. **Send a comms-check message to each role** via `send_message` (both sends can go in one turn; each triggers an "Allow Once" prompt the user approves). Ask each to reply **on the bus** (via `send_message` back to {IMPL_SHORT}) with:
+   - Their role identity (character name + role)
+   - The deployed version they see
+   - Their **live** master tip (`git rev-parse --short HEAD`, not a value copied from a handoff file)
+   - Their top-of-queue read
+   - A "{short name} comms OK" signal
 
-Mark complete: `✓ Step 5 — All three roles synced: v{VERSION}, top of queue: {ITEM}`
+4. **Wait for both replies** to arrive as cross-session messages, then verify each field against {IMPL_SHORT}'s baseline:
+   - Role identity correct
+   - Version matches
+   - **Master tip SHA matches** ← this leg catches stale-handoff drift (a role reporting an old SHA read from a file instead of live git)
+   - Top-of-queue item matches
+   - "comms OK" received (proves the bus works both directions)
+
+5. **On any mismatch:** identify the cause (stale handoff file citing an old version/SHA is the usual culprit), have the affected role re-verify against live git, fix the stale file so the next boot doesn't repeat it, and re-run the check for that role.
+
+If a role's session can't be reached over the bus (no reply, or it's a Terminal CLI session which can't receive messages), fall back to asking the user to relay that one role's confirmation manually, and flag that the role isn't on the bus.
+
+Mark complete: `✓ Step 5 — All three roles synced over the bus: v{VERSION} @ {SHA}, top of queue: {ITEM}`
 
 ## Step 6 — Work begins
 

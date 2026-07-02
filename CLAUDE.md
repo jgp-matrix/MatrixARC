@@ -54,8 +54,8 @@ STARTUP CHECKLIST (Full Team)
    → USER ACTION: Paste Freddy block into a new Freddy CCD session
 □ Step 3 — Wait for Jon to confirm both sessions initialized
    → USER ACTION: Confirm "Coach is up" and "Freddy is up"
-□ Step 4 — Cross-reference sync check (Marc states version/queue/role)
-   → USER ACTION: Relay Coach's and Freddy's confirmations back
+□ Step 4 — Comms-check sync (Marc messages both roles via send_message; they reply on the bus)
+   → USER ACTION: Approve the per-send "Allow Once" prompts — no manual relay needed
 □ Step 5 — Work begins
    → USER ACTION: Give first work instruction
 ```
@@ -103,21 +103,16 @@ Open the deployed app URL (https://matrix-arc.web.app) in a linked browser sessi
 
 Marc waits. No work begins until Jon confirms both sessions are initialized.
 
-**Step 4 — Cross-reference sync check**
+**Step 4 — Comms-check sync (automated, over the CCD bus)**
 
-Once Jon signals that Coach and Freddy are up, Marc initiates the sync check by stating:
+Once Jon signals that Coach and Freddy are up, Marc runs the sync check **directly over the cross-session `send_message` bus — no manual relay from Jon.** This simultaneously proves the three-way bus is live in both directions and confirms all three roles agree. Marc:
 
-- **Version:** current `APP_VERSION`
-- **Top of queue:** the next work item from SESSION-STATE.md
-- **Role:** "Marc Masdev, ready"
+1. Calls `list_sessions` and locates the Coach and Freddy sessions by title (they self-title on boot per their pastes; ask Jon which sessionId is which if a title is missing or ambiguous — never guess the target).
+2. States his own baseline — current `APP_VERSION`, live master tip (`git rev-parse --short HEAD`, must equal `origin/master`), top-of-queue from SESSION-STATE.md, "Marc Masdev, ready".
+3. Sends a comms-check `send_message` to Coach and to Freddy (each triggers an "Allow Once" prompt Jon approves), asking each to reply **on the bus** with: role identity, deployed version, their **live** master tip (from `git rev-parse`, not copied from a handoff file), top-of-queue read, and a "comms OK" signal.
+4. Waits for both replies, then verifies each against his baseline: role identity, version, **master tip SHA** (this leg catches stale-handoff drift — a role reporting an old SHA read from a file), top-of-queue, and "comms OK" (proves the bus works both ways).
 
-Jon relays Coach's and Freddy's confirmations. Each role must confirm:
-- Their role identity (character name + role)
-- Current version matches Marc's
-- Top-of-queue item matches
-- "Ready" signal
-
-If any role reports a version or queue mismatch, resolve before proceeding. Mismatches usually mean SESSION-STATE.md or FREDDY.md is stale — Marc regenerates and re-pastes.
+If any role reports a version, queue, or **master-tip** mismatch, resolve before proceeding — the usual culprit is a stale SESSION-STATE.md / FREDDY.md citing an old version or SHA. Have the role re-verify against live git, fix the stale file, and re-run the check. If a role can't be reached on the bus (no reply, or a Terminal CLI session that can't receive messages), fall back to Jon relaying that one role's confirmation manually and flag that it isn't on the bus.
 
 **Step 5 — Work begins**
 
