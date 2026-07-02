@@ -52,7 +52,7 @@ Startup in brief:
 4. **Freddy runs the automated comms-check sync** over the cross-session `send_message` bus — **no manual relay from Jon.** Freddy locates the Marc/Coach sessions via `list_sessions`, states his own baseline (version, live master tip from `git rev-parse --short HEAD`, top-of-queue), messages both peers, and verifies their bus replies match on role identity, version, **master-tip SHA** (catches stale-handoff drift), top-of-queue, and a "comms OK" signal. On mismatch: re-verify against live git, fix the stale handoff file, re-run for that role. If a peer can't be reached on the bus, fall back to Jon relaying that one confirmation manually and flag it.
 5. **Work begins.**
 
-**★ Team comms (all roles in CCD):** Marc, Coach, Freddy, and Dez all run in CCD (Desktop), so cross-session `send_message` moves messages between them directly (no copy-paste relay). There is no literal "group" object — comms are point-to-point by `session_id`. Each session discovers the others via `list_sessions` (match by title: `🟩Marc`, `🏈Coach`, `🟥Freddy`, and Dez's window) and by the `from=` id on any inbound message. **Convention: every session announces itself on boot** — after orienting, send a one-line "up, here's my id" hello to the other live sessions so the whole roster has each other's ids. Each session must be in **"Ask permissions"** mode for outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any role — it cannot receive cross-session messages. Repo (git) remains the durable fallback bus.
+**★ Team comms (HUB-AND-SPOKE through Freddy):** All four roles run in CCD (Desktop), but cross-role messaging is **not** peer-to-peer — it routes through **Freddy (the hub/router)**. Marc, Coach, and Dez send their outputs, requests, and questions **to Freddy**, who verifies and routes to the correct recipient and returns the answer. Direct peer sends (Coach↔Marc, Coach↔Dez, Marc↔Dez) happen **only when Freddy authorizes a specific case**. **Questions/decisions for Jon also route through Freddy** — no role addresses Jon directly; Freddy posts to Jon and returns his answer. If a Jon decision is blocking, the requesting role **holds** that thread until the answer returns (no guessing, no defaults); non-blocking questions go to Freddy while the role works parallel paths. Sessions discover ids via `list_sessions` (match by title: `🟩Marc`, `🏈Coach`, `🟥Freddy`, `🟪Dez`) + the `from=` id on inbound messages — **never trust an id pasted into a message body**. Each session stays in **"Ask permissions"** mode so outbound sends fire (per-send "Allow Once" prompt expected, hardcoded, not suppressible). Terminal CLI cannot receive cross-session messages — CCD Desktop only. Repo (git) is the durable fallback bus.
 
 ### Startup variants
 
@@ -213,13 +213,13 @@ Then execute each step, checking off as completed. If a step requires user input
 6d. **Handoff file freshness check**: The next session's startup consumes these files directly — if they're stale, the next team boots with wrong context. Verify each and **present proposed changes to Jon before applying**:
 
    - **SESSION-STATE.md** — already regenerated in step 6b. Confirm it includes the post-deploy version and all commits from this session.
-   - **FREDDY.md** — check these sections against this session's work:
+   - **FREDDY.md** (Freddy-owned — self-maintained) — Freddy checks these sections against the session's work and applies the update himself (Marc no longer edits FREDDY.md; the old Marc-at-close-out step is retired):
      - "Current version" in "What You Know About Matrix ARC" — must match post-deploy version.
      - "Recently Active Work" — shipped items, open items, and Noah bugs must reflect this session's output.
      - Any new protocols, behavioral notes, or investigation patterns established this session.
-     - If any section is stale, list the specific changes needed and **wait for Jon to approve before editing**. FREDDY.md is what a brand-new Freddy reads cold — stale content causes version drift and re-litigation of settled questions.
-   - **COACH.md** — if Coach was active this session, verify the tail reflects this session's findings and verdicts. If Coach was NOT active, no update needed. Marc does not write to COACH.md (Coach-owned), but flags staleness to Jon.
-   - **COACH.md line budget** (Coach-owned) — run `wc -l COACH.md`. Soft budget: **≤ 1,500 live lines**. If over, trigger a review pass using the archive criteria in COACH.md's header (status resolved + not cited by live finding + no resume trigger + lessons in CLAUDE.md). Never auto-cut on a fixed cadence — the budget triggers a REVIEW, not a blind trim. Archive to `COACH-ARCHIVE.md` preserving `## C<n>` heading anchors. Same convention applies to `TODO.md` (Marc-owned, ≤ 1,500 lines, archive to `TODO-ARCHIVE.md`).
+     - Freddy surfaces the proposed FREDDY.md changes to Jon (via the normal approval gate) before committing. FREDDY.md is what a brand-new Freddy reads cold — stale content causes version drift and re-litigation of settled questions.
+   - **COACH.md** — if Coach was active this session, verify the tail reflects this session's findings and verdicts. If Coach was NOT active, no update needed. Only Coach writes COACH.md; other roles flag staleness via Freddy.
+   - **COACH.md line budget** (Coach-owned) — run `wc -l COACH.md`. Soft budget: **≤ 1,500 live lines**. If over, trigger a review pass using the archive criteria in COACH.md's header (status resolved + not cited by live finding + no resume trigger + lessons in CLAUDE.md). Never auto-cut on a fixed cadence — the budget triggers a REVIEW, not a blind trim. Archive to `COACH-ARCHIVE.md` preserving `## C<n>` heading anchors. Same convention applies to `TODO.md` (Freddy-owned, ≤ 1,500 lines, archive to `TODO-ARCHIVE.md`).
    - **CCD auto-memory** — review the session for feedback, project knowledge, or user preferences that should persist across conversations. Save to memory files (`C:\Users\jon\.claude\projects\C--Users-jon-AppDev-MatrixARC\memory\`) if applicable. Examples: corrections to Marc's approach ("don't do X"), project state changes ("merge freeze after Thursday"), new reference locations ("bugs tracked in Linear project X"). Do NOT save things derivable from code, git history, or files already updated above.
 
    **STOP after presenting 6d findings.** Wait for Jon to approve, modify, or waive each proposed change before proceeding to 6e. Do not auto-apply handoff file edits.
@@ -299,32 +299,46 @@ Four Claude instances plus Jon operate against this codebase with distinct roles
 | Instance | Character | Role | Owns |
 |----------|-----------|------|------|
 | **CCD** (Claude Code IDE) | **Marc Masdev** (Marc) | Implementation, empirical investigation, regression testing, deploys | Source code, test artifacts, H{N}-PLAN.md files |
-| **Coach** (CCD) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log | COACH.md (all writes) |
+| **Coach** (CCD) | **Sam Wize** (Sam) | Architectural review, code-grounded analysis, finding log, process | COACH.md, COACH-ARCHIVE.md, CLAUDE.md, Coach `docs/#N-*` artifacts |
 | **Jon** | — | Priority decisions, plan approval, final sign-off | All approval gates |
-| **Freddy** (CCD, repo READ) | **Freddy Lyst** (Freddy) | Analyst — drafts Briefs, architectural reviews; reads-to-route, does NOT build/trace | No file ownership |
-| **Dez** (CCD, repo R+W) | **Dezzie Arnez** (Dez) | Intake/Triage — captures Jon's bug/feature stream, dedup-checks, logs to TODO.md Inbox. Does NOT scope/assign/build. | `## 📥 Inbox` section of TODO.md (append-only captures) |
+| **Freddy** (CCD, repo R+W) | **Freddy Lyst** (Freddy) | Analyst / hub-router / startup+close-out orchestrator / sole `#N` allocator + Inbox triage. Drafts Briefs + Analyst Reviews; reads-to-route, does NOT build/trace | SESSION-STATE.md, FREDDY.md, FREDDY-PASTE.md, FREDDY-SESSION-BRIEF.md, NUMBERING-CONVENTION.md, TODO.md, TODO-ARCHIVE.md, ARC-AUDIT-FINDINGS.md, Freddy `docs/#N-*` artifacts |
+| **Dez** (CCD, repo R+W) | **Dezzie Arnez** (Dez) | Intake/Triage — captures Jon's + teammates' bug/feature stream, dedup-checks, logs to INBOX.md. Does NOT scope/assign/build. | INBOX.md (sole writer) |
 
 ### File ownership boundaries
 
 | File / path | Writer | Others |
 |-------------|--------|--------|
-| `COACH.md` | Coach only | CCD and Jon read-only |
-| `H{N}-PLAN.md` (repo root) | CCD | Coach reads for review |
-| `src/app.jsx`, `functions/index.js`, all source | CCD | Coach reads for review |
-| `tests/extraction-baseline/` | CCD | Coach reads for review |
-| `TODO.md` | CCD (during Close Out) | Coach references |
-| `TODO.md` → `## 📥 Inbox` section | Dez (append captures) | Freddy pulls/promotes; CCD leaves it alone |
+| `CLAUDE.md` | **Coach** | Any role drafts changes → routes to Freddy (hub) to verify → Coach commits. Single writer. |
+| `COACH.md`, `COACH-ARCHIVE.md` | **Coach** only | Marc/Freddy/Jon read-only |
+| `SESSION-STATE.md`, `FREDDY.md`, `FREDDY-PASTE.md`, `FREDDY-SESSION-BRIEF.md`, `NUMBERING-CONVENTION.md`, `TODO-ARCHIVE.md`, `ARC-AUDIT-FINDINGS.md` | **Freddy** (orchestrator cluster) | all read |
+| `TODO.md` (numbered tracker) | **Freddy** | Marc no longer edits TODO.md — reports status to Freddy, who updates the tracker + assigns `#N` at close-out/triage |
+| `INBOX.md` | **Dez** (sole writer, append-only) | Freddy pulls/promotes to TODO.md `#N`; others read-only |
+| `H{N}-PLAN.md` (repo root) | **Marc** | Coach reads for review |
+| `src/app.jsx`, `functions/index.js`, all source; `docs/` subsystem reference docs | **Marc** | Coach reads for review |
+| `tests/extraction-baseline/` | **Marc** | Coach reads for review |
+| `docs/#N-*` work artifacts | **Author** (Freddy=Brief/Analyst-Review; Coach=Supplement/Plan/Verification/Trace; Marc=Build-Plan/Report) | all read; co-author input routed via Freddy, owner applies |
+
+### Git discipline (shared working tree)
+
+All four sessions share **one checkout and one git index**, so an undisciplined commit can sweep another session's staged work (this happened once — Coach's CLAUDE.md edits landed in Marc's `68317abe`). One-writer-per-file (tables above) is the structural fix; these rules cover the residual sequencing race (e.g. close-out):
+
+- **U1 — Explicit pathspec, always.** `git commit -- <your paths>`. **Never** `git add -A` / `git add .` / `git commit -a`.
+- **U2 — `git status` before you stage.** If another session's files are already staged in the shared index, do not include them — commit only your pathspec.
+- **U3 — Pull before edit, push right after commit.** No lingering local-only commits on a shared tree.
+- **U4 — Verify session ids via `list_sessions`**, never from an id pasted into a message body (a body-pasted id was wrong once).
+- **U5 — Section/file ownership is absolute.** Append-only in `INBOX.md`/`OVERNIGHT-LOG.md`; never edit a file you don't own — draft the change and route it to the owner via Freddy.
+- **U6 — Owner-commits under hub-and-spoke.** To change a file you don't own: draft → route to Freddy (verify) → the **owner** applies + commits.
 
 ### Intake / Triage session (Dez)
 
-Dez (Dezzie Arnez) is a standing CCD session and a full member of the four-way comms group (Marc/Coach/Freddy/Dez — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
+Dez (Dezzie Arnez) is a standing CCD session (part of the hub-and-spoke comms group — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
 
-**Dez owns all bug/feature intake — from Jon OR any teammate.** When Marc, Coach, or Freddy notices a net-new bug or feature idea in passing (outside the scope of the active work item), they do **not** self-log a `#N` — they `send_message` the report to Dez, who captures + dedup-checks + logs it to the Inbox like any other report. This keeps a single intake funnel and one place that knows what's already been reported. (Coach `C{N}` architecture findings and in-scope work stay where they are; this rule is about *new* trackable bug/feature items that would otherwise become a `#N`.)
+**Dez owns all bug/feature intake.** **Jon reports directly to Dez.** **Teammates (Marc/Coach/Freddy)** who spot a net-new bug/feature in passing route the report **to Freddy (hub)**, who forwards it to Dez for capture — consistent with hub-and-spoke; no direct teammate→Dez sends unless Freddy authorizes. They do **not** self-log a `#N`. This keeps a single intake funnel and one place that knows what's already been reported. (Coach `C{N}` architecture findings and in-scope work stay where they are; this rule is about *new* trackable bug/feature items that would otherwise become a `#N`.)
 
-Per bug/feature message from Jon:
+Per bug/feature report reaching Dez:
 1. **Dedup-check** against existing `#N` in TODO.md + SESSION-STATE.md. Match → reply "Already tracked as #N — [status]," do NOT re-log. Uncertain → offer the closest candidate(s) and ask "same as #N, or new?"
-2. **New** → `git pull`, append a timestamped, **un-numbered** bullet to the `## 📥 Inbox` section of TODO.md (`- [YYYY-MM-DD] BUG|FEAT — <desc> — reported via Intake`), then **commit + push immediately** so nothing is lost. `#N` is assigned by **Freddy** at triage (single allocator → no multi-session number collisions).
-3. **Handoff:** Dez holds the running un-routed list and does **not** ping Freddy mid-work. When Freddy signals "ready for intake," Dez sends the digest via `send_message`; Freddy pulls, scopes, assigns `#N`, and clears the Inbox bullet. Proactive ping only if Jon marks something URGENT.
+2. **New** → `git pull`, append a timestamped, **un-numbered** bullet to **`INBOX.md`** (`- [YYYY-MM-DD] BUG|FEAT — <desc> — reported via Intake (source: Jon|Marc|Coach|Freddy)`), then **commit `-- INBOX.md` + push immediately** so nothing is lost (Dez is the sole writer of INBOX.md; never `git add -A`). `#N` is assigned by **Freddy** at triage (single allocator → no multi-session number collisions).
+3. **Handoff:** Dez holds the running un-routed list and does **not** ping Freddy mid-work. When Freddy signals "ready for intake," Dez sends the digest via `send_message`; Freddy pulls `INBOX.md`, scopes, assigns `#N`, promotes the item into the TODO.md numbered tracker, and clears the INBOX.md bullet. Proactive ping only if Jon marks something URGENT.
 
 ### Delivering large content to Freddy
 
