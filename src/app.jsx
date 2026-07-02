@@ -27001,12 +27001,41 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return pn&&!vn&&ld>0;
     });
     setPushingLeadTimes(true);
-    // Resolve missing vendors live
+    // #188: Validate cached bcVendorNo before push. A vendor renumber/merge in BC leaves the
+    // cached bcVendorNo dead, which makes bcUpsertItemVendorLeadTime fail with
+    // Internal_InvalidTableRelation. Tier 1 (cheap): check each unique cached vendor via
+    // bcGetVendorName (already-seen vendors resolve from _vendorMapCache = 0 network calls).
+    // Tier 2: only dead-vendor rows get re-resolved live via bcGetItemVendorNo (same lookup
+    // needVendorLookup uses). Healed rows join resolvedExtra and self-persist back to the BOM.
+    const _staleVendorRows=[];
+    const _freshDirectly=[];
+    {
+      const uniqueVendors=new Set(directlyQualifying.map(r=>(r.bcVendorNo||"").trim()).filter(Boolean));
+      const deadVendors=new Set();
+      for(const vNo of uniqueVendors){
+        const name=await bcGetVendorName(vNo).catch(()=>"");
+        if(!name)deadVendors.add(vNo);
+      }
+      if(deadVendors.size>0)console.warn("[PUSH] Stale vendor(s) detected:",[...deadVendors].join(", "),"— re-resolving affected items");
+      for(const r of directlyQualifying){
+        if(deadVendors.has((r.bcVendorNo||"").trim()))_staleVendorRows.push(r);
+        else _freshDirectly.push(r);
+      }
+    }
+    // Resolve missing vendors live (needVendorLookup) + re-resolve stale-vendor rows (#188).
+    // _itemResolveCache dedupes bcGetItemVendorNo by item number across both pools.
     const resolvedExtra=[];
     const stillNoVendor=[];
-    for(const row of needVendorLookup){
+    const _allNeedResolution=[...needVendorLookup,..._staleVendorRows];
+    const _itemResolveCache=new Map();
+    for(const row of _allNeedResolution){
       try{
-        const vNo=await bcGetItemVendorNo(_bcNo(row));
+        const itemNo=_bcNo(row);
+        let vNo=_itemResolveCache.get(itemNo);
+        if(vNo===undefined){
+          vNo=await bcGetItemVendorNo(itemNo);
+          _itemResolveCache.set(itemNo,vNo||"");
+        }
         if(vNo){
           const vName=await bcGetVendorName(vNo).catch(()=>"");
           resolvedExtra.push({...row,bcVendorNo:vNo,bcVendorName:row.bcVendorName||vName||""});
@@ -27015,7 +27044,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         }
       }catch(e){stillNoVendor.push(row);}
     }
-    const qualifying=[...directlyQualifying,...resolvedExtra];
+    const qualifying=[..._freshDirectly,...resolvedExtra];
     if(!qualifying.length){
       setPushingLeadTimes(false);
       const reasons=stillNoVendor.length>0?`\n\n${stillNoVendor.length} row(s) have a lead time but no BC vendor on the Item Card (Purchase → Vendor No.). Set a default vendor in BC or submit a supplier portal quote to associate one.`:"";
@@ -27023,7 +27052,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return;
     }
     const skippedCount=stillNoVendor.length;
-    if(!await arcConfirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${resolvedExtra.length>0?`\n\n(${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`,{title:"Push Lead Times to BC"})){setPushingLeadTimes(false);return;}
+    if(!await arcConfirm(`Push ${qualifying.length} lead time${qualifying.length>1?"s":""} to BC ItemVendorCatalog?\n\nThis will create/update per-vendor lead time records in BC so next time ARC or anyone else looks up these items, the lead time is there.${resolvedExtra.length>0?`\n\n(${resolvedExtra.length} row${resolvedExtra.length>1?"s":""} had vendor resolved live from BC Item Card.)`:""}${_staleVendorRows.length>0?`\n\n(${_staleVendorRows.length} row${_staleVendorRows.length>1?"s":""} had a stale/renumbered vendor — re-resolved from the current BC Item Card.)`:""}${skippedCount>0?`\n\n(${skippedCount} row${skippedCount>1?"s":""} will be skipped — no vendor on BC Item Card.)`:""}`,{title:"Push Lead Times to BC"})){setPushingLeadTimes(false);return;}
     const cid=_appCtx.companyId;
     let created=0,updated=0,failed=0;
     const failures=[];

@@ -52,7 +52,7 @@ Startup in brief:
 4. **Freddy runs the automated comms-check sync** over the cross-session `send_message` bus — **no manual relay from Jon.** Freddy locates the Marc/Coach sessions via `list_sessions`, states his own baseline (version, live master tip from `git rev-parse --short HEAD`, top-of-queue), messages both peers, and verifies their bus replies match on role identity, version, **master-tip SHA** (catches stale-handoff drift), top-of-queue, and a "comms OK" signal. On mismatch: re-verify against live git, fix the stale handoff file, re-run for that role. If a peer can't be reached on the bus, fall back to Jon relaying that one confirmation manually and flag it.
 5. **Work begins.**
 
-**★ Team comms (all roles in CCD):** Marc, Coach, and Freddy all run in CCD (Desktop), so cross-session `send_message` moves messages between them directly (no copy-paste relay). Each session must be in **"Ask permissions"** mode for outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any role — it cannot receive cross-session messages. Repo (git) remains the durable fallback bus.
+**★ Team comms (all roles in CCD):** Marc, Coach, Freddy, and Dez all run in CCD (Desktop), so cross-session `send_message` moves messages between them directly (no copy-paste relay). There is no literal "group" object — comms are point-to-point by `session_id`. Each session discovers the others via `list_sessions` (match by title: `🟩Marc`, `🏈Coach`, `🟥Freddy`, and Dez's window) and by the `from=` id on any inbound message. **Convention: every session announces itself on boot** — after orienting, send a one-line "up, here's my id" hello to the other live sessions so the whole roster has each other's ids. Each session must be in **"Ask permissions"** mode for outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any role — it cannot receive cross-session messages. Repo (git) remains the durable fallback bus.
 
 ### Startup variants
 
@@ -317,7 +317,9 @@ Four Claude instances plus Jon operate against this codebase with distinct roles
 
 ### Intake / Triage session (Dez)
 
-Dez (Dezzie Arnez) is a standing CCD session Jon fires **bug and feature ideas** at mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
+Dez (Dezzie Arnez) is a standing CCD session and a full member of the four-way comms group (Marc/Coach/Freddy/Dez — see "Team comms" above). Jon fires **bug and feature ideas** at her mid-flight so they don't interrupt the active team. Dez's mandate is narrow: **capture, dedup-check, log — never scope, assign, or build** (Freddy remains the sole analyst-router).
+
+**Dez owns all bug/feature intake — from Jon OR any teammate.** When Marc, Coach, or Freddy notices a net-new bug or feature idea in passing (outside the scope of the active work item), they do **not** self-log a `#N` — they `send_message` the report to Dez, who captures + dedup-checks + logs it to the Inbox like any other report. This keeps a single intake funnel and one place that knows what's already been reported. (Coach `C{N}` architecture findings and in-scope work stay where they are; this rule is about *new* trackable bug/feature items that would otherwise become a `#N`.)
 
 Per bug/feature message from Jon:
 1. **Dedup-check** against existing `#N` in TODO.md + SESSION-STATE.md. Match → reply "Already tracked as #N — [status]," do NOT re-log. Uncertain → offer the closest candidate(s) and ask "same as #N, or new?"
