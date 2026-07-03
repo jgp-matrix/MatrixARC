@@ -52,7 +52,7 @@ Startup in brief:
 4. **Freddy runs the automated comms-check sync** over the cross-session `send_message` bus — **no manual relay from Jon.** Freddy locates the Marc/Coach sessions via `list_sessions`, states his own baseline (version, live master tip from `git rev-parse --short HEAD`, top-of-queue), messages both peers, and verifies their bus replies match on role identity, version, **master-tip SHA** (catches stale-handoff drift), top-of-queue, and a "comms OK" signal. On mismatch: re-verify against live git, fix the stale handoff file, re-run for that role. If a peer can't be reached on the bus, fall back to Jon relaying that one confirmation manually and flag it.
 5. **Work begins.**
 
-**★ Team comms (HUB-AND-SPOKE through Freddy):** All four roles run in CCD (Desktop), but cross-role messaging is **not** peer-to-peer — it routes through **Freddy (the hub/router)**. Marc, Coach, and Dez send their outputs, requests, and questions **to Freddy**, who verifies and routes to the correct recipient and returns the answer. Direct peer sends (Coach↔Marc, Coach↔Dez, Marc↔Dez) happen **only when Freddy authorizes a specific case**. **Questions/decisions for Jon also route through Freddy** — no role addresses Jon directly; Freddy posts to Jon and returns his answer. If a Jon decision is blocking, the requesting role **holds** that thread until the answer returns (no guessing, no defaults); non-blocking questions go to Freddy while the role works parallel paths. Sessions discover ids via `list_sessions` (match by title: `🟩Marc`, `🏈Coach`, `🟥Freddy`, `🟪Dez`) + the `from=` id on inbound messages — **never trust an id pasted into a message body**. Each session stays in **"Ask permissions"** mode so outbound sends fire (per-send "Allow Once" prompt expected, hardcoded, not suppressible). Terminal CLI cannot receive cross-session messages — CCD Desktop only. Repo (git) is the durable fallback bus.
+**★ Team comms (HUB-AND-SPOKE through Freddy):** All four roles run in CCD (Desktop), but cross-role messaging is **not** peer-to-peer — it routes through **Freddy (the hub/router)**. Marc, Coach, and Dez send their outputs, requests, and questions **to Freddy**, who verifies and routes to the correct recipient and returns the answer. Direct peer sends (Coach↔Marc, Coach↔Dez, Marc↔Dez) happen **only when Freddy authorizes a specific case**. **Questions/decisions for Jon also route through Freddy** — no role addresses Jon directly; Freddy posts to Jon and returns his answer. If a Jon decision is blocking, the requesting role **holds** that thread until the answer returns (no guessing, no defaults); non-blocking questions go to Freddy while the role works parallel paths. Sessions discover ids via `list_sessions` (match by title: `🟩Marc`, `🏈Coach`, `🟥Freddy`, `🟪Dez`) + the `from=` id on inbound messages — **never trust an id pasted into a message body**. Each session stays in **"Ask permissions"** mode so outbound sends fire. The "Allow Once" prompt is **per-SEND, not per-target** (confirmed live 2026-07-03 — there is no remembered per-target approval; *every* `send_message` prompts), and is **hardcoded / not suppressible** by any allowlist or permission mode (G001). The **only** lever to reduce prompts is **fewer sends** — batch relays and prefer the pull-based repo/STATUS.md bus for routine sync. Terminal CLI cannot receive cross-session messages — CCD Desktop only. Repo (git) is the durable fallback bus.
 
 ### Startup variants
 
@@ -138,7 +138,7 @@ Do NOT produce a fix plan and stop for approval to act. Produce the diagnostic f
 
 ## Session shutdown procedure
 
-The shutdown is a two-step user command: "Close Out" (surface state) followed by "Closed" (confirm safe to end).
+The shutdown is a two-step user command: "Close Out" (surface state) followed by "Closed" (confirm safe to end). **Freddy (analyst) orchestrates close-out** (Jon ruled 2026-07-03 — symmetric with startup orchestration; the operative procedure lives in the `/team-closeout` skill, orchestrator set via `closeoutOrchestrator` in `.claude/team-config.json`): Freddy runs the procedure and routes handoff-file approvals to Jon, but **role-owned files are still edited + committed by their owners** (Coach commits CLAUDE.md / COACH.md; Marc commits source; Freddy commits SESSION-STATE / TODO.md / FREDDY.md).
 
 ### "Close Out" — commit, merge, push, deploy, and surface state
 
@@ -349,6 +349,16 @@ Freddy (hub) routes each task by **stakes**:
 **Rationale:** the #17 trial proved subagents are capable + friction-free, but their cross-check is orchestrator-framed, drops Jon from the per-step loop, and lacks accumulated context — so independent verification is preserved for high-stakes work. The Allow-Once friction (hardcoded, G001) then only occurs where the cross-check earns it. The G002 launcher stays relevant (still boot the 4 sessions for the high-stakes lane).
 
 **Guardrails (subagent model is ON PROBATION):** (1) Subagent spawning is HUB-ONLY — only Freddy (orchestrator) spawns them; Coach/Marc/Dez don't (one coordinator, no sprawl). (2) Freddy ASKS Jon before each subagent spawn — subagent use is Jon-gated per-use, not autonomous; Freddy decides High-vs-Low stakes, Jon greenlights the spawn. (3) ALL subagent activity is logged to STATUS.md + TODO.md (pull-based sync so the standing sessions + Jon stay in sync without messaging/Allow-friction). (4) Reversible — Jon monitors subagent output and may reverse the whole subagent model if results aren't solid; treat it as a trial, not a settled default.
+
+### Per-phase gating (2026-07-03)
+
+Jon runs multi-phase work on an **explicit per-phase gate** so he stays genuinely in the loop:
+
+- **HOLD after every phase.** Each phase (plan→build→verify→deploy, or P1→P2→P3) ends by reporting to Freddy and **holding for Jon's explicit "go"** — no role auto-advances to the next phase; Freddy relays the go.
+- **A question to Jon FREEZES the whole team.** When any role has a blocking question/decision for Jon, work **stops team-wide** on that item — no self-solving, guessing, defaulting, or parallel-pathing around it. Resume only when Jon's answer returns via Freddy. (Extends the hub-and-spoke "holds that thread" to "freezes all threads.")
+- **Deploy is its own checkpoint.** Code-complete ≠ deploy. Deploy is a separate, explicitly Jon-released step — never bundled into a phase sign-off.
+- **"HOLD" / "STOP" freezes everything.** If Jon (or Freddy relaying) says HOLD or STOP, all roles stand down immediately and await an explicit go — no in-flight self-resolution.
+- **Freddy minimizes cross-session sends.** Every `send_message` costs a hardcoded per-send Allow-Once prompt (see Team comms), so Freddy batches relays, avoids redundant round-trips, and prefers the pull-based repo/STATUS.md bus for routine sync.
 
 ### Intake / Triage session (Dez)
 
