@@ -15963,19 +15963,19 @@ function findIncompleteQuoteItems(project){
         });
       }
     }
-    // #199 P3 — hard gate: any unresolved Tech-Review row blocks the quote. Adds a synthetic
-    // issue so _sendBlocked (findIncompleteQuoteItems(...).length>0) trips on all 6 consuming
-    // surfaces automatically — zero new call sites. Resolution: per-row Resolve (reviewer) or
-    // the pre-review approve-sweep (never a dead-end — see #199 L3/L5).
-    const _trUnresolvedRows=bom.filter(_isUnresolvedTechReviewRow);
-    if(_trUnresolvedRows.length){
+    // #199 P3 — hard gate: push ONE issue PER unresolved Tech-Review row (not one-per-panel),
+    // so every count display that reads issues.length (Send-button label, modal titles) reflects
+    // the true number of flagged lines rather than "1 per panel" (bug: multi-line flag showed
+    // "1 incomplete"). _sendBlocked (findIncompleteQuoteItems(...).length>0) trips on all consuming
+    // surfaces. Resolution: per-row Resolve (reviewer) or the pre-review approve-sweep (never a
+    // dead-end — see #199 L3/L5). The count-summing sites use `count||1`, so per-row (no count) sums right.
+    for(const _trRow of bom.filter(_isUnresolvedTechReviewRow)){
       issues.push({
         panelName:pan.name||`Panel ${pi+1}`,
-        partNumber:"(Technical Review)",
-        description:`${_trUnresolvedRows.length} line(s) require Technical Review sign-off`,
+        partNumber:_trRow.partNumber||"(Technical Review)",
+        description:"Requires Technical Review sign-off",
         missing:["Technical Review sign-off"],
         isTechReviewBlock:true,
-        count:_trUnresolvedRows.length,
       });
     }
   }
