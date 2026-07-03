@@ -5,16 +5,16 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current
-**#199 — ✅ await-fix SIGNED OFF · ONLY 4 live tests left · DEPLOY IMMINENT on pass**
-- **✅ await-fix SIGNED OFF (Coach)** — commit `41824f6c` / docs `41ddfc28`; correct + sufficient on code-verify; immediate-reload empirical proof **NOT required** (no fresh supplier PDF needed). **All analysis + fix gates CLEARED.**
-- **ONLY remaining:** **T10 + T13/T16-send/T17** on PRJ402097. Marc confirming Send proceeds unflagged first (the "1 item incomplete" is a **scan-results advisory** per Jon, NOT a send-block).
-- **Deploy gate = these 4 live tests only. No further approval gate.** Full pass → `deploy.sh` ships **#199 + await-fix (`41824f6c`) + #17.**
-- **📥 Intake:** 4 un-routed (GEN test-env; BUG Review-Supplier-Quote; BUG portal-Apply reload-race → **IN-PROGRESS, ships w/ #199**; BUG resolved-TR-row re-arm → tuning follow-up); B001/B002 triaged. **MED-4** = LOW.
-- **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc + Jon → **final 4 live tests on 097** · Coach → done (signed off) · Freddy hub-coordinating. (**Deploy imminent on pass.**)
+## Current — SESSION END (close-out in progress)
+**#199 — ✅ SHIPPED to PROD (v1.21.25, master `333f385d`)**
+- **#199 Tech-Review flag — SHIPPED.** Full live pass complete; deployed to production **v1.21.25** (master `333f385d`), bundling **#199 + the await-fix (`41824f6c`) + #17**. All customer-facing surfaces gate on unresolved Tech Review; supplier auto-stamp + persistence verified.
+- **Team:** holding under per-phase gating; **close-out in progress**.
+- **📥 Intake:** **INBOX CLEAR** — all 4 items triaged at close-out → **G005** (matrix-arc-test shares PROD Firestore), **B003** (Review-Supplier-Quote lists unquoted parts), **B004** (portal-Apply unawaited-save reload-race → **RESOLVED** `41824f6c` / shipped v1.21.25), **B005** (resolved-TR-row can't re-arm, LOW/tuning). Earlier: G001/B001/B002 triaged.
+- **G002 v3** (team-boot launcher) — full run **deferred to a clean boot** (`Ctrl+N` mechanic confirmed).
+- **STATUS:** #199 done + shipped · Coach signed off · Freddy hub-coordinating close-out · Dez (board + intake) clear.
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 20:31 MDT]** **✅ #199 SHIPPED to PROD — SESSION END (close-out in progress).** Full live pass complete; deployed **v1.21.25** (master `333f385d`) bundling #199 + await-fix (`41824f6c`) + #17. INBOX cleared at close-out — all 4 items triaged/promoted to TODO.md: G005 (test-env shares prod Firestore), B003 (Review-Supplier-Quote lists unquoted parts), B004 (portal-Apply reload-race → RESOLVED `41824f6c` / shipped v1.21.25), B005 (resolved-TR-row can't re-arm, LOW/tuning). G002 team-boot launcher deferred to a clean boot (Ctrl+N mechanic confirmed). Dez board + intake clear.
 - **[2026-07-02 18:55 MDT]** **✅ #199 await-fix SIGNED OFF by Coach** (commit `41824f6c` / docs `41ddfc28`) — correct + sufficient on code-verify; immediate-reload empirical proof NOT required (no fresh supplier PDF needed). All analysis + fix gates CLEARED. ONLY remaining: T10 + T13/T16-send/T17 on PRJ402097 — Marc confirming Send proceeds unflagged first (the "1 item incomplete" is a scan-results advisory per Jon, not a send-block). Full pass → deploy.sh ships #199 + await-fix (`41824f6c`) + #17. Deploy gate = these 4 live tests only; no further approval gate. Deploy imminent on pass.
 - **[2026-07-02 18:52 MDT]** **#199 analysis items ALL CLOSED.** T3 code-confirmed covered-by-design (flag rides `isCrossed` lifecycle — `pn_changed`-accept drops via whitelist @48067, reject/qty-only persist; no gap). T12 N/A-by-design note applied to plan (Coach `46b8c326`). Tuning residual captured to INBOX. REMAINING: T10 + T13/T16-send/T17 live on PRJ402097 (Marc+Jon); await-fix being committed (Marc, explicit pathspec) → Coach re-verify (last gate); Coach setting whether an immediate-reload empirical proof is required (may need Jon fresh-PDF drop). Deploy HELD pending: final live chunk pass + await-fix committed + Coach sign-off.
 - **[2026-07-02 18:49 MDT]** **#199 fixture set — PRJ402097** (fully-priced/sendable) for the last live chunk: T10 (approve-sweep) + T13/T16-send-button + T17 (preReview compose). Marc confirms pricing-clean first, then runs those (Jon clicks checkboxes, strict stop-loop). Then: apply await-fix (@38302) → re-verify → Coach sign-off → deploy #199 + await-fix + #17. 13/18 green; T12 resolved; T3 pending Coach leg code-confirm. Deploy HELD (full pass + Coach sign-off).
