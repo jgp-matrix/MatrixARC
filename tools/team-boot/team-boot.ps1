@@ -37,7 +37,7 @@ param()
 $CcdProcName = "Claude Code Desktop"
 
 # AutoHotkey v2 executable (full path if not on PATH).
-$AhkExe = "AutoHotkey64.exe"
+$AhkExe = "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe"  # v2 installed here, not on PATH (Jon's machine, confirmed 2026-07-03)
 
 # The new-session shortcut INSIDE CCD (creates a session in the current window).
 # Jon's best guess is Ctrl+N — CONFIRM on the target build.
