@@ -1,12 +1,12 @@
-# Session State — 2026-07-03 MDT (#199 Tech Review flag SHIPPED v1.21.25 · team protocols reset)
+# Session State — 2026-07-03 MDT (#199 Tech Review flag SHIPPED v1.21.25 · team protocols reset · regen at startup 2026-07-02 boot)
 
 ## Version
 **v1.21.25** (deployed 2026-07-03, PRODUCTION). Shipped #199 (Tech Review flag) + two in-pass fixes + #17.
 
 ## Deploy State
-- **Master tip:** `01099977` (dev-tooling: team-boot AHK path). **Release commit = `333f385d` (v1.21.25)**. `master == origin/master` (in sync). No feature branches (all work committed directly to master this session).
-- Production hosting: **https://matrix-arc.web.app** serving **v1.21.25**. All app code committed + deployed. The `01099977` commit is dev-tooling only (no `src/` change) — production is still v1.21.25.
-- Working tree CLEAN at close-out.
+- **Master tip:** `3936fd86` (docs/orchestration only — Allow-Once forensics, per-phase gating, Dez 4th role added, close-out-from-Freddy). **Release commit = `333f385d` (v1.21.25)**. `master == origin/master` (in sync). No feature branches.
+- Production hosting: **https://matrix-arc.web.app** serving **v1.21.25**. All app code committed + deployed. Every commit since `333f385d` (`01099977` → `3936fd86`) is dev-tooling / docs / orchestration only (no `src/` change) — production is still v1.21.25.
+- Working tree CLEAN.
 
 ## ⭐ NEXT UP — analyst leads (top 10)
 
