@@ -72,3 +72,18 @@ if(trBlocks.length){ const _trN=trBlocks.reduce((s,i)=>s+(i.count||1),0);
 - **Optional trivial nit (non-blocking):** two `findIncompleteQuoteItems(project)` calls now in `handleBomSend` (verify + TR); could compute once and filter twice. Harmless (send-click, not hot path) and matches the existing style — no change needed.
 
 **#199 is now FULLY code-complete — all 7 customer-facing surfaces gated on unresolved Tech Review.** Clear to live T1–T18 → deploy. MED-4 remains the logged LOW follow-up.
+
+---
+
+## COUNT-FIX RE-VERIFY (2026-07-02, commit `107b960b`) — PASS
+
+Live-acceptance bug (Jon): with >1 line flagged, the Send-button label + QuoteSendModal titles showed "1 incomplete" regardless of count. Root cause: the P3 gate pushed **one issue per PANEL** (`count:N`), but the `.length`-based displays read the issue-object count = 1/panel. Fix pushes **one issue per unresolved TR row** (matches the pricing per-row pattern), dropping the `count` field.
+
+- **(a) Per-row push correct, no double-count / no pricing disturbance** — `for(const _trRow of bom.filter(_isUnresolvedTechReviewRow)){ issues.push({… isTechReviewBlock:true}) }` at `src/app.jsx:15963-15982`: one issue per unresolved row, each pushed once; separate from the untouched pricing loop above it. ✓
+- **(b) `.length` displays now agree** — modal Send-button titles (`33367`/`33375`, `incompleteItems.length`), modal pagination (`33356`, `incompleteItems.length-8`), ProjectView Send-button label (`36086`, `_incompleteItems.length`) now count N per-row issues instead of 1/panel → true flagged-line count. The 5 sum sites (`15997`/`33020`/`33693`/`36019`/`37718`) all use `count||1` → per-row (no `count`) contributes 1 each → sum still = N. No site reads a raw `.count`, so dropping the field is safe. ✓
+- **(c) Gate unchanged** — `_sendBlocked = findIncompleteQuoteItems(...).length>0` still trips iff ≥1 unresolved TR row; `.some(i=>i.isTechReviewBlock)` still true iff any. ✓
+- **(d) No pricing regression** — diff touches only the TR block; pricing loop untouched; `_pricingIssueCount` filters out `isTechReviewBlock` (`33021`/`36020`) so it's unaffected. ✓
+
+**Minor, non-blocking (intended):** a row that is *both* pricing-incomplete *and* TR-unresolved now contributes **2** to the generic `incompleteItems.length` total (1 pricing + 1 TR) — two genuine distinct fixes, consistent with the per-row pattern; the per-category counts (banner/`_trCount`/`_pricingCount`) are independent and correct. Also a UX plus: TR rows are now itemized by part number in the modal's incomplete-items list rather than one vague "(Technical Review)" line.
+
+**Verdict: count-fix correct — PASS.**
