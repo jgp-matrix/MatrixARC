@@ -38299,7 +38299,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // navigation. Now safeSave fires immediately so the BOM survives a refresh.
     const updatedProject={...projectRef.current,panels:updatedPanels};
     update(updatedProject);
-    safeSave(uid,updatedProject).catch(e=>console.warn("safeSave after applyPortalPrices failed:",e));
+    // #199/persistence: AWAIT the write so it can't lose the race to an immediate reload —
+    // this is the money-path gate (a lost write would leave the send-gate reading "clear" →
+    // sendable without Tech-Review sign-off). safeSave never throws (internal retry, returns bool).
+    await safeSave(uid,updatedProject);
     // DECISION(v1.19.691): Write supplier lead times to BC ItemVendorCatalog (Page 114).
     // Fires alongside the price push — same transaction semantics. Blank partNumber is a
     // HARD REJECT. Audit trail in companies/{cid}/bcLeadTimeWrites. Non-fatal on failure.
