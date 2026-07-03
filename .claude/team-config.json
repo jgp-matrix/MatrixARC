@@ -2,6 +2,7 @@
   "teamName": "Matrix ARC Team",
   "guidedMode": false,
   "orchestrator": "analyst",
+  "closeoutOrchestrator": "analyst",
   "roles": {
     "implementer": {
       "name": "Marc Masdev",
@@ -25,6 +26,15 @@
       "hasFileAccess": true,
       "sessionTitle": "🟥Freddy - ARC",
       "_note": "2026-07-01: all three roles run in CCD (Claude Code Desktop) so cross-session send_message comms work between Marc/Freddy/Coach. Freddy moved browser→CCD (repo READ); Coach moved terminal→CCD. Terminal CLI can't receive cross-session messages — do NOT use it for team roles. Each session in Ask-permissions mode; per-send Allow-Once prompt is expected."
+    },
+    "intake": {
+      "name": "Dezzie Arnez",
+      "shortName": "Dez",
+      "environment": "ccd",
+      "notifyPrefix": "DEZ",
+      "hasFileAccess": true,
+      "sessionTitle": "🟪Dez - ARC",
+      "_note": "2026-07-03: Intake/Triage + live Status Board. Owns INBOX.md (append-only capture) + STATUS.md (sole writer). Capture/display only — does NOT scope/assign/build (Freddy triages the INBOX + routes status content). CCD, Ask-permissions mode."
     }
   },
   "appUrl": "https://matrix-arc.web.app",

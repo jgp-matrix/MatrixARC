@@ -1,6 +1,6 @@
 # /team-closeout — Dev Team Session Close Out
 
-This skill runs the full close out procedure. The Implementer (you) orchestrates.
+This skill runs the full close out procedure. The **close-out orchestrator** — the role in `closeoutOrchestrator` (default `analyst` = Freddy; falls back to `implementer` if unset) — runs it. As of 2026-07-03 close-outs are **Freddy-run** (like startup): Freddy owns SESSION-STATE / FREDDY.md / TODO, so most handoff edits are in-lane; steps already done mid-session (commit/merge/deploy) are skipped as no-ops.
 
 **Interaction rule:** Whenever this skill requires a user decision (approval, choice, confirmation), use the AskUserQuestion tool with selectable options — never ask as plain text expecting a typed answer.
 
@@ -14,6 +14,8 @@ Extract config values:
 - `IMPL_SHORT` = roles.implementer.shortName
 - `ARCH_SHORT` = roles.architect.shortName
 - `ANALYST_SHORT` = roles.analyst.shortName
+- `INTAKE_SHORT` = roles.intake.shortName (if the `intake` role exists)
+- `ORCH_ROLE` = closeoutOrchestrator (role key; default `analyst` = Freddy). The current session adopts this identity + runs close-out; the OTHER roles are the peers you clear-check in Step 7.
 - `SESSION_STATE` = files.sessionState
 - `ANALYST_ONBOARDING` = files.analystOnboarding
 - `ANALYST_PASTE` = files.analystPaste (combined onboarding + session state file for drag-and-drop)
@@ -233,9 +235,20 @@ Anything from this session that only lives in your chat and needs
 to be captured before we close? If not: "{ANALYST_SHORT} clear."
 ```
 
-**Wait for both confirmations.** Do not proceed to "Closed" until the user relays "{ARCH_SHORT} clear" and "{ANALYST_SHORT} clear" (or equivalent).
+### {INTAKE_SHORT} close-out notification (for the intake role — Dez; emit if `intake` exists)
 
-Mark complete: `✓ Step 7 — {ARCH_SHORT} and {ANALYST_SHORT} confirmed clear`
+```
+SESSION CLOSING — {INTAKE_SHORT} close out.
+
+Please: (1) ensure STATUS.md reflects the session's END state and is committed + pushed
+(commit `-- STATUS.md`); (2) confirm INBOX.md is clear (all items triaged/promoted).
+Anything from this session living only in your session and not in the repo?
+If not: "{INTAKE_SHORT} clear."
+```
+
+**Clear-check EVERY peer** (all roles except {ORCH_SHORT} — with the analyst orchestrating: {IMPL_SHORT}, {ARCH_SHORT}, {INTAKE_SHORT}). Send each their block via `send_message`. **Do not proceed to "Closed"** until every peer replies "<name> clear" (or equivalent).
+
+Mark complete: `✓ Step 7 — all peers confirmed clear`
 
 ## Step 8 — STOP
 
@@ -272,7 +285,7 @@ When user types "Closed" after close out:
 3. Commits on master (or intentionally on feature branch per user choice)
 4. TODO.md updates applied or waived
 5. Handoff files ({SESSION_STATE}, {ANALYST_ONBOARDING}, {ANALYST_PASTE}) committed and pushed
-6. {ARCH_SHORT} and {ANALYST_SHORT} confirmed clear (Step 7)
+6. All peers confirmed clear (Step 7 — {IMPL_SHORT}/{ARCH_SHORT}/{INTAKE_SHORT} when analyst orchestrates)
 
 If all pass: `✓ Session closed cleanly. All changes committed and pushed. Handoff files current. Safe to end.`
 

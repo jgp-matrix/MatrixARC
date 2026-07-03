@@ -12,9 +12,9 @@ Extract these values from the config (use throughout this skill):
 - `TEAM` = teamName
 - `GUIDED` = guidedMode (if true, show tips; if false or missing, skip tips)
 - `ORCH_ROLE` = orchestrator (role key: `implementer` | `architect` | `analyst`; if missing, default to `implementer`). This is the role the current session adopts and runs startup as.
-- For each role (`implementer`, `architect`, `analyst`), read `.name` / `.shortName` / `.sessionTitle` / `.environment` / `.hasFileAccess`. Referenced below as `IMPL_*`, `ARCH_*`, `ANALYST_*` (e.g. `IMPL_NAME`, `ARCH_TITLE`). If a `sessionTitle` is missing, fall back to a title containing that role's short name.
+- For each role (`implementer`, `architect`, `analyst`, `intake`), read `.name` / `.shortName` / `.sessionTitle` / `.environment` / `.hasFileAccess`. Referenced below as `IMPL_*`, `ARCH_*`, `ANALYST_*`, `INTAKE_*` (e.g. `IMPL_NAME`, `INTAKE_TITLE`). If a `sessionTitle` is missing, fall back to a title containing that role's short name. (`intake` may be absent in older configs — skip it if the role key isn't present.)
 - `ORCH_NAME` / `ORCH_SHORT` / `ORCH_TITLE` = the `.name` / `.shortName` / `.sessionTitle` of `roles[ORCH_ROLE]`.
-- `PEERS` = the two roles that are **not** `ORCH_ROLE`. You generate one paste per peer (Step 2) and comms-check each peer (Step 5).
+- `PEERS` = **all roles that are not** `ORCH_ROLE` (with the analyst orchestrating, that's implementer + architect + intake — Marc, Coach, Dez). You generate one paste per peer (Step 2) and comms-check each peer (Step 5).
 - `SESSION_STATE` = files.sessionState
 - `ANALYST_ONBOARDING` = files.analystOnboarding
 - `ANALYST_PASTE` = files.analystPaste (combined onboarding + session state, used only in the no-file-access fallback)
@@ -27,18 +27,18 @@ You are **{ORCH_NAME}** ("{ORCH_SHORT}"), running startup orchestration. **Set t
 
 ## Display the checklist
 
-Fill in the two peer short names for `{PEER_A}` / `{PEER_B}` (the roles that aren't {ORCH_SHORT}).
+List the peer short names — every role that isn't {ORCH_SHORT} (with the analyst orchestrating: Marc, Coach, Dez).
 
 ```
 {TEAM} STARTUP CHECKLIST  (orchestrated by {ORCH_SHORT})
 ─────────────────────────────
 □ Step 1 — Verify repo state (automatic — no user action)
-□ Step 2 — Generate {PEER_A} + {PEER_B} pastes (automatic; path-based)
+□ Step 2 — Generate a paste for EACH peer (automatic; path-based)
    → USER ACTION: Paste each block into a new CCD session for that role
 □ Step 3 — Live-testing browser (linked in the Implementer's session)
-□ Step 4 — Wait for user to confirm both peer sessions initialized
-   → USER ACTION: Confirm "{PEER_A} is up" and "{PEER_B} is up"
-□ Step 5 — Comms-check sync ({ORCH_SHORT} messages both peers via send_message; they reply on the bus)
+□ Step 4 — Wait for user to confirm ALL peer sessions initialized
+   → USER ACTION: Confirm each peer is up
+□ Step 5 — Comms-check sync ({ORCH_SHORT} messages every peer via send_message; they reply on the bus)
    → USER ACTION: Approve the per-send "Allow Once" prompts — no manual relay needed
 □ Step 6 — Work begins
    → USER ACTION: Give first work instruction
@@ -155,7 +155,29 @@ Start-Process explorer.exe -ArgumentList "/select,{repo root path}\{ANALYST_PAST
 Start-Process explorer.exe -ArgumentList "/select,{repo root path}\TODO.md"
 ```
 
-Mark complete: `✓ Step 2 — {PEER_A} + {PEER_B} pastes ready`
+**Intake paste** (emit if intake is a peer — Dez):
+
+```
+Set this session's name to "{INTAKE_TITLE}".
+
+You are {INTAKE_NAME} ("{INTAKE_SHORT}"), Intake/Triage + live Status Board on the {TEAM} project at {repo root path}.
+
+Read these files to orient yourself (in this order):
+1. CLAUDE.md — project rules + your role (the Intake/Triage subsection + the Status Board duty)
+2. INBOX.md — the intake capture file you own (append-only)
+3. STATUS.md — the live status board you own (sole writer)
+4. {SESSION_STATE} — current project state, version, work queue
+
+You OWN INBOX.md (append-only bug/feature capture — commit `-- INBOX.md` + push after each) and STATUS.md (sole writer). You CAPTURE + DISPLAY only — never scope, assign, or build (Freddy triages the INBOX + routes the status content). Stay in "Ask permissions" mode so your cross-session send_message replies fire.
+
+After reading, report back:
+- Your role identity (name and role)
+- Current deployed version + live master tip (git rev-parse --short HEAD)
+- That INBOX.md + STATUS.md are current (or note pending items)
+- "{INTAKE_SHORT} ready"
+```
+
+Mark complete: `✓ Step 2 — pastes ready for every peer`
 
 ## Step 3 — Live-testing browser
 
@@ -178,13 +200,13 @@ here and tell me when both are up.
 ```
 
 Tell the user:
-> The {PEER_A} and {PEER_B} pastes are ready above. Open a **new CCD (Claude Code Desktop) session for each** and paste their block in. Each paste self-titles the session (first line) so my Step 5 comms check can locate it via `list_sessions`. Let me know when both are up.
+> A paste is ready above for each peer. Open a **new CCD (Claude Code Desktop) session for each** and paste their block in. Each paste self-titles the session (first line) so my Step 5 comms check can locate it via `list_sessions`. Let me know when all are up.
 
 **All team roles run in CCD (Desktop)**, so cross-session `send_message` moves messages between them directly (no copy-paste relay). Each session must be in **"Ask permissions"** mode for its outbound sends to fire; a per-send **"Allow Once"** prompt is expected (hardcoded, not suppressible). Do NOT use the Terminal CLI for any team role — it cannot receive cross-session messages; the repo (git) remains the durable fallback bus.
 
-**Do not proceed** until the user confirms both peer sessions are initialized.
+**Do not proceed** until the user confirms all peer sessions are initialized.
 
-Mark complete: `✓ Step 4 — {PEER_A} and {PEER_B} initialized (both CCD)`
+Mark complete: `✓ Step 4 — all peers initialized (CCD)`
 
 ## Step 5 — Comms-check sync (automated, over the CCD bus)
 
@@ -199,7 +221,7 @@ or master tip SHA), it usually means a handoff file is stale — we fix it befor
 starting work.
 ```
 
-1. **Locate the peer sessions.** Call `list_sessions` and match each peer by its self-title ({PEER_A} → its `sessionTitle`, {PEER_B} → its `sessionTitle`). If a title isn't found or is ambiguous (e.g. duplicates), ask the user which sessionId is which before sending — never guess the target.
+1. **Locate the peer sessions.** Call `list_sessions` and match each peer by its self-title (its `sessionTitle`). If a title isn't found or is ambiguous (e.g. duplicates), ask the user which sessionId is which before sending — never guess the target.
 
 2. **State {ORCH_SHORT}'s own sync baseline** so the reply comparison has a reference:
    - **Version:** current version
@@ -235,7 +257,7 @@ Mark complete: `✓ Step 5 — All roles synced over the bus: v{VERSION} @ {SHA}
 ──────────────────────────
 Version: v{VERSION} @ {SHA}
 Orchestrated by: {ORCH_SHORT}
-Roles: {IMPL_SHORT} + {ARCH_SHORT} + {ANALYST_SHORT} (all CCD)
+Roles: {IMPL_SHORT} + {ARCH_SHORT} + {ANALYST_SHORT} + {INTAKE_SHORT} (all CCD)
 Live-testing browser: {linked in IMPL_SHORT's session | not yet needed}
 Top of queue: {ITEM}
 Awaiting first work instruction.

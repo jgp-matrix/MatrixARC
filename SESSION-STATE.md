@@ -40,6 +40,11 @@ Further carry: B005 (resolved-TR-row re-arm — TR-tuning), G005 (matrix-arc-tes
 - **Comms finding (per-send Allow-Once).** Live-tested this session: the cross-session `send_message` Allow-Once is **per-SEND, not per-target** — a repeat send to an already-approved target STILL prompts (refutes the earlier "per-target memory" read). Hardcoded, no allowlist can suppress (G001). Only lever = fewer sends (→ the batching/gating above). *(Jon tabled the deeper comms investigation — do not re-open unless he resumes it.)*
 - **Hub-and-spoke + hybrid routing** unchanged (see CLAUDE.md): all cross-role messaging routes through Freddy; low-stakes mechanical → subagents (ask Jon first, ON PROBATION); high-stakes → the 4 standing sessions.
 
+## Loose ends — test-data cleanup (2026-07-03, low-value; test data, Jon-cleared, note-only)
+- **PRJ402097 "Villages Clarifier"** — left in "Pre-Review Approved by Designer" state + 3 resolved TR flags on BOM rows (from the #199 T10 approve-sweep test); a review-notification email fired to jon@matrixpci.com; a BC quote_ready upload fired (sandbox). Reset if you demo/reuse this project.
+- **PRJ402111 "Secret Panel"** — pending supplier submission CONSUMED (applied); ~7 BC ItemVendorCatalog sandbox writes; a manufactured cross (KXT1HTC-3→800H-QRH2G) reverted on reload (benign). Needs a fresh submission before re-running a supplier-cross test.
+- No reset performed (test data, pre-launch) — logged only per Jon 2026-07-03. Related: G005 (matrix-arc-test shares PROD Firestore — isolate before real customers).
+
 ## Session infrastructure lessons (carry-forward)
 - **Cross-session bus:** CCD Desktop↔Desktop only (Terminal can't receive). Each session in "Ask permissions" mode for outbound sends to fire. Allow-Once is per-send + hardcoded (above).
 - **React controlled inputs can't be set by automation** — the TR checkbox needed Jon's real click; synthetic/ref clicks toggle the DOM box but React reverts (no onChange). Ref-clicking BUTTONS/dropdowns works fine. → live acceptance of checkbox-driven UI needs Jon co-driving the clicks.
