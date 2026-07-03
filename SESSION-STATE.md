@@ -1,115 +1,46 @@
-# Session State — 2026-07-01 MDT (#182 verified · #187/#191 shipped · #192 regression · #193 pending-verify)
+# Session State — 2026-07-03 MDT (#199 Tech Review flag SHIPPED v1.21.25 · team protocols reset)
 
 ## Version
-**v1.21.23** (deployed 2026-07-01, PRODUCTION). Ten patch bumps this session over v1.21.13:
-- v1.21.14 = #187 Phase 2 (customer tier + relocation)
-- v1.21.15–.18 = #187 relocation fix + right-justify (on-screen + PDF)
-- v1.21.19 = #192 widen BUDGETARY auto-set to all red rows (⚠ regression, see below)
-- v1.21.20 = #191 quote-# assign on all send paths + subject recompute
-- v1.21.21 = #192 TEMP instrumentation ([#192 REVERT-FIRE] log)
-- v1.21.22 = #191 4th-path closer (handleGeneratePdf)
-- v1.21.23 = #193 Send-To-Sales tab
-- (v1.21.12/.13 earlier = #186 guard / #187 Phase 1)
+**v1.21.25** (deployed 2026-07-03, PRODUCTION). Shipped #199 (Tech Review flag) + two in-pass fixes + #17.
 
 ## Deploy State
-- **Master tip:** `966f3055` (close-out doc/config commits; release = `1e9129c2` v1.21.23). **`master == origin/master`** (in sync). No feature branches.
-- Production hosting: **https://matrix-arc.web.app** serving v1.21.23. All session code committed + deployed.
-- **#192 instrumentation is LIVE** (temporary, tagged "#192 TEMP INSTRUMENTATION" — the `_redReasonBreakdown`
-  helper + the "[#192 REVERT-FIRE]" log at ~app.jsx:37246). STRIP it after the #192 regression fix.
-- Uncommitted at close-out (left for their owners): Coach's untracked docs (plans/verifications/supplements),
-  `.gitignore`, `.claude/settings.json`, `tools/arc-*.sh` — Coach commits these at Coach's close-out.
+- **Master tip:** `01099977` (dev-tooling: team-boot AHK path). **Release commit = `333f385d` (v1.21.25)**. `master == origin/master` (in sync). No feature branches (all work committed directly to master this session).
+- Production hosting: **https://matrix-arc.web.app** serving **v1.21.25**. All app code committed + deployed. The `01099977` commit is dev-tooling only (no `src/` change) — production is still v1.21.25.
+- Working tree CLEAN at close-out.
 
-## ⭐ NEXT UP — analyst leads (top 10 · #192 REGRESSION first)
+## ⭐ NEXT UP — analyst leads (top 10)
 
-**Start here.** Take the reins per your Startup Directive. Top priority is the #192 regression (teed up at #1);
-the rest is the ranked fallback (re-prioritize if you see a better next move).
+**Take the reins per your Startup Directive.** #199 closed cleanly this session with nothing queued behind it, so this list is ranked by priority — pick the best next move (several are teed up). #192 remains the top open *bug* but is EVIDENCE-GATED; the first genuinely-unblocked moves are the G002 live test, #200, and #193 verify.
 
-1. **🔴 #192 REGRESSION (TEED UP — do first)** — auto-revert CLEARS BUDGETARY on red-row projects on OPEN
-   (Noah watched it uncheck). Mechanism strong-inferred (NOT directly observed): background reprice on open
-   transiently drives all-non-red ≥600ms → `_hasRedRows(latest)` false at the debounced fire (~app.jsx:37246) →
-   false "Remove Budgetary?" dialog. **Instrumentation is LIVE (v1.21.21)** — the "[#192 REVERT-FIRE]" console
-   log appearing AT ALL confirms the transient. **Awaiting Noah's intermittent repro w/ console open.** FIX
-   DIRECTION: don't auto-revert on the initial-open / bg-reprice re-fire; require a STABLE clean state (re-check
-   after settle) before prompting. Then STRIP the instrumentation. Trace: docs/192-BUDGETARY-REVERT-REGRESSION-TRACE.md.
-   **⚠ #192 is #1 but EVIDENCE-GATED** — not team-actionable until the "[#192 REVERT-FIRE]" log appears on Noah's
-   repro. **First UNBLOCKED team action = #188 build (#3 below); run it in PARALLEL so #192's #1 priority doesn't
-   idle Marc.** Routing state at close: Marc FREE (queue #188 build → #196 trace); Coach IDLE (#192 fix-plan
-   blocked on the capture). (Full analyst hand-off: docs/2026-07-01-FREDDY-BROWSER-FINAL-DUMP.md.)
-2. **#193 Send-To-Sales — VERIFY** (v1.21.23, done-pending) — Jon verify + Coach verify: default tab = Send To
-   Sales, recipient pre-fills own email (editable), tab-switch swaps recipient, real-send semantics, writes
-   `quote_send` to `qvHistory[]`. Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md.
-3. **#188 validate-at-push vendor fix** (MED, plan APPROVED, shovel-ready) — two-tier (#184-safe); heals
-   PRJ402124's V00102 rows on next push. Build not started. Plan: docs/188-VALIDATE-AT-PUSH-PLAN.md.
-4. **#197 ship-date on PO Received modal** (MED) — compute calendar ship date = PO received date + lead time
-   (ARC only stores duration today); mismatch OA messaging. PREREQ: Coach reads the lead-time formula → Brief.
-5. **#196 locked-quote overlay covers Receive PO** (LOW-MED, latent) — lock shouldn't gate forward workflow
-   (PO receipt). Trace not run. Workaround: unlock.
-6. **#198 Client Review approval step** (MED) — no "Approved" action; project stuck "Client Review In Progress —
-   Edits Locked". Add a client-facing approve that clears the lock. (Renumbered from #191.)
-7. **#190 "Save Defaults" → "Save" relabel** (LOW) — pending Coach confirm the button commits the full modal.
-8. **#184 push concurrency** (LOW) — Firestore "resource-exhausted" under broad Push (adjacent to #182).
-9. **#185 Send-RFQ Contacts dropdown** (LOW) — looks inert (correct dedup) + InterMtn duplicate-email artifact.
-10. **#194 global ARC email/metrics + click-tracing** (feature placeholder) — #193's `quote_send` log is the
-    first feed. Needs a Brief.
+1. **🔴 #192 REGRESSION (top bug, but EVIDENCE-GATED — not team-actionable yet)** — auto-revert CLEARS BUDGETARY on red-row projects on OPEN (Noah watched it uncheck). Mechanism strong-inferred (background reprice on open transiently drives all-non-red → `_hasRedRows(latest)` false at the debounced fire ~app.jsx:37246 → false "Remove Budgetary?" dialog). **Instrumentation LIVE (v1.21.21)** — the "[#192 REVERT-FIRE]" console log appearing AT ALL confirms it. **Blocked on Noah's intermittent repro w/ console open.** FIX: require a STABLE clean state (re-check after settle) before auto-revert; then STRIP instrumentation. Trace: docs/192-BUDGETARY-REVERT-REGRESSION-TRACE.md.
+2. **G002 launcher — LIVE FRESH-BOOT CALIBRATION (teed up, unblocked)** — the launcher is Coach-approved (v3), AHK path baked (`01099977`), desktop shortcut `Boot ARC Team.lnk` + printable `ARC-Team-Startup.html` runbook created, `-WhatIf` clean. Only the live run remains: at a clean boot, run it and confirm `Ctrl+N` creates EXACTLY 4 sessions (the #1 unknown — silent-stack risk if the shortcut's wrong), then tear-off/title/comms-check. TODO G002.
+3. **#200 — Quota-aging project-tile color-shift (Brief written, ready to pipeline)** — shift dashboard tile color as a project ages toward its Sales quota deadline (anchor createdAt, un-quoted-only + sending stops it, business days, fixed offsets). Next step: Coach Supplement → Analyst Review → Plan. Brief: docs/200-QUOTA-TILE-AGING-BRIEF.md.
+4. **#193 Send-To-Sales — VERIFY** (v1.21.23, done-pending) — Jon + Coach verify default tab, recipient pre-fill, tab-switch, real-send semantics, `quote_send` in `qvHistory[]`. Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md.
+5. **#188 validate-at-push vendor fix** (MED, plan APPROVED, shovel-ready) — two-tier (#184-safe); heals PRJ402124's V00102 rows on next push. Plan: docs/188-VALIDATE-AT-PUSH-PLAN.md.
+6. **#197 ship-date on PO Received modal** (MED) — calendar ship date = PO received + lead time. PREREQ: Coach reads the lead-time formula → Brief.
+7. **#198 Client Review approval step** (MED) — add a client-facing "Approved" action that clears the "Client Review In Progress — Edits Locked" state.
+8. **B003 — Review Supplier Quote modal lists unquoted parts** (Backlog) — hide non-quoted lines (declutter). New this session.
+9. **#196 locked-quote overlay covers Receive PO** (LOW-MED, latent) — lock shouldn't gate PO receipt. Workaround: unlock.
+10. **#190 "Save Defaults" → "Save" relabel** (LOW) — pending Coach confirm the button commits the full modal.
 
-Further carry (below the top 10): #195 (cosmetic — Print-as-Firm checklist shows auto-flagged BUDGETARY on
-override), #176/#177 (LOW residuals), #58/C15 Parts 2/4/7, #165(A) pending Jon eyeball, #159 (Copy-to-New-Quote),
-Coach C118 (#165 detector-diff).
+Further carry: B005 (resolved-TR-row re-arm — TR-tuning), G005 (matrix-arc-test prod-Firestore isolation — before launch), #184/#185 (LOW), #194/#195, #176/#177, #58/C15 Parts 2/4/7, #165(A), #159, Coach C118.
 
 ## What shipped this session
-- **#182 (v1.21.11 `7cf55a82`) — Item Vendor EntityWithSameKeyExists.** 3-part PATCH key fix. **T3 VERIFIED
-  LIVE 2026-07-01: 32 collisions → 0.** RESOLVED.
-- **#187 (v1.21.13→.18) — quote-validity cascade + valid-until relocation + PDF right-justify.** 4-tier cascade,
-  single-source `project.quoteExpiresAt`; Phase 1 (`543e1700`) + Phase 2 customer tier (`ee085025`); combined
-  valid-until row (doubling + PDF orphan fixed), on-screen right-justified, PDF right-aligned. RESOLVED.
-- **#189 — global default won't persist.** Not a defect (Jon hadn't clicked "Save Defaults"). RESOLVED; relabel → #190.
-- **#191 (v1.21.20 `896c2e6e` + v1.21.22 `6ed639b5`) — quote # missing.** New idempotent `ensureQuoteNumber`;
-  all 4 quote-PDF paths assign before build; subject recompute. Backfilled PRJ402119→MTX-Q202030,
-  PRJ402118→MTX-Q202031. RESOLVED (Noah confirms send-flow as backstop).
-- **#192 (v1.21.19 `a30d975c`) — widened BUDGETARY auto-set to all red rows** (14 sites). DONE, but see the
-  🔴 regression above (auto-revert false-clear on open).
-- **#193 (v1.21.23 `39c8d6ac`) — Send-To-Sales tab.** DONE-PENDING-VERIFY.
+- **#199 — Per-line Tech Review flag + hard send-gate. SHIPPED v1.21.25, RESOLVED.** Per-BOM-line Tech-Review checkbox; auto-stamps on supplier crosses (`@38978`, unconditional → a supplier re-cross re-arms a resolved row); hard send-gate across all 7 send surfaces; reviewer per-row Resolve + approve-sweep (MED-2 no-partial-write). Full **T1–T18 live-passed** on matrix-arc-test (Jon co-drove the React-checkbox clicks; Marc ref-drove buttons + verified). Dispositions: T3 covered-by-design (flag rides isCrossed lifecycle), T7 superseded by P3, T12 N/A-by-design (read-only resolved is §2.2-compliant + safe). Commits: P1 `13f06fcf`/`66494253`, P2 `a5253d42`, P3 `a0e39335`, MED-3 `c46184aa`, await-fix `41824f6c`, count-fix `107b960b`, release `333f385d`. Coach chain: P1/P2/P3 + MED-1/2/3 verified, persist-trace `186da1fe`, await sign-off `41ddfc28`, count re-verify `29d9ea09`.
+- **B004 — Portal Apply unawaited-save reload-race. RESOLVED `41824f6c` (shipped w/ #199).** `doApplyPortalPrices` persisted via a fire-and-forget `safeSave` → an immediate reload could beat the write and revert cross+flag+prices. Fix: `await safeSave` @38302. Pre-existing since v1.19.722; surfaced during #199 live pass.
+- **Jon-found multi-line COUNT bug — fixed `107b960b`.** Send-button/modal showed "1 incomplete" regardless of count (banner was correct); P3 pushed one issue per PANEL. Fix: one issue per unresolved TR row.
+- **#17 — arcDocOpen fire-and-forget fallback (`.catch`).** Shipped in the same hosting build (`0651a73c`).
 
 ## New findings logged this session
-- **#188** (MED) stale/phantom bcVendorNo on Push (plan approved). **#190** (LOW) Save relabel. **#192 regression**
-  (🔴 top priority). **#194** (feature) metrics. **#195** (LOW cosmetic) Print-as-Firm checklist. **#196** (LOW)
-  locked overlay covers Receive PO. **#197** (MED) ship-date on PO Received modal. **#198** (MED) Client Review
-  approval step (renumbered from #191). See TODO.md for full text.
+- **G005** (infra) matrix-arc-test shares PROD Firestore — isolate before real customers. **B003** (Backlog) Review-Supplier-Quote modal lists unquoted parts. **B004** (RESOLVED, above). **B005** (LOW/tuning) resolved-TR-row can't be manually re-armed. **#200** (Brief written, queued). See TODO.md B/F/G Tracker.
 
-## Team workflow state (2026-07-01)
-- **★ ANALYST PIVOT — browser-Freddy → terminal-Freddy (CCD), effective NEXT SESSION:** Freddy now runs in CCD
-  (Claude Code Desktop) with repo-READ access and boots from THIS SESSION-STATE, **REPLACING** browser-Freddy —
-  **ONE live analyst, no overlap** (never both concurrent; handoff is clean via this file). Boundary unchanged
-  (reads-to-route, does NOT build/trace); onboarding = FREDDY.md + FREDDY-PASTE.md (both). **CCD startup mechanics
-  are TBD — Marc establishes them with the first terminal-Freddy session** (launch/command, how pastes+reports
-  flow, how Freddy receives Coach/Marc outputs). See the "Terminal-Freddy (CCD) role addition" section in FREDDY.md.
-  NOTE: "terminal-Freddy" = CCD **Desktop** (not the Terminal CLI, which per the cross-session lesson below cannot
-  receive messages).
-- **Controlled-tab title marker:** the Claude-driven tab is stamped `🤖 CLAUDE-CONTROLLED ▸ ARC`
-  (`document.title`), re-stamped after every reload/navigation (app resets it). Per CLAUDE.md.
+## Team workflow state (2026-07-03) — IMPORTANT, changed this session
+- **★ PER-PHASE GATING (Jon-in-the-loop).** Jon flagged that the team moved so fast he was reduced to clicking "Allow Once" while questions got self-solved before he could answer. New protocol: the team **HOLDS after each phase** for Jon's explicit "go"; a **question to Jon FREEZES the whole team** (no self-solving/working around it); **Freddy MINIMIZES cross-session sends** (each is a hardcoded per-send Allow-Once prompt = noise); **deploy is its own Jon-released checkpoint**; **"HOLD"/"STOP" from Jon freezes all sessions.** (memory: gating-per-phase-jon-in-loop.)
+- **★ CLOSE-OUTS RUN FROM FREDDY** (Jon ruled 2026-07-03, twice) — like startup (Freddy took startup 2026-07-02). Freddy orchestrates the close-out directly (owns SESSION-STATE/FREDDY.md/TODO). **Mechanism follow-up:** `.claude/commands/team-closeout.md` still says "Implementer orchestrates" + team-config has no close-out orchestrator field → update to analyst/Freddy (routes to tooling owner). (memory: freddy-runs-closeouts.)
+- **Comms finding (per-send Allow-Once).** Live-tested this session: the cross-session `send_message` Allow-Once is **per-SEND, not per-target** — a repeat send to an already-approved target STILL prompts (refutes the earlier "per-target memory" read). Hardcoded, no allowlist can suppress (G001). Only lever = fewer sends (→ the batching/gating above). *(Jon tabled the deeper comms investigation — do not re-open unless he resumes it.)*
+- **Hub-and-spoke + hybrid routing** unchanged (see CLAUDE.md): all cross-role messaging routes through Freddy; low-stakes mechanical → subagents (ask Jon first, ON PROBATION); high-stakes → the 4 standing sessions.
 
-## Session infrastructure lessons
-- **Controlled-tab instability:** heavy in-page JS (recursive React-fiber scans, large JSON.stringify dumps)
-  FREEZES/kills the Claude-in-Chrome tab. Keep probes lightweight (small DOM queries, bounded returns). Reading
-  Firestore/company data: capture companyId via a lightweight `firebase.firestore().collection/doc` path-logger
-  patch, then read `companies/{cid}/…` directly (the app renders from the company-scoped source, NOT
-  `users/{uid}/projects` — legacy). The MCP console reader does NOT reliably capture the app's own console.log
-  (e.g. `[BG PRICING]`/`[LEAD DRIVERS]`) — use a real DevTools console for those.
-- **Separate tabs share Firestore data but NOT in-memory state** — Jon's app session and Marc's controlled tab
-  are distinct; durable evidence (debug logs, project docs) is readable cross-tab, live UI state is not.
-- **Prod load-failure 2026-07-01 = Fastly Denver POP (DEN) edge timeout, NOT ARC.** `X-Served-By: cache-den-*`
-  (Firebase Hosting is fronted by Fastly). Origin was healthy throughout (version.json served, Firebase/Google
-  status clean, firebase.json intact — no deploy broke it). Regional/edge, recovered on its own. Response:
-  confirm-and-wait, NO redeploy (a redeploy re-pushes the same origin, does nothing for a Fastly edge).
-- **Cross-session messaging (`mcp__ccd_session_mgmt__send_message`) — tested 2026-07-01:** CCD↔CCD works
-  two-way. An idle Desktop window ingests an injected turn immediately and can reply back (tool returns
-  "Message sent", not "queued"). **TERMINAL sessions CANNOT receive** — the send queues (registry
-  `lastActivityAt` advances) but a Terminal CLI never surfaces/processes the turn, even when idle or nudged
-  with a keystroke. So **keep all team roles in CCD (Desktop) windows, not Terminal.** Each session must be in
-  **"Ask permissions"** mode for its OUTBOUND sends to fire — Auto/Bypass disables the tool entirely (that's
-  why sessions boot unable to send: global `defaultMode` is `bypassPermissions`). The per-send **"Allow Once"
-  prompt is HARDCODED** — the tool literally "requires explicit approval regardless of permission mode"
-  (confirmed by G001's clean test 2026-07-02: a freshly-rebooted session WITH an allowlist rule loaded still
-  prompted; screenshot evidence). NOT suppressible by permission allowlist or any mode, and no remote-approval
-  path exists. Accepted as the cost of the four-independent-window workflow; do NOT re-test. For unattended runs,
-  fall back to the repo-commit handoff bus.
+## Session infrastructure lessons (carry-forward)
+- **Cross-session bus:** CCD Desktop↔Desktop only (Terminal can't receive). Each session in "Ask permissions" mode for outbound sends to fire. Allow-Once is per-send + hardcoded (above).
+- **React controlled inputs can't be set by automation** — the TR checkbox needed Jon's real click; synthetic/ref clicks toggle the DOM box but React reverts (no onChange). Ref-clicking BUTTONS/dropdowns works fine. → live acceptance of checkbox-driven UI needs Jon co-driving the clicks.
+- **Controlled-tab instability / Firestore reads / Fastly-edge:** unchanged from prior state (heavy in-page JS freezes the tab; read `companies/{cid}/…`; a prod load-failure may be a Fastly POP edge timeout, not ARC — confirm-and-wait, no redeploy).

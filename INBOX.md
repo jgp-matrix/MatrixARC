@@ -21,10 +21,9 @@
 
 ---
 
-- [2026-07-02] GEN — "matrix-arc-test shares PROD Firestore (not data-isolated)" — the test hosting target is in the same Firebase project as prod → same Firestore + Auth, so data-mutation tests there write the SAME DB as production. Safe NOW only because all data is pre-launch/test (Jon confirmed). BEFORE real customers exist, live mutation tests must use a truly isolated env / dedicated scratch, or they'd violate Data-Retention. Infra follow-up to fix before launch. — reported via Intake (source: Marc, #199 live pass, 2026-07-02; via Freddy)
-- [2026-07-02] BUG — "Review Supplier Quote modal lists unquoted parts" — on the Review Supplier Quote modal, parts the supplier did NOT quote should not be listed (declutter — only show quoted lines). (Likely a FEAT/UI refinement rather than a defect; Jon framed it as a bug fix — Freddy's call at triage.) — reported via Intake (source: Jon, 2026-07-02)
-- [2026-07-02] **[IN-PROGRESS — fixing PRE-DEPLOY, ships WITH #199; Jon-approved 2026-07-02; Freddy to RESOLVE w/ deploy SHA at triage]** BUG — "Portal Apply save is unawaited → reload-race on portal-apply data" — `doApplyPortalPrices` persists correctly via `safeSave` (@app.jsx ~38291-93; TR fields preserved, not stripped) BUT the save is fire-and-forget/unawaited, so an immediate page reload can beat the in-flight write and revert cross + flag + prices. PRE-EXISTING (since v1.19.722), affects ALL portal-apply data (NOT #199-specific). Fix: `await safeSave` in the portal Apply handler (@app.jsx:38302) to close the reload-race. — reported via Intake (source: Coach #199 P-persist verification `186da1fe`, 2026-07-02; via Freddy)
-- [2026-07-02] BUG — "Resolved TR row can't be manually re-armed / re-flagged" — a resolved Tech-Review row's checkbox is read-only, so (a) a manual PN edit to a resolved row does NOT re-arm the gate, and (b) read-only blocks a manual re-flag. NOT a #199 blocker (supplier re-cross @38978 DOES auto-re-arm a resolved row, so automatic re-review still fires). Freddy: defer to broader Tech-Review tuning. LOW/tuning follow-up. — reported via Intake (source: Coach #199 live pass, 2026-07-02; via Freddy)
+_(empty — all items triaged & promoted to TODO.md; see triage log below)_
 
-<!-- Triage log: 2026-07-02 — G001 (Allow-Once remote-approval → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) all promoted to TODO.md by Freddy. -->
+<!-- Triage log:
+     2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
+     2026-07-03 — G005 (matrix-arc-test shares PROD Firestore), B003 (Review-Supplier-Quote modal lists unquoted parts), B004 (portal-Apply unawaited-save reload-race → RESOLVED 41824f6c / shipped v1.21.25), B005 (resolved-TR-row can't re-arm, LOW/tuning) promoted by Freddy at #199 close-out. -->
 

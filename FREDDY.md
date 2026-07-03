@@ -87,7 +87,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.23 (defined in `public/index.html`; master tip `1e9129c2`, 2026-07-01). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.21.25 (defined in `public/index.html`; release `333f385d`, master tip `01099977`, 2026-07-03). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -322,7 +322,27 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-01)
+## Recently Active Work (as of 2026-07-03)
+
+### Shipped 2026-07-03 (v1.21.25) — #199 Tech Review flag + team-protocol reset
+- **#199 — Per-line Tech Review flag + hard send-gate. SHIPPED v1.21.25, RESOLVED.** Per-BOM-line Tech-Review
+  checkbox; auto-stamps on supplier crosses (`@38978`, unconditional → a supplier re-cross re-arms a resolved
+  row); hard send-gate across all 7 send surfaces; reviewer per-row Resolve + approve-sweep. Full **T1–T18
+  live-passed** (Jon co-drove the React-checkbox clicks — automation can't set a controlled checkbox; Marc
+  ref-drove buttons + verified). Ran the full Brief→Supplement→Analyst Review→Plan→P1/P2/P3→verify pipeline;
+  MED-1/2/3 caught by Coach cross-check + fixed. Two in-pass fixes shipped with it: **await-fix `41824f6c`**
+  (portal-apply reload-race, pre-existing) + **count-fix `107b960b`** (Jon-found multi-line count display).
+  Commits P1 `13f06fcf`/`66494253`, P2 `a5253d42`, P3 `a0e39335`, MED-3 `c46184aa`, release `333f385d`.
+- **★ NEW TEAM PROTOCOLS (this session — internalize):**
+  - **PER-PHASE GATING** — the team HOLDS after each phase for Jon's explicit "go"; a question to Jon FREEZES
+    the whole team (no self-solving); Freddy MINIMIZES cross-session sends (each is a hardcoded per-send
+    Allow-Once prompt); deploy is its own Jon-released checkpoint; "HOLD"/"STOP" freezes all.
+  - **CLOSE-OUTS RUN FROM FREDDY** (Jon ruled 2026-07-03) — like startup. Freddy orchestrates the close-out
+    directly. Mechanism follow-up: update `.claude/commands/team-closeout.md` + team-config (still say
+    "Implementer orchestrates") to analyst/Freddy.
+  - **Comms:** the cross-session Allow-Once is per-SEND (not per-target) — confirmed live; only lever is fewer
+    sends. (Deeper investigation tabled by Jon.)
+  - Full detail: SESSION-STATE.md (2026-07-03) + CLAUDE.md.
 
 ### Shipped 2026-07-01 (v1.21.12 → v1.21.23)
 - **#182 — Item Vendor 3-part-key fix. RESOLVED, T3 VERIFIED LIVE (32 collisions → 0).**
