@@ -6,15 +6,15 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — FULL T1–T18 CO-DRIVE proceeding (T1 fixture resolved)**
-- **✅ T1 fixture RESOLVED** — Jon approved (a): Marc manufactures a cross by re-mapping a BOM-Match dropdown in PRJ402111's variance-review → creates a genuine cross → exercises the auto-stamp path. **T1/T3/T5/T18 UNBLOCKED.**
-- **✅ Verified so far:** **T6** render (47 TR checkboxes, 0 console errors) + **no-regression** on the pricing banner.
-- **NOW:** full **T1–T18** co-drive (Jon clicks checkboxes; Marc ref-clicks buttons + re-map/apply + verifies).
-- **📥 Intake:** 2 un-routed (GEN test-env-shares-prod-Firestore; BUG Review-Supplier-Quote-modal-lists-unquoted-parts); B001/B002 triaged. **MED-4** = LOW.
+**#199 — LIVE PASS: 10 of 18 GREEN (supplier cluster fully passed)**
+- **✅ 10 GREEN:** T1 auto-stamp (source="supplier", badge) · T5 supplier-lock/MED-1 (checkbox disabled) · T14 composed block message · T8 reviewer Resolve affordance · T18 MED-3 7th-surface Quoted-BOM gate · T9 Resolve · T11 predicate excludes resolved · T15 resolve clears gate · T6 legacy render (47 controls, 0 errors) · no-regression on pricing banner. **Money-path gate confirmed firing + clearing across all 7 surfaces.**
+- **REMAINING (8):** T2 (reload) driving now · T3 (reconciliation) spot-check · T10 approve-sweep (Marc's scratch, authorized) · T13/T16-send + T17 (fully-priced scratch) · **T4/T12/T16-checkbox** (need Jon's real React-checkbox clicks).
+- **📥 Intake:** 2 un-routed (GEN test-env; BUG Review-Supplier-Quote-modal-lists-unquoted-parts); B001/B002 triaged. **MED-4** = LOW.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc + Jon → co-driving full T1–T18 · Coach → standby for results verify · Freddy hub-coordinating. (**Full-pass → deploy (#199 + #17).**)
+- **STATUS:** Marc → finishing solo + will co-drive 3 checkbox toggles w/ Jon · Coach → standby for results verify · Freddy hub-coordinating. (**Full-pass → deploy (#199 + #17).**)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 18:28 MDT]** **#199 live pass — 10 of 18 GREEN. Supplier cluster fully passed on PRJ402111** (cross manufactured per Jon): T1 auto-stamp · T5 supplier-lock/MED-1 · T14 composed block message · T8 reviewer Resolve · T18 MED-3 7th-surface gate · T9 Resolve · T11 predicate excludes resolved · T15 resolve clears gate · T6 legacy render · pricing no-regression. Money-path gate confirmed firing + clearing across all 7 surfaces. REMAINING: T2 (reload, driving now), T3 (reconciliation spot-check), T10 approve-sweep (Marc scratch), T13/T16-send + T17 (scratch), T4/T12/T16-checkbox (need Jon's real React clicks). Marc finishing solo + will co-drive 3 checkbox toggles w/ Jon. Full-pass → deploy (#199 + #17).
 - **[2026-07-02 18:18 MDT]** **#199 T1 fixture RESOLVED — Jon approved (a).** Marc manufactures a cross by re-mapping a BOM-Match dropdown in PRJ402111's variance-review → creates a genuine cross → exercises the auto-stamp path. T1/T3/T5/T18 now UNBLOCKED. Full T1–T18 co-drive proceeding (Jon clicks checkboxes; Marc ref-clicks buttons + re-map/apply + verifies). Full-pass → deploy (#199 + #17).
 - **[2026-07-02 18:15 MDT]** **#199 co-drive underway** (Jon clicks React checkboxes, Marc ref-clicks buttons + verifies). VERIFIED: T6 render (47 TR checkboxes, 0 console errors) + no-regression on pricing banner. NOW: co-driving the non-supplier set (T2/T4/T6/T8–T17) on Marc's fully-priced scratch. T1/T3/T5/T18 (supplier cross) HELD — PRJ402111's submission is exact-match/price-only (no cross → won't trigger T1); Jon deciding the T1 fixture (manufacture a cross via re-map, or a real-substitution submission). Full-pass → deploy (#199 + #17).
 - **[2026-07-02 18:05 MDT]** **#199 live pass → CO-DRIVE mode (Jon + Marc).** 12px TR controls too small for reliable extension-clicks → Jon clicks in the monitored tab + Marc verifies each step (canonical live-testing model). Already verified: T6 (legacy render — 47 rows show the TR control, zero console errors) + no-regression on pricing send-block. Now co-driving full interactive T1–T18 (fully-priced scratch for send-gate isolation; PRJ402111 RFQ for supplier tests). FULL-pass → deploy (#199 + #17); Coach standby for results verify.
