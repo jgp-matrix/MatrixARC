@@ -6,15 +6,16 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — CO-DRIVE MODE (Jon + Marc): interactive T1–T18 in the monitored tab**
-- **Why co-drive:** the 12px TR controls are too small for reliable extension-clicks → **Jon clicks in the monitored tab, Marc verifies each step** (canonical live-testing model).
-- **✅ Already verified:** **T6** (legacy render — 47 rows show the TR control, zero console errors) + **no-regression** on the pricing send-block.
-- **NOW:** Jon + Marc co-drive the full interactive **T1–T18** — fully-priced scratch for send-gate isolation; PRJ402111 RFQ for supplier tests.
-- **📥 Intake:** 1 un-routed (GEN test-env-shares-prod-Firestore); B001/B002 await Freddy triage. **MED-4** = LOW.
+**#199 — CO-DRIVE underway (Jon clicks, Marc verifies) · ⚠ T1 supplier-cross fixture needs Jon**
+- **✅ Verified:** **T6** render (47 TR checkboxes, 0 console errors) + **no-regression** on the pricing banner.
+- **NOW:** Jon + Marc co-driving the **non-supplier set (T2/T4/T6/T8–T17)** on Marc's fully-priced scratch (Jon clicks React checkboxes, Marc ref-clicks buttons + verifies).
+- **👤 HELD on Jon — T1 fixture:** T1/T3/T5/T18 (supplier cross) held because **PRJ402111's submission is exact-match / price-only (no cross → won't trigger T1)**. Jon deciding the T1 fixture: **manufacture a cross via re-map, or use a real-substitution submission.**
+- **📥 Intake:** 2 un-routed (GEN test-env-shares-prod-Firestore; BUG Review-Supplier-Quote-modal-lists-unquoted-parts); B001/B002 triaged. **MED-4** = LOW.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → **leading co-drive w/ Jon** · Coach → standby for results verify · Freddy hub-coordinating. (**FULL-pass → deploy (#199 + #17).**)
+- **STATUS:** Marc + Jon → co-driving non-supplier tests · T1 fixture pending Jon · Coach → standby for results verify · Freddy hub-coordinating. (Full-pass → deploy (#199 + #17).)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 18:15 MDT]** **#199 co-drive underway** (Jon clicks React checkboxes, Marc ref-clicks buttons + verifies). VERIFIED: T6 render (47 TR checkboxes, 0 console errors) + no-regression on pricing banner. NOW: co-driving the non-supplier set (T2/T4/T6/T8–T17) on Marc's fully-priced scratch. T1/T3/T5/T18 (supplier cross) HELD — PRJ402111's submission is exact-match/price-only (no cross → won't trigger T1); Jon deciding the T1 fixture (manufacture a cross via re-map, or a real-substitution submission). Full-pass → deploy (#199 + #17).
 - **[2026-07-02 18:05 MDT]** **#199 live pass → CO-DRIVE mode (Jon + Marc).** 12px TR controls too small for reliable extension-clicks → Jon clicks in the monitored tab + Marc verifies each step (canonical live-testing model). Already verified: T6 (legacy render — 47 rows show the TR control, zero console errors) + no-regression on pricing send-block. Now co-driving full interactive T1–T18 (fully-priced scratch for send-gate isolation; PRJ402111 RFQ for supplier tests). FULL-pass → deploy (#199 + #17); Coach standby for results verify.
 - **[2026-07-02 18:03 MDT]** **#199 live pass — supplier fixture resolved.** Jon: PRJ402111 has a pending RFQ to process/import → Marc's T1/T3/T5/T18 fixture. Marc now: process/import PRJ402111's RFQ → variance-apply → verify T1 (auto-stamp) / T3 (reconciliation) / T5 (supplier flag disabled) / T18 (Quoted-BOM block); non-supplier T2/T4/T6/T8–T17 on the scratch → FULL T1–T18 coverage. FULL-pass → deploy (#199 + #17) → SHIPPED. Coach standby for results verify.
 - **[2026-07-02 17:57 MDT]** **#199 live pass — split to unblock.** Marc using a FRESH scratch project for mutation tests (contained; T10 BC upload → sandbox task). NOW running the non-supplier set on scratch: T2/T4/T6/T8–T12/T13–T17. Incidental positive: existing PRICING send-block banner still renders correctly with the #199 build (no-regression signal). HELD: T1/T3/T5/T18 (supplier auto-stamp etc.) need a pending supplier submission — Jon's fixture call pending. Deploy on FULL-suite pass; Coach standby.
