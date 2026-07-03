@@ -93,7 +93,7 @@ onChange handlers (write to the row, then `saveProjectPanel(uid, project.id, pan
 ### 2.4 P1 test criteria
 - **T1** — Supplier cross via variance-apply → row gets `techReviewFlag:true, source:"supplier", resolved:false`.
 - **T2** — Save → reload → flag + source + resolved survive (all 5 fields).
-- **T3** — Reconciliation: unchanged/qty-changed/rejected rows retain the flag; a genuine `pn_changed`-accept drops it (rides `isCrossed` lifecycle — Coach Q5; no `NO_CARRY` edit).
+- **T3** — Reconciliation: unchanged/qty-changed/rejected rows retain the flag; a genuine `pn_changed`-accept drops it (rides `isCrossed` lifecycle — Coach Q5; no `NO_CARRY` edit). **✅ CODE-CONFIRMED (Coach, 2026-07-02):** `carryChangedPnChanged` (`src/app.jsx:48067`) is an explicit field **whitelist** (id/new-PN/qty/desc/mfr/itemNo/geometry) — no `...prior` — so `isCrossed`+`crossedFrom`+pricing+all 5 TR fields **drop** on a `pn_changed`-accept (same path the #165/C117 admin cross-strip warning already surfaces). Reject pushes `{...prior}` → TR **persists**; `carryUnchanged`/`carryChangedPnSame` spread `...prior` minus `NO_CARRY` (which contains only extraction-noise fields, not `isCrossed`/`techReview*`) → TR **persists** on unchanged/qty-only. Behaves per intent; T3 covered by code (+ partial-live), no dedicated live repro needed.
 - **T4** — Sales checks an unflagged row → `source:"manual"`; unchecks it → `flag:false`.
 - **T5** — Sales sees a supplier-flagged row's checkbox **disabled** (cannot uncheck).
 - **T6** — Legacy project (rows lack the fields) renders unflagged, no console errors, `_isUnresolvedTechReviewRow` false.
@@ -120,7 +120,7 @@ Current approve writes project-level `reviewFields = {preReviewStatus:"approved"
 - **T9** — Resolve sets `resolved:true, resolvedBy, resolvedAt`; persists across reload.
 - **T10** — Approving the project sweeps **all** unresolved flagged rows across **all panels** → resolved.
 - **T11** — A resolved row is excluded by `_isUnresolvedTechReviewRow` / `_hasUnresolvedTechReview`.
-- **T12** — Manual re-check of a resolved row re-arms it (`resolved:false`) — sets up the P3 re-block.
+- **T12** — Manual re-check of a resolved row re-arms it (`resolved:false`) — sets up the P3 re-block. **⚠ OPTIONAL / DEFERRED (Coach, 2026-07-02):** §2.2 marks the resolved-row re-open affordance "(optional)"; the shipped build makes resolved rows **read-only** (no manual re-open), which is §2.2-compliant. So T12 tests an optional-and-not-built affordance → **N/A-by-design**, not a failure. The automatic re-review path is preserved: a supplier **re-cross** of a resolved row re-arms it (unconditional auto-stamp, `src/app.jsx:38978`). Manual re-open deferred to the broader Tech-Review tuning.
 
 ---
 
