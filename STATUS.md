@@ -6,15 +6,15 @@
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
 ## Current
-**#199 — LIVE PASS SPLIT: non-supplier set running on scratch · ⚠ supplier fixture needs Jon**
-- **Env:** #199 on **matrix-arc-test** (prod untouched), **v1.21.24**. Mutation tests on a **FRESH scratch project** (contained; T10 BC upload → sandbox task).
-- **NOW (Marc):** non-supplier set on scratch — **T2/T4/T6/T8–T12/T13–T17**. Incidental positive: existing PRICING send-block banner still renders correctly with the #199 build (**no-regression signal**).
-- **👤 HELD on Jon:** **T1/T3/T5/T18** (supplier auto-stamp etc.) need a **pending supplier submission** — Jon's **fixture call pending**.
-- **📥 Intake:** 1 un-routed — GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" — infra follow-up before launch (safe now). (B001/B002 triaged.) **MED-4** = LOW.
+**#199 — FULL T1–T18 COVERAGE RUNNING (supplier fixture resolved)**
+- **Env:** #199 on **matrix-arc-test** (prod untouched), **v1.21.24**. Non-supplier set on a fresh scratch project; supplier set on **PRJ402111** (Jon: it has a pending RFQ to process/import → the T1/T3/T5/T18 fixture).
+- **NOW (Marc):** process/import PRJ402111's RFQ → variance-apply → verify **T1** (auto-stamp) / **T3** (reconciliation) / **T5** (supplier flag disabled) / **T18** (Quoted-BOM block). Non-supplier **T2/T4/T6/T8–T17** on the scratch. → **FULL T1–T18 coverage.**
+- **📥 Intake:** 1 un-routed (GEN test-env-shares-prod-Firestore); B001/B002 await Freddy triage. **MED-4** = LOW.
 - **G002 v3** — full run still **deferred to a clean boot**.
-- **STATUS:** Marc → running non-supplier T-set on scratch · Jon → **supplier-fixture decision** · Coach → standby · Freddy hub-coordinating. (Deploy on FULL-suite pass.)
+- **STATUS:** Marc → running full suite (scratch + PRJ402111) · Coach → standby for results verify · Freddy hub-coordinating. (**FULL-pass → deploy (#199 + #17) → SHIPPED.**)
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-02 18:03 MDT]** **#199 live pass — supplier fixture resolved.** Jon: PRJ402111 has a pending RFQ to process/import → Marc's T1/T3/T5/T18 fixture. Marc now: process/import PRJ402111's RFQ → variance-apply → verify T1 (auto-stamp) / T3 (reconciliation) / T5 (supplier flag disabled) / T18 (Quoted-BOM block); non-supplier T2/T4/T6/T8–T17 on the scratch → FULL T1–T18 coverage. FULL-pass → deploy (#199 + #17) → SHIPPED. Coach standby for results verify.
 - **[2026-07-02 17:57 MDT]** **#199 live pass — split to unblock.** Marc using a FRESH scratch project for mutation tests (contained; T10 BC upload → sandbox task). NOW running the non-supplier set on scratch: T2/T4/T6/T8–T12/T13–T17. Incidental positive: existing PRICING send-block banner still renders correctly with the #199 build (no-regression signal). HELD: T1/T3/T5/T18 (supplier auto-stamp etc.) need a pending supplier submission — Jon's fixture call pending. Deploy on FULL-suite pass; Coach standby.
 - **[2026-07-02 17:54 MDT]** **#199 live pass UNBLOCKED — Data-Retention block lifted.** Jon confirmed PRJ402xxx are all test data (pre-launch). Marc running FULL T1–T18 on one contained test project. FULL-pass → deploy (#199 + #17); Coach standby for results verify. Also captured GEN "matrix-arc-test shares PROD Firestore (not data-isolated)" to INBOX — infra follow-up to fix before launch (safe now, pre-launch; source Marc).
 - **[2026-07-02 17:51 MDT]** **#199 live pass FULLY UNBLOCKED.** Jon confirmed admin/reviewer on test (T8–T12 drivable) + any test project is fair game for the supplier fixture (T1/T3/T18). Marc now running the FULL T1–T18 in the controlled tab (visual/behavioral). FULL-pass → deploy (#199 + #17) → SHIPPED. Coach standby for results verify; deploy gated on FULL-suite pass (incl. T1 supplier auto-stamp). G002 full run deferred.
