@@ -60,3 +60,22 @@ At **`src/app.jsx:38302`**, change
 `safeSave` (`9124`) never throws (it catches + retries internally and returns a bool), so awaiting needs no try/catch. Because the Apply handler already `await`s `doApplyPortalPrices`, this holds the `varianceProcessing` spinner until the Firestore write commits — the user can't reload mid-write. **This closes the reload-race for ALL portal-apply data (prices + cross + TR) and makes the #199 gate reliable.**
 
 **Deploy call:** the gate logic is correct and the data *is* persisted on normal use, so shipping as-is is defensible with the fix as a fast-follow. **But given this is the money-path gate and the fix is a one-word `await` at `38302`, I recommend applying it before deploy** (then a quick re-verify + the wait-then-reload test) rather than relying on "benign unless the user reloads within the write window."
+
+---
+
+## FIX RE-VERIFY + SIGN-OFF (2026-07-02) — PASS; code-verify is sufficient (no fresh-fixture repro required)
+
+Jon approved the fix pre-deploy; Marc applied it at `src/app.jsx:38302` (staged):
+`safeSave(uid,updatedProject).catch(…)` → **`await safeSave(uid,updatedProject);`** (+ money-path comment).
+
+**Correctness — PASS:**
+- Single `await`, no `.catch` — correct: `safeSave` (`9124`) catches + retries internally and returns a bool, never throws, so no try/catch is needed.
+- **Return path / spinner-hold:** the Apply handler runs `await doApplyPortalPrices(remapped); setVarianceProcessing(false);`. `doApplyPortalPrices` now awaits the commit before returning → `varianceProcessing` stays true until the write lands, so the UI no longer signals "done" before persistence. No double-await, no return-path surprise; the subsequent BC lead-time writes simply run after the panel save (benign sequencing, arguably better).
+
+**Testing bar — code-verify + the already-passing wait-then-reload regression is SUFFICIENT; I do NOT require a fresh-fixture immediate-reload repro.** Rationale:
+1. The failure mode (reload-race) was already empirically observed, and the data path is already runtime-validated — Marc's wait-then-reload passes (the write persists correctly). The fix does not change *what* is written (`updatedProject` unchanged), only *when the handler returns* relative to the commit.
+2. The change is trivially correct by construction — awaiting an already-proven, non-throwing save whose caller is already awaited.
+3. An immediate-reload repro is **timing-noisy and can't cleanly prove absence of the race**: a spinner does not block a browser hard-reload (Cmd-R/F5), so a sub-second hard-reload *during* the in-flight commit could still beat the write — an inherent property of any client-side save, not a defect in this fix. A "pass" wouldn't prove atomicity; a "fail" wouldn't indict the fix.
+4. Net effect of the await: it removes the *premature "done" signal* (the real trigger for the observed revert), which code-verify establishes directly. Requiring Jon to source a fresh supplier PDF for marginal, timing-dependent confidence is disproportionate.
+
+**Sign-off:** the await fix is correct and sufficient on code-verify + existing regression. **Clear to deploy #199 with the fix.** (Honest limit, for the record: the await closes the UX-signaled race window but does not make the write atomic against a mid-commit hard browser reload — same as every client-side save in ARC; acceptable, monitor in prod.)
