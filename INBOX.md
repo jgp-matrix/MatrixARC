@@ -22,6 +22,7 @@
 ---
 
 - [2026-07-02] GEN — "matrix-arc-test shares PROD Firestore (not data-isolated)" — the test hosting target is in the same Firebase project as prod → same Firestore + Auth, so data-mutation tests there write the SAME DB as production. Safe NOW only because all data is pre-launch/test (Jon confirmed). BEFORE real customers exist, live mutation tests must use a truly isolated env / dedicated scratch, or they'd violate Data-Retention. Infra follow-up to fix before launch. — reported via Intake (source: Marc, #199 live pass, 2026-07-02; via Freddy)
+- [2026-07-02] BUG — "Review Supplier Quote modal lists unquoted parts" — on the Review Supplier Quote modal, parts the supplier did NOT quote should not be listed (declutter — only show quoted lines). (Likely a FEAT/UI refinement rather than a defect; Jon framed it as a bug fix — Freddy's call at triage.) — reported via Intake (source: Jon, 2026-07-02)
 
 <!-- Triage log: 2026-07-02 — G001 (Allow-Once remote-approval → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) all promoted to TODO.md by Freddy. -->
 
