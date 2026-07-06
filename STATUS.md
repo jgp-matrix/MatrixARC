@@ -5,19 +5,20 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ACTIVE SESSION (prod v1.22.1, release `1048d635`)
-**F002+F003 SHIPPED · live cosmetic/bug iteration underway (v1.22.2 → v1.22.3) · Jon iterating live.**
-- **F002 — BOM column reorg / indicator cleanup → ✅ SHIPPED to prod v1.21.26, CLOSED.** (Rev1 shipped-in-v1.22.0, Coach-confirmed.)
-- **F003 — Role-Differentiated Tech Review → ✅ SHIPPED to PROD v1.22.0, RESOLVED.** Release `2d24f5a2`, prod-verified. Full T1–T11 + 4 Rev-A PASS, Coach-approved.
-- **v1.22.1 — white TR checkbox fill (checked-state) → ✅ SHIPPED, prod-verified** (`1048d635`). Prod now = **v1.22.1**.
-- **TR checkbox UNCHECKED-state fix → 🔨 Marc BUILDING → v1.22.2.** Follow-up: `accentColor` only styles the checked state; unchecked needs its own fill.
-- **B006 — Scan Results banner → Dismiss (source Jon) → ✅ DECIDED (option B), 🔨 queued to build → v1.22.3.** Option B = per-project dismiss-by-report (✕ hides this scan's banner; a new extraction resurfaces it). Locate finding: banner isn't empty — it's NOISY (benign auto-fixed info dominates). Bugs [Backlog].
+## Current — ACTIVE SESSION (prod v1.22.2, master `8bd75f38`)
+**F002+F003 shipped · v1.22.2 shipped (B006 resolved + checkbox polish) · Jon deciding next.**
+- **F002 — BOM column reorg / indicator cleanup → ✅ SHIPPED v1.21.26, CLOSED.** (Rev1 shipped-in-v1.22.0, Coach-confirmed.)
+- **F003 — Role-Differentiated Tech Review → ✅ SHIPPED PROD v1.22.0, RESOLVED.** Release `2d24f5a2`, prod-verified. Full T1–T11 + 4 Rev-A PASS, Coach-approved.
+- **v1.22.2 — white TR checkbox (both states) + B006 → ✅ SHIPPED to prod** (release `5cb5c392`). Bundled the checkbox polish + B006. Prod now = **v1.22.2**.
+- **B006 — Scan Results banner → Dismiss (source Jon) → ✅ RESOLVED (shipped v1.22.2).** Option B = per-project dismiss-by-report (✕ hides this scan's banner; new extraction resurfaces it).
+- **White TR checkbox polish → ✅ SHIPPED (both states; Jon kept faint-white-when-unflagged).**
 - **F001 — Interactive quote-building walkthrough → 🔓 UNBLOCKED (next-up feature).** Brief: `docs/F001-QUOTE-WALKTHROUGH-BRIEF.md`.
 - **📥 Intake:** **CLEAR (0 pending).** Backlog: **F004** (portal submit confirmation), **F005** (Print-Only button in locked-quote overlay), **F006** (Qv.## Hist. button).
-- **WHO'S DOING WHAT:** Marc → building checkbox-unchecked fix (v1.22.2), then B006 option B (v1.22.3) · Coach → caught up, standby · Freddy → hub · **Jon → iterating live + eyeballing.**
-- **STATUS:** F002+F003 shipped (v1.22.0) · v1.22.1 shipped · v1.22.2 (checkbox-unchecked) + v1.22.3 (B006) building · F001 next-up · Dez board+intake live (0 pending).
+- **WHO'S DOING WHAT:** Marc → standby (v1.22.2 shipped) · Coach → standby · Freddy → hub · **Jon → deciding next (F001 / backlog / close out).**
+- **STATUS:** F002+F003 shipped · v1.22.2 shipped (B006 RESOLVED + checkbox polish) · F001 next-up · F004/F005/F006 Backlog · Dez board+intake live (0 pending).
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-06 15:55 MDT]** **✅ v1.22.2 SHIPPED to prod (release `5cb5c392`, master `8bd75f38`).** Bundled: white TR checkbox (BOTH states; Jon kept faint-white-when-unflagged) + **B006 Scan Results dismiss-by-report** (option B). **B006 = RESOLVED.** v1.22.2 combined the two queued patches (v1.22.2/v1.22.3) into one ship. Prod now = **v1.22.2**. Backlog: F004/F005/F006 (features); F001 🔓 unblocked/next-up. INBOX clear. WHO: Marc standby (shipped) · Coach standby · Freddy hub · Jon deciding next (F001 / backlog / close out).
 - **[2026-07-06 15:45 MDT]** **🔨 Live iteration — v1.22.2 (checkbox) + v1.22.3 (B006) building.** **B006** (Scan Results banner → Dismiss): Jon DECIDED **option B** = per-project dismiss-by-report (✕ hides this scan's banner; a new extraction resurfaces it). Locate finding: banner isn't empty, it's NOISY (benign auto-fixed info dominates). → Marc building. **White TR checkbox:** v1.22.1 covered the checked state; a follow-up for the UNCHECKED state (`accentColor` is checked-only) is queued → **v1.22.2**. Build order: Marc → checkbox-unchecked (v1.22.2) → B006 option B (v1.22.3). Coach caught up + standby (confirmed nothing held; verified F002 Rev1 shipped-in-v1.22.0). Prod = v1.22.1. F001 unblocked/next. WHO: Marc building · Coach standby · Freddy hub · Jon iterating live.
 - **[2026-07-06 15:40 MDT]** **✅ v1.22.1 SHIPPED (cosmetic patch — white TR checkbox fill), prod-verified (release `1048d635`).** Prod now = **v1.22.1**. **B006 — Scan Results concern window → add Dismiss button** (source Jon) tracked to Bugs [Backlog]; **Marc in LOCATE phase.** F001 (walkthrough) still 🔓 unblocked / next-up feature. WHO: Marc → locating B006 · Coach → catching up/standby · Freddy → hub · Jon → eyeballing v1.22.1 + deciding next (F001 / B006 / other).
 - **[2026-07-06 15:17 MDT]** **🎉 F003 SHIPPED to PROD v1.22.0, RESOLVED (release `2d24f5a2`).** Prod-verified via artifacts; DEPLOY Pushover fired. The full "clean up the BOM" arc is now DONE: **F002 shipped v1.21.26 + F003 shipped v1.22.0.** **F001** (interactive quote-building walkthrough) → 🔓 **UNBLOCKED** (both prereqs shipped), ready to start — targets the final BOM UI + `data-tour` anchors. **📥 Intake CLEAR (0 pending):** F004, F005, F006 (Qv.## Hist. button) all triaged to Features [Backlog]. WHO: Marc standby (deployed) · Coach standby · Freddy hub — awaiting Jon's next direction (start F001 / close out / other) · Jon deciding next move. Prod = v1.22.0.
