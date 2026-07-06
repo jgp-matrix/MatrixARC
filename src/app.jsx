@@ -29127,7 +29127,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             // USER (Sales / non-assignee / any non-`pending` state): checkbox only (C6 = no text label).
                             if(_trFlagged||!readOnly)return(
                               <label data-tour="bom-tr-user-checkbox" title={_trTitle}
-                                style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5,position:"relative"}}>
+                                style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,position:"relative"}}>
                                 {/* F003 tweak (Jon): white box in BOTH states. accentColor only colors the CHECKED fill, so the
                                    unchecked native box was dark on our dark rows. appearance:none → we own the box: white bg +
                                    border always; a dark ✓ overlays when checked. NOTE: the label keeps opacity 0.5 when unflagged
