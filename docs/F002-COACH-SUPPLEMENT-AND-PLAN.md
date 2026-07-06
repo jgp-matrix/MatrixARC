@@ -351,8 +351,10 @@ bcUpdated(transient flash) → labor → ECO tint → restoreSkipped → TR-yell
 - **C8-T4 (precedence):** an ECO-tagged TR-flagged row shows ECO tint (per default ruling); a labor row is never TR-flagged.
 - **Regression:** re-confirm Rev 1 T1/T3′/T5′/T6 unaffected; `validate_jsx.js` clean.
 
-### 11.4 C7 — OUT OF SCOPE (held → likely F003)
-Per Freddy's routing and Marc's trace: the only "Approved" chip is **"✓ Pre-Review Approved" at app.jsx:36006**, gated on `project.preReviewStatus==="approved"`, rendered in the **panel quote-summary/action area — NOT the BOM table**, and **outside F002's diff**. It's pre-existing pre-review-subsystem behavior, not an F002 regression and not a BOM change. **C7 is held for Jon to identify the exact element/view; if it's the project-level pre-review chip it spins out as its own item (F003).** Coach does not plan C7 here.
+### 11.4 C7 — RE-SCOPED INTO REV 2 (Jon, commit `158604df`) — trace pending Freddy routing
+**Update (supersedes the earlier "F003 / pre-review chip" read):** Jon clarified (`158604df`) that C7 is **NOT** the project-level "✓ Pre-Review Approved" chip (app.jsx:36006). It is the **Resolve chip in the TR column** — i.e. the reviewer **Resolve ✓** control (the #199 P2 button, now relocated into the new TR column per §6.3). Jon's ask: it should **show ONLY when the Engineer opens the row for Technical Review** (reviewer-TR context), not in the normal Sales BOM view. C7 is **back in Rev 2 scope.**
+
+**Coach's job (pending Freddy's explicit routing):** trace the current gate on the Resolve ✓ button (today `_trShow && _trUnresolved && _trIsReviewer`, ~29076–29079) and the "Engineer-open-for-TR" context, then bring **options** for gating it to the reviewer-TR view only. **Not traced in this rev** — Freddy set my current scope to C6+C8; I'll add the C7 trace as **§12** once Freddy routes it. Flagged to Freddy.
 
 ### 11.5 Pipeline / HOLD
 Rev 2 Plan (this §11) → Freddy Analyst Review → Jon approves Rev 2 → Marc builds C6+C8 → re-verify (C6/C8 incl. live C8 yellow on PRJ402111 row 8 + approval-revert, re-confirm Rev 1 T1/T3′/T5′/T6) → Coach review → **Jon deploy checkpoint** (F002 ships Rev 1 + Rev 2 together). **HOLDING — no build until Jon's go.**
