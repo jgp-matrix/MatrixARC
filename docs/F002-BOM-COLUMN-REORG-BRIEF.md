@@ -112,3 +112,24 @@ Jon's "Approved chip" = the green **Resolve ✓** button (the per-row reviewer r
 - **Intent (Freddy's read, Jon to confirm):** the Resolve ✓ should show **only when the Engineer is actually in a Technical Review context** — not on every unresolved row in the normal quote-building BOM view (today it shows whenever `_trIsReviewer`).
 - **Coach trace needed (added to Rev 2):** what does `_trIsReviewer` / the Resolve gate key on today? Is there an existing "Engineer opened Technical Review" state/mode/view to gate on (e.g. a sent-for-tech-review project state, a reviewer-opened-review flag), or must one be defined? **Deliver as OPTIONS for Jon** (existing-context vs new-context), not a built gate — Jon rules at Rev 2 plan review.
 - **C7 is now part of Coach's Rev 2 scope** (C6 + C8 + C7). Supersedes the "C7 held / likely F003" note above.
+
+### C7 SUPERSEDED → ROLE-DIFFERENTIATED TR-REVIEW REDESIGN (Jon, 2026-07-06)
+Presented Coach's A/A′/B gate options; Jon instead **redesigned the whole TR interaction** (A/A′/B are now moot). **This is materially bigger than the planned ~1-line C7 gate — it does NOT proceed to build; it needs a design spec + Coach feasibility trace + open-Q resolution → plan → Jon approval → build.** Rev 2 build **HELD**.
+
+**Jon's design (verbatim intent):**
+- **User (non-engineer / Sales):** sees a **checkbox** only. Check → row turns **YELLOW** ("in review"). Uncheck → clears yellow, reverts to current state.
+- **Assigned Engineer:** does NOT see the user's checkbox — sees an **empty green circle + yellow row** ("needs engineer attention"). Engineer checks the circle → review satisfied → row returns to current state + circle shows a **checked mark**.
+- **Gate:** Tech Review **cannot be Approved or Rejected until all yellow rows are addressed** (every green circle checked).
+
+**Freddy interpretation:** this is a **role-differentiated TR control** — same row renders a *user checkbox* vs an *engineer green-circle* by viewer role/context; yellow = the shared "in review" signal; approve/reject is blocked until all rows individually addressed (replaces the current #199 approve-**sweep** that auto-resolves everything). Folds C6 (bare checkbox) + C8 (yellow) into one integrated model; **supersedes the piecemeal C6/C7/C8 build** (avoid re-churn — build the integrated model once).
+
+**OPEN QUESTIONS (scope pass — Coach traces feasibility, Jon rules design):**
+1. **Auto-stamp:** #199 auto-flags rows for TR on supplier crosses (unconditional). Keep auto-flag, drop it (user-manual-only), or keep-but-user-can't-uncheck-auto-flagged?
+2. **User uncheck during review:** once out for review, can the User still uncheck (pull back) a row, or is it locked to the engineer's green-circle?
+3. **Role boundaries:** "Engineer" = `preReviewAssignedTo`? What do **admin** and **non-assigned reviewers** see (checkbox or circle)?
+4. **When does the engineer's green-circle view replace the user's checkbox** — whenever the viewer is the assigned engineer, or only while `preReviewStatus==="pending"` (out for review)?
+5. **Green circle:** restyle of the existing Resolve ✓ button (repurpose `_onTrResolve`) or a new control?
+6. **Approve/reject gate:** replaces the current approve-sweep (34396–34416, auto-resolves all) with "blocked until every yellow row individually addressed"? Reject too?
+7. **Send-gate:** does a yellow (unaddressed) row still hard-block quote sends (as #199 does today)? (Presumably yes — confirm.)
+
+**Judgment / path:** REDESIGN — bigger lift than A/A′ (~1 line). Recommend: capture as a design spec, route to Coach for a **feasibility trace** against the existing #199 + pre-review architecture (can it support this cleanly + what's the lift), resolve the open Qs, bring Jon a plan to approve, THEN build once. **C6/C8 fold in (no separate build). F002 packaging (fold vs new F003) decided once the lift is known.**
