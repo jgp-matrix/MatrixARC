@@ -77,3 +77,19 @@ Rulings routed to Coach to **revise the Plan** (§5.1→R1 unified circle in §6
 - **Jon: APPROVED the build** → routed to **Marc**. Build per Rev 1 §10 (authoritative) + §6 (header/colgroup/TR+🔍 relocation/colSpan/data-tour).
 - **Two non-blocking live-verify watch-items:** (1) BC-circle vs confidence-"C" palette collision (BC-red `#dc2626`/BC-yellow `#fcd34d` vs conf `#ef4444`/`#f59e0b`); (2) readOnly visibility of RED/YELLOW (informational, preserved).
 - **Gating:** code-complete ≠ deploy. After build + `validate_jsx.js`, Marc+Jon live-verify on matrix-arc-test (T1′–T10 in §10.5/§8), Coach reviews, THEN Jon releases deploy as its own checkpoint.
+
+---
+
+## 7. REV 2 — three TR-refinement additions (Jon, 2026-07-06, surfaced during live verify)
+
+Jon surfaced three TR refinements while eyeballing the live F002 build. **Ruling: FOLD INTO F002** (same TR/BOM-row code; F001 waits on the final UI regardless — avoid shipping then re-churning). F002 deploy slips to include these. **Rev 1 verify results (T1/T3′/T4/T5′/T6/T7/T10 PASS, T2 wiring verified) stand** — Rev 2 adds on top.
+
+| # | Change | Scope note |
+|---|--------|-----------|
+| **C6** | **Remove the "TR"/"TR✓" text label** beside the TR checkbox (both unresolved + resolved states) — checkbox only. | Trivial presentation. With text gone, unresolved-vs-resolved is conveyed by checkbox state (checked+enabled vs checked+disabled) + **C8 row color**. Confirm sufficient at verify. |
+| **C7** | **"Approved" chip shows ONLY when the Engineer opens for Technical Review** (reviewer TR context) — not in the normal BOM view. | **Trace-gated:** Coach/Marc must first determine whether the current showing is an **F002 regression** (column move dragged the chip's render) or **pre-existing #199 behavior** Jon now wants re-gated. Regression → must-fix; new-gate → scoped change. |
+| **C8** | **TR-flagged + unresolved row → YELLOW bg, overriding red**, until Tech Review approved. On approval → override ends, normal highlight resumes (**red returns if still unpriced/stale**). | **VISUAL-ONLY override — critical:** `_isBomRowFlaggedRed` (and RFQ-eligibility / all predicate consumers) must stay UNCHANGED. Only the displayed row bg is overridden: `bg = (TR-flagged && unresolved) ? yellow : (_isBomRowFlaggedRed ? red : normal)`. The row is still "red" for logic/RFQ purposes; only the color the user sees flips to yellow while TR is pending. This **supersedes** the Brief §3.2 / Rev1 §10.6 "row-bg untouched" line — but at the DISPLAY layer only; the predicate invariant holds. Coach to define the exact precedence hook + confirm no predicate consumer regresses. |
+
+**Rev 2 pipeline:** Marc live-trace observations (label source / C7 regression-vs-new / C8 baseline) → Coach Rev 2 trace + Plan (C7 + C8; C6 trivial) → Freddy Analyst Review → Jon approves Rev 2 Plan → Marc builds → re-verify (incl. C6/C7/C8 + re-confirm T1/T3′/T5′/T6 didn't regress) → Coach review → Jon deploy checkpoint.
+
+**Item-3 (C8) precedence — LOCKED (Jon):** yellow while TR-pending; after approval, normal highlight logic resumes (red returns if the row is still unpriced/stale). Approval does NOT suppress pricing-red — it only ends the TR-pending yellow override.
