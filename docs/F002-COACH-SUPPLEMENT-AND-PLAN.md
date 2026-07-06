@@ -4,7 +4,7 @@
 **Date:** 2026-07-06
 **For:** Freddy (Analyst Review) → Jon (Plan approval) → Marc (build)
 **Traced against tip:** `ede88d59` (v1.21.25). All line numbers are at this tip; expect ±small drift.
-**Status:** **REV 2 (2026-07-06)** — Rev 1 (§10) BUILT + live-verified + banked (not yet deployed). Rev 2 (§11) adds **C6 + C8** TR-refinements on top (C7 held → likely F003). Rev 1 §10 supersedes §3/§6.3-Status/§6.4/§6.5; §11 is the C6/C8 spec. **HOLD per gating — no build until Freddy re-review + Jon's build-approval.**
+**Status:** **REV 2 (2026-07-06)** — Rev 1 (§10) BUILT + live-verified + banked (not yet deployed). Rev 2 adds **C6 + C8 + C7** TR-refinements on top. §11 = C6/C8 spec; §12 = C7 trace + options (Jon rules the gate). Rev 1 §10 supersedes §3/§6.3-Status/§6.4/§6.5. **HOLD per gating — no build until Freddy re-review + Jon's build-approval.**
 **Line numbers:** §1–§9 at tip `ede88d59`; §10 R1/R2 applied; **§11 line numbers at tip `7914f191`** (post-Rev-1-build `c8cbbca7`).
 
 > **Reading order for Marc:** §1 (inventory) and §6.1/§6.2/§6.6/§6.7 (header/colgroup/colSpan/data-tour) are unchanged and authoritative. For the BC circle (§6.5), Status-cell content (§6.3), and Unit $ styling (§6.4/§3), **use §10 — it supersedes.**
@@ -354,7 +354,56 @@ bcUpdated(transient flash) → labor → ECO tint → restoreSkipped → TR-yell
 ### 11.4 C7 — RE-SCOPED INTO REV 2 (Jon, commit `158604df`) — trace pending Freddy routing
 **Update (supersedes the earlier "F003 / pre-review chip" read):** Jon clarified (`158604df`) that C7 is **NOT** the project-level "✓ Pre-Review Approved" chip (app.jsx:36006). It is the **Resolve chip in the TR column** — i.e. the reviewer **Resolve ✓** control (the #199 P2 button, now relocated into the new TR column per §6.3). Jon's ask: it should **show ONLY when the Engineer opens the row for Technical Review** (reviewer-TR context), not in the normal Sales BOM view. C7 is **back in Rev 2 scope.**
 
-**Coach's job (pending Freddy's explicit routing):** trace the current gate on the Resolve ✓ button (today `_trShow && _trUnresolved && _trIsReviewer`, ~29076–29079) and the "Engineer-open-for-TR" context, then bring **options** for gating it to the reviewer-TR view only. **Not traced in this rev** — Freddy set my current scope to C6+C8; I'll add the C7 trace as **§12** once Freddy routes it. Flagged to Freddy.
+**Coach's job:** trace the Resolve ✓ gate + the "Engineer-open-for-TR" context, bring options. **Routed by Freddy → traced in §12 below.**
 
 ### 11.5 Pipeline / HOLD
-Rev 2 Plan (this §11) → Freddy Analyst Review → Jon approves Rev 2 → Marc builds C6+C8 → re-verify (C6/C8 incl. live C8 yellow on PRJ402111 row 8 + approval-revert, re-confirm Rev 1 T1/T3′/T5′/T6) → Coach review → **Jon deploy checkpoint** (F002 ships Rev 1 + Rev 2 together). **HOLDING — no build until Jon's go.**
+Rev 2 Plan (§11 C6/C8 + §12 C7) → Freddy Analyst Review → Jon approves Rev 2 → Marc builds C6+C8+C7 → re-verify (C6/C8/C7 incl. live C8 yellow on PRJ402111 row 8 + approval-revert, re-confirm Rev 1 T1/T3′/T5′/T6) → Coach review → **Jon deploy checkpoint** (F002 ships Rev 1 + Rev 2 together). **HOLDING — no build until Jon's go.**
+
+---
+
+## 12. REV 2 — C7: gate the Resolve ✓ button to a real Technical-Review context (TRACE + OPTIONS)
+
+**Jon's ask (Brief §7 C7, clarified `158604df`):** the green **Resolve ✓** button (per-row reviewer sign-off, `#4ade80`, in the relocated TR column) should show **only when the Engineer is actually in a Technical-Review context** — NOT on every unresolved row in the normal quote-building BOM view. **This is a trace + options; Jon rules the gate at plan review — I do not pick it.**
+
+### 12.1 What the Resolve gate keys on TODAY
+**Render gate (app.jsx:29076):** `_trShow && _trUnresolved && _trIsReviewer`
+- `_trShow` (28994) = `!row.isLaborRow && !row.isContingency` — real part rows.
+- `_trUnresolved` (~29011, local) = the row is flagged & unresolved.
+- **`_trIsReviewer`** = `_isTechReviewer(project)` (module fn, **line 15880**):
+  ```js
+  _appCtx.role==="admin" || hasPermission("reviewer")
+    || (project.preReviewAssignedTo ? project.preReviewAssignedTo===_appCtx.uid
+                                    : project.bcDesignerUid===_appCtx.uid)
+  ```
+**→ Root cause of the over-exposure:** `_trIsReviewer` is a **role/identity** test with **no "is a review actually happening" term.** So the moment an admin / any `reviewer`-permission user / the assigned designer opens the project — even mid-quote-build, no review initiated — the Resolve ✓ appears on every unresolved flagged row. That's exactly what Jon wants gone.
+
+### 12.2 Is there an EXISTING "Engineer opened Technical Review" context? — YES
+There is a fully-built **pre-review workflow** that already models "this project is out for technical review":
+- **`project.preReviewStatus`** — `null` (not in review) → **`"pending"`** (sent, awaiting the engineer) → `"approved"` / `"rejected"`.
+- Set by the **"📋 Send for Technical Review"** action (app.jsx:34523 → `preReviewStatus:"pending"`, `preReviewSubmittedAt`, **`preReviewAssignedTo`** = chosen engineer, 34546–34547).
+- The reviewer's Approve/Reject/Reassign UI block renders on **`preReviewStatus==="pending"`** (34369); Approve (34396) sets `"approved"` and runs the **approve-sweep** (34399–34416) that resolves **every** unresolved TR row across all panels.
+- The #199 send-block message already couples the two paths (15998): *"…require Technical Review sign-off… Click 'Send for Technical Review', or have an engineer resolve the flagged lines."*
+
+So **`preReviewStatus==="pending"`** IS the "engineer is in a technical-review context" state, and **`preReviewAssignedTo`** identifies *which* engineer. No new state is needed to express it.
+
+**Dead-end check (important, and it's clean):** because the approve-sweep resolves all flagged rows on approval, gating Resolve ✓ on `"pending"` creates **no** permanently-unresolvable rows — during "pending" the engineer resolves lines (or approves → sweep); after approval nothing unresolved remains. ✅
+
+### 12.3 OPTIONS for Jon
+
+| | Gate | Behavior | Cost | Coach note |
+|---|---|---|---|---|
+| **A — reuse pending state (RECOMMENDED)** | `_trShow && _trUnresolved && _trIsReviewer && project.preReviewStatus==="pending"` | Resolve ✓ shows only while the project is **out for technical review** and the viewer is a reviewer/admin/assignee. Hidden in the normal quote-building view. | **~1 line** (add one term at 29076; `project` already in scope). | Reuses existing persisted state; no new concept; approve-sweep guarantees no dead-end. |
+| **A′ — pending + strictly the assigned engineer** | `_trShow && _trUnresolved && project.preReviewStatus==="pending" && (project.preReviewAssignedTo===_appCtx.uid \|\| _appCtx.role==="admin")` | As A, but **only the specifically-assigned engineer** (or admin) sees Resolve — matches "the Engineer" (singular) most literally. | ~1–2 lines | Narrower; a non-assigned `reviewer`-permission user wouldn't resolve (admin still can). Pick if Jon wants one owner per review. |
+| **B — new dedicated "Open for Technical Review" mode/flag** | reviewer explicitly enters a TR mode (local mode or a persisted `techReviewOpenBy` flag); Resolve gates on that | Allows resolving lines **outside** the formal Send-for-Review flow. | **~20–40 lines** — new button/entry point, new state, exit path, persistence question | Only if Jon needs out-of-band resolution. Adds a concept parallel to the existing pre-review flow (possible confusion/duplication). Not recommended unless 12.4 says so. |
+
+### 12.4 The one tradeoff Jon must weigh (drives A vs B)
+**Today, an engineer can resolve flagged lines inline WITHOUT the project being formally sent for review** — that's the "*or have an engineer resolve the flagged lines*" path the send-block message advertises (15998 / 33705). **Option A removes that path**: resolution becomes possible only after "Send for Technical Review" → `pending`. 
+- If Jon is fine with "resolution happens inside the formal review flow" → **Option A/A′** (clean, ~1 line).
+- If Jon wants to keep an inline "resolve without formally sending" path but just make it non-omnipresent → **Option B** (explicit mode).
+**Companion cleanup either way:** if Option A is chosen, the send-block wording at 15998 / 33705 ("or have an engineer resolve the flagged lines") should be revisited so it doesn't advertise a now-gated path — this dovetails with **B002** (approved-state block message names an absent button), already logged.
+
+### 12.5 Invariant / safety
+C7 is a **visibility gate on an existing button** — it changes only *when* Resolve ✓ renders. The resolve action (`_onTrResolve`, ~29021), the audited stamp (`techReviewResolved/By/At`), the send-gate, and the approve-sweep are all **untouched**. No predicate/data change; no Firestore schema change. `preReviewStatus`/`preReviewAssignedTo` are **read**, not written, by C7.
+
+### 12.6 Coach recommendation
+**Option A** (or **A′** if Jon wants strictly the assigned engineer). It reuses the already-built, already-persisted pre-review state, is ~1 line, and the approve-sweep removes any dead-end risk. Reserve **Option B** only if Jon confirms a genuine need to resolve lines outside the formal Send-for-Technical-Review flow (12.4). **Jon rules; I'll pin the exact gate into §12 once he picks.**
