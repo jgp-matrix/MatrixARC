@@ -47951,23 +47951,25 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps,liveS
   useEffect(()=>{
     if(type!=="gated"||!step?.advance)return;
     const {on,match}=step.advance;
+    let fired=false;                       // one-shot: a burst of clicks/mutations must not skip steps
+    const go=()=>{if(fired)return;fired=true;onNext();};
     if(on==="click"){
-      const h=e=>{const t=step.target&&e.target.closest&&e.target.closest(step.target);if(t&&(!match||match(t)))onNext();};
+      const h=e=>{const t=step.target&&e.target.closest&&e.target.closest(step.target);if(t&&(!match||match(t)))go();};
       document.addEventListener("click",h,true);return()=>document.removeEventListener("click",h,true);
     }
     if(on==="input"){
-      const h=e=>{const t=step.target&&e.target.closest&&e.target.closest(step.target);if(t&&(!match||match(t.value)))onNext();};
+      const h=e=>{const t=step.target&&e.target.closest&&e.target.closest(step.target);if(t&&(!match||match(t.value)))go();};
       document.addEventListener("input",h,true);return()=>document.removeEventListener("input",h,true);
     }
     if(on==="appear"){
       const sel=step.advance.appearTarget||step.target;
-      if(document.querySelector(sel)){onNext();return;}
-      const mo=new MutationObserver(()=>{if(document.querySelector(sel))onNext();});
+      if(document.querySelector(sel)){go();return;}
+      const mo=new MutationObserver(()=>{if(document.querySelector(sel))go();});
       mo.observe(document.body,{childList:true,subtree:true});
       return()=>mo.disconnect();
     }
     // "navigate"/"state" gated advances fall through to the checkpoint/state watcher below.
-  },[stepIdx,step,type]);
+  },[stepIdx,step,type,onNext]);
 
   // F001 A4 — CHECKPOINT / state watcher. Re-runs whenever liveState changes (it flows in as a prop,
   // so project updates re-check automatically — no polling). Advances when when(liveState) flips true.
@@ -47976,7 +47978,7 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps,liveS
     const on=step.advance&&step.advance.on;
     if(!(type==="checkpoint"||on==="state"||on==="navigate"))return;
     if(step.advance&&step.advance.when&&step.advance.when(liveState||{}))onNext();
-  },[stepIdx,step,type,liveState]);
+  },[stepIdx,step,type,liveState,onNext]);
 
   // F001 A8 — Esc minimizes (preserves resume, mirrors the – Hide button).
   useEffect(()=>{
