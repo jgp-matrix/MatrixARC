@@ -80,5 +80,11 @@ This is largely a **role-differentiated re-skin of existing #199 controls + an a
 
 **Ruled set = 1a / 2b / 3b / 4a / 5a / 6b / keep / none.** Design LOCKED.
 
+### BUILD PLAN APPROVED (2026-07-06)
+- **Coach Build Plan** (`docs/F003-COACH-BUILD-PLAN.md`, tip 8438b727) — **Freddy Analyst Review: PASS** (7 edit sites faithful to the ruled set; MEDIUM-risk sweep-removal verified SAFE in §7 — the sweep's panel-save was redundant to per-row `_onTrResolve` saves; removing it also eliminates the old #199 MED-2 partial-write risk; invariants hold; 11 test criteria).
+- **Accepted design consequence (Jon aware):** during an active review the engineer sees only sign-off circles (no checkbox) → cannot flag NEW rows mid-review; path for more review = Reject/Return to Sales. Falls out of 2b + engineer-sees-circle; accepted as-is.
+- **Jon: APPROVED the build** → routed to **Marc**. Build per the Plan's 7 sites + build order (§11).
+- **Gating:** code-complete ≠ deploy. After build + `validate_jsx.js`, Marc+Jon live-verify on matrix-arc-test (§10 T1–T11, incl. both role views + PRJ402111 row 8 backward-compat), Coach reviews, THEN Jon deploy checkpoint (Jon decides F003-alone vs any bundling).
+
 ### Next: Coach writes the BUILD PLAN
 Coach → exact edit sites (feasibility §4 lift breakdown as the skeleton) encoding the ruled set, the `_isReviewSignoffAuthority` helper (3b), the role-mutual-exclusivity branch (4a-gated), the approve-gate swap (6b) **+ resolve the MEDIUM-risk dependency** (confirm nothing else keys off the removed sweep's persist side-effect, §3.4), `data-tour` anchors on BOTH controls (F001), test criteria. → Freddy Analyst Review → **Jon build-approval** → Marc builds. HOLD, no build.
