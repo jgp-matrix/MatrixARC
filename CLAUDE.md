@@ -41,7 +41,7 @@ If anything looks unexpected — wrong directory, unfamiliar branch, untracked f
 
 ### Team startup (default)
 
-**Freddy orchestrates startup.** Jon opens ONE fresh CCD session and runs `/team-startup`; that session becomes **Freddy** (the orchestrator) and coordinates the boot. (Freddy took over from Marc on 2026-07-02, once Freddy gained repo file access — previously Marc orchestrated only because he was the one who could read the handoff `.md` files and paste them to a browser-based Freddy. Orchestration is a coordination duty; it does NOT change Freddy's read-to-route lane during work.)
+**Freddy orchestrates startup.** Jon opens ONE fresh CCD session and runs `/team-startup`; that session becomes **Freddy** (the orchestrator) and coordinates the boot. **The primary session — where Jon types `/team-startup` — is ALWAYS Freddy, never a peer (Marc/Coach/Dez).** (A regression where the startup skill defaulted the orchestrator to the implementer and landed Marc in the primary session was fixed 2026-07-06, commit `fe5bf50e`.) (Freddy took over from Marc on 2026-07-02, once Freddy gained repo file access — previously Marc orchestrated only because he was the one who could read the handoff `.md` files and paste them to a browser-based Freddy. Orchestration is a coordination duty; it does NOT change Freddy's read-to-route lane during work.)
 
 **The operative, step-by-step procedure lives in the `/team-startup` skill** (`.claude/commands/team-startup.md`) — it is orchestrator-configurable (via `orchestrator` in `.claude/team-config.json`) and is the source of truth. Do not maintain a second divergent copy here. The rest of this section is the summary any role can read without invoking the skill.
 
