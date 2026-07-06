@@ -5,19 +5,19 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ACTIVE SESSION (prod v1.22.2, master `8bd75f38`)
-**F002+F003 shipped · v1.22.2 shipped (B006 resolved + checkbox polish) · Jon deciding next.**
+## Current — ACTIVE SESSION (prod v1.22.3, master `572d0f8c`)
+**F002+F003 shipped · checkbox saga closed (v1.22.3) · no open bugs · Jon deciding next.**
 - **F002 — BOM column reorg / indicator cleanup → ✅ SHIPPED v1.21.26, CLOSED.** (Rev1 shipped-in-v1.22.0, Coach-confirmed.)
 - **F003 — Role-Differentiated Tech Review → ✅ SHIPPED PROD v1.22.0, RESOLVED.** Release `2d24f5a2`, prod-verified. Full T1–T11 + 4 Rev-A PASS, Coach-approved.
-- **v1.22.2 — white TR checkbox (both states) + B006 → ✅ SHIPPED to prod** (release `5cb5c392`). Bundled the checkbox polish + B006. Prod now = **v1.22.2**.
-- **B006 — Scan Results banner → Dismiss (source Jon) → ✅ RESOLVED (shipped v1.22.2).** Option B = per-project dismiss-by-report (✕ hides this scan's banner; new extraction resurfaces it).
-- **White TR checkbox polish → ✅ SHIPPED (both states; Jon kept faint-white-when-unflagged).**
+- **v1.22.3 — B007 fix (TR checkbox full-white both states) → ✅ SHIPPED to prod** (release `9bb6388b`). Dropped the 0.5 unflagged-row opacity (fill was always correct; opacity was the culprit). Prod now = **v1.22.3**. ⚠️ **Jon: hard-refresh** — dim screenshots were v1.22.2 + cache.
+- **B006 — Scan Results dismiss-by-report → ✅ RESOLVED (v1.22.2).** **B007 — checkbox opacity → ✅ RESOLVED (v1.22.3).** Checkbox saga closed (v1.22.1 checked-white → v1.22.2 both-faint + B006 → v1.22.3 full-white). **No open bugs.**
 - **F001 — Interactive quote-building walkthrough → 🔓 UNBLOCKED (next-up feature).** Brief: `docs/F001-QUOTE-WALKTHROUGH-BRIEF.md`.
 - **📥 Intake:** **CLEAR (0 pending).** Backlog: **F004** (portal submit confirmation), **F005** (Print-Only button in locked-quote overlay), **F006** (Qv.## Hist. button).
-- **WHO'S DOING WHAT:** Marc → standby (v1.22.2 shipped) · Coach → standby · Freddy → hub · **Jon → deciding next (F001 / backlog / close out).**
-- **STATUS:** F002+F003 shipped · v1.22.2 shipped (B006 RESOLVED + checkbox polish) · F001 next-up · F004/F005/F006 Backlog · Dez board+intake live (0 pending).
+- **WHO'S DOING WHAT:** Marc → standby · Coach → standby · Freddy → hub · **Jon → deciding next (F001 / backlog / close out).**
+- **STATUS:** F002+F003 shipped · v1.22.3 shipped (B007 RESOLVED, checkbox saga closed) · no open bugs · F001 next-up · F004/F005/F006 Backlog · Dez board+intake live (0 pending).
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-06 16:06 MDT]** **✅ v1.22.3 SHIPPED to prod (release `9bb6388b`, master `572d0f8c`).** **B007 fix** — dropped the 0.5 unflagged-row opacity → TR checkbox now FULL-WHITE in both states (fill was always correct; opacity was the culprit). **B007 = RESOLVED.** Checkbox saga CLOSED: v1.22.1 checked-white → v1.22.2 both-states-faint + B006 → v1.22.3 full-white. Prod now = **v1.22.3**. ⚠️ Jon to hard-refresh (dim screenshots were v1.22.2 + cache). Backlog: F004/F005/F006; F001 🔓 unblocked/next-up. INBOX clear. **No open bugs.** WHO: Marc + Coach standby · Freddy hub · Jon deciding next (F001 / close out / backlog).
 - **[2026-07-06 15:55 MDT]** **✅ v1.22.2 SHIPPED to prod (release `5cb5c392`, master `8bd75f38`).** Bundled: white TR checkbox (BOTH states; Jon kept faint-white-when-unflagged) + **B006 Scan Results dismiss-by-report** (option B). **B006 = RESOLVED.** v1.22.2 combined the two queued patches (v1.22.2/v1.22.3) into one ship. Prod now = **v1.22.2**. Backlog: F004/F005/F006 (features); F001 🔓 unblocked/next-up. INBOX clear. WHO: Marc standby (shipped) · Coach standby · Freddy hub · Jon deciding next (F001 / backlog / close out).
 - **[2026-07-06 15:45 MDT]** **🔨 Live iteration — v1.22.2 (checkbox) + v1.22.3 (B006) building.** **B006** (Scan Results banner → Dismiss): Jon DECIDED **option B** = per-project dismiss-by-report (✕ hides this scan's banner; a new extraction resurfaces it). Locate finding: banner isn't empty, it's NOISY (benign auto-fixed info dominates). → Marc building. **White TR checkbox:** v1.22.1 covered the checked state; a follow-up for the UNCHECKED state (`accentColor` is checked-only) is queued → **v1.22.2**. Build order: Marc → checkbox-unchecked (v1.22.2) → B006 option B (v1.22.3). Coach caught up + standby (confirmed nothing held; verified F002 Rev1 shipped-in-v1.22.0). Prod = v1.22.1. F001 unblocked/next. WHO: Marc building · Coach standby · Freddy hub · Jon iterating live.
 - **[2026-07-06 15:40 MDT]** **✅ v1.22.1 SHIPPED (cosmetic patch — white TR checkbox fill), prod-verified (release `1048d635`).** Prod now = **v1.22.1**. **B006 — Scan Results concern window → add Dismiss button** (source Jon) tracked to Bugs [Backlog]; **Marc in LOCATE phase.** F001 (walkthrough) still 🔓 unblocked / next-up feature. WHO: Marc → locating B006 · Coach → catching up/standby · Freddy → hub · Jon → eyeballing v1.22.1 + deciding next (F001 / B006 / other).
