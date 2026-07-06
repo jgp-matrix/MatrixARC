@@ -29109,7 +29109,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                               <label data-tour="bom-tr-user-checkbox" title={_trTitle}
                                 style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5}}>
                                 <input type="checkbox" checked={_trFlagged} disabled={_trDisabled} onChange={_onTrToggle}
-                                  style={{width:12,height:12,margin:0,accentColor:"#f59e0b",cursor:_trDisabled?"default":"pointer"}} />
+                                  style={{width:12,height:12,margin:0,accentColor:"#fff",cursor:_trDisabled?"default":"pointer"}} />
                               </label>
                             );
                             return null;
