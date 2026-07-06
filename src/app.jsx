@@ -47910,28 +47910,80 @@ function useTourRect(target){
   const[rect,setRect]=useState(null);
   useEffect(()=>{
     if(!target){setRect(null);return;}
-    function measure(){
+    // Track-only (no scrollIntoView) — used by the initial measure + scroll/resize handlers so we
+    // don't fight the user's scroll during gated steps (F001 A7).
+    function track(){
       const el=document.querySelector(target);
-      if(!el){setRect(null);return;}
+      if(!el){setRect(null);return null;}
       const r=el.getBoundingClientRect();
       setRect({top:r.top,left:r.left,width:r.width,height:r.height});
-      el.scrollIntoView({behavior:'smooth',block:'center'});
+      return el;
     }
-    measure();
-    const t=setTimeout(measure,320);
-    return()=>clearTimeout(t);
+    // Initial measure DOES scroll the target into view; a delayed re-measure catches late layout.
+    const el0=track();
+    if(el0)el0.scrollIntoView({behavior:'smooth',block:'center'});
+    const t=setTimeout(track,320);
+    // F001 A7: keep the cutout glued to the target while the user scrolls to reach it (rAF-throttled).
+    let raf=0;
+    const onMove=()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;track();});};
+    window.addEventListener('scroll',onMove,true);
+    window.addEventListener('resize',onMove);
+    return()=>{clearTimeout(t);if(raf)cancelAnimationFrame(raf);window.removeEventListener('scroll',onMove,true);window.removeEventListener('resize',onMove);};
   },[target]);
   return rect;
 }
 
-function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps}){
+function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps,liveState}){
   // DECISION(v1.19.667): Accept a `steps` prop so we can swap between TOUR_STEPS (full)
   // and SALES_TOUR_STEPS without duplicating this component.
+  // F001: + `liveState` (checkpoint/state advances) and a per-step `type` (gated/narrated/checkpoint).
+  // `type` defaults to "narrated" when omitted → TOUR_STEPS / SALES_TOUR_STEPS behave exactly as before.
   const stepsArr=steps||TOUR_STEPS;
   const step=stepsArr[stepIdx];
+  const type=step?.type||"narrated";
   const PAD=12;const PW=480;
   const rect=useTourRect(step?.target||null);
   const[popStyle,setPopStyle]=useState({});
+  const _reduceMotion=typeof window!=="undefined"&&window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // F001 A2 — GATED detectors. Arm on step mount; one-shot onNext; document-level DELEGATED listeners
+  // so a modal/row remount doesn't drop a node-bound listener (Supplement §2). Narrated steps skip this.
+  useEffect(()=>{
+    if(type!=="gated"||!step?.advance)return;
+    const {on,match}=step.advance;
+    if(on==="click"){
+      const h=e=>{const t=step.target&&e.target.closest&&e.target.closest(step.target);if(t&&(!match||match(t)))onNext();};
+      document.addEventListener("click",h,true);return()=>document.removeEventListener("click",h,true);
+    }
+    if(on==="input"){
+      const h=e=>{const t=step.target&&e.target.closest&&e.target.closest(step.target);if(t&&(!match||match(t.value)))onNext();};
+      document.addEventListener("input",h,true);return()=>document.removeEventListener("input",h,true);
+    }
+    if(on==="appear"){
+      const sel=step.advance.appearTarget||step.target;
+      if(document.querySelector(sel)){onNext();return;}
+      const mo=new MutationObserver(()=>{if(document.querySelector(sel))onNext();});
+      mo.observe(document.body,{childList:true,subtree:true});
+      return()=>mo.disconnect();
+    }
+    // "navigate"/"state" gated advances fall through to the checkpoint/state watcher below.
+  },[stepIdx,step,type]);
+
+  // F001 A4 — CHECKPOINT / state watcher. Re-runs whenever liveState changes (it flows in as a prop,
+  // so project updates re-check automatically — no polling). Advances when when(liveState) flips true.
+  useEffect(()=>{
+    if(!step)return;
+    const on=step.advance&&step.advance.on;
+    if(!(type==="checkpoint"||on==="state"||on==="navigate"))return;
+    if(step.advance&&step.advance.when&&step.advance.when(liveState||{}))onNext();
+  },[stepIdx,step,type,liveState]);
+
+  // F001 A8 — Esc minimizes (preserves resume, mirrors the – Hide button).
+  useEffect(()=>{
+    const h=e=>{if(e.key==="Escape")onMinimize&&onMinimize();};
+    document.addEventListener("keydown",h);
+    return()=>document.removeEventListener("keydown",h);
+  },[onMinimize]);
 
   useEffect(()=>{
     const vw=window.innerWidth;const vh=window.innerHeight;
@@ -47963,17 +48015,36 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps}){
 
   const isFirst=stepIdx===0;const isLast=stepIdx===stepsArr.length-1;
   const phasePct=Math.round(((stepIdx+1)/stepsArr.length)*100);
+  // F001: reduced-motion (A8) + type-driven behaviors (A3 click-through, checkpoint waiting).
+  const _ringTransition=_reduceMotion?'none':'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease';
+  const _barTransition=_reduceMotion?'none':'width 0.3s ease';
+  const _gatedHole=type==="gated"&&!!rect;                     // click-through spotlight mode
+  const _showNext=type==="narrated"||!!step?.allowManualNext;  // gated/checkpoint auto-advance; hide Next unless allowed
+  const _waiting=type==="checkpoint";
 
   return(
-    <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:'all'}}>
-      {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.75)'}}/>}
-      {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:12,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:'top 0.25s ease,left 0.25s ease,width 0.25s ease,height 0.25s ease'}}/>}
+    // F001 A3: for GATED with a resolved target, the root does NOT absorb clicks (pointerEvents:none) —
+    // the four backdrop rects around the cutout absorb off-script clicks while the hole lets the user's
+    // real click reach the spotlighted target. NARRATED/CHECKPOINT keep the full-absorb backdrop (unchanged).
+    <div style={{position:'fixed',inset:0,zIndex:99997,pointerEvents:_gatedHole?'none':'all'}}>
+      {_gatedHole?(
+        <>
+          <div style={{position:'fixed',top:0,left:0,right:0,height:Math.max(0,rect.top-PAD),background:'rgba(0,0,0,0.75)',pointerEvents:'all'}}/>
+          <div style={{position:'fixed',top:rect.top+rect.height+PAD,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.75)',pointerEvents:'all'}}/>
+          <div style={{position:'fixed',top:Math.max(0,rect.top-PAD),left:0,width:Math.max(0,rect.left-PAD),height:rect.height+PAD*2,background:'rgba(0,0,0,0.75)',pointerEvents:'all'}}/>
+          <div style={{position:'fixed',top:Math.max(0,rect.top-PAD),left:rect.left+rect.width+PAD,right:0,height:rect.height+PAD*2,background:'rgba(0,0,0,0.75)',pointerEvents:'all'}}/>
+          <div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:12,border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:_ringTransition}}/>
+        </>
+      ):(<>
+        {!rect&&<div style={{position:'absolute',inset:0,background:'rgba(0,0,0,0.75)'}}/>}
+        {rect&&<div style={{position:'fixed',top:rect.top-PAD,left:rect.left-PAD,width:rect.width+PAD*2,height:rect.height+PAD*2,borderRadius:12,boxShadow:'0 0 0 9999px rgba(0,0,0,0.75)',border:'2px solid #60a5fa',pointerEvents:'none',zIndex:99998,transition:_ringTransition}}/>}
+      </>)}
       <div style={{...popStyle,zIndex:99999,background:'#131929',border:'1px solid #1e3a5f',borderRadius:16,overflow:'hidden',boxShadow:'0 16px 56px rgba(0,0,0,0.75)',color:'#f1f5f9',pointerEvents:'all'}}>
         {/* Phase + progress header */}
         <div style={{background:'#0d1f3c',padding:'13px 20px',borderBottom:'1px solid #1e3a5f',display:'flex',alignItems:'center',justifyContent:'space-between',gap:12}}>
           <span style={{fontSize:13,fontWeight:700,color:'#60a5fa',letterSpacing:0.5,textTransform:'uppercase'}}>{step.phase}</span>
           <div style={{flex:1,height:4,background:'#1e293b',borderRadius:2,overflow:'hidden'}}>
-            <div style={{height:'100%',width:phasePct+'%',background:'#3b82f6',borderRadius:2,transition:'width 0.3s ease'}}/>
+            <div style={{height:'100%',width:phasePct+'%',background:'#3b82f6',borderRadius:2,transition:_barTransition}}/>
           </div>
           <span style={{fontSize:13,color:'#64748b',flexShrink:0,fontWeight:600}}>{stepIdx+1} / {stepsArr.length}</span>
           <button onClick={onMinimize} title="Minimize — your progress is saved" style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',cursor:'pointer',fontSize:13,lineHeight:1,padding:'3px 10px',borderRadius:5,flexShrink:0,fontFamily:'inherit'}}>– Hide</button>
@@ -47981,7 +48052,14 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps}){
         {/* Body */}
         <div style={{padding:'22px 26px'}}>
           <div style={{fontSize:18,fontWeight:700,color:'#93c5fd',lineHeight:1.3,marginBottom:14}}>{step.title}</div>
-          <div style={{fontSize:15,color:'#cbd5e1',lineHeight:1.75,whiteSpace:'pre-line',marginBottom:step.action?16:22}}>{step.body}</div>
+          <div style={{fontSize:15,color:'#cbd5e1',lineHeight:1.75,whiteSpace:'pre-line',marginBottom:(step.action||_waiting)?16:22}}>{step.body}</div>
+          {/* F001 CHECKPOINT: waiting state — the state watcher (A4) auto-advances when the signal arrives */}
+          {_waiting&&(
+            <div style={{background:'#1a1400',border:'1px solid #a16207',borderRadius:10,padding:'14px 18px',marginBottom:18,display:'flex',alignItems:'center',gap:10}}>
+              <span style={{fontSize:18}}>⏳</span>
+              <div style={{fontSize:14,color:'#fcd34d',lineHeight:1.6}}>{step.waitLabel||"Waiting — the walkthrough will continue automatically when this step completes."}</div>
+            </div>
+          )}
           {/* Action prompt */}
           {step.action&&(
             <div style={{background:'#0f2a1a',border:'1px solid #166534',borderRadius:10,padding:'14px 18px',marginBottom:18}}>
@@ -47996,7 +48074,9 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps}){
               {!isFirst&&<button onClick={onPrev} style={{background:'none',border:'1px solid #1e3a5f',color:'#94a3b8',borderRadius:8,padding:'9px 20px',cursor:'pointer',fontSize:14,fontFamily:'inherit'}}>← Back</button>}
               {isLast
                 ?<button onClick={onDone} style={{background:'#16a34a',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>Finish ✓</button>
-                :<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next →':'Next →'}</button>
+                :(_showNext
+                  ?<button onClick={onNext} style={{background:'#2563eb',border:'none',color:'#fff',borderRadius:8,padding:'9px 24px',cursor:'pointer',fontSize:15,fontWeight:700,fontFamily:'inherit'}}>{step.action?'Done, Next →':'Next →'}</button>
+                  :<span style={{fontSize:13,color:'#64748b',fontStyle:'italic',alignSelf:'center'}}>{_waiting?'Waiting…':'Do the highlighted step to continue'}</span>)
               }
             </div>
           </div>
