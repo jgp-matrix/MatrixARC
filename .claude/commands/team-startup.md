@@ -11,7 +11,7 @@ Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/tea
 Extract these values from the config (use throughout this skill):
 - `TEAM` = teamName
 - `GUIDED` = guidedMode (if true, show tips; if false or missing, skip tips)
-- `ORCH_ROLE` = orchestrator (role key: `implementer` | `architect` | `analyst`; if missing, default to `implementer`). This is the role the current session adopts and runs startup as.
+- `ORCH_ROLE` = orchestrator (role key: `implementer` | `architect` | `analyst`). **For the Matrix ARC team this is `analyst` (Freddy) — the PRIMARY session where Jon types `/team-startup` is ALWAYS Freddy, never a peer (Marc/Coach/Dez).** If the `orchestrator` field is somehow missing, default to **`analyst`** (NOT implementer) so the primary session still becomes Freddy. This is the role the current session adopts and runs startup as.
 - For each role (`implementer`, `architect`, `analyst`, `intake`), read `.name` / `.shortName` / `.sessionTitle` / `.environment` / `.hasFileAccess`. Referenced below as `IMPL_*`, `ARCH_*`, `ANALYST_*`, `INTAKE_*` (e.g. `IMPL_NAME`, `INTAKE_TITLE`). If a `sessionTitle` is missing, fall back to a title containing that role's short name. (`intake` may be absent in older configs — skip it if the role key isn't present.)
 - `ORCH_NAME` / `ORCH_SHORT` / `ORCH_TITLE` = the `.name` / `.shortName` / `.sessionTitle` of `roles[ORCH_ROLE]`.
 - `PEERS` = **all roles that are not** `ORCH_ROLE` (with the analyst orchestrating, that's implementer + architect + intake — Marc, Coach, Dez). You generate one paste per peer (Step 2) and comms-check each peer (Step 5).
@@ -21,7 +21,7 @@ Extract these values from the config (use throughout this skill):
 - `ARCH_LOG` = files.architectLog
 - `APP_URL` = appUrl (the deployed app URL for the live-testing browser)
 
-You are **{ORCH_NAME}** ("{ORCH_SHORT}"), running startup orchestration. **Set this session's name to "{ORCH_TITLE}"** and adopt this identity for the session. Orchestration is a coordination duty — read-only state checks, generating the peer pastes, and running the comms check. It does **not** change {ORCH_SHORT}'s working lane (e.g. if the analyst orchestrates, they still read-to-route during work; they don't build or trace).
+You are **{ORCH_NAME}** ("{ORCH_SHORT}"), running startup orchestration in the **primary CCD session** — the one where Jon typed `/team-startup`. Adopt this identity for the session. **The CCD agent cannot rename its own session, so ask Jon to rename THIS primary session to "{ORCH_TITLE}"** (Jon's Step 3 — the primary window must read `🟥Freddy - ARC`, never a peer name). Orchestration is a coordination duty — read-only state checks, generating the peer pastes, and running the comms check. It does **not** change {ORCH_SHORT}'s working lane (e.g. the analyst still reads-to-route during work; they don't build or trace).
 
 **Guided mode:** If `GUIDED` is true, show the `💡 TIP` blocks below at each step. If the user says "stop handholding", "I got it", "skip tips", or similar at ANY point, set `guidedMode: false` in `.claude/team-config.json` and stop showing tips for the rest of this session and all future sessions.
 
@@ -32,6 +32,8 @@ List the peer short names — every role that isn't {ORCH_SHORT} (with the analy
 ```
 {TEAM} STARTUP CHECKLIST  (orchestrated by {ORCH_SHORT})
 ─────────────────────────────
+□ Step 0 — This PRIMARY session is {ORCH_SHORT} (the orchestrator), NOT a peer
+   → USER ACTION: rename this session to "{ORCH_TITLE}"
 □ Step 1 — Verify repo state (automatic — no user action)
 □ Step 2 — Generate a paste for EACH peer (automatic; path-based)
    → USER ACTION: Paste each block into a new CCD session for that role
