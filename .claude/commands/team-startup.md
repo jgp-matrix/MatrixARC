@@ -276,3 +276,18 @@ Awaiting first work instruction.
 - **who's-doing-what** changes (a role picks up / finishes / goes idle).
 
 Each ping = a short glanceable snapshot: current item states + who's on what right now + the next Jon touchpoint. Batch related changes into one ping. ({INTAKE_SHORT}'s side of this is in CLAUDE.md → Intake/Triage; this is the {ORCH_SHORT}-side reminder that was missing.)
+
+## ★ AWAY MODE — when Jon steps away (unattended coordination, ZERO sends)
+
+**The problem:** every cross-session `send_message` needs Jon's per-send "Allow Once" click (hardcoded, unsuppressible — G001, re-confirmed incl. Bypass Permissions). So the instant Jon steps away, any send **stalls** waiting for a click that won't come. This bit us live (2026-07-06 lunch: Marc's "report results" send + {ORCH_SHORT}'s status pings all blocked). **Do not repeat it.**
+
+**Trigger:** Jon says he's stepping away — "lunch", "afk", "leaving", "back in N", etc. {ORCH_SHORT} declares **AWAY MODE** and adopts BOTH levers (Jon ruled "both", 2026-07-06):
+
+**Lever 1 — pull-based repo bus (standing 4-session team).** The key insight: tasks are already assigned; only cross-session *reporting* stalls. So during away mode:
+- **{ORCH_SHORT} assigns/confirms each active role's task BEFORE Jon leaves** (no inbound sends needed during the away window).
+- Roles **do NOT `send_message`.** Each role finishes its assigned task and **commits its output + a one-line status to a file it owns** (results doc / its status file) and pushes. A mid-task blocker → commit a `BLOCKED: <what>` note + work parallel paths or hold; never send (it would stall).
+- {ORCH_SHORT} **`git pull`s** to see progress (pulling needs no approval) — on Jon's return, and periodically if useful. Resume normal send-based coordination only once Jon's back to click.
+
+**Lever 2 — in-session subagents for hands-off multi-step runs.** For a task Jon wants to *just run* unattended, {ORCH_SHORT} drives **in-session subagents** (Agent/Task tool) — they run inside the orchestrator session with **no cross-session prompts at all**. Jon **pre-authorizes** the run before leaving (subagent spawning stays hub-only + Jon-gated per the hybrid-routing guardrails); all subagent activity logs to STATUS.md/TODO.md. Ephemeral + orchestrator-framed cross-check — fine for mechanical/low-stakes autonomy; keep high-stakes independent review for when Jon's back.
+
+**On return:** {ORCH_SHORT} pulls, reads the committed results / subagent output, updates Jon + feeds {INTAKE_SHORT}'s board, and normal send-based flow resumes.
