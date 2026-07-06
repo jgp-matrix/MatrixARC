@@ -4,7 +4,9 @@
 **Date:** 2026-07-06
 **For:** Freddy (Analyst Review) → Jon (Plan approval) → Marc (build)
 **Traced against tip:** `ede88d59` (v1.21.25). All line numbers are at this tip; expect ±small drift.
-**Status:** Trace + Plan complete. **HOLD after Plan per per-phase gating — no build until Jon's go.**
+**Status:** **REV 1 (2026-07-06)** — Jon's R1/R2 rulings applied (see §10, which SUPERSEDES §3, §6.3 Status content, §6.4, §6.5, and resolves §5.1/§5.2/§5.3). Original trace (§1–§9) retained for reference. **HOLD per per-phase gating — no build until Freddy re-review + Jon's build-approval.**
+
+> **Reading order for Marc:** §1 (inventory) and §6.1/§6.2/§6.6/§6.7 (header/colgroup/colSpan/data-tour) are unchanged and authoritative. For the BC circle (§6.5), Status-cell content (§6.3), and Unit $ styling (§6.4/§3), **use §10 — it supersedes.**
 
 ---
 
@@ -208,3 +210,78 @@ Add `data-tour="bom-tr"`, `data-tour="bom-status"`, `data-tour="bom-search"` to 
 ## 9. Pipeline / HOLD
 
 Per per-phase gating: **this deliverable → Freddy Analyst Review → Jon approves the Plan (H-item step 4) → THEN Marc builds.** No code before Jon's explicit go. Two items block a clean build and need Jon's ruling first: **§5.1 (C1 three-badge)** and **§5.2 (M/LABOR pill removal)**.
+
+---
+
+## 10. REV 1 — R1/R2 rulings applied (2026-07-06) — SUPERSEDING SPEC
+
+Jon's rulings (Brief §6, R1/R2) are final. This section is the **authoritative spec** for the BC circle, the Status-cell content, and the Unit $ styling — it supersedes §3, §6.3 (Status content), §6.4, §6.5, and resolves the §5 open questions. Everything else in §6 (header array §6.1, colgroup §6.2, TR/🔍 relocation, colSpan sites §6.6, data-tour §6.7) is unchanged.
+
+### 10.1 R1 — Unified tri-state BC circle (replaces the 3 separate badges)
+
+**One circle in the Status column, glyph "BC", color = state, precedence RED > YELLOW > BLUE > none.** It co-exists with the AI-confidence "C" circle (Status holds up to 2 circles, right-anchored flex — same wrapper the old `_bc` cell used at 29047).
+
+**Exact precedence predicate** (behavior-preserving union of the three current gates — 29214 red, 29221 yellow, 29071 blue — resolved by priority). Compute once per row, alongside the TR predicates (~28984):
+```js
+// F002 R1 — unified BC-circle state. RED > YELLOW > BLUE > none.
+const _bcCircle=(()=>{
+  if(row.isLaborRow||row.isContingency||!_bcToken)return null;      // no circle on labor/contingency or when BC not connected
+  if(row.priceSource==="bc")return null;                            // matched/BC-priced → none (Jon's rule)
+  if(row.bcVerify?.status==="not-in-bc")return "red";               // catalog-absent → "add & link"
+  if(row.bcVerify?.status==="fuzzy"&&!bcFuzzySuggestions[row.id])return "yellow"; // close match → "match & link"
+  if(!readOnly&&row.priceSource!=="manual")return "blue";           // in BC, needs matching → "match & link"
+  return null;
+})();
+```
+**Notes on the predicate (verified against current gates):**
+- The **`priceSource==="bc"` early-return** encodes Jon's "matched/BC-priced → none." It is stricter than today (today a stale `not-in-bc`/`fuzzy` verify on a bc-priced row could still show a badge), but `runPricingOnPanel` refreshes `bcVerify` and `applyConfirmedPrice` stamps `bcVerify:{status:"in-bc"}` (26905), so bc rows won't carry a stale red/yellow in practice. This is the correct reading of the ruling; flagged as an intentional, safe tightening.
+- **RED/YELLOW show even in `readOnly`** (informational) — preserves current behavior (29214/29221 have no `!readOnly` gate). **BLUE only when `!readOnly`** (it's purely an action) — preserves 29071.
+- **YELLOW keeps `!bcFuzzySuggestions[row.id]`** so it hides while the suggestions panel (Part Number cell) is open — preserves current 29221 behavior.
+- **`priceSource==="manual"` (budgetary) → no BC circle** (blue excludes manual, as today). Correct: a budgetary-manual row isn't seeking a BC match.
+
+**Click flow — RED differs from YELLOW/BLUE (confirmed):**
+- **RED → "add & link":** open the BC Item Browser **directly** (current red "+ BC" onClick, 29216): `setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);`
+- **YELLOW + BLUE → "match & link" (shared):** the current **blue** fuzzy-lookup handler (29072–29078): `bcFuzzyLookup(pn)` → `applyBcItem` on match, else open suggestions, else browser. (Jon: yellow functions identically to blue — unify on the blue handler; the old yellow re-trigger at 29223 is functionally equivalent and is dropped.)
+
+**Colors (proposed — one nuance flagged):** glyph "BC", white text, 24×24 / 50% / fs9 / fw800 (matches the existing blue circle + confidence circle).
+| State | Suggested bg | Heritage |
+|---|---|---|
+| RED | `#dc2626` | the old red "+ BC" pill |
+| YELLOW | `#fcd34d` (black text for contrast) | the old yellow "? BC" pill |
+| BLUE | `#2563eb` | the current blue BC circle |
+
+> **⚠ Color-collision nuance for Jon/Freddy:** the AI-confidence "C" circle uses `#ef4444` (low=red) and `#f59e0b` (medium=amber). Placing the BC circle's red/yellow next to it risks two near-identical red or amber circles side-by-side. Using `#dc2626` (BC-red) vs `#ef4444` (conf-red) and `#fcd34d` (BC-yellow) vs `#f59e0b` (conf-amber) keeps them distinguishable, and the glyphs differ ("BC" vs "C"). If Jon wants stronger separation we could reorder (BC left, C right) or add a hairline. **Non-blocking — confirm palette at live verify.**
+
+**Tooltips by state:** RED "Not in BC catalog — click to add & link"; YELLOW "Close match in BC — click to match & link"; BLUE "Click to match this part in BC".
+
+### 10.2 R1 — Status-cell content (revises §6.3 Status bullet)
+The new **Status `<td>`** (between Qty and 🔍) renders, right-anchored (reuse the 29047 flex wrapper), in order: **confidence "C" circle** (29067–29070, unchanged gate/colors) then the **unified `_bcCircle`** (single element, color+onClick per §10.1). The old blue-circle block (29071–29080), red "+ BC" (29214–29220), and yellow "? BC" (29221–29234) are all **removed from their current locations** and replaced by the one `_bcCircle` element here. Add `data-tour="bom-status"`.
+
+### 10.3 R2 — Unit $ styling (replaces §3 + §6.4)
+**AI and Manual both grey+italic; only BC white.** Edit the Unit $ value input style (29375):
+```js
+const _softPrice=row.priceSource==="ai"||row.priceSource==="manual";
+style={{...,color:_softPrice?C.muted:C.text,fontStyle:_softPrice?"italic":"normal",...}}
+```
+- `C.muted="#94a3b8"` + italic == the Lead Time column's AI styling (29427) — exact match, as R2 requires.
+- `priceSource==="bc"` → `C.text` (white). Labor → "— auto" (29369), untouched. Red row-bg unchanged (orthogonal).
+
+**R2 "identify the budget-vs-confirmed manual field" — FINDING (no new field needed):**
+There is **no separate budget/confirmed boolean.** The distinction already lives in **`priceSource`**, set by the Price-Entry modal (`priceConfirmPending`, fired from `updatePrice` at 26872):
+- **Budgetary Estimate** → `applyBudgetaryPrice` (26877) sets `priceSource:"manual"`, `priceDate:null`.
+- **Confirmed Cost** → `applyConfirmedPrice` (26892) sets **`priceSource:"bc"`**, `priceDate:now`, `bcVerify:{status:"in-bc"}` (per the v1.19.1026 decision at 26898–26902 — a confirmed manual price is deliberately stored as `"bc"`).
+
+**Therefore R2's rule already differentiates them for free:** budgetary-manual (`"manual"`) → grey+italic; confirmed-manual (stored `"bc"`) → white. **No v1 work is needed to get "confirmed → white"** — it falls out of the existing `priceSource`. (Corollary: a confirmed-manual price is already visually identical to a true BC-catalog price — both white — which is existing v1.19.1026 behavior, not introduced by F002. If Jon ever wants confirmed-manual visually distinct from BC-catalog, *that* would need a new field — but it's the opposite of R2 and out of scope.)
+
+### 10.4 §5 open questions — RESOLVED
+- **§5.1 (C1)** → R1 unified tri-state circle (§10.1/§10.2).
+- **§5.2 (C5)** → R2: AI+manual grey/italic, BC white (§10.3). **⚠ `bcSyncError` pill STAYS** (actionable error, not a source marker — keep at 29367). **LABOR pill removed** (29360). **BC/ARC AI/M source pills removed** (29361–29366).
+- **§5.3** → TR **Resolve ✓ button moves into the TR column** with the checkbox (§6.3 TR bullet already specifies this).
+
+### 10.5 Revised test criteria (supersede §8 items 3 & 5)
+- **T3′ (Status / BC circle):** exactly ONE BC circle per row, color = state: RED when `bcVerify.not-in-bc` (click → BC Browser directly), YELLOW when `bcVerify.fuzzy` (click → fuzzy-match), BLUE when unpriced/non-bc/non-manual & editable (click → fuzzy-match), none when BC-priced. RED wins over YELLOW wins over BLUE. Confidence "C" circle still co-exists.
+- **T5′ (Unit $):** AI **and** manual (budgetary) prices render grey `#94a3b8` + italic (matching Lead column); BC prices (incl. confirmed-manual, stored as bc) render white; source pills gone; ⚠ sync-error pill still present; LABOR pill gone.
+- All other §8 items (1,2,4,6,7,8,9,10) stand.
+
+### 10.6 Invariants — still fully protected under R1/R2
+R1 is a **merge + relocation** of existing render gates (no gate logic changes — the union predicate is behavior-preserving with an intentional, safe `bc→none` tightening). R2 restyles the **displayed value only**. `_isBomRowFlaggedRed`, `_hasPrice`, `_isValidPrice`, `_isValidLT`, #199 TR logic, and all Firestore writes remain **untouched**. `priceSource` is read, never written, by F002.
