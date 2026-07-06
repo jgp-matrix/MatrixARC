@@ -15883,6 +15883,18 @@ function _isTechReviewer(project){
         ?project.preReviewAssignedTo===_appCtx.uid
         :!!(project&&project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid));
 }
+// F003 — who sees the engineer's green sign-off circle: the assigned engineer OR an admin,
+// and ONLY while the project is actively out for Technical Review (preReviewStatus==="pending").
+// Deliberately EXCLUDES generic hasPermission("reviewer") (3b) and all non-"pending" states (4a) —
+// this is the C7 over-exposure fix. Everyone else (Sales / non-assignee / any non-pending state)
+// falls through to the user checkbox.
+function _isReviewSignoffAuthority(project){
+  if(!project||project.preReviewStatus!=="pending")return false;
+  if(_appCtx.role==="admin")return true;
+  return project.preReviewAssignedTo
+    ? project.preReviewAssignedTo===_appCtx.uid
+    : project.bcDesignerUid===_appCtx.uid;   // same assignee-fallback as _isTechReviewer
+}
 // DECISION(v1.19.678): Owner Priority Mode — shared lock message for button tooltips + alerts.
 const _OWNER_PRIORITY_ALERT="This action is disabled while the owner is working this project. Wait until they leave, or ask an admin to Take Over.";
 const _OWNER_PRIORITY_TOOLTIP="Disabled — owner is working this project. Wait until they leave or ask an admin to Take Over.";
@@ -15967,8 +15979,9 @@ function findIncompleteQuoteItems(project){
     // so every count display that reads issues.length (Send-button label, modal titles) reflects
     // the true number of flagged lines rather than "1 per panel" (bug: multi-line flag showed
     // "1 incomplete"). _sendBlocked (findIncompleteQuoteItems(...).length>0) trips on all consuming
-    // surfaces. Resolution: per-row Resolve (reviewer) or the pre-review approve-sweep (never a
-    // dead-end — see #199 L3/L5). The count-summing sites use `count||1`, so per-row (no count) sums right.
+    // surfaces. Resolution: per-row sign-off (the reviewer's green circle); F003 removed the approve-sweep
+    // and instead GATES Approve on all rows being resolved first (never a dead-end — see #199 L3/L5, F003 §5).
+    // The count-summing sites use `count||1`, so per-row (no count) sums right.
     for(const _trRow of bom.filter(_isUnresolvedTechReviewRow)){
       issues.push({
         panelName:pan.name||`Panel ${pi+1}`,
@@ -28964,7 +28977,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     //   add    → purple tint
                     //   remove → red tint + reduced opacity (struck-through downstream)
                     const _ecoTint=row.ecoOp==="modify"?"rgba(252,211,77,0.16)":row.ecoOp==="add"?"rgba(168,85,247,0.16)":row.ecoOp==="remove"?"rgba(248,113,113,0.18)":null;
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    // F003 C8 — an unresolved Tech-Review row shows a YELLOW bg that overrides red, until
+                    // sign-off. VISUAL-ONLY: uses the MODULE predicate _isUnresolvedTechReviewRow (line ~15872),
+                    // NOT the local _trUnresolved (defined below this line → TDZ). _isBomRowFlaggedRed and every
+                    // logic/RFQ consumer are untouched; on sign-off the predicate goes false and the row falls
+                    // through to red (if still unpriced) or zebra.
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isUnresolvedTechReviewRow(row)?"rgba(245,158,11,0.28)":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // Strikethrough on the row text for ecoOp:"remove" so the
                     // "this is being removed" intent is visible at a glance.
                     const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
@@ -28996,7 +29014,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // #199 MED-1 (Jon): supplier flags are checked+DISABLED for EVERYONE (Sales AND
                     // reviewers) — clearable ONLY via the audited Resolve (stamps resolved/By/At), never
                     // an unaudited uncheck. Manual flags stay toggleable; resolved rows are read-only.
-                    const _trDisabled=readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier);
+                    // F003 Q2b — once the project is out for review (preReviewStatus==="pending"), the
+                    // user checkbox is read-only: the engineer owns resolution (via the green circle).
+                    // Sales can still SEE flags, not change them. Authority users render the circle, not
+                    // this checkbox, so they never hit this term.
+                    const _trDisabled=readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier)||project.preReviewStatus==="pending";
                     const _trTitle=!_trFlagged?"Flag this line for Technical Review"
                       :_trResolved?"Technical Review resolved"
                       :_trSupplier?"Supplier substitution — requires engineer sign-off"
@@ -29063,20 +29085,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       f==="_tr"?(
                         <td key="_tr" data-tour="bom-tr" style={{padding:"3px 2px",width:30,textAlign:"center"}}>
                           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                          {/* #199 P1 — Tech Review flag control. Amber "TR" glyph, separate from the red price-flag row bg (R1).
-                             Shows on real part rows; unflagged+editable shows a faint checkbox (manual set); supplier flags are
-                             checked+disabled for Sales. F002: relocated from the old _bc column — logic byte-for-byte unchanged. */}
-                          {_trShow&&(_trFlagged||!readOnly)&&(
-                            <label title={_trTitle} style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5}}>
-                              <input type="checkbox" checked={_trFlagged} disabled={_trDisabled} onChange={_onTrToggle} style={{width:12,height:12,margin:0,accentColor:"#f59e0b",cursor:_trDisabled?"default":"pointer"}} />
-                              {_trFlagged&&<span style={{fontSize:9,fontWeight:800,color:_trUnresolved?"#f59e0b":C.muted,lineHeight:1}}>{_trUnresolved?"TR":"TR✓"}</span>}
-                            </label>
-                          )}
-                          {/* #199 P2 — reviewer-only Resolve (audited sign-off); shown only on unresolved flagged rows */}
-                          {_trShow&&_trUnresolved&&_trIsReviewer&&(
-                            <button title="Resolve — engineer sign-off for this Technical Review line" onClick={_onTrResolve}
-                              style={{background:"#052e16",border:"1px solid #4ade80",color:"#4ade80",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>✓</button>
-                          )}
+                          {/* F003 — role-mutual-exclusivity: the assigned engineer/admin (during review) sees ONLY the
+                             green sign-off circle on flagged rows; everyone else sees ONLY the user checkbox. C6: no
+                             "TR"/"TR✓" text label in either branch. 5a: the circle reuses _onTrResolve (audit stamp
+                             intact) — empty when unresolved, "✓"+filled bg when resolved, non-clickable once resolved.
+                             Reuses the #199 predicates/handlers (_trShow/_trFlagged/_trResolved/_trUnresolved/_trDisabled/
+                             _trTitle/_onTrToggle/_onTrResolve) unchanged. */}
+                          {_trShow&&(()=>{
+                            if(_isReviewSignoffAuthority(project)){
+                              // ENGINEER (assignee/admin) during `pending`: green sign-off circle on flagged rows only.
+                              if(!_trFlagged)return null;                       // nothing to sign off on unflagged rows
+                              return(
+                                <button data-tour="bom-tr-engineer-circle"
+                                  title={_trUnresolved?"Sign off — engineer approval for this Technical Review line":"Signed off"}
+                                  onClick={_trUnresolved?_onTrResolve:undefined} disabled={!_trUnresolved}
+                                  style={{background:_trResolved?"#052e16":"transparent",border:"1px solid #4ade80",color:"#4ade80",cursor:_trUnresolved?"pointer":"default",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>
+                                  {_trResolved?"✓":""}
+                                </button>
+                              );
+                            }
+                            // USER (Sales / non-assignee / any non-`pending` state): checkbox only (C6 = no text label).
+                            if(_trFlagged||!readOnly)return(
+                              <label data-tour="bom-tr-user-checkbox" title={_trTitle}
+                                style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5}}>
+                                <input type="checkbox" checked={_trFlagged} disabled={_trDisabled} onChange={_onTrToggle}
+                                  style={{width:12,height:12,margin:0,accentColor:"#f59e0b",cursor:_trDisabled?"default":"pointer"}} />
+                              </label>
+                            );
+                            return null;
+                          })()}
                           </div>
                         </td>
                       ):f==="_status"?(
@@ -33696,8 +33733,8 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
     }
     // #199 MED-3: the standalone "Send Quoted BOM to Customer" path is the 7th customer-facing
     // surface — gate it on unresolved Tech-Review flags too (mirrors the verification gate above).
-    // Resolution is the same reachable path as the quote gate: reviewer per-row Resolve or the
-    // pre-review approve-sweep (no new dead-end).
+    // Resolution is the same reachable path as the quote gate: reviewer per-row sign-off (green circle);
+    // F003 removed the approve-sweep and gates Approve on all rows resolved (no new dead-end).
     const trBlocks=findIncompleteQuoteItems(project).filter(i=>i.isTechReviewBlock);
     if(trBlocks.length){
       const _trN=trBlocks.reduce((s,i)=>s+(i.count||1),0);
@@ -34391,33 +34428,30 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 <div style={{display:"flex",gap:6}}>
                   <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}}
                     style={btn("#1a1040","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa88",padding:"6px 16px"})}>📐 Review Drawings</button>
-                  <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
+                  {(()=>{
+                    // F003 Q6b — Approve is gated on EVERY Technical-Review row being signed off first.
+                    // The engineer resolves each flagged line via its green circle (per-row _onTrResolve,
+                    // which persists immediately via onSaveImmediate). The old #199 approve-sweep is REMOVED
+                    // (Plan §5/§7): resolution now happens per-row BEFORE approval is reachable, so the blanket
+                    // sweep+save is redundant and its MED-2 partial-write hazard can no longer occur. The
+                    // quote_ready stamp (below) is unrelated to the sweep and is kept.
+                    const _trOpen=(project.panels||[]).reduce((n,p)=>n+(p.bom||[]).filter(_isUnresolvedTechReviewRow).length,0);
+                    const _apDisabled=ownerPriorityActive||_trOpen>0;
+                    return <button disabled={_apDisabled}
+                    title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:_trOpen>0?`Resolve ${_trOpen} flagged line${_trOpen>1?"s":""} (green circles) before approving`:""}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                     const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
                     _logQvHistory(project.id,{type:"review_approve"});
                     delete _pendingPreReviewOverrides[project.id];
-                    // #199 P2 — approve-sweep: approval IS the engineer's affirmative sign-off on the
-                    // whole project incl. flagged lines, so resolve every unresolved Tech-Review row
-                    // across ALL panels (guarantees an approved project is never permanently un-sendable).
-                    const _trNow=Date.now();
-                    const _trSweptPanels=(project.panels||[]).map(p=>(
-                      (p.bom||[]).some(_isUnresolvedTechReviewRow)
-                        ?{...p,bom:p.bom.map(r=>_isUnresolvedTechReviewRow(r)?{...r,techReviewResolved:true,techReviewResolvedBy:_appCtx.uid,techReviewResolvedAt:_trNow}:r)}
-                        :p));
-                    const _trChangedPanels=_trSweptPanels.filter((p,i)=>p!==(project.panels||[])[i]);
-                    onUpdate({...project,...reviewFields,panels:_trSweptPanels});
+                    onUpdate({...project,...reviewFields});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
-                    let _trApproveOk=false;
-                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);_trApproveOk=true;}
+                    try{await fbDb.collection(_prjPath).doc(project.id).update(reviewFields);}
                     catch(e){console.error("Pre-review approve save failed:",e);onUpdate({...project});}
-                    // #199 MED-2: persist the swept-resolved panels ONLY if the approval write
-                    // succeeded — else we'd leave resolved TR flags on a NOT-approved project → the P3
-                    // gate reads "no unresolved" → sendable WITHOUT approval. No partial write on error.
-                    if(_trApproveOk){for(const _p of _trChangedPanels){try{await saveProjectPanel(uid,project.id,_p.id,_p,true);}catch(e){console.warn("[#199] TR approve-sweep panel save failed:",e);}}}
                     if(bcUploadRef?.current){
                       try{await bcUploadRef.current({stampMode:"quote_ready",archiveOld:true});}catch(e){console.warn("QUOTE READY stamp upload failed:",e);}
                     }
-                  }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>✓ Approve</button>
+                  }} style={btn("#052e16","#4ade80",{fontSize:13,fontWeight:700,border:"1px solid #4ade80",padding:"6px 16px",opacity:_apDisabled?0.45:1,cursor:_apDisabled?"not-allowed":"pointer"})}>✓ Approve</button>;
+                  })()}
                   <button disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                     const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
