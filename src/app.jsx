@@ -28758,20 +28758,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 {/* DECISION(v1.19.972): Qty column widened from 42 to 56 — 42px
                     couldn't fit 3-digit quantities (e.g., 100, 240) without
                     truncation; some BOMs have qty up to several hundred. */}
-                <col style={{width:42}}/><col style={{width:42}}/><col style={{width:56}}/>
-                <col style={{width:"18%"}}/><col style={{width:28}}/><col style={{width:"22%"}}/>
+                {/* F002: 15 cols — # Ref TR Qty Status 🔍 Part# Desc Mfr Supplier Unit$ Ext$ Lead Priced actions.
+                    New narrow fixed cols: TR 30, Status 56 (holds confidence "C" + unified BC circle — same 56 the old _bc col held), 🔍 30. */}
+                <col style={{width:42}}/><col style={{width:42}}/><col style={{width:30}}/><col style={{width:56}}/><col style={{width:56}}/><col style={{width:30}}/>
+                <col style={{width:"18%"}}/><col style={{width:"22%"}}/>
                 <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
-                {/* DECISION(v1.19.825): Unit $ column was 82px which couldn't fit the BC/ARC AI/M
-                    source pill + "$" + price input — the pill overflowed left into the supplier
-                    column. Widened to 116px and trimmed Ext $ to 64 to keep total table width
-                    similar. */}
+                {/* DECISION(v1.19.825): Unit $ column was 82px which couldn't fit the source pill + "$" + price input;
+                    widened to 116 (F002 removed the source pills but the width is retained for the "$" + input). Ext $ 64. */}
                 <col style={{width:116}}/><col style={{width:64}}/><col style={{width:48}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
                   {/* DECISION(v1.19.687): Lead column placed between Ext $ and Priced per user pick. */}
-                  {["#","Ref","Qty","Part Number","","Description","Manufacturer","Supplier","Unit $","Ext $","Lead","Priced",""].map((h,hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":h==="Lead"||hi<3?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  {/* F002: 13→15 cols — TR (Ref/Qty), Status + 🔍 (Qty/Part Number); _bc empty col removed; BC/ARC-AI source pills gone (moved to unified Status circle + Unit $ styling). */}
+                  {["#","Ref","TR","Qty","Status","🔍","Part Number","Description","Manufacturer","Supplier","Unit $","Ext $","Lead","Priced",""].map((h,hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":["#","Ref","TR","Qty","Status","🔍","Lead"].includes(h)?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -28925,7 +28926,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const isEmpty=!!opts?.empty;
                     return(
                       <tr key={`eco-hdr-${num}-${isEmpty?"empty":"items"}`} style={{background:"#1a0040"}}>
-                        <td colSpan={13} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:isEmpty?"1px dashed #a855f766":"1px solid #a855f7"}}>
+                        <td colSpan={15} style={{padding:"6px 12px",borderTop:"2px solid #a855f7",borderBottom:isEmpty?"1px dashed #a855f766":"1px solid #a855f7"}}>
                           <div style={{display:"flex",alignItems:"center",gap:8,fontSize:11,fontWeight:800,color:"#a855f7",letterSpacing:1}}>
                             <span>⏷ {label}</span>
                             {date&&<span style={{color:C.muted,fontWeight:500,letterSpacing:0.3,fontSize:10}}>· {date}</span>}
@@ -29029,6 +29030,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       onUpdate(_u);
                       try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
                     };
+                    // F002 R1 — unified BC-circle state for the Status column. RED > YELLOW > BLUE > none.
+                    // Behavior-preserving union of the three old gates (red "+ BC" 29214, yellow "? BC" 29221,
+                    // blue "BC" circle 29071) resolved by priority. priceSource==="bc" → none (Jon's rule;
+                    // intentional, safe tightening — runPricingOnPanel/applyConfirmedPrice keep bcVerify fresh).
+                    // RED/YELLOW show even in readOnly (informational, as the old inline pills did); BLUE only
+                    // when editable (it's a pure action, as the old blue circle was).
+                    const _bcCircle=(()=>{
+                      if(row.isLaborRow||row.isContingency||!_bcToken)return null;
+                      if(row.priceSource==="bc")return null;
+                      if(row.bcVerify?.status==="not-in-bc")return "red";
+                      if(row.bcVerify?.status==="fuzzy"&&!bcFuzzySuggestions[row.id])return "yellow";
+                      if(!readOnly&&row.priceSource!=="manual")return "blue";
+                      return null;
+                    })();
                     const _rowEl=(()=>{
                   return(
                   <tr key={row.id} data-row-id={String(row.id)} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":(ecoFlashRowId&&String(ecoFlashRowId)===String(row.id)?"eco-row-flash":undefined)} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity,...(row.restoreSkipped?{borderLeft:"3px solid #f59e0b"}:{})}}>
@@ -29041,13 +29056,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       )}
                     </td>
                     <td style={{padding:"3px 4px",whiteSpace:"nowrap",textAlign:"center",fontSize:12,color:row.itemNo?C.accent:C.muted,userSelect:"none"}}>{row.itemNo||"—"}</td>
-                    {[["qty",56],["partNumber",0,"fit"],["_bc",56],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(  /* #141 (C84): _bc widened 32→56 to hold the "C" + "BC" circle pair */
-                      f==="_bc"?(
-                        <td key="_bc" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
-                          <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>  {/* #141 (C86): fill the _bc cell + right-anchor the pair — BC keeps its pre-#141 right edge, "C" extends leftward into the widened column */}
+                    {/* F002: left-region cols reordered → TR | Qty | Status | 🔍 | Part Number | Description | Manufacturer | Supplier.
+                       The old empty _bc column is split into TR (checkbox + Resolve) and Status (confidence "C" + unified BC circle);
+                       the 🔍 browse icon is extracted from the Part Number cell into its own column. */}
+                    {[["_tr",30],["qty",56],["_status",56],["_search",30],["partNumber",0,"fit"],["description",220],["manufacturer",0,"fit"],["_supplier",0,"fit"]].map(([f,w,mode])=>(
+                      f==="_tr"?(
+                        <td key="_tr" data-tour="bom-tr" style={{padding:"3px 2px",width:30,textAlign:"center"}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
                           {/* #199 P1 — Tech Review flag control. Amber "TR" glyph, separate from the red price-flag row bg (R1).
                              Shows on real part rows; unflagged+editable shows a faint checkbox (manual set); supplier flags are
-                             checked+disabled for Sales. Per-row Resolve affordance arrives in P2. */}
+                             checked+disabled for Sales. F002: relocated from the old _bc column — logic byte-for-byte unchanged. */}
                           {_trShow&&(_trFlagged||!readOnly)&&(
                             <label title={_trTitle} style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,opacity:_trFlagged?1:0.5}}>
                               <input type="checkbox" checked={_trFlagged} disabled={_trDisabled} onChange={_onTrToggle} style={{width:12,height:12,margin:0,accentColor:"#f59e0b",cursor:_trDisabled?"default":"pointer"}} />
@@ -29059,26 +29077,43 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             <button title="Resolve — engineer sign-off for this Technical Review line" onClick={_onTrResolve}
                               style={{background:"#052e16",border:"1px solid #4ade80",color:"#4ade80",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>✓</button>
                           )}
-                          {/* #141 (C84): confidence "C" circle — mirrors the blue BC circle EXACTLY
-                             (24×24, borderRadius 50%, fontSize 9, weight 800, padding 0). Color carries
-                             severity (amber=medium, red=low); "C" carries type. <span>/cursor:help —
-                             informational, not clickable. Independent of BC: reads row.confidence
-                             (cleared to "high" on PN edit, line 25525). Renders LEFT of the BC circle. */}
+                          </div>
+                        </td>
+                      ):f==="_status"?(
+                        <td key="_status" data-tour="bom-status" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
+                          <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>  {/* right-anchor the circle pair — same wrapper the old _bc cell used (#141 C86) */}
+                          {/* #141 (C84): confidence "C" circle — reads row.confidence; amber=medium, red=low; informational (cursor:help). Renders LEFT of the BC circle. */}
                           {!row.isLaborRow&&!row.isContingency&&(row.confidence==="low"||row.confidence==="medium")&&(
                             <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
                               style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>C</span>
                           )}
-                          {!readOnly&&_bcToken&&row.priceSource!=="bc"&&row.priceSource!=="manual"&&(
-                            <button data-tip="Auto-match this part number in Business Central — click to find the best match or open the item browser" title="Fuzzy BC lookup" onClick={async()=>{
-                              const pn=(row.partNumber||"").trim();
-                              if(!pn)return;
-                              const result=await bcFuzzyLookup(pn);
-                              if(result.match)applyBcItem(row.id,result.match);
-                              else if(result.suggestions.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
-                              else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
-                            }} style={{background:"#2563eb",border:"none",color:"#fff",cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>BC</button>
-                          )}
+                          {/* F002 R1 — unified tri-state BC circle (replaces old blue circle 29071 + red "+ BC" 29214 + yellow "? BC" 29221).
+                             Color = _bcCircle state (RED>YELLOW>BLUE>none). RED → open BC Browser directly (add & link);
+                             YELLOW/BLUE → shared fuzzy-lookup (match & link) — identical to the old blue-circle handler. */}
+                          {_bcCircle&&(()=>{
+                            const _bcMeta={red:{bg:"#dc2626",fg:"#fff",tip:"Not in BC catalog — click to add & link"},yellow:{bg:"#fcd34d",fg:"#000",tip:"Close match in BC — click to match & link"},blue:{bg:"#2563eb",fg:"#fff",tip:"Click to match this part in BC"}}[_bcCircle];
+                            const _onBcClick=_bcCircle==="red"
+                              ?()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}
+                              :async()=>{
+                                const pn=(row.partNumber||"").trim();
+                                if(!pn)return;
+                                const result=await bcFuzzyLookup(pn);
+                                if(result.match)applyBcItem(row.id,result.match);
+                                else if(result.suggestions.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
+                                else{setBcBrowserTarget(row.id);setBcBrowserQuery(pn);setBcBrowserOpen(true);}
+                              };
+                            return <button data-tip={_bcMeta.tip} title={_bcMeta.tip} onClick={_onBcClick} style={{background:_bcMeta.bg,border:"none",color:_bcMeta.fg,cursor:"pointer",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>BC</button>;
+                          })()}
                           </div>
+                        </td>
+                      ):f==="_search"?(
+                        <td key="_search" data-tour="bom-search" style={{padding:"3px 2px",width:30,textAlign:"center"}}>
+                          {/* F002 C3 — browse-BC search icon extracted from the Part Number cell into its own column (gate identical minus the f==="partNumber" scope). */}
+                          {!readOnly&&!row.isLaborRow&&_bcToken&&(
+                            <button data-tip="Search and select a replacement part number from the Business Central catalog" title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
+                              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
+                              onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
+                          )}
                         </td>
                       ):f==="_supplier"?(
                         <td key="_supplier" title={row.bcVendorName||""} style={{padding:"3px 5px",fontSize:11}}>
@@ -29089,11 +29124,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         {mode==="fit"?(
                           <div>
                           <div style={{display:"flex",alignItems:"center"}}>
-                          {f==="partNumber"&&!readOnly&&!row.isLaborRow&&_bcToken&&(
-                            <button data-tip="Search and select a replacement part number from the Business Central catalog" title="Browse BC items" onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
-                              style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,padding:"2px 4px",lineHeight:1,opacity:0.85,flexShrink:0,filter:"brightness(1.8)"}}
-                              onMouseEnter={e=>e.target.style.opacity=1} onMouseLeave={e=>e.target.style.opacity=0.85}>🔍</button>
-                          )}
+                          {/* F002 C3: 🔍 browse icon relocated to its own "🔍" column (see the f==="_search" cell above). */}
                           <div style={{position:"relative",display:"inline-flex",alignItems:"center",minWidth:80}}>
                             {/* #141 (C84): confidence indicator moved out of this input wrapper to the _bc column (next to the blue BC circle). */}
                             <span style={{visibility:"hidden",whiteSpace:"pre",fontSize:13,fontFamily:"inherit",padding:"5px 20px 5px 7px",display:"block",pointerEvents:"none"}}>{row[f]||"\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0\u00a0"}</span>
@@ -29211,28 +29242,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                              is the primary value-add — user can verify before they manually re-add
                              a part that ARC's fuzzy match missed (real failure case: ABD122NUB).
                              Click opens the BC Item Browser pre-filled with the row's PN. */}
-                          {f==="partNumber"&&!row.isLaborRow&&!row.isContingency&&row.bcVerify&&row.bcVerify.status==="not-in-bc"&&_bcToken&&(
-                            <button title="Not found in BC catalog. Click to verify in the BC Item Browser — if the part exists under a different SKU, you can match it. Otherwise it needs to be added to BC."
-                              onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||row.description||"");setBcBrowserOpen(true);}}
-                              style={{fontSize:10,color:"#fff",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"pointer",background:"#dc2626",padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4}}>
-                              + BC
-                            </button>
-                          )}
-                          {f==="partNumber"&&!row.isLaborRow&&!row.isContingency&&row.bcVerify&&row.bcVerify.status==="fuzzy"&&_bcToken&&!bcFuzzySuggestions[row.id]&&(
-                            <button title="Close match exists in BC. Click to review and apply the suggested item."
-                              onClick={()=>{
-                                // Re-trigger the fuzzy lookup so the suggestions panel opens
-                                bcFuzzyLookup((row.partNumber||"").trim()).then(result=>{
-                                  if(result?.suggestions?.length>0)setBcFuzzySuggestions(prev=>({...prev,[row.id]:result.suggestions}));
-                                  else if(result?.match)applyBcItem(row.id,result.match);
-                                  else{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}
-                                });
-                              }}
-                              style={{fontSize:10,color:"#000",fontWeight:700,marginLeft:6,whiteSpace:"nowrap",cursor:"pointer",background:"#fcd34d",padding:"1px 7px",borderRadius:10,border:"none",lineHeight:1.4}}>
-                              ? BC
-                            </button>
-                          )}
-                          {/* #141 (C84): confidence "C" indicator now lives in the _bc column next to the blue BC circle — reverted the v1.20.127 pill that was here. */}
+                          {/* F002 R1: red "+ BC" (not-in-bc) and yellow "? BC" (fuzzy) pills removed — both folded into the
+                             unified tri-state BC circle in the Status column (_bcCircle, RED>YELLOW>BLUE). RED there opens the
+                             BC Browser directly (the old "+ BC" add-and-link flow); YELLOW shares the fuzzy-lookup handler. */}
+                          {/* #141 (C84): confidence "C" indicator lives in the Status column next to the unified BC circle. */}
                           {/* DECISION(v1.19.638): Suspect qty flag — row description implies single
                              assembly (enclosure, window kit, etc.) but qty is large. Almost always
                              a column-alignment error where qty was grabbed from a different row. */}
@@ -29357,13 +29370,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     ))}
                     <td style={{padding:"3px 5px 3px 8px",textAlign:"right",width:110}}>
                       <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>
-                        {row.isLaborRow&&<span style={{background:"#1e3a5f",color:"#38bdf8",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>LABOR</span>}
-                        {!row.isLaborRow&&row.priceSource==="bc"&&<span style={{background:"#2563eb22",color:"#5b9aff",borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>BC</span>}
-                        {!row.isLaborRow&&row.priceSource==="ai"&&<span style={{background:C.teal+"22",color:C.teal,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",cursor:"pointer"}}
-                          onMouseEnter={e=>{clearTimeout(aiSourceTooltipTimer.current);setAiSourceTooltip({x:e.clientX,y:e.clientY,sources:row.aiSources||[],basis:row.aiBasis||""});}}
-                          onMouseLeave={()=>{aiSourceTooltipTimer.current=setTimeout(()=>setAiSourceTooltip(null),200);}}
-                        >ARC AI</span>}
-                        {!row.isLaborRow&&row.priceSource==="manual"&&<span style={{background:C.accentDim,color:C.accent,borderRadius:8,padding:"1px 5px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>M</span>}
+                        {/* F002 C5/R2: BC / ARC AI / M / LABOR source pills removed — the AI-vs-BC pricing signal is now carried
+                           by the Unit $ VALUE styling (ai||manual → grey+italic; bc → white). The actionable ⚠ bcSyncError pill STAYS. */}
                         {bcSyncErrors[row.id]&&(()=>{const ef=bcSyncErrors[row.id];function parsePillErr(e){if(!e)return"Sync error";if(/must select an existing item/i.test(e))return"Not in BC";if(/Posting Group/i.test(e))return"BC setup";if(/429|Too Many/i.test(e))return"Rate limit";return"BC error";}return(<button title={parsePillErr(ef.error)+"\nClick to fix in Item Browser"} onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}} style={{background:C.red,color:"#fff",border:"none",borderRadius:8,padding:"1px 6px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>⚠ {parsePillErr(ef.error)}</button>);})()}
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
                         {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:<>
@@ -29372,7 +29380,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
                           key={row.id+"-"+(row.priceSource||"")+(row.unitPrice??"")+"-"+priceInputResetTick}
                           placeholder="—"
-                          style={{background:"transparent",border:"1px solid transparent",borderRadius:5,padding:"5px 2px 5px 0",color:C.text,fontSize:13,outline:"none",textAlign:"right",width:70,minWidth:50}}
+                          /* F002 R2: AI + manual (budgetary) prices render grey+italic (matching the Lead column's AI styling); BC prices (incl. confirmed-manual, stored as "bc") render white. Value styling only — _isBomRowFlaggedRed / red row-bg unchanged. */
+                          style={{background:"transparent",border:"1px solid transparent",borderRadius:5,padding:"5px 2px 5px 0",color:(row.priceSource==="ai"||row.priceSource==="manual")?C.muted:C.text,fontStyle:(row.priceSource==="ai"||row.priceSource==="manual")?"italic":"normal",fontSize:13,outline:"none",textAlign:"right",width:70,minWidth:50}}
                           onFocus={e=>{e.target.style.borderColor=C.accent;e.target.style.background=C.card;e.target.select();}}
                           onBlur={e=>{e.target.style.borderColor="transparent";e.target.style.background="transparent";const v=e.target.value.trim();if(v===""){if(row.unitPrice!=null)updatePrice(row.id,"");}else{const n=parseFloat(v);if(!isNaN(n)){e.target.value=n.toFixed(2);if(n!==row.unitPrice)updatePrice(row.id,String(n));}else{e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";}}}}
                           onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):"";e.target.blur();}}}
@@ -29487,8 +29496,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     const alt=isCross&&!readOnly?alternates.find(a=>a.originalPN===row.crossedFrom):null;
                     return(
                       <tr key={row.id+"-meta"} style={{background:rowBg,borderBottom:i<sortedBom.length-1?`1px solid ${C.border}33`:"none"}}>
-                        <td colSpan={3}/>
-                        <td colSpan={2} style={{padding:"0 5px 6px 38px"}}>
+                        {/* F002: meta-row spans recomputed for 15 cols — lead 6 (#,Ref,TR,Qty,Status,🔍) + content 2 (Part#,Desc) + trailing 7 = 15. Left pad dropped 38→5 (🔍 is its own column now, no in-cell indent). */}
+                        <td colSpan={6}/>
+                        <td colSpan={2} style={{padding:"0 5px 6px 5px"}}>
                           {row.isDescriptionCross&&!isCross&&(
                             <div style={{display:"flex",alignItems:"center",gap:6}}>
                               <span style={{fontSize:10,color:C.muted}}>from: <span style={{color:"#8b5cf6"}}>{(row.descriptionCrossFrom||"").slice(0,30)}</span></span>
@@ -29519,7 +29529,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             )}
                           </div>
                         </td>
-                        <td colSpan={8}/>
+                        <td colSpan={7}/>
                       </tr>
                     );
                   })():null;
