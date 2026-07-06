@@ -28784,8 +28784,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <tr style={{background:"#0a0a12"}}>
                   {/* DECISION(v1.19.687): Lead column placed between Ext $ and Priced per user pick. */}
                   {/* F002: 13→15 cols — TR (Ref/Qty), Status + 🔍 (Qty/Part Number); _bc empty col removed; BC/ARC-AI source pills gone (moved to unified Status circle + Unit $ styling). */}
-                  {["#","Ref","TR","Qty","Status","🔍","Part Number","Description","Manufacturer","Supplier","Unit $","Ext $","Lead","Priced",""].map((h,hi)=>(
-                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":["#","Ref","TR","Qty","Status","🔍","Lead"].includes(h)?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
+                  {["#","Ref","TR","Qty","Issues","🔍","Part Number","Description","Manufacturer","Supplier","Unit $","Ext $","Lead","Priced",""].map((h,hi)=>(
+                    <th key={h||"bc"+hi} style={{padding:"9px 4px",textAlign:h==="Unit $"||h==="Ext $"?"right":["#","Ref","TR","Qty","Issues","🔍","Lead"].includes(h)?"center":"left",color:C.muted,fontWeight:700,fontSize:11,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -28982,7 +28982,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // NOT the local _trUnresolved (defined below this line → TDZ). _isBomRowFlaggedRed and every
                     // logic/RFQ consumer are untouched; on sign-off the predicate goes false and the row falls
                     // through to red (if still unpriced) or zebra.
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isUnresolvedTechReviewRow(row)?"rgba(245,158,11,0.28)":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isUnresolvedTechReviewRow(row)?"rgba(250,204,21,0.40)":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // Strikethrough on the row text for ecoOp:"remove" so the
                     // "this is being removed" intent is visible at a glance.
                     const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
@@ -29099,7 +29099,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                 <button data-tour="bom-tr-engineer-circle"
                                   title={_trUnresolved?"Sign off — engineer approval for this Technical Review line":"Signed off"}
                                   onClick={_trUnresolved?_onTrResolve:undefined} disabled={!_trUnresolved}
-                                  style={{background:_trResolved?"#052e16":"transparent",border:"1px solid #4ade80",color:"#4ade80",cursor:_trUnresolved?"pointer":"default",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>
+                                  style={{background:_trResolved?"#052e16":"transparent",border:"2px solid #4ade80",color:"#4ade80",cursor:_trUnresolved?"pointer":"default",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>
                                   {_trResolved?"✓":""}
                                 </button>
                               );
