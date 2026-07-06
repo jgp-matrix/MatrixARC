@@ -21,11 +21,12 @@
 
 ---
 
-- [2026-07-06] FEAT — "Qv.## Hist. button — per-quote send history with document previews" — Add a "Qv.## Hist." button next to the Send / Resend / Print Quote button. It opens a history of ALL historical sends for that quote, each entry showing a PREVIEW of the document that was actually sent. (Data feed already exists — #193 writes per-send `quote_send` entries to `project.qvHistory[]`; #194 is the GLOBAL email-metrics/click-tracing consumer. This is a distinct per-quote history VIEWER + requires storing/rendering the sent-document snapshot for each send.) — reported via Intake (source: Jon)
+_(no un-triaged items)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
      2026-07-03 — G005 (matrix-arc-test shares PROD Firestore), B003 (Review-Supplier-Quote modal lists unquoted parts), B004 (portal-Apply unawaited-save reload-race → RESOLVED 41824f6c / shipped v1.21.25), B005 (resolved-TR-row can't re-arm, LOW/tuning) promoted by Freddy at #199 close-out.
      2026-07-06 — F004 (Portal submit confirmation shows ARC user + email-copy notice) promoted to TODO.md Features [Backlog] by Freddy. Also back-filled F001/F002/F003 into the Features tracker (were only in SESSION-STATE + docs).
-     2026-07-06 — F005 (Print-Only button in locked-quote blocker overlay) promoted to TODO.md Features [Backlog] by Freddy (sibling to #196). -->
+     2026-07-06 — F005 (Print-Only button in locked-quote blocker overlay) promoted to TODO.md Features [Backlog] by Freddy (sibling to #196).
+     2026-07-06 — F006 (Qv.## Hist. button — per-quote send history w/ document previews) promoted to TODO.md Features [Backlog] by Freddy (feed = #193 qvHistory; distinct from #194 global metrics). -->
 
