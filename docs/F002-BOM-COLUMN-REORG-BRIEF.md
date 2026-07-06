@@ -133,3 +133,6 @@ Presented Coach's A/A′/B gate options; Jon instead **redesigned the whole TR i
 7. **Send-gate:** does a yellow (unaddressed) row still hard-block quote sends (as #199 does today)? (Presumably yes — confirm.)
 
 **Judgment / path:** REDESIGN — bigger lift than A/A′ (~1 line). Recommend: capture as a design spec, route to Coach for a **feasibility trace** against the existing #199 + pre-review architecture (can it support this cleanly + what's the lift), resolve the open Qs, bring Jon a plan to approve, THEN build once. **C6/C8 fold in (no separate build). F002 packaging (fold vs new F003) decided once the lift is known.**
+
+### RESOLVED — TR redesign PROMOTED TO F003 (Jon "scope the full redesign", 2026-07-06)
+The role-differentiated TR redesign (and the absorbed C6/C7/C8) is now its own item: **F003 — Role-Differentiated Tech Review** (`docs/F003-TECH-REVIEW-REDESIGN-BRIEF.md`), routed to Coach for a feasibility trace. **F002's scope is now Rev 1 ONLY** (columns + tri-state BC circle + grey-italic pricing) — **live-verified + banked**, and **shippable independently** (Jon decides ship-now vs bundle-with-F003 at the deploy checkpoint). C6/C7/C8 no longer live under F002.
