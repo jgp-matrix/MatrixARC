@@ -17,13 +17,13 @@
 | **C4** | **New "Status" column** | Holds the blue **"BC" circle** (from C1) **and** the **AI-confidence circle**. *(Position not specified by Jon — see §4 open Q.)* |
 | **C5** | **Remove the "BC / ARC-AI" marker column** (currently between **Supplier** and **Unit $**) | Delete the column entirely. Convey the AI-vs-BC pricing signal by **styling the Unit $ value instead**: <br>• **ARC-AI-priced** → show Unit Cost in **grey** (same grey as the Lead Time column values) + **italic**. <br>• **BC-priced (or otherwise good)** → **normal white text**, exactly as a good row shows today. Nothing extra. |
 
-## 2. Resulting column order (target)
+## 2. Resulting column order (target) — LOCKED (Jon, 2026-07-06)
 ```
-Ref | [TR ✚] | Qty | [🔍 ✚] | Part Number | … existing middle … | Supplier | ✗(marker col REMOVED) | Unit $ | … | Lead Time | …
-                                                                                    ↑ Unit $ now carries the AI/BC signal via grey-italic vs white
-[Status ✚]  ← new; holds BC circle + AI-confidence circle. Exact position TBD (§4).
+Ref | [TR ✚] | Qty | [Status ✚] | [🔍 ✚] | Part Number | … existing middle … | Supplier | ✗(marker col REMOVED) | Unit $ | … | Lead Time | …
+                                                                                                          ↑ Unit $ now carries the AI/BC signal via grey-italic vs white
 ```
-Net: **+3 columns** (TR, 🔍, Status), **−1 column** (BC/ARC-AI marker), **−1 inline element** (red +BC pill).
+- **TR** between Ref and Qty (C2). **Status** between Qty and 🔍 (C4, resolved). **🔍** between Status and Part Number (C3). BC/ARC-AI marker column removed (C5).
+- Net: **+3 columns** (TR, Status, 🔍), **−1 column** (BC/ARC-AI marker), **−1 inline element** (red +BC pill).
 
 ## 3. Invariants to PROTECT (do not regress) — for Coach's trace + Marc's build
 1. **#199 Tech-Review flag** — the checkbox behavior, auto-stamp on supplier cross (`@38978`), hard send-gate, and reviewer Resolve/approve-sweep must be **byte-for-byte unchanged** — this is a **relocation only**, not a logic change. The send-block count fix (`107b960b`) and the await-save fix (B004 `41824f6c`) stay intact.
@@ -33,7 +33,7 @@ Net: **+3 columns** (TR, 🔍, Status), **−1 column** (BC/ARC-AI marker), **�
 5. **`data-tour` readiness** — since this feeds F001, Marc should add `data-tour` anchors to the new TR / 🔍 / Status columns while restructuring (cheap now, saves a second pass).
 
 ## 4. Open questions (Coach's Supplement to resolve; one is Jon's)
-- **Q1 (Jon) — where does the "Status" column sit?** Not specified. Candidates: (a) immediately after **Part Number** (front-of-row, at-a-glance), (b) where the removed marker column was (between Supplier and Unit $), (c) far right. *Freddy leans (a).*
+- **Q1 (Jon) — where does the "Status" column sit? → RESOLVED (Jon, 2026-07-06): between Qty and 🔍.** Final left-region order: `Ref | TR | Qty | Status | 🔍 | Part Number`.
 - **Q2 (Coach) — element inventory.** Locate every render site in `src/app.jsx`: the +BC pill, the BC circle, the AI-confidence circle, the TR checkbox, the search-icon links, the BC/ARC-AI marker column, and the Unit $ cell. Confirm each is a single source (not duplicated per view).
 - **Q3 (Coach) — AI-confidence circle.** What drives it today (field/threshold), and does it currently live in the marker column being removed? Confirm relocating it to Status doesn't drop its data source.
 - **Q4 (Coach) — Unit $ styling hook.** Is there a clean place to branch the Unit $ cell style on `priceSource === "ai"`? Confirm the exact grey token used by the Lead Time column so C5 matches it precisely.
