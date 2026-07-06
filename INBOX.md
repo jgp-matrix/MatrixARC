@@ -21,7 +21,7 @@
 
 ---
 
-_(no un-triaged items)_
+- [2026-07-06] FEAT — "Qv.## Hist. button — per-quote send history with document previews" — Add a "Qv.## Hist." button next to the Send / Resend / Print Quote button. It opens a history of ALL historical sends for that quote, each entry showing a PREVIEW of the document that was actually sent. (Data feed already exists — #193 writes per-send `quote_send` entries to `project.qvHistory[]`; #194 is the GLOBAL email-metrics/click-tracing consumer. This is a distinct per-quote history VIEWER + requires storing/rendering the sent-document snapshot for each send.) — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
