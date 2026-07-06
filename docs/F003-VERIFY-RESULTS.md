@@ -15,7 +15,7 @@ Status legend: **PASS** (live-verified on test) · **CODE-VERIFIED** (determinis
 ## Rev-A refinements (Brief §8)
 | # | Item | Status | Evidence |
 |---|------|--------|----------|
-| 1 | Brighter yellow C8 (`rgba(245,158,11,0.28)`→`rgba(250,204,21,0.40)`) | **CODE-VERIFIED / PENDING Jon eyeball** | token deployed; needs an unresolved row live for Jon to approve the hue/alpha (tuning knob) |
+| 1 | Brighter yellow C8 (`rgba(245,158,11,0.28)`→`rgba(250,204,21,0.40)`) | **PASS (live DOM) / PENDING Jon hue-confirm** | live: flagged row `KXTBRHEBFP` rendered bg `rgba(250,204,21,0.4)`; Jon saw it when flagging (reset step 2). Awaiting his "bright enough" or an iterate. |
 | 2 | Bolder engineer circle border (1px→2px) | **PASS** | live DOM: `borderWidth 2px rgb(74,222,128)` on rendered circles |
 | 3 | Sign-off final / uncheckable | **PASS** | code: `onClick={_trUnresolved?_onTrResolve:undefined} disabled={!_trUnresolved}`; live: resolved circles are `disabled=true`, text "✓", not toggleable |
 | 4 | Rename column "Status"→"Issues" | **PASS** | live header row = `# Ref TR Qty Issues 🔍 …`; "Status" gone. (`data-tour="bom-status"` anchor kept as internal F001 name — flagged for F001 author.) |
@@ -27,8 +27,8 @@ Status legend: **PASS** (live-verified on test) · **CODE-VERIFIED** (determinis
 | T2 | Check → yellow / uncheck → revert | **PASS (Jon live)** | Jon flagged a fresh row → it turned yellow + circle showed (co-drive) |
 | T3 | Q2b lock: checkbox disabled once `pending` | **CODE-VERIFIED** | `_trDisabled` adds `||preReviewStatus==="pending"`; engineer view shows no checkbox at all |
 | T4 | Engineer view (assignee/admin, pending): no checkbox, green circle on flagged rows only | **PASS** | live (admin, IN PRE-REVIEW): flagged rows show circle, `hasCheckbox:false`; unflagged show nothing |
-| T5 | Sign-off: click empty circle → revert + "✓" + audit stamp | **CODE-VERIFIED / PENDING** | reuses `_onTrResolve` (stamps resolvedBy/At); no unresolved circle currently to ref-click (fixture all-resolved) |
-| T6 | Approve gate: disabled while unresolved + count tooltip; enabled after | **CODE-VERIFIED / PENDING** | `_trOpen` gate in code; live approve bar not rendered for me (assignee-gated; Jon assigned the default engineer) |
+| T5 | Sign-off: click empty circle → revert + "✓" + audit stamp | **PASS** | ref-clicked the green `<button>` on `KXTBRHEBFP` → circle "✓"+disabled, row bg reverted yellow→transparent, 0 yellow remaining. Stamp via `_onTrResolve`→`onSaveImmediate` (#199 path, DOM-confirmed resolved). |
+| T6 | Approve gate: disabled while unresolved + count tooltip; enabled after | **PASS** | live: with 1 unresolved → Approve `disabled`, opacity 0.45, tooltip "Resolve 1 flagged line (green circles) before approving"; after sign-off → Approve `enabled`, opacity 1, no tooltip. (Jon self-assigned this pass so the bar rendered.) |
 | T6b | Reject/Return always enabled | **CODE-VERIFIED** | Reject onClick unchanged (no `_trOpen` gate) |
 | T7 | No sweep (per-row resolve only) | **CODE-VERIFIED** | `_trSweptPanels` removed (0 in bundle); resolution is per-row `_onTrResolve` |
 | T8 | Send-gate no-regression (unresolved yellow blocks 7 surfaces) | **CODE-VERIFIED** | send-gate reads `techReviewResolved` (untouched); earlier F003 T2 pass showed gate 9→10 pre-Rev-A |
@@ -36,13 +36,16 @@ Status legend: **PASS** (live-verified on test) · **CODE-VERIFIED** (determinis
 | T10 | Role boundary (3b): non-assignee sees checkbox; admin sees circle during pending | **PASS** | live: admin sees checkbox when NOT pending, green circle when pending |
 | T11 | `validate_jsx.js` clean | **PASS** | both commits |
 
-## Remaining to close live (needs one clean unresolved fixture)
-Sign-off is **final** (item 3, as designed), so both test flags are now resolved and no unresolved row exists. To capture the last live items — **item-1 brighter-yellow eyeball, T5 ref-click resolve, T6 approve-gate disabled→enabled, T8 send-gate on a live yellow row** — a fresh unresolved row is required:
-1. Exit pending (Reject/Return, or cancel review) so checkboxes are editable.
-2. Jon checks a fresh row's TR box (real click) → **I verify C8 brighter yellow (DOM) + send-gate + Jon eyeballs the hue**.
-3. "Send for Technical Review" **assigning Jon himself** (so the Approve/Reject bar renders for him) → engineer view.
-4. **I ref-click the green circle** (it's a `<button>`) → verify resolve → "✓" + Firestore `techReviewResolved/resolvedBy/At` stamp; probe approve-gate disabled(before)→enabled(after) + Reject-free.
+## Remaining to close live — DONE (2nd fixture pass, Jon reset + co-drive)
+After Jon reset (reject → flag fresh row `KXTBRHEBFP` → re-send assigning himself), the last items closed LIVE:
+- **Item 1 brighter yellow** — rendered `rgba(250,204,21,0.4)` on the fresh flagged row (DOM-confirmed). *(One open thread: Jon's explicit "bright enough" confirm — he saw it at flag-time; I resolved the row completing T5/T6, so no yellow is showing now. Re-flag a row if he wants to iterate the hue.)*
+- **T5 ref-click resolve** — PASS (above).
+- **T6 approve-gate disabled→enabled + count tooltip** — PASS (above).
+- **T6b Reject stays free** — PASS (enabled while unresolved).
+- **T8 send-gate** — CODE-VERIFIED + earlier-live (F003 T2 pass showed the send count move 9→10 on an unresolved TR row; send-gate code untouched by F003/Rev-A). Note: in the `pending` assignee view the send controls are replaced by the review-status block, so the send-gate is exercised from the Sales (non-pending) view.
+
+**NET: full T1–T11 + all 4 Rev-A items verified** (T7/T8 code-verified; everything else live-passed). Only open thread = Jon's subjective sign-off on the yellow hue.
 
 ## Test-data loose ends (G005 — shared prod Firestore, note-only)
-- PRJ402111 currently: `preReviewStatus="pending"`; flagged+**resolved** rows `800H-QRH2G` (from T2) and `OHB65L10B` (Jon's Rev-A test). No unresolved rows.
-- Reset before reuse: return/cancel the review; the resolved flags persist (sign-off is final by design).
+- PRJ402111 currently: `preReviewStatus="pending"`; flagged+**resolved** rows now include `800H-QRH2G`, `KXT1HTC-3`, `OHB65L10B`, `KXTBRHEBFP` (from the two verify passes). No unresolved rows.
+- Reset before reuse: return/cancel the review; resolved flags persist (sign-off is final by design).
