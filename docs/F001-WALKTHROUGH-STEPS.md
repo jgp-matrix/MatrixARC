@@ -82,4 +82,4 @@ Pure "gated hands-on" (D1) can't cover these — the tour would stall waiting on
 - Freddy lean: **(a)** — one re-entrant walkthrough with per-step types (gated / narrated / checkpoint), so it mirrors the real lifecycle without stalling.
 
 ### Next
-Jon rules F2 (how to handle the async/external steps) → route Brief + these steps to **Coach** for the engine Supplement + `data-tour` anchor inventory across the flow + feasibility of the drag/async/external triggers → Plan → build.
+**F2 RULED (Jon, 2026-07-06) = option (a):** ONE re-entrant walkthrough with mixed step-types (GATED / NARRATED / CHECKPOINT); re-entrancy prefers STATE-DRIVEN resume (project state = progress). See F001 Brief §Status. → routing Brief + these steps to **Coach** for the engine Supplement + whole-flow `data-tour` anchor inventory + feasibility of the drag/async/external triggers → Analyst Review → Jon approve → build.

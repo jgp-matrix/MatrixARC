@@ -2,9 +2,11 @@
 
 **Author:** Freddy Lyst (Analyst)
 **Date:** 2026-07-03
-**Status:** Discovery → **BLOCKED BY F002** (do not start — see below)
+**Status:** ACTIVE — F002+F003 shipped (unblocked); walkthrough steps received (2026-07-06); routing to Coach for the engine Supplement.
 
-> ⛔ **SEQUENCING (Jon, 2026-07-06): F002 must ship before ANY F001 work — including step collection.** F001's walkthrough steps reference the live BOM UI (the new TR / Status / 🔍 columns, the unified tri-state BC circle, and the `data-tour` anchors F002 adds). Authoring steps against the pre-F002 UI would only create rework. Resume F001 (route Brief → Coach Supplement, and collect Jon's §5 steps) **only after F002 is built, live-verified, and deployed.** F002's `data-tour="bom-tr|bom-status|bom-search"` anchors are the hooks F001 will target.
+> ✅ **UNBLOCKED (2026-07-06):** F002 (v1.21.26) + F003 (v1.22.3) shipped, so the BOM UI is final. Jon delivered the walkthrough content → **`docs/F001-WALKTHROUGH-STEPS.md`** (full 7-step quote lifecycle).
+>
+> ★ **F2 RULING (Jon, 2026-07-06): ONE re-entrant walkthrough with MIXED step-types** — **GATED** (advance on the user's action), **NARRATED** (advance on Next — e.g. the Issues-chip explanation), **CHECKPOINT** (async-external waits: extraction / supplier-quote / engineer-review — the tour pauses "continue when X arrives" and is **re-entrant**). This **REVISES D1** (pure gated → gated+narrated+checkpoint) and **§3g** (v1 was "stateless" → re-entrancy now needs resume handling). **Re-entrancy — prefer STATE-DRIVEN resume:** on (re)launch the engine reads the project's current state (extraction done? supplier quote received? `preReviewStatus`? sent?) and resumes at the matching step — so **project state = progress** (no separate stored walkthrough-progress); Coach to assess vs persisted-progress. Anchors span **~7 whole-app flows** (only the F002/F003 BOM anchors exist today). **Next: Coach engine Supplement** (mixed step-types + re-entrancy + whole-flow `data-tour` anchor inventory + feasibility of drag-drop / long-async / external-wait triggers) → Analyst Review → Jon approve → build.
 **Category:** F001 (first Feature under the B/F/G scheme; sole-allocator stamp)
 
 ---
