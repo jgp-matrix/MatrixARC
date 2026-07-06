@@ -23114,7 +23114,7 @@ function ZeroBomBanner({panel,onTriggerReextract}){
   );
 }
 
-function ScanResultsBanner({panel}){
+function ScanResultsBanner({panel,onDismiss}){
   const [expanded,setExpanded]=React.useState(false);
   const r=panel.extractionReport;
   if(!r)return null;
@@ -23197,6 +23197,12 @@ function ScanResultsBanner({panel}){
     concerns.unshift(`⚠ Possible missing items: ${cwDetails}. Verify against the drawing.`);
   }
   if(concerns.length===0)return null;
+  // B006 — dismiss-by-report: identify THIS scan (prefer the report timestamp; fall back to a
+  // count/version key for legacy reports without one). Once the user dismisses this exact scan
+  // (panel.scanBannerDismissedScan), hide the banner — a NEW extraction produces a new key, so it
+  // auto-resurfaces when there's genuinely new scan data. Additive panel field (data-retention safe).
+  const _reportKey=String(r.timestamp||`${r.rawCount||0}-${r.finalCount||0}-${r.version||""}`);
+  if(panel.scanBannerDismissedScan===_reportKey)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
   const isCritical=!!(cw&&cw.warning);
   return(
@@ -23208,6 +23214,12 @@ function ScanResultsBanner({panel}){
           <div style={{color:"#fde68a",fontSize:11,marginTop:2}}>{concerns.join(" · ")}</div>
         </div>
         <div style={{color:C.yellow,fontSize:11,fontWeight:600}}>{expanded?"▼ Hide":"▶ Details"}</div>
+        {onDismiss&&(
+          <button title="Dismiss — hides this scan's results until the next extraction"
+            onClick={e=>{e.stopPropagation();onDismiss(_reportKey);}}
+            style={{background:"none",border:"none",color:C.yellow,cursor:"pointer",fontSize:15,lineHeight:1,padding:"0 2px",opacity:0.7,flexShrink:0}}
+            onMouseEnter={e=>e.currentTarget.style.opacity=1} onMouseLeave={e=>e.currentTarget.style.opacity=0.7}>✕</button>
+        )}
       </div>
       {expanded&&(
         <div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${C.yellow}55`}}>
@@ -28765,7 +28777,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>
           )}
           {(panel.bom||[]).length>0&&<div data-tour="bom-table" style={{borderRadius:8,border:`1px solid ${C.border}`,overflowX:"hidden"}}>
-            <ScanResultsBanner panel={panel}/>
+            <ScanResultsBanner panel={panel} onDismiss={(key)=>{
+              // B006 — persist the dismissed-scan key on the panel (same latestPanelRef + guarded
+              // onSaveImmediate path as the TR toggle). A future extraction changes the key → banner returns.
+              const _lp=latestPanelRef.current||panel;
+              const _u={..._lp,scanBannerDismissedScan:key};
+              latestPanelRef.current=_u;
+              onUpdate(_u);
+              try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
+            }}/>
             <table style={{borderCollapse:"collapse",fontSize:13,width:"100%",tableLayout:"fixed"}}>
               <colgroup>
                 {/* DECISION(v1.19.972): Qty column widened from 42 to 56 — 42px
