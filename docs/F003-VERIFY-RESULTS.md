@@ -15,7 +15,7 @@ Status legend: **PASS** (live-verified on test) · **CODE-VERIFIED** (determinis
 ## Rev-A refinements (Brief §8)
 | # | Item | Status | Evidence |
 |---|------|--------|----------|
-| 1 | Brighter yellow C8 (`rgba(245,158,11,0.28)`→`rgba(250,204,21,0.40)`) | **PASS (live DOM) / PENDING Jon hue-confirm** | live: flagged row `KXTBRHEBFP` rendered bg `rgba(250,204,21,0.4)`; Jon saw it when flagging (reset step 2). Awaiting his "bright enough" or an iterate. |
+| 1 | Brighter yellow C8 (`rgba(245,158,11,0.28)`→`rgba(250,204,21,0.40)`) | **PASS** | live: flagged row `KXTBRHEBFP` rendered bg `rgba(250,204,21,0.4)`; **Jon signed off the hue live ("good for now")** 2026-07-06. |
 | 2 | Bolder engineer circle border (1px→2px) | **PASS** | live DOM: `borderWidth 2px rgb(74,222,128)` on rendered circles |
 | 3 | Sign-off final / uncheckable | **PASS** | code: `onClick={_trUnresolved?_onTrResolve:undefined} disabled={!_trUnresolved}`; live: resolved circles are `disabled=true`, text "✓", not toggleable |
 | 4 | Rename column "Status"→"Issues" | **PASS** | live header row = `# Ref TR Qty Issues 🔍 …`; "Status" gone. (`data-tour="bom-status"` anchor kept as internal F001 name — flagged for F001 author.) |
@@ -44,7 +44,7 @@ After Jon reset (reject → flag fresh row `KXTBRHEBFP` → re-send assigning hi
 - **T6b Reject stays free** — PASS (enabled while unresolved).
 - **T8 send-gate** — CODE-VERIFIED + earlier-live (F003 T2 pass showed the send count move 9→10 on an unresolved TR row; send-gate code untouched by F003/Rev-A). Note: in the `pending` assignee view the send controls are replaced by the review-status block, so the send-gate is exercised from the Sales (non-pending) view.
 
-**NET: full T1–T11 + all 4 Rev-A items verified** (T7/T8 code-verified; everything else live-passed). Only open thread = Jon's subjective sign-off on the yellow hue.
+**NET: full T1–T11 + all 4 Rev-A items VERIFIED — no open threads** (T7/T8 code-verified; everything else live-passed). Jon signed off the yellow hue live ("good for now") 2026-07-06. **Ready for Coach review → Jon prod-deploy checkpoint.**
 
 ## Test-data loose ends (G005 — shared prod Firestore, note-only)
 - PRJ402111 currently: `preReviewStatus="pending"`; flagged+**resolved** rows now include `800H-QRH2G`, `KXT1HTC-3`, `OHB65L10B`, `KXTBRHEBFP` (from the two verify passes). No unresolved rows.
