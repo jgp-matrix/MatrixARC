@@ -21,10 +21,11 @@
 
 ---
 
-- [2026-07-06] FEAT — "Print-Only button in locked-quote (Quote Sent) blocker overlay" — After a quote is sent, the blocker overlay covers the Print and Send buttons. Add a "Print Only" button to the overlay (alongside "Verify with Project Owner & Enable Edits") that lets the user print the quote to PDF. Printing to PDF requires NEITHER approval NOR unblocking the project — it's a read-only output. (Thematic sibling to #196 — locked-quote overlay covers a forward/output button; different button/ask.) — reported via Intake (source: Jon)
+_(no un-triaged items)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
      2026-07-03 — G005 (matrix-arc-test shares PROD Firestore), B003 (Review-Supplier-Quote modal lists unquoted parts), B004 (portal-Apply unawaited-save reload-race → RESOLVED 41824f6c / shipped v1.21.25), B005 (resolved-TR-row can't re-arm, LOW/tuning) promoted by Freddy at #199 close-out.
-     2026-07-06 — F004 (Portal submit confirmation shows ARC user + email-copy notice) promoted to TODO.md Features [Backlog] by Freddy. Also back-filled F001/F002/F003 into the Features tracker (were only in SESSION-STATE + docs). -->
+     2026-07-06 — F004 (Portal submit confirmation shows ARC user + email-copy notice) promoted to TODO.md Features [Backlog] by Freddy. Also back-filled F001/F002/F003 into the Features tracker (were only in SESSION-STATE + docs).
+     2026-07-06 — F005 (Print-Only button in locked-quote blocker overlay) promoted to TODO.md Features [Backlog] by Freddy (sibling to #196). -->
 
