@@ -45,3 +45,29 @@ Ref | [TR ✚] | Qty | [Status ✚] | [🔍 ✚] | Part Number | … existing mi
 3. **Marc builds** — relocate TR + search icons, add Status col, remove marker col + red pill, restyle Unit $, add `data-tour` anchors. Runs `validate_jsx.js`.
 4. **Live verify** — Marc + Jon confirm all five changes on matrix-arc-test against a real BOM (TR still gates sends; red rows still red; AI prices grey-italic; BC prices white; search icons + checkboxes work in new columns). Coach reviews.
 5. **Jon sign-off → deploy** (its own checkpoint).
+
+---
+
+## 6. ANALYST REVIEW + JON RULINGS (Freddy, 2026-07-06)
+
+**Analyst Review of Coach's Supplement+Plan (`docs/F002-COACH-SUPPLEMENT-AND-PLAN.md`, tip 5f221935):** APPROVED as sound — single-source verified per element with line numbers, invariants provably protected (C5 restyles the value only; TR is a pure JSX move; zero Firestore changes), column math corrected to 13→15. Coach's three divergence catches are valid and material. Rulings below resolve §5.1/§5.2; they **supersede** the Brief's original C1/C5 wording.
+
+### RULING R1 — C1 is now a SINGLE tri-state BC circle (supersedes "remove red +BC pill")
+Jon: collapse the three BC badges into **ONE circle** in the **Status** column, color = state, with priority:
+- **RED** — part **not in BC catalog** (`bcVerify.status==="not-in-bc"`). Means **"add & link."** **RED takes priority over YELLOW/BLUE** (resolving red resolves the others). Click action = the current red "+ BC" add-and-link flow (Coach confirm the exact onClick).
+- **YELLOW** — **fuzzy/close match exists** (`bcVerify.status==="fuzzy"`). **Functions identically to BLUE** (click → match/link); yellow only signals "a close match exists."
+- **BLUE** — in BC, **needs matching/linking** (the current blue-circle gate `priceSource!=="bc"&&!=="manual"` && `_bcToken`, when not caught by RED/YELLOW). Click → fuzzy-match/browse (current blue action).
+- **(none)** — matched / BC-priced → no circle.
+- Coach to define the **exact precedence predicate** (RED > YELLOW > BLUE > none) merging the `bcVerify` gates (red/yellow) with the `priceSource` gate (blue), and confirm whether RED's click flow differs from BLUE/YELLOW's (Jon says red = add+link, blue/yellow = match+link — may share the same fuzzy-lookup/browser flow). The single circle **co-exists** with the AI-confidence "C" circle in Status (Status holds up to 2 circles).
+
+### RULING R2 — C5: AI **and Manual** both render grey+italic (supersedes "manual → white")
+Jon (corrected): **`priceSource==="ai"` OR `priceSource==="manual"` → `C.muted` (#94a3b8) + italic**; **`priceSource==="bc"` → `C.text` (white)**. Rationale: BC is the authoritative price (white); AI estimates and manual entries are "softer" (grey/italic). The existing budget-vs-confirmed manual modal complements this.
+- **⚠ OPEN NUANCE (flagged to Jon; v1 assumption):** there is a budget-vs-confirmed manual modal. **v1 treats ALL manual as grey+italic.** Coach to identify the budget/confirmed field so we *could* later differentiate (e.g. confirmed-manual → white) if Jon wants — but not in v1 unless Jon says so.
+
+### Confirmed defaults (Coach's recommendations, Freddy accepts)
+- **§5.2 — ⚠ `bcSyncError` pill STAYS** (it's an actionable error, not a source marker).
+- **§5.2 — LABOR pill removed** (cosmetic; labor rows already show "— auto").
+- **§5.3 — TR Resolve ✓ button moves into the TR column** with the checkbox.
+
+### Next step
+Rulings routed to Coach to **revise the Plan** (§5.1→R1 unified circle in §6.5/§6.3; §5.2→R2 in §6.4). Revised Plan → Freddy quick re-review (matches rulings?) → **Jon's build-approval gate** → Marc builds.
