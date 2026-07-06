@@ -264,3 +264,15 @@ Live-testing browser: {linked in IMPL_SHORT's session | not yet needed}
 Top of queue: {ITEM}
 Awaiting first work instruction.
 ```
+
+## Standing duty during the session — feed {INTAKE_SHORT}'s Status Board
+
+{INTAKE_SHORT} (Intake) runs the live **Status Board** (`STATUS.md`, {INTAKE_SHORT} sole writer) — the glanceable "who's doing what right now" for Jon. The board only stays current if **{ORCH_SHORT} (hub) pings {INTAKE_SHORT} the status content**; {INTAKE_SHORT} captures/displays, never scopes. **This is easy to forget — do not.**
+
+**Cadence — ping {INTAKE_SHORT} at every milestone / phase boundary**, NOT every micro-step (respect the minimize-sends rule — each send is an Allow-Once prompt). Fire a status ping when:
+- an item **ships / deploys**, changes **status** (Backlog→Building→Verified), or is **blocked/unblocked**;
+- a **phase** starts or finishes (plan→build→verify→deploy);
+- a **decision is pending with Jon** (so the board shows what's waiting on him);
+- **who's-doing-what** changes (a role picks up / finishes / goes idle).
+
+Each ping = a short glanceable snapshot: current item states + who's on what right now + the next Jon touchpoint. Batch related changes into one ping. ({INTAKE_SHORT}'s side of this is in CLAUDE.md → Intake/Triage; this is the {ORCH_SHORT}-side reminder that was missing.)
