@@ -59,3 +59,26 @@ This is largely a **role-differentiated re-skin of existing #199 controls + an a
 3. **Marc builds** (+ `data-tour` anchors for F001) → `validate_jsx.js`.
 4. **Live re-verify** on matrix-arc-test — both role views (user checkbox→yellow / engineer circle→resolve), approve/reject gate, send-gate, backward-compat on existing flagged rows.
 5. **Coach review → Jon deploy checkpoint.**
+
+---
+
+## 7. ANALYST REVIEW + JON RULINGS (2026-07-06)
+
+**Analyst Review of Coach's feasibility trace (`docs/F003-COACH-FEASIBILITY.md`, tip 3c9df0a7): PASS.** Thorough; recommended option set internally consistent; the one MEDIUM risk (approve-sweep persist side-effect) is well-contained and flagged for the build Plan. Core new logic correctly identified = role-mutual-exclusivity of the two controls. §2 re-skin framing confirmed.
+
+**JON RULED the 8 open questions (all as Coach-recommended — the consistent set):**
+| Q | Ruling |
+|---|--------|
+| Q1 auto-stamp | **1a — KEEP** supplier-cross auto-flag (already the #199 safety net; no code change). |
+| Q2 uncheck-during-review | **2b — LOCK** all flags once `preReviewStatus==="pending"`; engineer owns resolution. |
+| Q3 signoff authority | **3b — assigned engineer + admin** get the circle; non-assigned reviewers see the checkbox. |
+| Q4 view-switch | **4a — engineer circles ONLY while `pending`**; everyone else/other states see the checkbox (also fixes old C7 over-exposure). |
+| Q5 green circle | **5a — RESTYLE** the existing Resolve ✓ (`_onTrResolve`) into empty→checked circle (reuse handler + audit stamp). |
+| Q6 approve/reject gate | **6b — block APPROVE** while `_hasUnresolvedTechReview`; **remove the sweep**; **Reject/Return stays FREE**. |
+| Q7 send-gate | **keep** — unresolved row still hard-blocks all 7 send surfaces (no regression). |
+| Q8 existing data | **none** — no migration; PRJ402111 row 8 is the verify fixture. |
+
+**Ruled set = 1a / 2b / 3b / 4a / 5a / 6b / keep / none.** Design LOCKED.
+
+### Next: Coach writes the BUILD PLAN
+Coach → exact edit sites (feasibility §4 lift breakdown as the skeleton) encoding the ruled set, the `_isReviewSignoffAuthority` helper (3b), the role-mutual-exclusivity branch (4a-gated), the approve-gate swap (6b) **+ resolve the MEDIUM-risk dependency** (confirm nothing else keys off the removed sweep's persist side-effect, §3.4), `data-tour` anchors on BOTH controls (F001), test criteria. → Freddy Analyst Review → **Jon build-approval** → Marc builds. HOLD, no build.
