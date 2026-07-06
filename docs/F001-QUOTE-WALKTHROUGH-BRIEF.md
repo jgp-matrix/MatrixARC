@@ -2,7 +2,9 @@
 
 **Author:** Freddy Lyst (Analyst)
 **Date:** 2026-07-03
-**Status:** Discovery → Decided-pending (awaiting Jon "go" to route to Coach for Supplement)
+**Status:** Discovery → **BLOCKED BY F002** (do not start — see below)
+
+> ⛔ **SEQUENCING (Jon, 2026-07-06): F002 must ship before ANY F001 work — including step collection.** F001's walkthrough steps reference the live BOM UI (the new TR / Status / 🔍 columns, the unified tri-state BC circle, and the `data-tour` anchors F002 adds). Authoring steps against the pre-F002 UI would only create rework. Resume F001 (route Brief → Coach Supplement, and collect Jon's §5 steps) **only after F002 is built, live-verified, and deployed.** F002's `data-tour="bom-tr|bom-status|bom-search"` anchors are the hooks F001 will target.
 **Category:** F001 (first Feature under the B/F/G scheme; sole-allocator stamp)
 
 ---
