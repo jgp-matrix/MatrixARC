@@ -86,5 +86,14 @@ This is largely a **role-differentiated re-skin of existing #199 controls + an a
 - **Jon: APPROVED the build** → routed to **Marc**. Build per the Plan's 7 sites + build order (§11).
 - **Gating:** code-complete ≠ deploy. After build + `validate_jsx.js`, Marc+Jon live-verify on matrix-arc-test (§10 T1–T11, incl. both role views + PRJ402111 row 8 backward-compat), Coach reviews, THEN Jon deploy checkpoint (Jon decides F003-alone vs any bundling).
 
+---
+
+## 8. REV-A — live-pass refinements (Jon, 2026-07-06, during the F003 live verify)
+Four small tweaks Jon surfaced watching the live pass. All trivial (cosmetic + one behavior-confirm + a header string) → Marc implements in the F003 build; no separate Coach plan (folds into the F003 diff Coach reviews). Fold the F002 header rename in too (ships with F003).
+1. **Brighter yellow (C8 token).** The current `rgba(245,158,11,0.28)` reads brownish over the dark bg. Shift to a brighter, more-yellow hue — start point `rgba(250,204,21,0.40)` (`#facc15`) — **alpha/hue is a live tuning knob; Jon eyeballs.**
+2. **Bolder engineer-circle border.** Current `1px solid #4ade80` → thicker (e.g. `2px solid #4ade80`) so the green circle reads as a bold ring.
+3. **Sign-off is FINAL (uncheckable).** Once the engineer checks the circle (✓ / resolved), it **cannot be un-checked/toggled back** — matches the Plan's "non-clickable once resolved." Confirm the build enforces this; if currently toggleable, lock it. (Re-opening a signed-off row = Reject/Return.) *(Jon to confirm interpretation.)*
+4. **Rename column "Status" → "Issues".** The F002-shipped header "Status" (holds the BC circle + confidence "C" circle) → **"Issues"**. Header string change (F002 header array); folds into the F003 build/deploy. *(Technically an F002 amendment — bundled with F003 for one deploy.)*
+
 ### Next: Coach writes the BUILD PLAN
 Coach → exact edit sites (feasibility §4 lift breakdown as the skeleton) encoding the ruled set, the `_isReviewSignoffAuthority` helper (3b), the role-mutual-exclusivity branch (4a-gated), the approve-gate swap (6b) **+ resolve the MEDIUM-risk dependency** (confirm nothing else keys off the removed sweep's persist side-effect, §3.4), `data-tour` anchors on BOTH controls (F001), test criteria. → Freddy Analyst Review → **Jon build-approval** → Marc builds. HOLD, no build.
