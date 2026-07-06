@@ -4,7 +4,8 @@
 **Date:** 2026-07-06
 **For:** Freddy (Analyst Review) → Jon (Plan approval) → Marc (build)
 **Traced against tip:** `ede88d59` (v1.21.25). All line numbers are at this tip; expect ±small drift.
-**Status:** **REV 1 (2026-07-06)** — Jon's R1/R2 rulings applied (see §10, which SUPERSEDES §3, §6.3 Status content, §6.4, §6.5, and resolves §5.1/§5.2/§5.3). Original trace (§1–§9) retained for reference. **HOLD per per-phase gating — no build until Freddy re-review + Jon's build-approval.**
+**Status:** **REV 2 (2026-07-06)** — Rev 1 (§10) BUILT + live-verified + banked (not yet deployed). Rev 2 (§11) adds **C6 + C8** TR-refinements on top (C7 held → likely F003). Rev 1 §10 supersedes §3/§6.3-Status/§6.4/§6.5; §11 is the C6/C8 spec. **HOLD per gating — no build until Freddy re-review + Jon's build-approval.**
+**Line numbers:** §1–§9 at tip `ede88d59`; §10 R1/R2 applied; **§11 line numbers at tip `7914f191`** (post-Rev-1-build `c8cbbca7`).
 
 > **Reading order for Marc:** §1 (inventory) and §6.1/§6.2/§6.6/§6.7 (header/colgroup/colSpan/data-tour) are unchanged and authoritative. For the BC circle (§6.5), Status-cell content (§6.3), and Unit $ styling (§6.4/§3), **use §10 — it supersedes.**
 
@@ -285,3 +286,73 @@ There is **no separate budget/confirmed boolean.** The distinction already lives
 
 ### 10.6 Invariants — still fully protected under R1/R2
 R1 is a **merge + relocation** of existing render gates (no gate logic changes — the union predicate is behavior-preserving with an intentional, safe `bc→none` tightening). R2 restyles the **displayed value only**. `_isBomRowFlaggedRed`, `_hasPrice`, `_isValidPrice`, `_isValidLT`, #199 TR logic, and all Firestore writes remain **untouched**. `priceSource` is read, never written, by F002.
+
+---
+
+## 11. REV 2 — C6 + C8 TR refinements (2026-07-06) — traced against tip `7914f191`
+
+Scope for Coach = **C6 + C8 only.** C7 is out of scope (see §11.4). Both are confirmed **non-regressions** (Marc's Rev 2 trace) — C6 is a pre-existing #199 label; C8 is genuinely new behavior. Rev 1 live-verify (T1/T2/T3′/T4/T5′/T6/T7/T8/T9/T10) stands.
+
+### 11.1 C6 — remove the "TR"/"TR✓" text label (checkbox only)
+
+**Exact edit — delete the span at line 29072** (inside the TR label, after the checkbox):
+```js
+// DELETE this entire line (29072):
+{_trFlagged&&<span style={{fontSize:9,fontWeight:800,color:_trUnresolved?"#f59e0b":C.muted,lineHeight:1}}>{_trUnresolved?"TR":"TR✓"}</span>}
+```
+The checkbox (`<input>` 29071) and its wrapping `<label>` (29070) stay. Result: flagged rows show a bare amber checkbox, no text.
+
+**Confirmed — no other consumer:** the span is an inline JSX leaf; nothing reads it. The variable `_trUnresolved` **stays** (still used by the Resolve-button gate ~29076 and now by C8). After removal, the flagged/resolved distinction is conveyed by:
+- **checkbox opacity** — `opacity:_trFlagged?1:0.5` on the label (29070): flagged=solid, unflagged=faint.
+- **checkbox enabled/disabled** — `_trDisabled` includes `_trResolved` and supplier-flag, so a **resolved** flag reads as checked+disabled (greyed), an **unresolved manual** flag as checked+enabled.
+- **C8 row color** — unresolved → yellow row bg (§11.2); resolved → color reverts.
+
+Marc's note "confirm sufficient at verify" stands (verify the checked+disabled greying is legible enough to distinguish resolved from unresolved without the "✓" text). Cosmetic-only; no logic touched. **C6 LOCKED.**
+
+### 11.2 C8 — TR-flagged-unresolved row → YELLOW bg, overriding red (VISUAL-ONLY)
+
+**Exact edit — the `rowBg` ternary at line 28967.** Current:
+```js
+const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+```
+Insert one term — `_isUnresolvedTechReviewRow(row)?"<yellow>":` — **immediately before the `_isBomRowFlaggedRed` term**:
+```js
+const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isUnresolvedTechReviewRow(row)?"rgba(245,158,11,0.28)":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+```
+
+**Predicate to reuse — the MODULE function, NOT the local var (ordering hazard):**
+`_isUnresolvedTechReviewRow` is defined at **module scope, line 15872**: `r=>!!r&&!!r.techReviewFlag&&!r.techReviewResolved` — it already means "flagged AND unresolved." **Use it inline.**
+⚠ **Do NOT use the local `_trUnresolved` variable** — it's computed at ~29011, which is **AFTER** `rowBg` at 28967. Referencing it here would be a temporal-dead-zone / undefined error. The module function has no such ordering dependency. (This is the one real trap in C8; the module predicate sidesteps it cleanly and keeps a single source of truth for "unresolved TR" — same function the send-gate uses.)
+
+**Yellow token (proposed):** `rgba(245,158,11,0.28)` = `#f59e0b` (the exact TR-accent amber used by the checkbox `accentColor` at 29071 and the old "TR" glyph) at 0.28 alpha (red is 0.35; slightly lighter reads as "caution, not error"). Ties the row visually to the TR control. **Alpha is a tuning knob — confirm legibility at live verify.**
+
+**Auto-revert on approval — no extra code.** When a reviewer resolves the flag (`techReviewResolved:true`), `_isUnresolvedTechReviewRow(row)` → `false`, the ternary falls through to `_isBomRowFlaggedRed` → **red returns if still unpriced/stale**, else zebra. This is exactly Jon's LOCKED precedence (Brief §7 item-3): yellow while pending; approval ends the override; pricing-red is never suppressed, only deferred. The predicate handles it automatically.
+
+**Precedence (final) + interaction flags.** New order:
+```
+bcUpdated(transient flash) → labor → ECO tint → restoreSkipped → TR-yellow → RED(_isBomRowFlaggedRed) → zebra
+```
+- **vs RED:** TR-yellow wins — the ask. ✅
+- **vs labor:** labor stays above. **Moot** — `_trShow` gates the checkbox off labor rows, so labor rows are never TR-flagged. Safe either way.
+- **vs bcUpdated:** the transient "BC price updated" green flash (returns `undefined` → CSS `.bc-row-updated` animation, ~seconds) stays above. Correct — transient feedback shouldn't be masked.
+- **⚠ vs ECO tint (non-blocking Q for Jon):** an ECO-tagged row CAN be TR-flagged. Under this placement the **ECO tint wins** (row shows its ECO color, not TR-yellow). Recommendation: keep ECO tint above (structural-change signal; ECO-modify tint is already yellowish so a TR row inside an ECO still reads "attention"). If Jon wants TR-yellow to win even on ECO rows, move the TR term above `_ecoTint`. **Default: ECO wins.**
+- **⚠ vs restoreSkipped (non-blocking edge):** a restore-skipped row (`#78350f22` + orange left-border) that's also TR-flagged keeps its restoreSkipped bg under this placement. Rare; restoreSkipped is a structural "must remap" state. **Default: restoreSkipped wins.**
+
+**INVARIANT — visual-only, no predicate consumer regresses (the C8 critical requirement):**
+- `_isBomRowFlaggedRed` is **unchanged** — same signature, same call, same return. C8 only changes what the `rowBg` *string* evaluates to; the function's value still drives every logic consumer (RFQ eligibility `_eligibilityReason`/`isFirmLT`, red-count checks, pre-print checklist, etc.) exactly as before. A TR-yellow row is **still "red" for all logic/RFQ purposes** — only the displayed color differs. ✅
+- `_isUnresolvedTechReviewRow` is **READ** here (a new read), **not modified** — it's the same function the #199 send-gate uses; C8 adds a consumer, changes nothing about the predicate or the flag data. No Firestore writes. ✅
+- This **supersedes the Rev 1 §10.6 / Brief §3.2 "row-bg untouched" line — at the DISPLAY layer only.** The predicate/invariant guarantee is intact. **C8 LOCKED.**
+
+### 11.3 Rev 2 test criteria (add to §8/§10.5)
+- **C6-T1:** flagged rows show a bare amber checkbox, no "TR"/"TR✓" text, in both unresolved (checked+enabled) and resolved (checked+disabled/greyed) states; the two states remain visually distinguishable (checkbox state + row color).
+- **C8-T1 (live, PRJ402111 row 8 `800H-AR6A`, unresolved):** the row renders **yellow** (`rgba(245,158,11,0.28)`), NOT red, even though it's unpriced/stale.
+- **C8-T2 (approval):** resolve row 8's TR → row reverts to **red** (still unpriced) or zebra (if priced) — override ends.
+- **C8-T3 (invariant):** the row is still counted "red" by the pre-print/RFQ logic while yellow (e.g. it still qualifies for RFQ / still trips the incomplete-pricing gate). Confirms `_isBomRowFlaggedRed` semantics unchanged.
+- **C8-T4 (precedence):** an ECO-tagged TR-flagged row shows ECO tint (per default ruling); a labor row is never TR-flagged.
+- **Regression:** re-confirm Rev 1 T1/T3′/T5′/T6 unaffected; `validate_jsx.js` clean.
+
+### 11.4 C7 — OUT OF SCOPE (held → likely F003)
+Per Freddy's routing and Marc's trace: the only "Approved" chip is **"✓ Pre-Review Approved" at app.jsx:36006**, gated on `project.preReviewStatus==="approved"`, rendered in the **panel quote-summary/action area — NOT the BOM table**, and **outside F002's diff**. It's pre-existing pre-review-subsystem behavior, not an F002 regression and not a BOM change. **C7 is held for Jon to identify the exact element/view; if it's the project-level pre-review chip it spins out as its own item (F003).** Coach does not plan C7 here.
+
+### 11.5 Pipeline / HOLD
+Rev 2 Plan (this §11) → Freddy Analyst Review → Jon approves Rev 2 → Marc builds C6+C8 → re-verify (C6/C8 incl. live C8 yellow on PRJ402111 row 8 + approval-revert, re-confirm Rev 1 T1/T3′/T5′/T6) → Coach review → **Jon deploy checkpoint** (F002 ships Rev 1 + Rev 2 together). **HOLDING — no build until Jon's go.**
