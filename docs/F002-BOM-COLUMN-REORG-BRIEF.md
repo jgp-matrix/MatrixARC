@@ -71,3 +71,9 @@ Jon (corrected): **`priceSource==="ai"` OR `priceSource==="manual"` → `C.muted
 
 ### Next step
 Rulings routed to Coach to **revise the Plan** (§5.1→R1 unified circle in §6.5/§6.3; §5.2→R2 in §6.4). Revised Plan → Freddy quick re-review (matches rulings?) → **Jon's build-approval gate** → Marc builds.
+
+### APPROVED FOR BUILD (2026-07-06)
+- **Coach Plan Rev 1** (`docs/F002-COACH-SUPPLEMENT-AND-PLAN.md` §10, tip 38039b5b) — **Freddy re-review: PASS** (faithfully encodes R1/R2; invariants protected; R2's budget/confirmed distinction falls out of existing `priceSource` for free — budgetary-manual→grey, confirmed-manual stored as `bc`→white).
+- **Jon: APPROVED the build** → routed to **Marc**. Build per Rev 1 §10 (authoritative) + §6 (header/colgroup/TR+🔍 relocation/colSpan/data-tour).
+- **Two non-blocking live-verify watch-items:** (1) BC-circle vs confidence-"C" palette collision (BC-red `#dc2626`/BC-yellow `#fcd34d` vs conf `#ef4444`/`#f59e0b`); (2) readOnly visibility of RED/YELLOW (informational, preserved).
+- **Gating:** code-complete ≠ deploy. After build + `validate_jsx.js`, Marc+Jon live-verify on matrix-arc-test (T1′–T10 in §10.5/§8), Coach reviews, THEN Jon releases deploy as its own checkpoint.
