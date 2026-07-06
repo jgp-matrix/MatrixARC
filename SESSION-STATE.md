@@ -1,16 +1,18 @@
-# Session State — 2026-07-03 MDT (#199 Tech Review flag SHIPPED v1.21.25 · team protocols reset · regen at startup 2026-07-02 boot)
+# Session State — 2026-07-06 MDT (regen at startup · F001 Brief written since last regen · #199 SHIPPED v1.21.25 · team protocols current)
 
 ## Version
 **v1.21.25** (deployed 2026-07-03, PRODUCTION). Shipped #199 (Tech Review flag) + two in-pass fixes + #17.
 
 ## Deploy State
-- **Master tip:** `3936fd86` (docs/orchestration only — Allow-Once forensics, per-phase gating, Dez 4th role added, close-out-from-Freddy). **Release commit = `333f385d` (v1.21.25)**. `master == origin/master` (in sync). No feature branches.
-- Production hosting: **https://matrix-arc.web.app** serving **v1.21.25**. All app code committed + deployed. Every commit since `333f385d` (`01099977` → `3936fd86`) is dev-tooling / docs / orchestration only (no `src/` change) — production is still v1.21.25.
+- **Master tip:** `52a1e9ef` (F001 Brief — interactive quote-building walkthrough; docs-only). **Release commit = `333f385d` (v1.21.25)**. `master == origin/master` (in sync, verified at 2026-07-06 startup). No feature branches.
+- Production hosting: **https://matrix-arc.web.app** serving **v1.21.25**. All app code committed + deployed. Every commit since `333f385d` is dev-tooling / docs / orchestration only (no `src/` change) — production is still v1.21.25.
 - Working tree CLEAN.
 
 ## ⭐ NEXT UP — analyst leads (top 10)
 
-**Take the reins per your Startup Directive.** #199 closed cleanly this session with nothing queued behind it, so this list is ranked by priority — pick the best next move (several are teed up). #192 remains the top open *bug* but is EVIDENCE-GATED; the first genuinely-unblocked moves are the G002 live test, #200, and #193 verify.
+**Take the reins per your Startup Directive.** This list is ranked by priority — pick the best next move (several are teed up). #192 remains the top open *bug* but is EVIDENCE-GATED; the first genuinely-unblocked moves are the G002 live test, #200/F001, and #193 verify.
+
+0. **F001 — Interactive quote-building walkthrough (Brief written `52a1e9ef`, ready to pipeline)** — gated hands-on walkthrough + Help-button + reusable engine. Next step: Coach Supplement → Analyst Review → Plan. Brief: docs/F001-*.md.
 
 1. **🔴 #192 REGRESSION (top bug, but EVIDENCE-GATED — not team-actionable yet)** — auto-revert CLEARS BUDGETARY on red-row projects on OPEN (Noah watched it uncheck). Mechanism strong-inferred (background reprice on open transiently drives all-non-red → `_hasRedRows(latest)` false at the debounced fire ~app.jsx:37246 → false "Remove Budgetary?" dialog). **Instrumentation LIVE (v1.21.21)** — the "[#192 REVERT-FIRE]" console log appearing AT ALL confirms it. **Blocked on Noah's intermittent repro w/ console open.** FIX: require a STABLE clean state (re-check after settle) before auto-revert; then STRIP instrumentation. Trace: docs/192-BUDGETARY-REVERT-REGRESSION-TRACE.md.
 2. **G002 launcher — LIVE FRESH-BOOT CALIBRATION (teed up, unblocked)** — the launcher is Coach-approved (v3), AHK path baked (`01099977`), desktop shortcut `Boot ARC Team.lnk` + printable `ARC-Team-Startup.html` runbook created, `-WhatIf` clean. Only the live run remains: at a clean boot, run it and confirm `Ctrl+N` creates EXACTLY 4 sessions (the #1 unknown — silent-stack risk if the shortcut's wrong), then tear-off/title/comms-check. TODO G002.
