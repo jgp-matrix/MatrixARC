@@ -5,16 +5,19 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ACTIVE SESSION (prod v1.22.0, release `2d24f5a2`)
-**🎉 F003 SHIPPED v1.22.0 — "clean up the BOM" arc complete (F002+F003). Awaiting Jon's next direction.**
+## Current — ACTIVE SESSION (prod v1.22.1, release `1048d635`)
+**F002+F003 SHIPPED · v1.22.1 cosmetic patch shipped · B006 in LOCATE · Jon deciding next.**
 - **F002 — BOM column reorg / indicator cleanup → ✅ SHIPPED to prod v1.21.26, CLOSED.** Decluttered columns (# Ref TR Qty Status 🔍 Part#), unified tri-state BC circle, AI+manual grey-italic pricing.
-- **F003 — Role-Differentiated Tech Review → ✅ SHIPPED to PROD v1.22.0, RESOLVED.** Release `2d24f5a2`, prod-verified via artifacts, DEPLOY Pushover fired. Full T1–T11 + 4 Rev-A PASS, Coach-approved.
-- **F001 — Interactive quote-building walkthrough → 🔓 UNBLOCKED (ready to start).** F002+F003 both shipped; targets the final BOM UI + `data-tour` anchors. Brief: `docs/F001-QUOTE-WALKTHROUGH-BRIEF.md`.
-- **📥 Intake:** **CLEAR (0 pending).** All triaged to Features [Backlog]: **F004** (portal submit confirmation), **F005** (Print-Only button in locked-quote overlay), **F006** (Qv.## Hist. button — per-quote send history w/ doc previews).
-- **WHO'S DOING WHAT:** Marc → standby (F003 deployed) · Coach → standby · Freddy → hub, awaiting Jon's next direction · **Jon → deciding next move (start F001 / close out / other).**
-- **STATUS:** F002 + F003 both SHIPPED (prod v1.22.0) · F001 unblocked, ready · F004/F005/F006 Backlog · Dez board+intake live (0 pending).
+- **F003 — Role-Differentiated Tech Review → ✅ SHIPPED to PROD v1.22.0, RESOLVED.** Release `2d24f5a2`, prod-verified, DEPLOY Pushover fired. Full T1–T11 + 4 Rev-A PASS, Coach-approved.
+- **v1.22.1 — white TR checkbox fill (cosmetic patch) → ✅ SHIPPED to prod, prod-verified.** Release `1048d635`. Prod now = **v1.22.1**.
+- **B006 — Scan Results concern window: add Dismiss button (source Jon) → 🔨 Marc in LOCATE phase.** Bugs [Backlog].
+- **F001 — Interactive quote-building walkthrough → 🔓 UNBLOCKED (next-up feature).** Targets the final BOM UI + `data-tour` anchors. Brief: `docs/F001-QUOTE-WALKTHROUGH-BRIEF.md`.
+- **📥 Intake:** **CLEAR (0 pending).** Backlog: **F004** (portal submit confirmation), **F005** (Print-Only button in locked-quote overlay), **F006** (Qv.## Hist. button), **B006** (Scan Results Dismiss, in LOCATE).
+- **WHO'S DOING WHAT:** Marc → locating B006 (Scan Results Dismiss) · Coach → catching up / standby · Freddy → hub · **Jon → eyeballing v1.22.1 + deciding next (F001 / B006 / other).**
+- **STATUS:** F002+F003 shipped · v1.22.1 cosmetic patch shipped · B006 in LOCATE · F001 unblocked/next-up · Dez board+intake live (0 pending).
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-06 15:40 MDT]** **✅ v1.22.1 SHIPPED (cosmetic patch — white TR checkbox fill), prod-verified (release `1048d635`).** Prod now = **v1.22.1**. **B006 — Scan Results concern window → add Dismiss button** (source Jon) tracked to Bugs [Backlog]; **Marc in LOCATE phase.** F001 (walkthrough) still 🔓 unblocked / next-up feature. WHO: Marc → locating B006 · Coach → catching up/standby · Freddy → hub · Jon → eyeballing v1.22.1 + deciding next (F001 / B006 / other).
 - **[2026-07-06 15:17 MDT]** **🎉 F003 SHIPPED to PROD v1.22.0, RESOLVED (release `2d24f5a2`).** Prod-verified via artifacts; DEPLOY Pushover fired. The full "clean up the BOM" arc is now DONE: **F002 shipped v1.21.26 + F003 shipped v1.22.0.** **F001** (interactive quote-building walkthrough) → 🔓 **UNBLOCKED** (both prereqs shipped), ready to start — targets the final BOM UI + `data-tour` anchors. **📥 Intake CLEAR (0 pending):** F004, F005, F006 (Qv.## Hist. button) all triaged to Features [Backlog]. WHO: Marc standby (deployed) · Coach standby · Freddy hub — awaiting Jon's next direction (start F001 / close out / other) · Jon deciding next move. Prod = v1.22.0.
 - **[2026-07-06 15:13 MDT]** **📥 New intake captured (1 pending).** `FEAT — "Qv.## Hist. button — per-quote send history with document previews"` (source: Jon, INBOX `832e2cfa`) — a "Qv.## Hist." button next to Send/Resend/Print that opens all historical sends for the quote, each with a preview of the document actually sent. Dedup-checked: data feed exists (#193 writes `quote_send` → `project.qvHistory[]`); distinct from #194 (global email-metrics/click-tracing consumer) — this is a per-quote history VIEWER + stored sent-doc snapshot. Holding for Freddy triage. No change to F003 (still at Jon's deploy checkpoint, prod HELD).
 - **[2026-07-06 15:02 MDT]** **✅ Coach APPROVED F003 for deploy → 🚩 Jon's deploy checkpoint.** Coach final review of the actual diff = **APPROVE FOR DEPLOY** (`docs/F003-COACH-REVIEW.md`). → now at **Jon's deploy checkpoint** — F003 to prod, **v1.22.0 minor**; Marc ready to run `deploy.sh`. Prod HELD until Jon releases. F001 unblocks on ship. **📥 Intake CLEAR (0 pending):** Freddy triaged both captures → **F004** (portal submit confirmation) + **F005** (Print-Only button in locked-quote overlay, sibling to #196), Features [Backlog]. WHO: Freddy hub (holding for release) · Marc standby (deploy-ready) · Coach done · Jon → deploy decision.
