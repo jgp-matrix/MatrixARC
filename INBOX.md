@@ -21,7 +21,7 @@
 
 ---
 
-_(empty — all items triaged & promoted to TODO.md; see triage log below)_
+- [2026-07-06] FEAT — "Portal submit confirmation shows ARC user + email-copy notice" — When a supplier submits a quote from an RFQ, the portal confirmation page AND the confirmation email to the supplier should display the ARC user's name and state that an email with a copy of the quote has been sent to that user (e.g. "a copy of your quote has been sent to <User Name> @ name@matrixpci.com"). Reassures the supplier the submission reached a real person. — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
