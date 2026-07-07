@@ -21,7 +21,7 @@
 
 ---
 
-_(no un-triaged items)_
+- [2026-07-07] FEAT — "Supplier Portal 'Analyzing Your Quote' copy → 'Matrix ARC AI is currently scanning your quote'" — On the Supplier Portal, during the quote-analysis loading state (currently labeled "Analyzing Your Quote"), change the message to read "Matrix ARC AI is currently scanning your quote." (Small copy/wording change — Freddy may class GEN/cosmetic.) — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
