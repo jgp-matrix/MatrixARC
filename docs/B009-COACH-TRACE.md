@@ -52,3 +52,42 @@ Root cause is a **later writer dropping a metadata flag**, so the fix is NOT ano
 
 ## 6. Pipeline / HOLD
 Trace → Freddy → Marc live repro + Debug Logs (confirm §3/§4) → Coach fix plan (targets the confirmed writer) → Jon approve → build. **HOLDING — no code.**
+
+---
+
+## 7. PREP AUDIT (read-only, Freddy-authorized 2026-07-07) — suspect MAPPING, not a fix
+
+> **Gate stands:** the fix plan still GATES on Marc's runtime confirmation of the exact clobbering writer. This is readiness, not a decision.
+
+### 7A. `runPricingOnPanel` (27174) is internally `...r`-CLEAN — the risk is STALE INPUT, not a rebuild
+Every row-emitting phase spreads `...r`, so `techReviewFlag` is carried **by value from the input**:
+- BC PO-date backfill (~27208): `{...r,bcPoDate}`
+- all BC/AI price-match `.map`s: `{...r, …price fields}`
+- AI lead-time fallback (27663): `{...r,leadTimeDays,…}`
+- vendor backfill (27689): `{...r,...vendorPatches[k]}`
+- bcVerify stamp (27711): `{...r,bcVerify}`
+- final: `updated={...panelBase,bom:updatedBom}` (27724) → `onSaveImmediate(updated)` (27726).
+
+**→ The clobber is NOT a non-spread rebuild inside the reprice.** It's the INPUT: `bom=bomOverride||panel.bom` (27176) and `panelBase=panelOverride||panelRef.current` (27722). If the reprice is invoked with a **pre-stamp `bomOverride`/`panelOverride`**, or `panelRef.current`/the `panel` prop is **lagging the 39069 stamp** (the stamp lands in PanelListView's `projectRef.current` at 39072, then must propagate down to this PanelCard's `panel` prop / `panelRef.current` — a render-cycle lag), the `...r` spreads faithfully preserve rows that **never had the flag**, and the save at 27726 overwrites the stamped rows. This is the classic ref-lag/stale-closure race and fits the "few seconds" (the reprice's async BC/AI calls) exactly.
+
+**Trigger candidates that feed it stale input post-apply:**
+- **Auto-reprice-on-unpriced** — e.g. the recon-path pattern at **24810-24811** (`if(bom.some(r=>!r.unitPrice)&&_apiKey) runPricingOnPanel(latestPanelRef.current.bom,…)`). Crossed rows are left **unpriced** by the apply (§3) → they satisfy `some(!unitPrice)` → prime bait. **Marc: check for an equivalent auto-reprice reachable in the seconds after a supplier apply** (a pricing `useEffect` or a post-apply call), and whether its `bomOverride`/ref is post-stamp.
+- **Manual "Get New Pricing"** (28646, `runPricingOnPanel()` → uses the `panel` prop) — only if the user clicks it; less likely unattended, but its input is the prop (lag-prone).
+
+### 7B. Other post-apply BOM writers (so we're not tunnel-visioned) + their pattern
+| Writer | Site | `...row` vs rebuild | Fresh source? | Save | Verdict for B009 |
+|---|---|---|---|---|---|
+| `doApplyPortalPrices` | 38339 | `...row` (all branches) | fresh `projectRef.current` | **awaited** safeSave (38393) | **PRESERVES — proven; the apply path, not the clobberer** |
+| `runPricingOnPanel` | 27174 | `...r` (all phases) | `bomOverride`/`panelOverride`/`panelRef.current` | `onSaveImmediate` (27726) | **PRIMARY SUSPECT — clean code, but STALE-INPUT-prone** |
+| SQ `onBomUpdate` | 39264-39333 | `...row` (39297) | fresh `projectRef.current` | fire-and-forget safeSave | preserves if ref fresh; **non-portal SQ path, not Jon's** — low |
+| `applyPriceCheckDiffs` | 37066-37088 | `{...rest,…}` (rest=row) | fresh `projectRef.current` | safeSave | preserves; **user-triggered (accept diffs), not auto-post-apply** — low |
+| Recon post-commit | 24800-24812 | `emap.get(id)||r` preserves + auto-reprice | `latestPanelRef.current` | onSaveImmediate | shares 7A stale-reprice risk but fires on **drawing-revision reconcile, not supplier apply** — wrong trigger |
+| `_markProjectBudgetaryForRedRows` | 1574 | writes `panel.pricing.isBudgetary` only | — | — | **writes NO bom rows → cannot drop the flag** — safe |
+| `saveBomRow`/`updateBomRow` | (single-row) | `{...r,[f]:v}` spread | user edit | safeSave | not auto-firing post-apply — n/a |
+
+### 7C. What this refines about the fix (still gated)
+Because the reprice code is `...r`-clean, the fix is **NOT** "add `...row` to `runPricingOnPanel`." Two candidate fix shapes to choose from once Marc names the writer:
+1. **Input freshness** — ensure any post-apply reprice is seeded from the **post-stamp** `projectRef.current`/`latestPanelRef.current` (not a captured `bomOverride` or a lagging prop), and/or defer the reprice until the stamp has propagated.
+2. **Save-time preservation (belt)** — have the BOM save path preserve the 5 TR fields by merging against the latest persisted rows (mirror the existing cross-user `saveProject` guards that re-read Firestore and preserve admin-set fields). Robust against ANY stale writer, not just this one — aligns with the CLAUDE.md metadata-preservation rule.
+
+**Marc's runtime result decides which** (is the bad writer a stale-input `runPricingOnPanel`, or something 7B flagged low?). No code until then.
