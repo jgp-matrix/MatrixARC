@@ -53,6 +53,16 @@ Headless debugging (instrumented deploys + console logs) proved: `useTourRect` m
 - **Step 2 (folder creation) → NARRATED (was gated on `prequote-continue`).** The pre-quote "Done… Continue to Project Quote" modal does **not exist** in the current codebase (no match), and the action is out-of-app (file system). A gated click on a non-existent button would stall the tour. Made narrated (advance on Next). VERIFY-ITEM: if a pre-quote modal is added later, re-point target to `[data-tour="prequote-continue"]` and switch to `type:'gated' advance:{on:'click'}`.
 - **Deferred anchors (not referenced by the shipped 10-step array):** `np-customer`, `np-salesperson`, `np-pm`, `np-engineer`, `np-create` (NewProjectModal — locatable, deeper in the modal); `prequote-continue` (modal absent); `verify-page-type`, `verify-region` (verify UIs — not located); `rfq-vendor-select`, `rfq-preview`, `rfq-send` (RFQ modal internals). Step 1 spotlights `new-project-btn` (exists), so these are only needed if finer sub-steps are authored later. Add when those sub-steps are defined.
 
+## Live-verify progress (Jon co-drive, 2026-07-07)
+Verify #1 (A3 gated flow) — **PASS live**, after 4 verify-fixes caught + fixed during the pass:
+1. **A3 spotlight rect** — `useLayoutEffect` + rAF-retry (`b834660d`/`9f52b642`): the spotlight now renders (rect propagates on the mount frame); real click reaches + New Project through the hole.
+2. **Step 1b modal spotlight** (`0862d00d`): split Step 1 (btn) → Step 1b (whole New-Project modal via `np-modal`) so the open modal isn't masked by the button-cutout.
+3. **Cutout follows target growth** — `ResizeObserver` (`18d64f6c`): the modal grows when a customer is picked; the cutout now tracks it (confirmed: +140px growth → cutout followed).
+4. **Bubble on-screen clamp** (`7cd91f3a`): below a tall target the Next button was clipped off the viewport bottom; bubble now clamped fully on-screen (confirmed at Step 3: bubble bottom 1219 ≤ vh 1261, Next visible).
+
+Confirmed live: the walkthrough drove project creation end-to-end (Steps 1→1b→2→3), auto-advancing through to the Step-3 extraction checkpoint (real project PRJ402134 created on test).
+STILL PENDING (Jon): drop drawings → real extraction checkpoint auto-advance; #2 checkpoint resume across lifecycle; #3 narrated sends (4Ba/7) never auto-fire; #4 a11y (Esc/reduced-motion).
+
 ## Not done / held
 - **No prod deploy** — prod stays v1.22.3. Live-verify + Coach review precede any deploy (Jon's checkpoint).
 - **Checkpoint-watcher same-step double-advance hardening** — low-risk (functional updater + distinct per-step predicates); flagged as a follow-up in the Track A commit.
