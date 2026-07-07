@@ -34581,7 +34581,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             <div style={{background:"#12121f",border:"1px solid "+C.border,borderRadius:12,padding:"24px 28px",maxWidth:480,width:"90%",boxShadow:"0 12px 48px rgba(0,0,0,0.6)"}} onMouseDown={e=>e.stopPropagation()}>
               <div style={{fontSize:16,fontWeight:700,color:C.text,marginBottom:16}}>📋 Send for Technical Review</div>
               <label style={{fontSize:12,fontWeight:600,color:C.sub,display:"block",marginBottom:4}}>Assign to Engineer</label>
-              <select value={sendReviewEngineer} onChange={e=>setSendReviewEngineer(e.target.value)}
+              <select data-tour="tech-review-engineer-picker" value={sendReviewEngineer} onChange={e=>setSendReviewEngineer(e.target.value)}
                 style={{width:"100%",padding:"8px 10px",borderRadius:6,border:"1px solid "+C.border,background:"#1a1a2e",color:C.text,fontSize:13,fontFamily:"inherit",marginBottom:14,outline:"none"}}>
                 <option value="">Select engineer…</option>
                 {(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return !!dUid;}).map(d=>{
@@ -36053,7 +36053,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       disabled={rfqLoading||ownerPriorityActive}
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
                       style={btn("#1e1b4b","#818cf8",{fontSize:12,padding:"8px 12px",flex:2,opacity:(rfqLoading||ownerPriorityActive)?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>{rfqLoading?"Building…":"Send/Print RFQs"}</button>
-                    <button onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"8px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
+                    <button data-tour="upload-quote-btn" onClick={()=>onOpenSupplierQuote(sp.bom||[],sp.id)} style={btn("#0d1f0d","#4ade80",{fontSize:12,padding:"8px 12px",flex:2,border:"1px solid #4ade8044",fontWeight:700})}>📥 Upload Quote{pendingRfqUploads>0?` (${pendingRfqUploads})`:""}</button>
                     <button onClick={onShowRfqHistory} title="View RFQ send history" style={btn("#111128","#64748b",{fontSize:10,padding:"4px 10px",flex:0,whiteSpace:"nowrap",fontWeight:700,border:"1px solid #64748b44",minWidth:72,textAlign:"center"})}>RFQ Hist.</button>
                   </div>;
                 })()}
@@ -36068,7 +36068,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   </div>;
                   if(reviewStatus==="pending")return <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"4px 0"}}><span style={{fontSize:11,fontWeight:700,color:"#a78bfa",animation:"pulseYellow 2s ease-in-out infinite"}}>📋 In Pre-Review — awaiting {_preReviewAssigneeName} approval</span>{_qvHistBtn}</div>;
                   if(readOnly)return null;
-                  return <div style={{display:"flex",gap:6,alignItems:"stretch"}}><button onClick={()=>{
+                  return <div style={{display:"flex",gap:6,alignItems:"stretch"}}><button data-tour="send-tech-review-btn" onClick={()=>{
                     const hasDrawings=(project.panels||[]).some(p=>(p.pages||[]).length>0);
                     if(!hasDrawings){arcAlert("No drawings uploaded yet. Upload drawings before requesting review.");return;}
                     const designers=(window._arcDesignerCache||[]).filter(d=>{const dUid=window._arcUidForBcUser?.(d.Code);return !!dUid;});
@@ -36960,6 +36960,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [sqPanelId,setSqPanelId]=useState(null);
   const [pendingRfqUploads,setPendingRfqUploads]=useState(0);
   const [portalSubmissions,setPortalSubmissions]=useState([]);
+  // F001 A5 — publish the walkthrough's project-state snapshot (checkpoint advances + state-driven
+  // resume read this). extractionActive = own running _bgTasks for this project ∪ other users'
+  // (projectRemoteTasks). bomPopulated flips on project update at extraction completion → drives the
+  // Step-3 checkpoint. Re-publishes whenever any tracked signal changes.
+  useEffect(()=>{
+    _publishArcTourState({
+      view,
+      projectId:project.id,
+      bomPopulated:(project.panels||[]).some(p=>(p.bom||[]).length>0),
+      extractionActive:(projectRemoteTasks&&projectRemoteTasks.length>0)||Object.values(_bgTasks).some(t=>t&&t.projectId===project.id&&t.status==="running"),
+      pendingRfqUploads,
+      preReviewStatus:project.preReviewStatus||null,
+      quoteSentAt:project.quoteSentAt||null,
+      quoteLocked:!!project.quoteLocked,
+    });
+  },[view,project.id,project.panels,pendingRfqUploads,project.preReviewStatus,project.quoteSentAt,project.quoteLocked,projectRemoteTasks]);
+  // F001 A5 — when the project view unmounts (back to dashboard), reflect "on dashboard / no project"
+  // so a re-launched walkthrough resolves to Step 1.
+  useEffect(()=>()=>{_publishArcTourState({view:"dashboard"});},[]);
   // DECISION(v1.19.407): Concurrent editing detection — listen for external updates to this project.
   const [externalUpdate,setExternalUpdate]=useState(false);
   const lastSavedAt=useRef(null);
@@ -42342,11 +42361,11 @@ function NewProjectModal({uid,onCreated,onClose}){
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Name this control panel quote</div>
         <form onSubmit={create}>
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Project Name</div>
-          <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Conveyor Control Panel" style={{...inp(),marginBottom:16}} autoFocus/>
+          <input data-tour="np-name" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Conveyor Control Panel" style={{...inp(),marginBottom:16}} autoFocus/>
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Number of Panels</div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
             <button type="button" onClick={()=>setPanelCount(c=>Math.max(1,c-1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>−</button>
-            <input type="number" min={1} max={1000} value={panelCount} onChange={e=>{const v=parseInt(e.target.value,10);if(!isNaN(v))setPanelCount(Math.max(1,Math.min(1000,v)));}} onBlur={()=>{if(panelCount<1)setPanelCount(1);if(panelCount>1000)setPanelCount(1000);}} style={{width:64,fontSize:20,fontWeight:700,textAlign:"center",background:C.bg,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 4px",MozAppearance:"textfield",WebkitAppearance:"none"}}/>
+            <input data-tour="np-panels" type="number" min={1} max={1000} value={panelCount} onChange={e=>{const v=parseInt(e.target.value,10);if(!isNaN(v))setPanelCount(Math.max(1,Math.min(1000,v)));}} onBlur={()=>{if(panelCount<1)setPanelCount(1);if(panelCount>1000)setPanelCount(1000);}} style={{width:64,fontSize:20,fontWeight:700,textAlign:"center",background:C.bg,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"2px 4px",MozAppearance:"textfield",WebkitAppearance:"none"}}/>
             <button type="button" onClick={()=>setPanelCount(c=>Math.min(1000,c+1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>+</button>
             <span style={{fontSize:12,color:C.muted}}>{panelCount===1?"1 panel will be created":`${panelCount} panels will be created`}</span>
           </div>
@@ -46383,9 +46402,14 @@ function App({user}){
   const sqInputRef=useRef();
   const [tourStep,setTourStep]=useState(null); // null=off, 0-N=active step
   // DECISION(v1.19.667): tourMode selects between full engineering tour and sales-focused tour
-  const [tourMode,setTourMode]=useState("full"); // "full" | "sales"
+  const [tourMode,setTourMode]=useState("full"); // "full" | "sales" | "quote"
+  // F001 A5 — mirror the published tour live-state into React so TourOverlay re-renders (and its
+  // checkpoint/state watcher re-fires) whenever the project state the walkthrough tracks changes.
+  const [tourLiveState,setTourLiveState]=useState(()=>{try{return window._arcTourState||{};}catch(e){return{};}});
+  useEffect(()=>{_arcTourStateNotify=setTourLiveState;return()=>{if(_arcTourStateNotify===setTourLiveState)_arcTourStateNotify=null;};},[]);
   const TOUR_KEY='arc_tour_step_'+user.uid;
   const TOUR_KEY_SALES='arc_tour_step_sales_'+user.uid;
+  const TOUR_KEY_QUOTE='arc_tour_step_quote_'+user.uid;
   const [showGearMenu,setShowGearMenu]=useState(false);
   const [showUserMenu,setShowUserMenu]=useState(false);
   const [showBellMenu,setShowBellMenu]=useState(false);
@@ -46423,17 +46447,20 @@ function App({user}){
   const [showSupplierPricing,setShowSupplierPricing]=useState(false);
   const [showCustomerTemplates,setShowCustomerTemplates]=useState(false); // DECISION(v1.19.656)
   // DECISION(v1.19.667): Keyed tour-step storage — separate progress saves for full vs sales tour.
-  const _tourKey=()=>(tourMode==="sales"?TOUR_KEY_SALES:TOUR_KEY);
-  const _tourSteps=()=>(tourMode==="sales"?SALES_TOUR_STEPS:TOUR_STEPS);
+  const _tourKey=()=>(tourMode==="sales"?TOUR_KEY_SALES:tourMode==="quote"?TOUR_KEY_QUOTE:TOUR_KEY);
+  const _tourSteps=()=>(tourMode==="sales"?SALES_TOUR_STEPS:tourMode==="quote"?QUOTE_TOUR_STEPS:TOUR_STEPS);
   function saveTourStep(s){try{const k=_tourKey();if(s===null)localStorage.removeItem(k);else localStorage.setItem(k,String(s));}catch(e){}}
   function startTour(mode){
     const m=mode||"full";
     setTourMode(m);
-    const key=m==="sales"?TOUR_KEY_SALES:TOUR_KEY;
-    const steps=m==="sales"?SALES_TOUR_STEPS:TOUR_STEPS;
+    const key=m==="sales"?TOUR_KEY_SALES:m==="quote"?TOUR_KEY_QUOTE:TOUR_KEY;
+    const steps=m==="sales"?SALES_TOUR_STEPS:m==="quote"?QUOTE_TOUR_STEPS:TOUR_STEPS;
     let saved=null;
     try{const v=localStorage.getItem(key);if(v!==null){const n=parseInt(v);if(!isNaN(n)&&n>=0&&n<steps.length)saved=n;}}catch(e){}
-    const step=saved!==null?saved:0;
+    // F001 A6 — the quote walkthrough resumes STATE-FIRST: current project state picks the phase band,
+    // the saved localStorage index only refines the sub-step WITHIN that band (self-heals if the project
+    // moved on since last time). Full/sales tours keep pure-localStorage resume (unchanged).
+    const step=m==="quote"?_resolveQuoteResumeIdx(saved,window._arcTourState||{}):(saved!==null?saved:0);
     setTourStep(step);
     try{if(step===null)localStorage.removeItem(key);else localStorage.setItem(key,String(step));}catch(e){}
   }
@@ -47499,6 +47526,8 @@ INSTRUCTIONS:
               <button data-tour="training-btn" onClick={()=>{startTour("full");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null&&tourMode==="full"?"#172554":"none",border:"none",color:tourStep!==null&&tourMode==="full"?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null&&tourMode==="full"?700:500}} onMouseEnter={e=>{if(!(tourStep!==null&&tourMode==="full"))e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!(tourStep!==null&&tourMode==="full"))e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY);if(v!==null&&(tourStep===null||tourMode!=="full")){const n=parseInt(v);if(!isNaN(n)&&n>0)return`📋 Resume Full Training (${n+1}/${TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'📋 Full Training (Engineering)'}</button>
               {/* DECISION(v1.19.667): Sales-focused walkthrough — ~8 steps, skips extraction/RFQ/BOM-building. */}
               <button onClick={()=>{startTour("sales");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null&&tourMode==="sales"?"#1a2e1a":"none",border:"none",color:tourStep!==null&&tourMode==="sales"?"#86efac":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null&&tourMode==="sales"?700:500}} onMouseEnter={e=>{if(!(tourStep!==null&&tourMode==="sales"))e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!(tourStep!==null&&tourMode==="sales"))e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY_SALES);if(v!==null&&(tourStep===null||tourMode!=="sales")){const n=parseInt(v);if(!isNaN(n)&&n>0)return`🏷 Resume Sales Walkthrough (${n+1}/${SALES_TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'🏷 Sales Walkthrough'}</button>
+              {/* F001: interactive quote-building walkthrough — gated/checkpoint, state-driven resume. */}
+              <button onClick={()=>{startTour("quote");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:tourStep!==null&&tourMode==="quote"?"#0d1f3c":"none",border:"none",color:tourStep!==null&&tourMode==="quote"?"#93c5fd":C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:tourStep!==null&&tourMode==="quote"?700:500}} onMouseEnter={e=>{if(!(tourStep!==null&&tourMode==="quote"))e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(!(tourStep!==null&&tourMode==="quote"))e.target.style.background="none";}}>{(()=>{try{const v=localStorage.getItem(TOUR_KEY_QUOTE);if(v!==null&&(tourStep===null||tourMode!=="quote")){const n=parseInt(v);if(!isNaN(n)&&n>0)return`🧭 Resume Quote Walkthrough (${n+1}/${QUOTE_TOUR_STEPS.length})`;}return null;}catch(e){return null;}})()??'🧭 Quote Walkthrough'}</button>
               <button onClick={()=>{setShowReports(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📊 Reports</button>
               <button onClick={()=>{setShowSupplierPricing(true);setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:"none",border:"none",color:C.text,cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:500}} onMouseEnter={e=>e.target.style.background="#1a1a2e"} onMouseLeave={e=>e.target.style.background="none"}>📥 Upload Supplier Pricing</button>
               {userRole==="admin"&&<button onClick={()=>{setView("aidb");setShowGearMenu(false);}} style={{display:"block",width:"100%",textAlign:"left",background:view==="aidb"?"#1a0a2a":"none",border:"none",color:"#a78bfa",cursor:"pointer",padding:"8px 16px",fontSize:13,fontWeight:700}} onMouseEnter={e=>{if(view!=="aidb")e.target.style.background="#1a1a2e";}} onMouseLeave={e=>{if(view!=="aidb")e.target.style.background="none";}}>🧠 ARC AI Database</button>}
@@ -47742,7 +47771,7 @@ INSTRUCTIONS:
         </div>
       </div>
       </div>{/* end flex row wrapper */}
-      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)} steps={tourMode==="sales"?SALES_TOUR_STEPS:TOUR_STEPS}/>}
+      {tourStep!==null&&<TourOverlay stepIdx={tourStep} onNext={tourNext} onPrev={tourPrev} onDone={tourDone} onSkip={tourSkip} onMinimize={()=>setTourStep(null)} steps={tourMode==="sales"?SALES_TOUR_STEPS:tourMode==="quote"?QUOTE_TOUR_STEPS:TOUR_STEPS} liveState={tourLiveState}/>}
       {/* DECISION(v1.19.601): Report Issue moved from floating button to user-menu entry
           so it stops overlapping in-page controls (PO Received, etc.). */}
       {showReportIssue&&<ReportIssueModal onClose={()=>setShowReportIssue(false)}/>}
@@ -47905,6 +47934,96 @@ const TOUR_STEPS=[
    body:'You\'ve completed the full ARC panel quote process:\n\n✓ Created a project and panel\n✓ Uploaded drawings and ran AI extraction\n✓ Reviewed and priced the BOM\n✓ Generated a customer quote\n✓ Sent RFQs to vendors\n✓ Recorded the customer PO in BC\n\nFor detailed reference on any feature, see the ARC Training Manual.',
    target:null},
 ];
+
+// ── F001: INTERACTIVE QUOTE-BUILDING WALKTHROUGH ──
+// Re-entrant, mixed step-type tour that mirrors the real multi-day quote lifecycle. Types:
+//   gated      — spotlights the real control (click-through) and auto-advances when the user does it
+//   narrated   — read → Next (also used for the two consequential SENDS, per Jon: never gate/auto-fire)
+//   checkpoint — pauses on an async/external wait and auto-advances when project state flips (A4/A5)
+// Step indices are load-bearing for the state-driven resume bands below — keep in sync if reordered.
+const QUOTE_TOUR_STEPS=[
+  // 0 — Step 1
+  {phase:'Quote Walkthrough',title:'Step 1 — Create the Project',type:'gated',
+   body:'Start on the Projects Dashboard. Click + New Project, then fill the pane:\n\n• PROJECT NAME (as the customer gave it)\n• # of Panels (line items)\n• Customer (or add a new one)\n• Salesperson, Project Manager, Engineer\n\nThen click Create Project.',
+   target:'[data-tour="new-project-btn"]',placement:'bottom',
+   action:true,actionLabel:'👆 Click + New Project, fill the fields, and click Create Project. The walkthrough continues once the project opens.',
+   advance:{on:'appear',appearTarget:'[data-tour="add-files-zone"]'}},
+  // 1 — Step 2 (out-of-app folder creation). NARRATED: the folder is created on the file system
+  // (outside ARC), and the pre-quote "Done… Continue" modal isn't present in the current build, so a
+  // gated click-advance would stall. Advance on Next. VERIFY-ITEM: if/when a pre-quote modal exists,
+  // re-point target to [data-tour="prequote-continue"] and switch to type:'gated' advance:{on:'click'}.
+  {phase:'Quote Walkthrough',title:'Step 2 — Create the Network Folder',type:'narrated',
+   body:'Before quoting, create the project folder on the Matrix network and save all customer files into the Quote folder.\n\nThis happens on your file system, outside ARC. Do it now, then click Next.',
+   target:null,placement:'center'},
+  // 2 — Step 3 (drag + long async extraction) — CHECKPOINT
+  {phase:'Quote Walkthrough',title:'Step 3 — Extract the Drawings',type:'checkpoint',
+   body:'Drag the customer drawings into the DRAWINGS section of each line item. ARC starts extracting — you\'ll verify page types and region-out sections along the way. Extraction runs for a few minutes and pulls vendor pricing + AI prices/lead times.',
+   target:'[data-tour="add-files-zone"]',placement:'bottom',
+   waitLabel:'Extraction is running (this can take a few minutes). The walkthrough continues automatically once the BOM finishes populating.',
+   allowManualNext:true,
+   advance:{on:'state',when:live=>!live.extractionActive&&!!live.bomPopulated}},
+  // 3 — Step 4A (Issues chips) — NARRATED
+  {phase:'Quote Walkthrough',title:'Step 4A — Read the "Issues" Column',type:'narrated',
+   body:'Each red row flags something to check in the Issues column:\n\n• Confidence chip — Red = Low, Yellow = Medium (High is hidden)\n• BC chip — Blue = in BC (match & link), Yellow = close match (match & link), Red = not in BC (needs a match)\n\nWhen a row is clean, its Issues cell is empty.',
+   target:'[data-tour="bom-status"]',placement:'top'},
+  // 4 — Step 4B (stale lead/price) — NARRATED
+  {phase:'Quote Walkthrough',title:'Step 4B — Stale Prices & Lead Times',type:'narrated',
+   body:'A row also turns red when its price or lead time is missing or stale. You\'ll clear these by sending RFQs (next). After suppliers respond, the Priced date turns green/yellow and the Lead time stops showing italic.',
+   target:'[data-tour="bom-table"]',placement:'top'},
+  // 5 — Step 4Ba (Send RFQs) — NARRATED per Jon: point + explain, NEVER gate-detect or auto-fire
+  {phase:'Quote Walkthrough',title:'Step 4Ba — Send RFQs',type:'narrated',
+   body:'Use Send/Print RFQs to request pricing + lead times from suppliers: pick vendors, preview the RFQ, and send.\n\nSend when you\'re ready — the walkthrough continues automatically once a supplier sends a quote back.',
+   target:'[data-tour="rfq-btn"]',placement:'top'},
+  // 6 — Step 4Bb (receive supplier quotes) — CHECKPOINT (waits on the supplier)
+  {phase:'Quote Walkthrough',title:'Step 4Bb — Receive Supplier Quotes',type:'checkpoint',
+   body:'When a supplier emails a quote back, the project tile shows "# RFQs" and the Upload Quote button gets a (count). Click Upload Quote, review the submitted lines, and accept to import. Flag any line that needs engineering sign-off with its TR checkbox.',
+   target:'[data-tour="upload-quote-btn"]',placement:'top',
+   waitLabel:'Waiting on the supplier to send a quote back (hours–days). You can close the walkthrough — it resumes here automatically when a quote arrives.',
+   allowManualNext:true,
+   advance:{on:'state',when:live=>(live.pendingRfqUploads||0)>0}},
+  // 7 — Step 5 (Send for Tech Review) — GATED (internal action; advances on the user's own state flip)
+  {phase:'Quote Walkthrough',title:'Step 5 — Send for Technical Review',type:'gated',
+   body:'For lines that need engineering sign-off, click Send for Tech. Review and choose an engineer. The project moves into "In Pre-Review" until the engineer approves.',
+   target:'[data-tour="send-tech-review-btn"]',placement:'top',
+   action:true,actionLabel:'👆 Click Send for Tech. Review and pick an engineer.',
+   advance:{on:'state',when:live=>live.preReviewStatus==="pending"}},
+  // 8 — Step 6 (receive returned tech review) — CHECKPOINT (waits on the engineer)
+  {phase:'Quote Walkthrough',title:'Step 6 — Receive the Approved Review',type:'checkpoint',
+   body:'The engineer reviews your flagged lines and signs each one off — a green ✓ circle appears on the reviewed rows when they\'re approved.',
+   target:'[data-tour="bom-tr-engineer-circle"]',placement:'top',
+   waitLabel:'Waiting on the engineer to approve the flagged lines. The walkthrough resumes here automatically when the review comes back approved.',
+   allowManualNext:true,
+   advance:{on:'state',when:live=>live.preReviewStatus==="approved"}},
+  // 9 — Step 7 (verify + Send Quote) — NARRATED per Jon: point + explain the lock, NEVER auto-fire
+  {phase:'Quote Walkthrough',title:'Step 7 — Verify & Send the Quote',type:'narrated',
+   body:'Do a final pass: no red rows, no stale prices, no stale lead times. When it\'s clean, use Send / Print Quote.\n\nWhen your rows are clean, send on your own timing — sending locks the quote (the customer has received it; sending to yourself locks it the same way). That\'s the full quote-build flow — nicely done! 🎉',
+   target:'[data-tour="print-quote-btn"]',placement:'top'},
+];
+// F001 A6 — state-driven resume for the quote walkthrough. Project state picks a PHASE BAND (a
+// contiguous index range that shares the same project state); the saved localStorage index only
+// refines the sub-step WITHIN that band. Self-heals if the project advanced since last launch.
+// Band edges are the QUOTE_TOUR_STEPS indices above — keep in sync if the step order changes.
+function _quotePhaseBand(live){
+  live=live||{};
+  if(live.quoteSentAt||live.preReviewStatus==="approved")return[9,9]; // → Send Quote
+  if(live.preReviewStatus==="pending")return[7,8];                    // tech review out (Steps 5–6)
+  if((live.pendingRfqUploads||0)>0)return[6,6];                       // supplier quote arrived (Step 4Bb)
+  if(live.bomPopulated)return[3,6];                                   // BOM ready → review/RFQ (Steps 4A–4Bb)
+  if(live.extractionActive)return[2,2];                              // extracting (Step 3)
+  if(live.projectId&&live.view!=="dashboard")return[1,2];            // project created, pre-extract (Steps 2–3)
+  return[0,0];                                                        // dashboard / no project (Step 1)
+}
+function _resolveQuoteResumeIdx(savedIdx,live){
+  const band=_quotePhaseBand(live);
+  if(savedIdx!=null&&savedIdx>=band[0]&&savedIdx<=band[1])return savedIdx;
+  return band[0];
+}
+
+// F001 A5 — live-state bridge. ProjectView/dashboard call _publishArcTourState with the walkthrough's
+// project-state snapshot; the app-scope component registers _arcTourStateNotify to mirror it into React
+// state and feed it to TourOverlay as `liveState` (so checkpoint/state advances re-run on change).
+let _arcTourStateNotify=null;
+function _publishArcTourState(s){try{window._arcTourState=s;}catch(e){}if(_arcTourStateNotify)_arcTourStateNotify(s);}
 
 function useTourRect(target){
   const[rect,setRect]=useState(null);
