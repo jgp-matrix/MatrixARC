@@ -21,7 +21,7 @@
 
 ---
 
-- [2026-07-07] FEAT — "Supplier Portal 'Analyzing Your Quote' copy → 'Matrix ARC AI is currently scanning your quote'" — On the Supplier Portal, during the quote-analysis loading state (currently labeled "Analyzing Your Quote"), change the message to read "Matrix ARC AI is currently scanning your quote." (Small copy/wording change — Freddy may class GEN/cosmetic.) — reported via Intake (source: Jon)
+_(no un-triaged items)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
@@ -30,6 +30,7 @@
      2026-07-06 — F005 (Print-Only button in locked-quote blocker overlay) promoted to TODO.md Features [Backlog] by Freddy (sibling to #196).
      2026-07-06 — F006 (Qv.## Hist. button — per-quote send history w/ document previews) promoted to TODO.md Features [Backlog] by Freddy (feed = #193 qvHistory; distinct from #194 global metrics).
      2026-07-07 — B008 (RFQ History "Supplier Portal" link opens pre-submission portal, not submitted) promoted to TODO.md Bugs [Backlog] by Freddy (classified BUG: link points at wrong state).
+     2026-07-07 — B010 (manual Upload-Supplier-Quote undefined crash) + B011 (harden other supplierQuotes sites) + F007/F008 + G006 (portal loading copy, cosmetic) promoted by Freddy.
      2026-07-07 — F007 (order projects by last-accessed) + F008 (new-version-available refresh notification) promoted to TODO.md Features [Backlog] by Freddy.
      2026-07-07 — F007 (Order main-page projects by last-accessed, most-recent on top) promoted to TODO.md Features [Backlog] by Freddy (distinct from #200 color-by-quota-age). -->
 
