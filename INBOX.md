@@ -21,7 +21,7 @@
 
 ---
 
-_(no un-triaged items)_
+- [2026-07-07] FEAT — "New-version-available notification prompting users to refresh (work-safe messaging)" — When a new site version is pushed, ARC should poll the source (e.g. compare the client's loaded `APP_VERSION` against the currently-served build — deploy.sh already bumps `APP_VERSION` in public/index.html) and show a notification on ALL users' pages that they need to refresh to apply the update. Message reassures that all their work is saved and nothing will be lost on refresh. — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
