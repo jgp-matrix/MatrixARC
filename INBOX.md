@@ -21,7 +21,7 @@
 
 ---
 
-_(no un-triaged items)_
+- [2026-07-07] FEAT — "Order main-page projects by last-accessed (bump just-exited project to top)" — On exiting a project, move it to the TOP of the main-page project list; order the whole list by last-accessed (most-recently-opened first). Requires tracking a per-project last-accessed timestamp (additive/data-safe field, written on open and/or exit) + sorting the dashboard list by it. (Distinct from #200 which shifts tile COLOR by quota-age, not order.) — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
