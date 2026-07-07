@@ -79,9 +79,28 @@ Rather than fire a real tech-review or quote send purely to exercise the tour (s
 - **Step 6 (Approve Tech Review) — CHECKPOINT ✓** — same engine path as **Step 4Bb** (PASSED live: ⏳ waiting bubble + `advance.when(liveState)` watcher + `allowManualNext`). 6's predicate is `preReviewStatus==="approved"`; it reads REAL state via the same A4 watcher, so it can't false-advance.
 - **Step 7 (Send Quote) — NARRATED ✓** — same structure as **Step 4Ba** (PASSED live: `type:'narrated'`, **no `advance` field** → the engine can only advance on Next; no detector, no state-watch, no auto-send). Confirmed in source: step 7 (`print-quote-btn`) has no `advance`.
 
-### STILL PENDING — ONE live item, Jon real-mouse
-1. **#2 state-driven resume, live** — on PRJ402134 (no BOM → phase band `[2,3]`): gear → "🧭 Resume Quote Walkthrough" → confirm it lands on **Step 2/3**, NOT the saved Step 5. Proves the self-healing resolver live. (Gear-dropdown onClick won't fire from synthetic dispatch → needs a real pointer.)
-2. **#1 A3 gated click-through** — already PASS live (verify #1); no action needed.
+### #2 state-driven resume — PASS live (Jon, 2026-07-07)
+On PRJ402134 (no BOM → phase band `[2,3]`): gear → "🧭 Resume Quote Walkthrough" (saved label ~9/11) → resumed on **Step 2**, NOT the saved Step 5. The resolver clamped the stale saved index back to `band[0]` = Step 2 — the self-healing resume proven live.
+
+### #1 A3 gated click-through — PASS live (verify #1, prior session).
+
+---
+
+## ✅ F001 VERIFY COMPLETE (2026-07-07)
+| Item | Status | Evidence |
+|------|--------|----------|
+| A3 gated click-through (Steps 1/1b/5) | **PASS live** | verify #1 + Step-5 gated masks/Your-Turn/no-Next this session |
+| Steps 4A / 4B narrated | **PASS live** | Next, no gated masks, no waiting bubble; now `placement:'right'` |
+| ★ Step 4Ba Send RFQs — narrated, never auto-fires | **PASS live** | 0 gated rects, no `advance`, no send auto-opened (structural) |
+| Step 4Bb checkpoint | **PASS live** | ⏳ waiting bubble, `allowManualNext`, no false-advance |
+| Step 6 checkpoint | **CODE-VERIFIED** | same A4 path as 4Bb; predicate `preReviewStatus==="approved"` |
+| ★ Step 7 Send Quote — narrated, never auto-fires | **CODE-VERIFIED** | same structure as 4Ba; no `advance` field (source-confirmed) |
+| #2 state-driven resume | **PASS live** | saved-9 → Step 2 on no-BOM project |
+| a11y Esc minimize-with-resume | **PASS live** | overlay hides, progress preserved (gear resume label) |
+| a11y reduced-motion | **CODE-VERIFIED** | `_reduceMotion` disables ring + bar transitions |
+
+**Verify commits (master):** placement `7c9fe14a` · 6/7 code-verify doc `63a88b38` · comment tidy `e4b0a6da` · walk record `0a8919cc`.
+**Next:** Coach final review (H-item discipline) → Jon prod-deploy checkpoint. Prod HELD v1.22.3.
 
 ## Not done / held
 - **No prod deploy** — prod stays v1.22.3. Live-verify + Coach review precede any deploy (Jon's checkpoint).
