@@ -48033,6 +48033,7 @@ function useTourRect(target){
   // frames covers late layout; scroll/resize keep the cutout glued during gated steps (A7).
   React.useLayoutEffect(()=>{
     if(!target){setRect(null);return;}
+    setRect(null); // reset on target change so a missing target falls back to the centered bubble (not a stale rect)
     let cancelled=false, raf=0, tries=0, scrolled=false;
     function track(){
       const el=document.querySelector(target);
