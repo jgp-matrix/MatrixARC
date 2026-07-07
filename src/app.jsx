@@ -47973,11 +47973,11 @@ const QUOTE_TOUR_STEPS=[
   // 3 — Step 4A (Issues chips) — NARRATED
   {phase:'Quote Walkthrough',title:'Step 4A — Read the "Issues" Column',type:'narrated',
    body:'Each red row flags something to check in the Issues column:\n\n• Confidence chip — Red = Low, Yellow = Medium (High is hidden)\n• BC chip — Blue = in BC (match & link), Yellow = close match (match & link), Red = not in BC (needs a match)\n\nWhen a row is clean, its Issues cell is empty.',
-   target:'[data-tour="bom-status"]',placement:'top'},
+   target:'[data-tour="bom-status"]',placement:'right'},
   // 4 — Step 4B (stale lead/price) — NARRATED
   {phase:'Quote Walkthrough',title:'Step 4B — Stale Prices & Lead Times',type:'narrated',
    body:'A row also turns red when its price or lead time is missing or stale. You\'ll clear these by sending RFQs (next). After suppliers respond, the Priced date turns green/yellow and the Lead time stops showing italic.',
-   target:'[data-tour="bom-table"]',placement:'top'},
+   target:'[data-tour="bom-table"]',placement:'right'},
   // 5 — Step 4Ba (Send RFQs) — NARRATED per Jon: point + explain, NEVER gate-detect or auto-fire
   {phase:'Quote Walkthrough',title:'Step 4Ba — Send RFQs',type:'narrated',
    body:'Use Send/Print RFQs to request pricing + lead times from suppliers: pick vendors, preview the RFQ, and send.\n\nSend when you\'re ready — the walkthrough continues automatically once a supplier sends a quote back.',
