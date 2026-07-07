@@ -48027,27 +48027,33 @@ function _publishArcTourState(s){try{window._arcTourState=s;}catch(e){}if(_arcTo
 
 function useTourRect(target){
   const[rect,setRect]=useState(null);
-  useEffect(()=>{
+  // F001: measure in a LAYOUT effect (runs after DOM mutations, before paint) so the spotlight rect is
+  // committed on the same frame the overlay mounts — an ordinary useEffect measure was landing on a
+  // render that didn't pick it up (spotlight stayed on the full-dim fallback). rAF-retry the first
+  // frames covers late layout; scroll/resize keep the cutout glued during gated steps (A7).
+  React.useLayoutEffect(()=>{
     if(!target){setRect(null);return;}
-    // Track-only (no scrollIntoView) — used by the initial measure + scroll/resize handlers so we
-    // don't fight the user's scroll during gated steps (F001 A7).
+    let cancelled=false, raf=0, tries=0, scrolled=false;
     function track(){
       const el=document.querySelector(target);
-      if(!el){setRect(null);return null;}
+      if(!el)return null;
       const r=el.getBoundingClientRect();
       setRect({top:r.top,left:r.left,width:r.width,height:r.height});
       return el;
     }
-    // Initial measure DOES scroll the target into view; a delayed re-measure catches late layout.
-    const el0=track();
-    if(el0)el0.scrollIntoView({behavior:'smooth',block:'center'});
-    const t=setTimeout(track,320);
-    // F001 A7: keep the cutout glued to the target while the user scrolls to reach it (rAF-throttled).
-    let raf=0;
-    const onMove=()=>{if(raf)return;raf=requestAnimationFrame(()=>{raf=0;track();});};
+    function attempt(){
+      if(cancelled)return;
+      const el=track();
+      if(el&&!scrolled){scrolled=true;el.scrollIntoView({behavior:'smooth',block:'center'});}
+      tries++;
+      if(tries<12)raf=requestAnimationFrame(attempt);   // keep re-measuring the first ~12 frames
+    }
+    attempt();
+    let mraf=0;
+    const onMove=()=>{if(mraf)return;mraf=requestAnimationFrame(()=>{mraf=0;track();});};
     window.addEventListener('scroll',onMove,true);
     window.addEventListener('resize',onMove);
-    return()=>{clearTimeout(t);if(raf)cancelAnimationFrame(raf);window.removeEventListener('scroll',onMove,true);window.removeEventListener('resize',onMove);};
+    return()=>{cancelled=true;if(raf)cancelAnimationFrame(raf);if(mraf)cancelAnimationFrame(mraf);window.removeEventListener('scroll',onMove,true);window.removeEventListener('resize',onMove);};
   },[target]);
   return rect;
 }
