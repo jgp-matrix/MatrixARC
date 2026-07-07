@@ -48152,7 +48152,12 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps,liveS
       top=Math.max(16,Math.min(rect.top-PAD-380,vh-380));
       left=Math.max(16,Math.min(cx-PW/2,vw-PW-16));
     }
-    setPopStyle({position:'fixed',top:Math.max(10,top),left:Math.max(10,left),width:PW});
+    // F001: clamp the bubble fully on-screen — below a tall target (e.g. the drawings drop zone) the
+    // 'bottom' placement was pushing the Next button off the viewport bottom. Cap top so the bubble
+    // (generous ~460px, checkpoint is tallest) fits, and add a maxHeight+scroll safety for any overflow.
+    const _estH=460;
+    const _top=Math.max(10,Math.min(top,vh-_estH-10));
+    setPopStyle({position:'fixed',top:_top,left:Math.max(10,left),width:PW,maxHeight:vh-20,overflowY:'auto'});
   },[rect,step,stepIdx]);
 
   const isFirst=stepIdx===0;const isLast=stepIdx===stepsArr.length-1;
