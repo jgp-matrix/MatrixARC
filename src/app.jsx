@@ -8560,6 +8560,15 @@ function sqValidateLineItems(items){
   const missingLn=items.filter(item=>item.ln==null).length;
   return{dupeLines,dupeParts,missingLn,hasIssues:dupeLines.length>0||dupeParts.length>0};
 }
+// B010: Firestore rejects `undefined` anywhere in a write payload (throws
+// "Unsupported field value: undefined"). Coerce undefined→null RECURSIVELY — preserves every key
+// (no field removal/rename), so it satisfies the data-retention rule while making any payload safe.
+function _nullifyUndefined(v){
+  if(v===undefined)return null;
+  if(Array.isArray(v))return v.map(_nullifyUndefined);
+  if(v&&typeof v==="object"){const o={};for(const k in v)o[k]=_nullifyUndefined(v[k]);return o;}
+  return v;
+}
 async function saveSupplierQuoteToFirestore(quoteData,userId,{supersedes=null,projectId=null,bcProjectNumber=null}={}){
   const ref=fbDb.collection('supplierQuotes').doc();
   const lineItems=(quoteData.lineItems||[]).map(sqNormalize);
@@ -31641,18 +31650,22 @@ ${fullText.slice(0,8000)}`;
         if(crossing){
           // Get fresh cost from BC using the crossed item number
           const bc=await bcLookupItemForQuote(crossing.bcItemNumber);
-          matched[i]={...item,bcItemId:bc?.id||crossing.bcItemId,
-            bcItemDescription:bc?.displayName||crossing.bcItemDescription,
-            bcCurrentCost:bc?.unitCost??crossing.bcUnitCost,matchStatus:'auto_matched'};
+          /* B010: coerce undefined→null so the Firestore update below can't throw on undefined */
+          matched[i]={...item,bcItemId:(bc?.id||crossing.bcItemId)??null,
+            bcItemDescription:(bc?.displayName||crossing.bcItemDescription)??null,
+            bcCurrentCost:(bc?.unitCost??crossing.bcUnitCost)??null,matchStatus:'auto_matched'};
         }else{
           const bc=await bcLookupItemForQuote(item.partNumber);
           if(bc){
-            matched[i]={...item,bcItemId:bc.id,bcItemDescription:bc.displayName,bcCurrentCost:bc.unitCost,matchStatus:'auto_matched'};
+            /* B010: coerce undefined→null (a BC item may lack id/displayName/unitCost) */
+            matched[i]={...item,bcItemId:bc.id??null,bcItemDescription:bc.displayName??null,bcCurrentCost:bc.unitCost??null,matchStatus:'auto_matched'};
           }
         }
       }
       setParseProgress(100);
-      await fbDb.collection('supplierQuotes').doc(docId).update({lineItems:matched,status:'pending_review'});
+      /* B010 belt: strip any residual undefined from the whole payload (defensive vs any field,
+         not just the BC-match ones coerced above) — Firestore rejects undefined anywhere. */
+      await fbDb.collection('supplierQuotes').doc(docId).update({lineItems:matched.map(_nullifyUndefined),status:'pending_review'});
       setLineItems(matched);
       setPhase('review');setStatusMsg('');
       // Refresh saved quotes list
