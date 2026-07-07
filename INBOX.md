@@ -21,7 +21,7 @@
 
 ---
 
-- [2026-07-07] FEAT — "Order main-page projects by last-accessed (bump just-exited project to top)" — On exiting a project, move it to the TOP of the main-page project list; order the whole list by last-accessed (most-recently-opened first). Requires tracking a per-project last-accessed timestamp (additive/data-safe field, written on open and/or exit) + sorting the dashboard list by it. (Distinct from #200 which shifts tile COLOR by quota-age, not order.) — reported via Intake (source: Jon)
+_(no un-triaged items)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
@@ -29,5 +29,6 @@
      2026-07-06 — F004 (Portal submit confirmation shows ARC user + email-copy notice) promoted to TODO.md Features [Backlog] by Freddy. Also back-filled F001/F002/F003 into the Features tracker (were only in SESSION-STATE + docs).
      2026-07-06 — F005 (Print-Only button in locked-quote blocker overlay) promoted to TODO.md Features [Backlog] by Freddy (sibling to #196).
      2026-07-06 — F006 (Qv.## Hist. button — per-quote send history w/ document previews) promoted to TODO.md Features [Backlog] by Freddy (feed = #193 qvHistory; distinct from #194 global metrics).
-     2026-07-07 — B008 (RFQ History "Supplier Portal" link opens pre-submission portal, not submitted) promoted to TODO.md Bugs [Backlog] by Freddy (classified BUG: link points at wrong state). -->
+     2026-07-07 — B008 (RFQ History "Supplier Portal" link opens pre-submission portal, not submitted) promoted to TODO.md Bugs [Backlog] by Freddy (classified BUG: link points at wrong state).
+     2026-07-07 — F007 (Order main-page projects by last-accessed, most-recent on top) promoted to TODO.md Features [Backlog] by Freddy (distinct from #200 color-by-quota-age). -->
 
