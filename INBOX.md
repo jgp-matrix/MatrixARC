@@ -21,7 +21,7 @@
 
 ---
 
-_(no un-triaged items)_
+- [2026-07-07] FEAT — "RFQ History 'Supplier Portal' link should open the SUBMITTED portal (post-fill), not the pre-submission link" — In RFQ History modal → View Received Quotes, each quote has a "Supplier Portal" link. It currently links to the portal BEFORE data was entered (effectively the blank/email-state portal). It should link to the portal AFTER submission so the user can see the pricing + lead times the supplier actually entered — not just the email link. (Note: Jon said "customer"; in the supplier-portal domain the RFQ recipient who fills the portal is the SUPPLIER/vendor. Bug-adjacent — the link points at the wrong state — Freddy may reclassify B vs F at triage.) — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
