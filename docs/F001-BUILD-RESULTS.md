@@ -74,10 +74,14 @@ Each step advanced with a scripted Next-click and probed for its type signature:
 - **#2 state-driven resume (resolver math) ✓** — `_resolveQuoteResumeIdx(saved, live)` clamps a saved index outside the current phase band back to `band[0]`. For an un-extracted project (`bomPopulated:false`, projectId set, not dashboard) the band is `[2,3]`, so a saved step-9 resumes at **Step 2** — you can't land on "Send for Tech Review" when the BOM isn't populated. The **live demonstration** (click gear → Resume, observe the clamp) is blocked: the gear-menu item's React onClick doesn't fire from synthetic/`el.onclick()` dispatch (known controlled-element friction) → **Jon real-mouse item**.
 - **#4 reduced-motion ✓** — `_reduceMotion` (matchMedia `prefers-reduced-motion: reduce`) disables the ring transition (48166) and progress-bar transition (48167). Live emulation of the media query isn't feasible through the JS tool → code-verified.
 
-### STILL PENDING — Jon real-mouse (dropdown/gated clicks need a real pointer)
-1. **#2 resume, live** — click gear → "🧭 Resume Quote Walkthrough" on PRJ402134 (un-extracted) → confirm it lands on **Step 2/3** (not the saved Step 5), demonstrating state authority.
-2. **Steps 6 + 7, live** — reach via resume on a **mid-lifecycle** project: `preReviewStatus:"pending"` → resumes at Step 6 (checkpoint, ⏳ waiting for approval); `quoteSentAt` set → resumes at Step 7 (narrated Send Quote — confirm it points+explains and **never** auto-fires). Alternatively fire a real TR send on the test project to walk 5→6 forward.
-3. **#1 A3 gated click-through** — already PASS live (verify #1); no action needed.
+### Steps 6 + 7 — CODE-VERIFIED (Jon ruling 2026-07-07: verify via live-proven analogs; no real TR/quote send just for the tour)
+Rather than fire a real tech-review or quote send purely to exercise the tour (same policy as F002/F003 un-exercisable-state handling), 6/7 are accepted as CODE-VERIFIED because their mechanisms are **identical to steps already PASSED live**:
+- **Step 6 (Approve Tech Review) — CHECKPOINT ✓** — same engine path as **Step 4Bb** (PASSED live: ⏳ waiting bubble + `advance.when(liveState)` watcher + `allowManualNext`). 6's predicate is `preReviewStatus==="approved"`; it reads REAL state via the same A4 watcher, so it can't false-advance.
+- **Step 7 (Send Quote) — NARRATED ✓** — same structure as **Step 4Ba** (PASSED live: `type:'narrated'`, **no `advance` field** → the engine can only advance on Next; no detector, no state-watch, no auto-send). Confirmed in source: step 7 (`print-quote-btn`) has no `advance`.
+
+### STILL PENDING — ONE live item, Jon real-mouse
+1. **#2 state-driven resume, live** — on PRJ402134 (no BOM → phase band `[2,3]`): gear → "🧭 Resume Quote Walkthrough" → confirm it lands on **Step 2/3**, NOT the saved Step 5. Proves the self-healing resolver live. (Gear-dropdown onClick won't fire from synthetic dispatch → needs a real pointer.)
+2. **#1 A3 gated click-through** — already PASS live (verify #1); no action needed.
 
 ## Not done / held
 - **No prod deploy** — prod stays v1.22.3. Live-verify + Coach review precede any deploy (Jon's checkpoint).
