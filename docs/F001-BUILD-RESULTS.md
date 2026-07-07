@@ -61,7 +61,23 @@ Verify #1 (A3 gated flow) — **PASS live**, after 4 verify-fixes caught + fixed
 4. **Bubble on-screen clamp** (`7cd91f3a`): below a tall target the Next button was clipped off the viewport bottom; bubble now clamped fully on-screen (confirmed at Step 3: bubble bottom 1219 ≤ vh 1261, Next visible).
 
 Confirmed live: the walkthrough drove project creation end-to-end (Steps 1→1b→2→3), auto-advancing through to the Step-3 extraction checkpoint (real project PRJ402134 created on test).
-STILL PENDING (Jon): drop drawings → real extraction checkpoint auto-advance; #2 checkpoint resume across lifecycle; #3 narrated sends (4Ba/7) never auto-fire; #4 a11y (Esc/reduced-motion).
+
+### Step-type walk 4A→5 + a11y (2026-07-07, driven via controlled tab on PRJ402134)
+Each step advanced with a scripted Next-click and probed for its type signature:
+- **Step 4A / 4B — NARRATED ✓** — Next present, no gated backdrops, no waiting bubble. (4A's `bom-status` target is absent on the un-extracted project → graceful centered-bubble fallback.)
+- **★ Step 4Ba (Send RFQs) — NARRATED, KEY RULING CONFIRMED ✓** — spotlights `rfq-btn`, advances on Next, **0 gated backdrop rects, no `advance` detector, no RFQ send modal auto-opened** (`rfqSendNOTauto:true`). Copy reads "continues automatically once a supplier sends a quote back." The never-auto-fire guarantee is structural: the step has no `advance` field, so the engine only advances it on Next — it cannot gate-detect or fire the send.
+- **Step 4Bb (Receive Supplier Quotes) — CHECKPOINT ✓** — ⏳ waiting bubble shown, `upload-quote-btn` spotlighted, `allowManualNext` provides a Next escape, and it correctly does **not** auto-advance (live `pendingRfqUploads:0`).
+- **Step 5 (Send for Technical Review) — GATED ✓** — backdrop masks present, **no manual Next**, "Your Turn" action block, `send-tech-review-btn` spotlighted. (Advancing past 5 requires the real TR send, which mutates state + hits prod Firestore per G005 — not fired.)
+- **a11y Esc — minimize-with-resume ✓** — Esc hid the overlay (backdrops→0, step gone) and **preserved progress**: the gear menu then showed "🧭 Resume Quote Walkthrough (9/11)". Clarification: "minimize" is implemented as `setTourStep(null)` (both Esc and the "– Hide" button) — it unmounts the overlay with **no floating restore pill**; you resume via the gear-menu entry (which shows the saved-step label). By design, not a bug. (The "↩ Restore" button in the BOM toolbar is unrelated — it restores BOM snapshots.)
+
+### Code-verified (blocked from live by synthetic-click friction / media emulation)
+- **#2 state-driven resume (resolver math) ✓** — `_resolveQuoteResumeIdx(saved, live)` clamps a saved index outside the current phase band back to `band[0]`. For an un-extracted project (`bomPopulated:false`, projectId set, not dashboard) the band is `[2,3]`, so a saved step-9 resumes at **Step 2** — you can't land on "Send for Tech Review" when the BOM isn't populated. The **live demonstration** (click gear → Resume, observe the clamp) is blocked: the gear-menu item's React onClick doesn't fire from synthetic/`el.onclick()` dispatch (known controlled-element friction) → **Jon real-mouse item**.
+- **#4 reduced-motion ✓** — `_reduceMotion` (matchMedia `prefers-reduced-motion: reduce`) disables the ring transition (48166) and progress-bar transition (48167). Live emulation of the media query isn't feasible through the JS tool → code-verified.
+
+### STILL PENDING — Jon real-mouse (dropdown/gated clicks need a real pointer)
+1. **#2 resume, live** — click gear → "🧭 Resume Quote Walkthrough" on PRJ402134 (un-extracted) → confirm it lands on **Step 2/3** (not the saved Step 5), demonstrating state authority.
+2. **Steps 6 + 7, live** — reach via resume on a **mid-lifecycle** project: `preReviewStatus:"pending"` → resumes at Step 6 (checkpoint, ⏳ waiting for approval); `quoteSentAt` set → resumes at Step 7 (narrated Send Quote — confirm it points+explains and **never** auto-fires). Alternatively fire a real TR send on the test project to walk 5→6 forward.
+3. **#1 A3 gated click-through** — already PASS live (verify #1); no action needed.
 
 ## Not done / held
 - **No prod deploy** — prod stays v1.22.3. Live-verify + Coach review precede any deploy (Jon's checkpoint).
