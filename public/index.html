@@ -235,7 +235,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.23.0";
+const APP_VERSION="v1.23.1";
 // Version freshness check — if the deployed version.json differs from the loaded
 // APP_VERSION, the browser is serving stale HTML. Clear SW caches and hard-reload.
 (function(){
@@ -467,6 +467,6 @@ async function unsubscribePushNotifications(uid){
 // Originally it was top-level here; that required messaging to load eagerly on every
 // page. Now this block is a no-op marker.
 </script>
-<script src="index.bundle.js?v=v1.23.0"></script>
+<script src="index.bundle.js?v=v1.23.1"></script>
 </body>
 </html>
