@@ -47956,53 +47956,53 @@ const QUOTE_TOUR_STEPS=[
    target:'[data-tour="np-modal"]',placement:'right',
    action:true,actionLabel:'👆 Fill the fields and click Create Project. The walkthrough continues once the project opens.',
    advance:{on:'appear',appearTarget:'[data-tour="add-files-zone"]'}},
-  // 1 — Step 2 (out-of-app folder creation). NARRATED: the folder is created on the file system
+  // 2 — Step 2 (out-of-app folder creation). NARRATED: the folder is created on the file system
   // (outside ARC), and the pre-quote "Done… Continue" modal isn't present in the current build, so a
   // gated click-advance would stall. Advance on Next. VERIFY-ITEM: if/when a pre-quote modal exists,
   // re-point target to [data-tour="prequote-continue"] and switch to type:'gated' advance:{on:'click'}.
   {phase:'Quote Walkthrough',title:'Step 2 — Create the Network Folder',type:'narrated',
    body:'Before quoting, create the project folder on the Matrix network and save all customer files into the Quote folder.\n\nThis happens on your file system, outside ARC. Do it now, then click Next.',
    target:null,placement:'center'},
-  // 2 — Step 3 (drag + long async extraction) — CHECKPOINT
+  // 3 — Step 3 (drag + long async extraction) — CHECKPOINT
   {phase:'Quote Walkthrough',title:'Step 3 — Extract the Drawings',type:'checkpoint',
    body:'Drag the customer drawings into the DRAWINGS section of each line item. ARC starts extracting — you\'ll verify page types and region-out sections along the way. Extraction runs for a few minutes and pulls vendor pricing + AI prices/lead times.',
    target:'[data-tour="add-files-zone"]',placement:'right',
    waitLabel:'Extraction is running (this can take a few minutes). The walkthrough continues automatically once the BOM finishes populating.',
    allowManualNext:true,
    advance:{on:'state',when:live=>!live.extractionActive&&!!live.bomPopulated}},
-  // 3 — Step 4A (Issues chips) — NARRATED
+  // 4 — Step 4A (Issues chips) — NARRATED
   {phase:'Quote Walkthrough',title:'Step 4A — Read the "Issues" Column',type:'narrated',
    body:'Each red row flags something to check in the Issues column:\n\n• Confidence chip — Red = Low, Yellow = Medium (High is hidden)\n• BC chip — Blue = in BC (match & link), Yellow = close match (match & link), Red = not in BC (needs a match)\n\nWhen a row is clean, its Issues cell is empty.',
    target:'[data-tour="bom-status"]',placement:'right'},
-  // 4 — Step 4B (stale lead/price) — NARRATED
+  // 5 — Step 4B (stale lead/price) — NARRATED
   {phase:'Quote Walkthrough',title:'Step 4B — Stale Prices & Lead Times',type:'narrated',
    body:'A row also turns red when its price or lead time is missing or stale. You\'ll clear these by sending RFQs (next). After suppliers respond, the Priced date turns green/yellow and the Lead time stops showing italic.',
    target:'[data-tour="bom-table"]',placement:'right'},
-  // 5 — Step 4Ba (Send RFQs) — NARRATED per Jon: point + explain, NEVER gate-detect or auto-fire
+  // 6 — Step 4Ba (Send RFQs) — NARRATED per Jon: point + explain, NEVER gate-detect or auto-fire
   {phase:'Quote Walkthrough',title:'Step 4Ba — Send RFQs',type:'narrated',
    body:'Use Send/Print RFQs to request pricing + lead times from suppliers: pick vendors, preview the RFQ, and send.\n\nSend when you\'re ready — the walkthrough continues automatically once a supplier sends a quote back.',
    target:'[data-tour="rfq-btn"]',placement:'top'},
-  // 6 — Step 4Bb (receive supplier quotes) — CHECKPOINT (waits on the supplier)
+  // 7 — Step 4Bb (receive supplier quotes) — CHECKPOINT (waits on the supplier)
   {phase:'Quote Walkthrough',title:'Step 4Bb — Receive Supplier Quotes',type:'checkpoint',
    body:'When a supplier emails a quote back, the project tile shows "# RFQs" and the Upload Quote button gets a (count). Click Upload Quote, review the submitted lines, and accept to import. Flag any line that needs engineering sign-off with its TR checkbox.',
    target:'[data-tour="upload-quote-btn"]',placement:'top',
    waitLabel:'Waiting on the supplier to send a quote back (hours–days). You can close the walkthrough — it resumes here automatically when a quote arrives.',
    allowManualNext:true,
    advance:{on:'state',when:live=>(live.pendingRfqUploads||0)>0}},
-  // 7 — Step 5 (Send for Tech Review) — GATED (internal action; advances on the user's own state flip)
+  // 8 — Step 5 (Send for Tech Review) — GATED (internal action; advances on the user's own state flip)
   {phase:'Quote Walkthrough',title:'Step 5 — Send for Technical Review',type:'gated',
    body:'For lines that need engineering sign-off, click Send for Tech. Review and choose an engineer. The project moves into "In Pre-Review" until the engineer approves.',
    target:'[data-tour="send-tech-review-btn"]',placement:'top',
    action:true,actionLabel:'👆 Click Send for Tech. Review and pick an engineer.',
    advance:{on:'state',when:live=>live.preReviewStatus==="pending"}},
-  // 8 — Step 6 (receive returned tech review) — CHECKPOINT (waits on the engineer)
+  // 9 — Step 6 (receive returned tech review) — CHECKPOINT (waits on the engineer)
   {phase:'Quote Walkthrough',title:'Step 6 — Receive the Approved Review',type:'checkpoint',
    body:'The engineer reviews your flagged lines and signs each one off — a green ✓ circle appears on the reviewed rows when they\'re approved.',
    target:'[data-tour="bom-tr-engineer-circle"]',placement:'top',
    waitLabel:'Waiting on the engineer to approve the flagged lines. The walkthrough resumes here automatically when the review comes back approved.',
    allowManualNext:true,
    advance:{on:'state',when:live=>live.preReviewStatus==="approved"}},
-  // 9 — Step 7 (verify + Send Quote) — NARRATED per Jon: point + explain the lock, NEVER auto-fire
+  // 10 — Step 7 (verify + Send Quote) — NARRATED per Jon: point + explain the lock, NEVER auto-fire
   {phase:'Quote Walkthrough',title:'Step 7 — Verify & Send the Quote',type:'narrated',
    body:'Do a final pass: no red rows, no stale prices, no stale lead times. When it\'s clean, use Send / Print Quote.\n\nWhen your rows are clean, send on your own timing — sending locks the quote (the customer has received it; sending to yourself locks it the same way). That\'s the full quote-build flow — nicely done! 🎉',
    target:'[data-tour="print-quote-btn"]',placement:'top'},
