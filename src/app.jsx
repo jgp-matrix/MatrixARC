@@ -47966,7 +47966,7 @@ const QUOTE_TOUR_STEPS=[
   // 2 — Step 3 (drag + long async extraction) — CHECKPOINT
   {phase:'Quote Walkthrough',title:'Step 3 — Extract the Drawings',type:'checkpoint',
    body:'Drag the customer drawings into the DRAWINGS section of each line item. ARC starts extracting — you\'ll verify page types and region-out sections along the way. Extraction runs for a few minutes and pulls vendor pricing + AI prices/lead times.',
-   target:'[data-tour="add-files-zone"]',placement:'bottom',
+   target:'[data-tour="add-files-zone"]',placement:'right',
    waitLabel:'Extraction is running (this can take a few minutes). The walkthrough continues automatically once the BOM finishes populating.',
    allowManualNext:true,
    advance:{on:'state',when:live=>!live.extractionActive&&!!live.bomPopulated}},
