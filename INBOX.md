@@ -21,12 +21,13 @@
 
 ---
 
-- [2026-07-07] FEAT — "RFQ History 'Supplier Portal' link should open the SUBMITTED portal (post-fill), not the pre-submission link" — In RFQ History modal → View Received Quotes, each quote has a "Supplier Portal" link. It currently links to the portal BEFORE data was entered (effectively the blank/email-state portal). It should link to the portal AFTER submission so the user can see the pricing + lead times the supplier actually entered — not just the email link. (Note: Jon said "customer"; in the supplier-portal domain the RFQ recipient who fills the portal is the SUPPLIER/vendor. Bug-adjacent — the link points at the wrong state — Freddy may reclassify B vs F at triage.) — reported via Intake (source: Jon)
+_(no un-triaged items)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
      2026-07-03 — G005 (matrix-arc-test shares PROD Firestore), B003 (Review-Supplier-Quote modal lists unquoted parts), B004 (portal-Apply unawaited-save reload-race → RESOLVED 41824f6c / shipped v1.21.25), B005 (resolved-TR-row can't re-arm, LOW/tuning) promoted by Freddy at #199 close-out.
      2026-07-06 — F004 (Portal submit confirmation shows ARC user + email-copy notice) promoted to TODO.md Features [Backlog] by Freddy. Also back-filled F001/F002/F003 into the Features tracker (were only in SESSION-STATE + docs).
      2026-07-06 — F005 (Print-Only button in locked-quote blocker overlay) promoted to TODO.md Features [Backlog] by Freddy (sibling to #196).
-     2026-07-06 — F006 (Qv.## Hist. button — per-quote send history w/ document previews) promoted to TODO.md Features [Backlog] by Freddy (feed = #193 qvHistory; distinct from #194 global metrics). -->
+     2026-07-06 — F006 (Qv.## Hist. button — per-quote send history w/ document previews) promoted to TODO.md Features [Backlog] by Freddy (feed = #193 qvHistory; distinct from #194 global metrics).
+     2026-07-07 — B008 (RFQ History "Supplier Portal" link opens pre-submission portal, not submitted) promoted to TODO.md Bugs [Backlog] by Freddy (classified BUG: link points at wrong state). -->
 
