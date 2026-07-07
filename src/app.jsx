@@ -48044,12 +48044,16 @@ function useTourRect(target){
   React.useLayoutEffect(()=>{
     if(!target){setRect(null);return;}
     setRect(null); // reset on target change so a missing target falls back to the centered bubble (not a stale rect)
-    let cancelled=false, raf=0, tries=0, scrolled=false;
+    let cancelled=false, raf=0, tries=0, scrolled=false, observed=false;
+    // F001: follow the target's SIZE too — e.g. the New-Project modal grows when a customer is picked
+    // (a Contact row appears). Without this the cutout stays at the old height and clips the modal.
+    const ro=(typeof ResizeObserver!=="undefined")?new ResizeObserver(()=>{if(!cancelled)track();}):null;
     function track(){
       const el=document.querySelector(target);
       if(!el)return null;
       const r=el.getBoundingClientRect();
       setRect({top:r.top,left:r.left,width:r.width,height:r.height});
+      if(ro&&!observed){observed=true;ro.observe(el);}
       return el;
     }
     function attempt(){
@@ -48064,7 +48068,7 @@ function useTourRect(target){
     const onMove=()=>{if(mraf)return;mraf=requestAnimationFrame(()=>{mraf=0;track();});};
     window.addEventListener('scroll',onMove,true);
     window.addEventListener('resize',onMove);
-    return()=>{cancelled=true;if(raf)cancelAnimationFrame(raf);if(mraf)cancelAnimationFrame(mraf);window.removeEventListener('scroll',onMove,true);window.removeEventListener('resize',onMove);};
+    return()=>{cancelled=true;if(raf)cancelAnimationFrame(raf);if(mraf)cancelAnimationFrame(mraf);if(ro)ro.disconnect();window.removeEventListener('scroll',onMove,true);window.removeEventListener('resize',onMove);};
   },[target]);
   return rect;
 }
