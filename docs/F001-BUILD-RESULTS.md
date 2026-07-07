@@ -1,7 +1,7 @@
 # F001 — Interactive Quote-Building Walkthrough — BUILD RESULTS
 
 **Author:** Marc Masdev · **Date:** 2026-07-07 · **Env:** matrix-arc-test (F001 build)
-**Commits (master):** Track A engine `ef9354a2` + review-fix `81b624bc`; Tracks A5/A6/B/C `0c0dba74`.
+**Commits (master):** Track A engine `ef9354a2` + review-fix `81b624bc`; Tracks A5/A6/B/C `0c0dba74`; A3 spotlight fix `b834660d` + `9f52b642`.
 **Plan:** `docs/F001-COACH-BUILD-PLAN.md`. Built headless in AWAY MODE (no sends; live-verify held for Jon).
 Status legend: **PASS** (headless-verified) · **CODE-VERIFIED** (source + deployed bundle correct; not exercised headlessly) · **⚠ NEEDS JON LIVE-VERIFY**.
 
@@ -38,12 +38,14 @@ Status legend: **PASS** (headless-verified) · **CODE-VERIFIED** (source + deplo
 - **A2 gated detectors / A4 checkpoint watcher / A6 resolver** — logic reads correct; deterministic. Reviewed twice (2 review-caught bugs fixed).
 - **NARRATED sends never auto-fire (Jon ruling):** steps 4Ba (rfq-btn) + 7 (print-quote-btn) are `type:'narrated'` with NO `advance` → engine only advances on Next; no detector, no state-watch, no auto-send. Downstream checkpoints (4Bb `pendingRfqUploads`, 6 `preReviewStatus`) read REAL state, so a narrated 4Ba can't satisfy them early.
 
-### ⚠ NEEDS JON LIVE-VERIFY (priority order)
-1. **★ GATED click-through spotlight (A3) — the #1 risk, and a headless anomaly to confirm.** In my HEADLESS JS-driven launch, `useTourRect` did not resolve a rect for Step 1 even though its target (`new-project-btn`) is present in the DOM — so the overlay rendered the full-dim fallback (no 4-rect cutout, no click-through) instead of the gated spotlight. No console error. The measure logic is **unchanged from the shipped, working original `useTourRect`**, so this is most likely a **headless-launch timing artifact** (tour launched via JS while the gear menu was closing; no real user scroll to trigger a re-measure) rather than a code regression — but I could NOT confirm that headlessly (no DevTools/React state inspection; a real hard-refresh cache-bust on test wasn't forceable via the automation). **Jon: launch the Quote Walkthrough on a hard-refreshed test load and confirm (a) Step 1 spotlights the + New Project button with a click-through hole, (b) your real click on it advances, (c) the four backdrop rects mask elsewhere at various scroll positions.** If the spotlight is missing/rect-null under real use, `useTourRect` measure timing is the suspect and I'll fix immediately (candidate: force a re-measure on mount via rAF, or on the first paint after the launching menu closes).
+### ★ A3 GATED spotlight anomaly — ROOT-CAUSED + FIXED (was a real bug, not an artifact)
+Headless debugging (instrumented deploys + console logs) proved: `useTourRect` measured a valid rect and called `setRect`, but the ordinary `useEffect` measure was **not propagating to the overlay render** — the spotlight stayed on the full-dim fallback (no click-through hole). **FIX (commits `b834660d` + `9f52b642`):** measure in `React.useLayoutEffect` (commits pre-paint on the mount frame) + rAF-retry the first ~12 frames for late layout; reset rect to null on target change. **Verified on test:** launching the Quote Walkthrough now renders the gated spotlight on Step 1 — `root pointerEvents:none`, **4 backdrop rects**, blue ring — and `document.elementFromPoint` at the + New Project button returns the **BUTTON** (click reaches it through the hole) once the launching gear-menu backdrop is gone (as it is in normal use). A7 scroll/resize tracking retained.
+
+### ⚠ NEEDS JON LIVE-VERIFY (priority order) — real clicks
+1. **A3 gated click-through (real flow):** click the gear → "🧭 Quote Walkthrough" → confirm Step 1 spotlights the + New Project button with a click-through hole, your real click opens the modal / advances, and the four rects mask elsewhere at a couple of scroll positions. (Headless-fixed + confirmed; this is the real-mouse confirmation.)
 2. **Checkpoint resume across lifecycle states (A4/A6):** open a real project mid-lifecycle (extraction running / awaiting supplier / awaiting review), relaunch, confirm it resumes on the right step and auto-advances when state flips.
 3. **NARRATED sends (4Ba/7):** confirm the tour points + explains and NEVER auto-fires or gate-detects the send.
-4. **React-input gating:** none in the shipped array (Step 1 advances on `appear`, not input) — n/a for now.
-5. **a11y:** Esc minimizes; reduced-motion disables spotlight/progress animation.
+4. **a11y:** Esc minimizes; reduced-motion disables spotlight/progress animation.
 
 ---
 
