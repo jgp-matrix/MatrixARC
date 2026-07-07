@@ -42356,7 +42356,7 @@ function NewProjectModal({uid,onCreated,onClose}){
 
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onClick={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()}>
-      <div style={{...card(),width:"100%",maxWidth:460}}>
+      <div data-tour="np-modal" style={{...card(),width:"100%",maxWidth:460}}>
         <div style={{fontSize:20,fontWeight:700,marginBottom:4}}>New Project</div>
         <div style={{fontSize:13,color:C.muted,marginBottom:20}}>Name this control panel quote</div>
         <form onSubmit={create}>
@@ -47942,11 +47942,19 @@ const TOUR_STEPS=[
 //   checkpoint — pauses on an async/external wait and auto-advances when project state flips (A4/A5)
 // Step indices are load-bearing for the state-driven resume bands below — keep in sync if reordered.
 const QUOTE_TOUR_STEPS=[
-  // 0 — Step 1
-  {phase:'Quote Walkthrough',title:'Step 1 — Create the Project',type:'gated',
-   body:'Start on the Projects Dashboard. Click + New Project, then fill the pane:\n\n• PROJECT NAME (as the customer gave it)\n• # of Panels (line items)\n• Customer (or add a new one)\n• Salesperson, Project Manager, Engineer\n\nThen click Create Project.',
+  // 0 — Step 1: open the New-Project modal — GATED, spotlight the + New Project button; advance when the
+  // modal appears (NOT project-created — otherwise the button's cutout keeps masking the open modal).
+  {phase:'Quote Walkthrough',title:'Step 1 — New Project',type:'gated',
+   body:'Start on the Projects Dashboard. Click + New Project to open the new-project form.',
    target:'[data-tour="new-project-btn"]',placement:'bottom',
-   action:true,actionLabel:'👆 Click + New Project, fill the fields, and click Create Project. The walkthrough continues once the project opens.',
+   action:true,actionLabel:'👆 Click + New Project.',
+   advance:{on:'appear',appearTarget:'[data-tour="np-modal"]'}},
+  // 1 — Step 1b: fill the modal — GATED, spotlight the WHOLE modal card (so the entire form is inside the
+  // click-through hole, not masked); advance when the project is created (the project view / drop zone appears).
+  {phase:'Quote Walkthrough',title:'Step 1 — Fill in the Project',type:'gated',
+   body:'Fill the form:\n\n• PROJECT NAME (as the customer gave it)\n• # of Panels (line items)\n• Customer (or add a new one)\n• Salesperson, Project Manager, Engineer\n\nThen click Create Project.',
+   target:'[data-tour="np-modal"]',placement:'right',
+   action:true,actionLabel:'👆 Fill the fields and click Create Project. The walkthrough continues once the project opens.',
    advance:{on:'appear',appearTarget:'[data-tour="add-files-zone"]'}},
   // 1 — Step 2 (out-of-app folder creation). NARRATED: the folder is created on the file system
   // (outside ARC), and the pre-quote "Done… Continue" modal isn't present in the current build, so a
@@ -48005,13 +48013,15 @@ const QUOTE_TOUR_STEPS=[
 // Band edges are the QUOTE_TOUR_STEPS indices above — keep in sync if the step order changes.
 function _quotePhaseBand(live){
   live=live||{};
-  if(live.quoteSentAt||live.preReviewStatus==="approved")return[9,9]; // → Send Quote
-  if(live.preReviewStatus==="pending")return[7,8];                    // tech review out (Steps 5–6)
-  if((live.pendingRfqUploads||0)>0)return[6,6];                       // supplier quote arrived (Step 4Bb)
-  if(live.bomPopulated)return[3,6];                                   // BOM ready → review/RFQ (Steps 4A–4Bb)
-  if(live.extractionActive)return[2,2];                              // extracting (Step 3)
-  if(live.projectId&&live.view!=="dashboard")return[1,2];            // project created, pre-extract (Steps 2–3)
-  return[0,0];                                                        // dashboard / no project (Step 1)
+  // Indices: 0 Step1(open modal), 1 Step1b(fill modal), 2 Step2(folders), 3 Step3(extract),
+  // 4 Step4A, 5 Step4B, 6 Step4Ba, 7 Step4Bb, 8 Step5, 9 Step6, 10 Step7.
+  if(live.quoteSentAt||live.preReviewStatus==="approved")return[10,10]; // → Send Quote
+  if(live.preReviewStatus==="pending")return[8,9];                     // tech review out (Steps 5–6)
+  if((live.pendingRfqUploads||0)>0)return[7,7];                        // supplier quote arrived (Step 4Bb)
+  if(live.bomPopulated)return[4,7];                                    // BOM ready → review/RFQ (Steps 4A–4Bb)
+  if(live.extractionActive)return[3,3];                              // extracting (Step 3)
+  if(live.projectId&&live.view!=="dashboard")return[2,3];            // project created, pre-extract (Steps 2–3)
+  return[0,1];                                                        // dashboard / creating (Steps 1–1b)
 }
 function _resolveQuoteResumeIdx(savedIdx,live){
   const band=_quotePhaseBand(live);
