@@ -8937,6 +8937,41 @@ if(typeof window!=="undefined"){window._computeQuoteHash=_computeQuoteHash;}
 
 // ── FIRESTORE ──
 const _saveHighWater={}; // {projectId: {panelCount, panels:[{pages,bomItems,savedPages,savedBom,...}]}}
+// DECISION(Phase B, 2026-07-08 — concurrent-safe BOM row merge; C137 M2/M3 fix):
+// Per-panel baseline of the row-ids this client last synced FROM the server. Distinguishes a
+// concurrent add by another user (server row NOT in baseline → preserve) from an intentional
+// delete by this client (server row IN baseline but absent from the incoming save → honor the
+// delete). Module-scope because the save fns are module-scope. Keyed projectId:panelId — panel
+// ids ("panel-1") are NOT globally unique across projects.
+let _bomBaselineIds={}; // { "<projectId>:<panelId>": Set<string rowId> }
+function _bomBaselineKey(projectId,panelId){return projectId+':'+panelId;}
+function _setBomBaseline(projectId,panelId,bom){
+  if(!projectId||!panelId)return;
+  _bomBaselineIds[_bomBaselineKey(projectId,panelId)]=new Set((bom||[]).filter(r=>!r.isLaborRow).map(r=>String(r.id)));
+}
+function _clearBomBaseline(projectId,panelIds){
+  (panelIds||[]).forEach(pid=>{delete _bomBaselineIds[_bomBaselineKey(projectId,pid)];});
+}
+// Union-merge the incoming (client) bom with the server's copy of the same panel. Incoming rows
+// win (field edits apply). A server-only row is PRESERVED unless the client knew it (id ∈ baseline)
+// and dropped it (→ honor the delete). baselineSet null (degraded: module state lost / first save)
+// → BIAS-TO-PRESERVE per Jon's ruling (loss is the reported harm) + loud warn. Rows are preserved
+// WHOLE (never reconstructed) so priceSource/isCrossed/crossedFrom/techReview*/leadTime*/bcNo/
+// bomVerification etc. all survive (CLAUDE.md data-retention). Concurrent-add rows append at end.
+function _mergeBomRows(bom,serverBom,baselineSet){
+  const incoming=bom||[];
+  const incomingIds=new Set(incoming.map(r=>String(r.id)));
+  const preserved=[];
+  for(const s of (serverBom||[])){
+    if(s.isLaborRow)continue;                      // labor is recomputed, not concurrent user data — incoming wins
+    const sid=String(s.id);
+    if(incomingIds.has(sid))continue;              // incoming has it → incoming wins
+    if(baselineSet&&baselineSet.has(sid))continue; // client knew it + dropped it → honor delete
+    preserved.push(s);                             // concurrent add (or baseline unknown) → preserve WHOLE row
+  }
+  if(preserved.length&&!baselineSet)console.warn(`BOM MERGE: baseline unknown — bias-to-preserve kept ${preserved.length} server-only row(s) (possible delete-resurrection only in this degraded no-baseline case)`);
+  return preserved.length?[...incoming,...preserved]:incoming;
+}
 async function saveProject(uid,project){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const col=fbDb.collection(path);
@@ -9023,6 +9058,23 @@ async function saveProject(uid,project){
             if(restoredShapes>0)parts.push(`reviewShapes×${restoredShapes}`);
             console.warn(`SAVE GUARD (saveProject): restored ${parts.join(", ")} on panel ${i} — stale incoming save`);
             newPanels[i]={...np,pages:merged};
+          }
+        }
+        // (1b) Phase B: concurrent-safe BOM row merge (C137 M2 fix). saveProject writes ALL
+        // panels, so merge each against the server copy BEFORE the bomVersion bump (so the
+        // version hash reflects the merged set). Preserves rows another user added concurrently
+        // that this client's stale in-memory copy is missing. Independent of the nBom===0
+        // high-water total-wipe belt above (that belt stays as a backstop).
+        for(let i=0;i<newPanels.length;i++){
+          const np=newPanels[i];
+          const cp=curPanels.find(p=>p.id===np.id);
+          if(!cp)continue;
+          const _base=_bomBaselineIds[_bomBaselineKey(data.id,np.id)]||null;
+          const _mergedBom=_mergeBomRows(np.bom,cp.bom,_base);
+          if(_mergedBom!==np.bom){
+            const _added=_mergedBom.length-((np.bom||[]).length);
+            if(_added>0)console.warn(`BOM MERGE (saveProject): preserved ${_added} concurrent-add row(s) on panel ${np.id}`);
+            newPanels[i]={...np,bom:_mergedBom};
           }
         }
         // (2) bomVersion bump
@@ -9156,6 +9208,8 @@ async function saveProject(uid,project){
   const stripped={...data,updatedBy:uid,updatedAt:Date.now(),panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
+  // Phase B: this client's own save becomes its new baseline (the server truth it just wrote).
+  (data.panels||[]).forEach(p=>_setBomBaseline(data.id,p.id,p.bom));
   _flushQvHistory(project.id);
   if(_pendingPreReviewOverrides[project.id]&&data.preReviewStatus!==undefined)delete _pendingPreReviewOverrides[project.id];
   return data; // return with dataUrls intact for in-memory use
@@ -9356,6 +9410,18 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // saveProject's all-panel loop handles it. Re-saves with no BOM change leave the field
     // untouched.
     safeUpdated=_bumpBomVersionIfChanged(safeUpdated,existingTarget);
+    // Phase B: concurrent-safe BOM row merge (C137 M2 fix) — preserve rows another user added
+    // to this panel that this client's incoming save is missing. Server copy = existingTarget.
+    // Runs BEFORE the dedup below; independent of the nBom===0 high-water belt (that belt stays).
+    {
+      const _base=_bomBaselineIds[_bomBaselineKey(projectId,panelId)]||null;
+      const _mergedBom=_mergeBomRows(safeUpdated.bom,existingTarget&&existingTarget.bom,_base);
+      if(_mergedBom!==safeUpdated.bom){
+        const _added=_mergedBom.length-((safeUpdated.bom||[]).length);
+        if(_added>0)console.warn(`BOM MERGE (saveProjectPanel): preserved ${_added} concurrent-add row(s) on panel ${panelId}`);
+        safeUpdated={...safeUpdated,bom:_mergedBom};
+      }
+    }
     // PRJ402109: Defensive dedup — resolve any duplicate BOM row IDs before writing
     if(safeUpdated.bom)safeUpdated={...safeUpdated,bom:_dedupBomRowIds(safeUpdated.bom)};
     let panels=(proj.panels||[]).map(p=>p.id===panelId?safeUpdated:p);
@@ -9403,6 +9469,8 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     liveProject.qvHistory=_mergeQvHistory(projectId,liveProject,null);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
+    // Phase B: this client's own save becomes its new baseline for this panel.
+    _setBomBaseline(projectId,panelId,safeUpdated.bom);
     _flushQvHistory(projectId);
     if(_prOvr)delete _pendingPreReviewOverrides[projectId];
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
@@ -37233,14 +37301,37 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const migrated=migrateProject({...remote,id:init.id});
         projectRef.current=migrated;
         setProject(migrated);
+        // Phase B: capture the initial server baseline of BOM row-ids per panel (what this
+        // client last knew existed on the server — anchors the concurrent-add vs delete decision).
+        (migrated.panels||[]).forEach(p=>_setBomBaseline(init.id,p.id,p.bom));
         console.log('[CONCURRENT] Initial load — synced to Firestore truth');
         return;
       }
       if(remote.updatedBy&&remote.updatedBy!==uid){
         // Always soft-apply: migrate remote data into local state (no page reload).
+        // Phase B (C137 M3 fix): re-inject THIS client's UNSAVED concurrent ADDS onto the remote
+        // truth so a remote save never eats my not-yet-saved new rows. Adds-only by design: local
+        // unsaved deletes/field-edits reconcile on this client's NEXT save (§2.3 merge); concurrent
+        // same-row field edits stay last-writer-wins (documented; field-merge is a follow-up).
         const migrated=migrateProject({...remote,id:init.id});
+        const _serverPanels=(migrated.panels||[]).map(p=>({id:p.id,bom:p.bom})); // server truth, pre-injection
+        const _local=projectRef.current;
+        if(_local&&Array.isArray(_local.panels)){
+          migrated.panels=(migrated.panels||[]).map(rp=>{
+            const lp=_local.panels.find(p=>p.id===rp.id);
+            if(!lp)return rp;
+            const _base=_bomBaselineIds[_bomBaselineKey(init.id,rp.id)]||null; // OLD baseline (what I last knew from server)
+            const remoteIds=new Set((rp.bom||[]).map(r=>String(r.id)));
+            // local rows the server lacks now AND that I never synced (∉ old baseline) = my unsaved adds.
+            // (A row in old baseline but absent from remote = the OTHER user deleted it → do NOT re-inject.)
+            const localAdds=(lp.bom||[]).filter(r=>!r.isLaborRow&&!remoteIds.has(String(r.id))&&!(_base&&_base.has(String(r.id))));
+            return localAdds.length?{...rp,bom:[...(rp.bom||[]),...localAdds]}:rp;
+          });
+        }
         projectRef.current=migrated;
         setProject(migrated);
+        // Refresh baseline to the SERVER truth (pre-injection) — NOT including my unsaved adds.
+        _serverPanels.forEach(p=>_setBomBaseline(init.id,p.id,p.bom));
         console.log('[CONCURRENT] Soft-applied remote update from',remote.updatedBy);
         // Show a brief toast (skip if grey-out overlay already communicates the source).
         const remoteActive=(projectRemoteTasks||[]).length>0;
@@ -37254,6 +37345,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     });
     return()=>unsub();
   },[init.id,uid,projectRemoteTasks]);
+  // Phase B: clear this project's BOM baselines on unmount / project-switch (hygiene — keys are
+  // project-scoped so no cross-project collision, but don't leak sets across a session's lifetime).
+  useEffect(()=>()=>{ _clearBomBaseline(init.id,((projectRef.current&&projectRef.current.panels)||[]).map(p=>p.id)); },[init.id]);
 
   // Auto-open portal modal when navigated from a notification
   useEffect(()=>{
@@ -37422,7 +37516,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     update(upd);safeSave(uid,upd);
   }
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
-  const didMigrate=useRef(!init.panels);
+  // DECISION(Phase A, 2026-07-08): `didMigrate` ref removed — its only consumer was the
+  // save-migrated-on-open effect below, deleted in the concurrent-edit data-loss fix (C137/M1).
 
   // Keep ref in sync with state for use in callbacks
   useEffect(()=>{projectRef.current=project;},[project]);
@@ -37467,13 +37562,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setShowTakeoverModal(false);
   }
 
-  // Save migrated project immediately on first open
-  useEffect(()=>{
-    if(didMigrate.current){
-      didMigrate.current=false;
-      safeSave(uid,migrateProject(init));
-    }
-  },[]);
+  // DECISION(Phase A, 2026-07-08 — concurrent-edit data-loss fix; Coach C137, mechanism M1):
+  // The "save migrated project immediately on first open" effect was DELETED here. It fired
+  // safeSave(uid, migrateProject(init)) on first open using the dashboard-CACHED, stale `init`,
+  // so merely OPENING a project wrote a stale whole-project snapshot back to Firestore —
+  // clobbering BOM rows another user had added concurrently ("reverts to a previous state
+  // when the other user opens"). migrateProject is applied in-memory for render and re-applies
+  // on every load; the normalized shape now persists on the next real edit's save
+  // (saveProjectPanel/saveProject) instead of an eager stale save-on-open. Same rationale as
+  // the sibling save-on-open effect deleted just below (v1.19.954); consistent with
+  // data-retention (no field stripped; migrateProject is idempotent).
 
   // DECISION(v1.19.954, runaway Quote Rev): The Stage 0 legacy-ECO save effect
   // was DELETED here. Original intent (v1.19.834) was: when migrateProjectShape
