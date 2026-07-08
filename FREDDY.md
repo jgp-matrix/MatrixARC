@@ -87,7 +87,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.25 (defined in `public/index.html`; release `333f385d`, master tip `01099977`, 2026-07-03). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.23.3 (defined in `public/index.html`; release `d373a510`, 2026-07-07). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -322,7 +322,15 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-03)
+## Recently Active Work (as of 2026-07-07)
+
+### Shipped 2026-07-07 — G005 Phase 1 + quick-win batch (huge session)
+- **G005 Phase 1 — test-env isolation firewall. SHIPPED v1.23.3.** `IS_TEST_ENV` (hostname) gates all external side-effects on `matrix-arc-test`: 14 client BC writes through one `bcGatedFetch` belt, client email (3 sites) suppressed, server triggers/callables gated (isTest/isTestCompany), `bulkMfrLookup` server-side BC write gated, TEST-MODE banner, test BC→sandbox. **Money-path/ERP-write harm PROVEN CLOSED.** Data-collision only Phase-1-partial (test-company convention is BLOCKED by 1-company-per-user → Phase 2 is the real fix + unblocks the deferred mutating-tail live demo). §10-8 prod-smoke is next session's first task. Lesson: the layered review caught 3 enumeration misses (BC 2→14, server sweep, bulkMfrLookup) — treat plan counts as a FLOOR.
+- **Quick-win batch v1.23.2** — G006/#190/#195/B002/B001/B003 (6 items, one patch).
+- **#192 fix FIRMED + ship-approved** (two correct-by-construction gates, `docs/192-FREDDY-FIX-BRIEF.md`) — build next, slots after the prod-smoke.
+- **B009 PARKED** (not reproducible; belt plan banked). Near-miss on PRJ402096 (real customer project) cleaned + restored.
+- **Backlog fully scoped (Briefs) + categorized** (91 legacy items tagged B=45/F=27/G=19 via a subagent; index `docs/LEGACY-BFG-CATEGORIZATION.md`; 4 stale closed).
+- *(Earlier this session, RESOLVED: F002 v1.21.26, F003 v1.22.0, checkbox/B006/B007 v1.22.1-.3, F001 v1.23.0, B010 v1.23.1.)*
 
 ### Shipped 2026-07-03 (v1.21.25) — #199 Tech Review flag + team-protocol reset
 - **#199 — Per-line Tech Review flag + hard send-gate. SHIPPED v1.21.25, RESOLVED.** Per-BOM-line Tech-Review
