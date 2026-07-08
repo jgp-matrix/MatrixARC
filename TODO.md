@@ -20,7 +20,7 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 > **★ SCOPED — BUGS CLUSTER (B008 / B011 / B005)** → `docs/B008-B011-B005-BUGS-SCOPING-BRIEF.md` (Freddy, 2026-07-07, @af3e7dfe). **B008** — the "🔗 Supplier Portal" link @20354 keys off `sub.id` while sibling links use `uploadToken` → likely the wrong key (opens pre-submission not submitted); Coach traces key-vs-state. **B011** — line numbers drifted since B010; the un-hardened `lineItems` writes are now **31304/31340/32004/32147** (31707 already hardened); apply undefined→null with the `_nullifyUndefined` Date/Map caveat verified per-site; money-path-adjacent = careful. **B005** — resolved-TR-row checkbox readOnly gate (@29074-29116) blocks manual re-arm; LOW/tuning; Coach traces the exact condition. Recommend: bundle B008+B005 (small UI/routing), keep B011 its own careful change. Queued behind G005 + features clusters.
 
 > **★ LEGACY SCREEN (Dez, Jon-directed, 2026-07-07, STATUS.md `7c4ee8bc`).** Screened all ~101 open `#N` Round-N items for silent fixes → **none; the ~101 is REAL backlog** (not bookkeeping lag). Done: #190/#195 flipped to RESOLVED (shipped v1.23.2). **5 to CODE-CONFIRM** (adjacent work may have shifted/partially-addressed them — need a Coach/Marc read before re-rank, at a G005 break): **#73** (Scan-Results banner ↔ B006 reworked that banner), **#65** (project-open BC-sync hygiene ↔ #65b emergency-disabled for PRJ402109 data loss), **#84** (drops last rows on scanned BOMs ↔ touched during #94), **#71** (vendor source-of-truth ↔ scanBomForArchiveIssues hotfix), **#58** (CRITICAL re-extraction verification gap ↔ re-scoped `5cc930fe`, confirm wording current). **Bigger lever (deferred):** a relevance/staleness pass over the ~101 ("still worth doing / superseded?") — judgment call needing Coach/Marc + Freddy ranking; tee up when backlog-shrink is the goal.
-> **★ IN PROGRESS — legacy B/F/G categorization (Jon-directed, 2026-07-07).** Decision: **TAG each OPEN legacy `#N` with a B/F/G category, KEEP the #N id** (no renumber — NUMBERING-CONVENTION intact, no broken references). A **Freddy-spawned SUBAGENT** (Jon-greenlit, hub-only) is reading all ~101 OPEN legacy items + proposing a category each (+ lightweight text-based STALE flags), running PARALLEL to the G005 build. Output = a proposal table → **Freddy reviews + applies the tags to TODO.md** (owner). Dez stays on the live status board (not pulled onto the sweep).
+> **★ DONE — legacy B/F/G categorization (Jon-directed, 2026-07-07).** All OPEN legacy `#N` items TAGGED by type (KEEP #N — no renumber). **Index: `docs/LEGACY-BFG-CATEGORIZATION.md`** (subagent-proposed + Freddy-reviewed). **91 items: B=45 · F=27 · G=19.** Backlog is ~50% bugs (several money-path/BC: #23/#54/#62/#69/#171/#172/#188). **4 STALE closed** (Jon 2026-07-07): #24 (task no-longer-needed), #75 (superseded by #52/#127 progress work), #76 + #96 (CCD send_message bus supersedes the coordination-layer/facilitator ideas). Applied as an index doc + this pointer (not 91 inline edits → #N entries untouched, reference-safe). Remaining bigger lever: the full relevance/staleness pass (Dez teed up).
 
 ### 🐛 Bugs (B###)
 - **B010 — "Manual 'Upload Supplier Quote' throws on drop (undefined field → Firestore reject)"** [RESOLVED — shipped v1.23.1, 2026-07-07 · release `6e82ea5e` (fix `b3f79473`)] — manual upload crashed on drop (`Unsupported field value: undefined` → import aborted). FIX: `_nullifyUndefined` helper + `??null` coercions in both BC-match branches + belt on the @31669 update payload (undefined→null, no field removal/rename — data-retention preserved). Re-test PASSED live (Jon, PRJ402096: drop → no crash → price-review UI; runtime artifact); Coach-approved data-safe; prod-verified probe-free.
@@ -639,7 +639,7 @@ longer matches what's committed. Re-reviewed deploy.sh against current reality a
     Low severity; out of scope for v1.19.1005 deploy. Pick up in a follow-up
     session.
 
-24. **OPEN** [Backlog] — Remove auto-creation of Project Task `20N20 Engineering Design`.
+24. **STALE — superseded** [closed 2026-07-07: task declared no-longer-needed; via legacy B/F/G categorization] (was G) — Remove auto-creation of Project Task `20N20 Engineering Design`.
     This task is auto-created on new projects (likely in the BC job/project
     creation path or initial project template), but is no longer needed since
     Engineering Design is now handled as a separate line item on the
@@ -1418,7 +1418,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     Discovered: RSD0203-126 extraction spot-check after v1.20.66, 2026-06-01.
     Owner for design: Coach.
 
-75. **OPEN** [Backlog] — Extraction progress bar accuracy.
+75. **STALE — superseded** [closed 2026-07-07: overlaps the #52/#127 progress-bar work; via legacy B/F/G categorization] (was B) — Extraction progress bar accuracy.
     Symptom: During extraction, the progress bar does not move smoothly or accurately. User has
     limited visibility into how far along the extraction is.
 
@@ -1455,7 +1455,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
 
 ## Development Direction (2026-06-01)
 
-76. **OPEN** [Backlog] — Multi-Claude coordination layer (Freddy ↔ Coach ↔ Marc).
+76. **STALE — superseded** [closed 2026-07-07: the CCD `send_message` bus is built; via legacy B/F/G categorization] (was G) — Multi-Claude coordination layer (Freddy ↔ Coach ↔ Marc).
     Symptom: Three-role workflow currently requires Jon to manually copy/paste messages between
     Claude.ai (Freddy Lyst / Analyst), CC Terminal (Sam Wize / Coach), and CCD (Marc Masdev / Dev).
     Each exchange is a forwarded paste. Friction is real: latency, lossy summarization,
@@ -1884,7 +1884,7 @@ T9. **OPEN** [Backlog] — Claude-in-Chrome MCP can't navigate to non-prod origi
     are also covered — the slash-split × positional-dedup bug behind them was fixed in #97.
     Resolved: 2026-06-16.
 
-96. **OPEN** [Backlog] (IDEA) — Windows facilitator app for three-role Claude workflow.
+96. **STALE — superseded** [closed 2026-07-07: the CCD `send_message` bus supersedes manual relay; via legacy B/F/G categorization] (was F) — Windows facilitator app for three-role Claude workflow.
     Currently Jon manually copy-pastes messages between CCD (Marc), Terminal (Coach), and
     Claude.ai (Freddy). A lightweight Windows desktop app could automate or streamline this
     relay — clipboard monitoring, paste routing, session status dashboard, maybe direct API
