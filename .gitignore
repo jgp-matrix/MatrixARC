@@ -13,3 +13,5 @@ public/index.bundle.js
 tests/extraction-baseline/h5-tiles/
 # Per-session role map for the ARC statusline (ephemeral session ids — local only)
 .claude/session-roles
+# Generated backlog-review docs (Dez's export for Jon — regenerable, local only)
+BACKLOG-REVIEW.*
