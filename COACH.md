@@ -141,6 +141,7 @@ If the function under test is correct but its caller is a fire-and-forget inside
 - **2026-07-07 (Session 11, cont.)** — **G005 §10 verify results-review** (money-path done; tail deferred to fresh continuation). Functions deployed (32, prod-safe default-false). MONEY-PATH PROOF **SOUND + SUFFICIENT**: bcGatedFetch (single choke point; I independently verified all 14 BC writes funnel there → proving the choke point proves the WHOLE BC-write class) live-BLOCKS a non-sandbox mutating write (_testEnvBlocked, no real write) + ALLOWS a sandbox write; bulkMfrLookup dryRun:false+isTest→patched:0. The demonstrated ERP/BC-write harm is CLOSED. Precise caveat: this closes the BC-WRITE harm; the near-miss's Firestore data-collision is the test-company convention's scope (Phase-1 partial per plan §6 honest-limit), NOT proven by this BC test — don't conflate. TAIL (§10-4 client email / -5 server triggers / -6 callables / -7 extraction+bcEnqueue / -8 prod regression) SAFE-TO-DEFER: same isTest/isTestCompany mechanism already proven live + functions-deployed, on email/trigger/callable surfaces — no new risk class. PROD FLIP is prod-safe BY CONSTRUCTION (IS_TEST_ENV false on prod → gates inert → byte-identical; only prod deltas = 14 BC writes gain semaphore/429 [benign] + B001 redirectUri [no-op normal]) → flip doesn't depend on the tail for prod safety. Recommend: continuation completes the tail (esp. §10-4 client email — only live-testable once the gated client bundle is on the TEST host) before declaring the test env's email/notification isolation verified; §10-8 prod spot-check post-flip.
 - **2026-07-08 (Session 12)** — C134/C135: two PROD bug traces on PRJ402096 (v1.23.3), routed by Freddy, HOLD-before-fix. **C134** ("BC Sync Incomplete: 61 items") — G005 hypothesis **REFUTED** (blame: this path's bcGatedFetch conversion is F-2d.1 @2026-06-01/02, pre-G005; and on prod IS_TEST_ENV=false makes bcGatedFetch ≡ raw fetch). ★ Disambiguation: the modal is `syncPlanningLinesToBC` (planning-lines auto-sync, Path B/#168) NOT the "Push Lead Times to BC" button (which uses a plain arcAlert). Failures are legitimate BC-side rejections; Text-fallback structure means 61 fallback-failures ⟹ line/task/project-level cause (not per-item) UNLESS they're PATCHes of existing lines (no fallback). Decisive artifact = per-row `error` text + POST-vs-PATCH (console @3882 / modal). **C135** (5 Codale items no price) — client faithfully reports server `found:false`; root cause is `extractFromPage` exact-normalized catalog-match gap on multi-result pages (Strategy 1/2/3 all miss when >1 product and no exact normalized match). "Data exists on site" ⟹ match/parse gap, not genuine absence. Decisive artifact = the 5 SKUs' `result.error`/`result.debug` (page body) in `codaleTestScrape` Functions logs.
 - **2026-07-08 (Session 12, cont.)** — C136: recurring PROD lock — non-owner (Andrew) repeatedly blocked on PRJ402096 while manually adding BOM. Banner = project-level remote-task lockout (`projectLockTask`/`lockedOut` full-page "Project In Use" @38726), fed by `companies/{cid}/activeExtractions` — **NOT owner-priority** (that reads presence/`ownerLockActive`, both clean per Marc, → correctly OFF). ★ Marc checked the WRONG collection; must dump `activeExtractions` (projectId=PRJ402096). `rbgStart` always stamps current uid ⇒ Andrew's own add can't self-attribute to Jon; the locking doc is genuinely the owner's. Fresh-heartbeat-on-recurrence ⟹ a LIVE owner bg task heart-beating from a session that navigated away (Async Ownership; presence≠activeExtractions). 3 real defects: (i) per-panel `remoteEditor` grey is DEAD (bare `panel.id` vs `_bgKey`-prefixed taskIds never match); (ii) staleness re-evaluated only on snapshot/re-render, no time-based self-clear (reacts to deletions ✓, can't expire a silently-aging doc ✗ — Freddy Q3); (iii) orphaned 'running' docs (no server TTL; cleanup relies on rbgDone/error/beforeunload). Decisive artifact = activeExtractions dump + is heartbeatAt advancing. HOLD for fix.
+- **2026-07-08 (Session 12, cont.)** — C137 ★ CRITICAL DATA-LOSS: concurrent BOM edits clobber each other on PRJ402096 (live customer). Q1: save = WHOLESALE OVERWRITE of bom array — both saveProject (ref.set @9158) + saveProjectPanel (replace target panel @9361, ref.set @9405); pages/notes/shapes get id-merge, BOM ROWS NEVER merged; only guard is high-water nBom===0 total-wipe belt (misses partial loss). Q2: save-on-open @37471 writes stale dashboard `init` snapshot ("strips on open"). Q3: live project onSnapshot EXISTS @37226 but soft-apply @37243 REPLACES local state (drops unsaved rows), and save-on-open uses stale init not synced truth. Q4: NOT same root as C136 (that=activeExtractions no-expiry staleness; this=merge-discipline/whole-object-replace) — related theme, distinct mechanism. 3 compounding mechanisms M1(save-on-open)/M2(overwrite-on-save)/M3(soft-apply-replace). Fix scoped (DO NOT IMPLEMENT): row-level union merge by row.id in existing save server-read guards + client-carried baseline-ids to honor deletes vs preserve concurrent adds; remove/guard save-on-open; soft-apply-merge follow-up. Row ids globally unique (verified) → union-by-id safe. Landmines: delete-vs-add disambiguation (naive union resurrects deletes), preserve priceSource/metadata, merge before _dedupBomRowIds, keep high-water, test-channel + 2-session concurrent matrix before prod. Needs Jon approval + staged rollout.
 
 
 ## Findings
@@ -1410,3 +1411,58 @@ For the lock to RE-APPEAR on each add, the owner doc must be **fresh (<30s heart
 4. Confirm `PRJ402096.createdBy` = the owner (Jon), so `iAmProjectOwner` is false for Andrew (required for `lockedOut`).
 
 **HOLD per Freddy — no fix proposed until reconciled with the dump.**
+
+---
+
+### C137 — ★ CRITICAL DATA-LOSS: concurrent BOM edits clobber each other (PRJ402096, live customer project, v1.23.3) — Code Trace + Fix Scope (2026-07-08)
+
+**Type:** Read-only trace + fix scoping (NO implementation)
+**Status:** ROOT CAUSE CONFIRMED (code-level). Fix scoped + data-retention landmines flagged. Needs Jon approval + data-safe rollout (live customer project).
+**Routed by:** Freddy. Preempts everything.
+
+---
+
+#### Q1 — MERGE or OVERWRITE? → **WHOLESALE OVERWRITE of the bom array. No row-level merge anywhere.**
+
+Both save paths end in `ref.set(...)` (full-document replace) and both replace the target panel's `bom` array with the client's in-memory copy:
+- **`saveProject`** (8940): after the consolidated server read (`_curDoc` @8981), it id-merges only **pages** fields — `storageUrl`, `reviewNotes`, `reviewShapes` (8992-9027) — and preserves project-level admin fields (takeover/lock/review). **BOM rows are never merged.** Write = `ref.set(toSave)` (9158) with `panels` = client copy.
+- **`saveProjectPanel`** (9266, the per-BOM-edit path via `onSaveImmediate`→`saveImmediatePanel`@34318): reads fresh server doc (9277), id-merges the target panel's **pages/notes/shapes** (9321-9351), then at **9361 replaces the entire target panel** (`panels=proj.panels.map(p=>p.id===panelId?safeUpdated:p)`) — `safeUpdated.bom` is the client copy verbatim. Write = `ref.set(stripped)` (9405). Other panels ARE kept fresh from server; only the *edited* panel's bom is clobbered.
+- **Only BOM protection = the high-water guard** (8963-8966 / 9291-9308): restores server bom ONLY when incoming has **zero** non-labor rows (`nBom===0`) — a total-wipe belt. **Partial concurrent loss (server 7, incoming 5) is NOT caught.** ⇒ last writer wins wholesale for that panel's bom.
+
+#### Q2 — Does OPENING trigger a WRITE? → **YES. Save-on-open of a stale snapshot.**
+
+`useEffect(...,[])` at **37471-37476**: on first open, if `migrateProject` changed anything (`didMigrate.current`), fires `safeSave(uid, migrateProject(init))`. `init` is the **dashboard-cached** project prop — stale if the list was cached before another user's rows replicated. This save runs through `saveProject` → wholesale bom overwrite ⇒ **opening clobbers rows another user added since the dashboard cache was taken.** This is the "strips on open" symptom. (A sibling save-on-open was already deleted @37478-37494 for a related runaway-QuoteRev reason; this one survived.)
+
+#### Q3 — Live BOM onSnapshot refresh while open? → **YES, but it REPLACES, not merges.**
+
+`onSnapshot` on the project doc @**37226**. First snapshot → `setProject(Firestore truth)`. Subsequent snapshots where `remote.updatedBy!==uid` → **soft-apply = `setProject(migrated)` (37243), a wholesale replacement of local React state.** So: (a) the project DOES live-sync (unlike C136's activeExtractions staleness), but (b) a remote save **blows away the local user's not-yet-persisted rows** (no merge of local unsaved edits), and (c) the save-on-open uses the stale `init`, not this synced truth. The live channel exists; the discipline is REPLACE-not-MERGE at every layer.
+
+#### Data-loss mechanism (compounding)
+
+1. **M1 — save-on-open (37471)** writes stale `init` bom → drops rows added by another user since dashboard cache. ("Jon added 2 → Andrew opens → 2 gone.")
+2. **M2 — every save (saveProject/saveProjectPanel)** overwrites the edited panel's bom wholesale with the saver's React copy → drops concurrent additions absent from that copy. ("Andrew added 6 → Jon opens+saves → some gone.")
+3. **M3 — soft-apply (37243)** replaces local state on a remote save → drops the local user's unsaved rows and can leave the two clients racing to overwrite each other.
+
+Root: **no BOM row-level merge**; pages/notes/shapes get id-merge, bom never does.
+
+#### Q4 — Same root as C136 (stale banner)? → **RELATED THEME, DIFFERENT ROOT.**
+
+C136 = `activeExtractions` listener with **no time-based staleness expiry** + orphan docs (a *staleness-expiry* failure). C137 = wholesale bom **overwrite/replace at save + soft-apply + save-on-open** (a *merge-discipline* failure), and here the project doc DOES live-sync. Common theme = multi-user concurrency handled by whole-object replace rather than field/row merge; but they are distinct mechanisms in distinct collections. Fixing one does not fix the other.
+
+#### SAFEST MINIMAL FIX (scoped — DO NOT IMPLEMENT; needs Jon approval + staged rollout)
+
+Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.now()+"-"+random` (26562/10544/11328/14719/25788/48432) — globally unique (not panel-1-style shared). `_dedupBomRowIds` (881/9360) already resolves accidental dups.
+
+- **Primary — row-level merge-on-save** in the EXISTING server-read guard of both `saveProject` (extend the 8992-9027 per-panel loop) and `saveProjectPanel` (extend the 9321-9351 target-panel guard): build `serverById=Map(cp.bom by id)` and `incomingIds=Set`. **Preserve server rows absent from incoming** (concurrent additions) — but must NOT resurrect intentionally-deleted rows (see landmine). Correct disambiguation needs a **client-carried baseline of loaded row-ids per panel** (captured at load + refreshed on soft-apply): server-only row IN baseline = intentional delete (honor); server-only row NOT in baseline = concurrent addition (preserve). ~30-50 lines + threading `_bomBaselineIds`.
+- **Secondary — remove/guard the save-on-open (37471).** Simplest data-safe option: delete it (migration is in-memory; it persists on the next real edit — same rationale used when the sibling save-on-open was removed @37478). Or gate it to save `projectRef.current` AFTER the first onSnapshot sync, never the stale `init`. ~2-5 lines, LOW risk, kills M1.
+- **Tertiary (follow-up, not minimal) — soft-apply should MERGE local unsaved bom rows** instead of `setProject`-replace (M3). Harder; flag separately.
+
+#### DATA-RETENTION LANDMINES (CLAUDE.md "never overwrite user data silently")
+
+- **Deletion vs addition disambiguation is the crux.** Naive union-by-id RESURRECTS deleted rows (non-lossy but a correctness surprise). The baseline-id approach is required to honor deletes while preserving concurrent adds. Interim union-preserve (no baseline) is strictly *less lossy* than status quo but can resurrect deletes — Jon must choose.
+- **Preserve `priceSource:"manual"|"bc"` rows + all metadata flags** (isCrossed, crossedFrom, techReview*, leadTime*, bcNo, etc.) on any merged/preserved row — do not reconstruct rows, carry them whole.
+- **Run the merge BEFORE `_dedupBomRowIds` (9360)** and ensure it can't introduce duplicate ids.
+- **Keep the `nBom===0` high-water guard** — it's an independent total-wipe belt.
+- **Rollout:** deploy behind the matrix-arc-test channel first; the harm is on a LIVE customer project (PRJ402096) so verify a two-session concurrent-add + concurrent-delete matrix before prod. This is a money/data path → PR + Jon sign-off per the extraction/save-path protocol.
+
+**HOLD — scoped, not implemented. Awaiting Jon's approval + rollout decision.**
