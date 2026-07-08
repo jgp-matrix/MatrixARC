@@ -140,6 +140,7 @@ If the function under test is correct but its caller is a fire-and-forget inside
 - **2026-07-07 (Session 11, cont.)** — **G005 bulkMfrLookup fix** (`f4880084`) re-review + **definitive server-BC-write sweep**. Fix APPROVE: `_skipMfrWrites=dryRun||isTest` skips the POST-Manufacturers + PATCH-ItemCard block when isTest (lookup still runs, status 'dry_run'); both client sites (45998/46019) thread isTest:IS_TEST_ENV; prod unchanged. ★ SWEEP found a SECOND server-side BC writer — `writePricesToBC` (codaleScheduler.js:202/218, BC purchase-price PATCH/POST) via `runCodaleScrape` — but it's **NOT test-reachable**: the only client-called Codale callable is `codaleTestScrape` (READ-ONLY, returns scraped prices, no BC write); the writer is reached only by `codaleRunScrape` (ZERO client call sites) + `codaleScheduledScrape` (Pub/Sub cron). Neither triggerable from the test-host UI → out of Phase-1 scope (like the scheduled monitors). Latent follow-up: gate `codaleRunScrape` if ever UI-wired. **NET: after f4880084, ZERO test-reachable ungated server-side BC writes.** G005 Phase 1 code (client c01e9a53 + server a23f9ba9 + fix f4880084) fully Coach-APPROVED → §10 live verify next (near-miss replay). 2 non-blocking notes (admin-alert emails, onIssueReported fail-open) deferred as Phase-1 follow-ups by Jon+Marc+Freddy.
 - **2026-07-07 (Session 11, cont.)** — **G005 §10 verify results-review** (money-path done; tail deferred to fresh continuation). Functions deployed (32, prod-safe default-false). MONEY-PATH PROOF **SOUND + SUFFICIENT**: bcGatedFetch (single choke point; I independently verified all 14 BC writes funnel there → proving the choke point proves the WHOLE BC-write class) live-BLOCKS a non-sandbox mutating write (_testEnvBlocked, no real write) + ALLOWS a sandbox write; bulkMfrLookup dryRun:false+isTest→patched:0. The demonstrated ERP/BC-write harm is CLOSED. Precise caveat: this closes the BC-WRITE harm; the near-miss's Firestore data-collision is the test-company convention's scope (Phase-1 partial per plan §6 honest-limit), NOT proven by this BC test — don't conflate. TAIL (§10-4 client email / -5 server triggers / -6 callables / -7 extraction+bcEnqueue / -8 prod regression) SAFE-TO-DEFER: same isTest/isTestCompany mechanism already proven live + functions-deployed, on email/trigger/callable surfaces — no new risk class. PROD FLIP is prod-safe BY CONSTRUCTION (IS_TEST_ENV false on prod → gates inert → byte-identical; only prod deltas = 14 BC writes gain semaphore/429 [benign] + B001 redirectUri [no-op normal]) → flip doesn't depend on the tail for prod safety. Recommend: continuation completes the tail (esp. §10-4 client email — only live-testable once the gated client bundle is on the TEST host) before declaring the test env's email/notification isolation verified; §10-8 prod spot-check post-flip.
 - **2026-07-08 (Session 12)** — C134/C135: two PROD bug traces on PRJ402096 (v1.23.3), routed by Freddy, HOLD-before-fix. **C134** ("BC Sync Incomplete: 61 items") — G005 hypothesis **REFUTED** (blame: this path's bcGatedFetch conversion is F-2d.1 @2026-06-01/02, pre-G005; and on prod IS_TEST_ENV=false makes bcGatedFetch ≡ raw fetch). ★ Disambiguation: the modal is `syncPlanningLinesToBC` (planning-lines auto-sync, Path B/#168) NOT the "Push Lead Times to BC" button (which uses a plain arcAlert). Failures are legitimate BC-side rejections; Text-fallback structure means 61 fallback-failures ⟹ line/task/project-level cause (not per-item) UNLESS they're PATCHes of existing lines (no fallback). Decisive artifact = per-row `error` text + POST-vs-PATCH (console @3882 / modal). **C135** (5 Codale items no price) — client faithfully reports server `found:false`; root cause is `extractFromPage` exact-normalized catalog-match gap on multi-result pages (Strategy 1/2/3 all miss when >1 product and no exact normalized match). "Data exists on site" ⟹ match/parse gap, not genuine absence. Decisive artifact = the 5 SKUs' `result.error`/`result.debug` (page body) in `codaleTestScrape` Functions logs.
+- **2026-07-08 (Session 12, cont.)** — C136: recurring PROD lock — non-owner (Andrew) repeatedly blocked on PRJ402096 while manually adding BOM. Banner = project-level remote-task lockout (`projectLockTask`/`lockedOut` full-page "Project In Use" @38726), fed by `companies/{cid}/activeExtractions` — **NOT owner-priority** (that reads presence/`ownerLockActive`, both clean per Marc, → correctly OFF). ★ Marc checked the WRONG collection; must dump `activeExtractions` (projectId=PRJ402096). `rbgStart` always stamps current uid ⇒ Andrew's own add can't self-attribute to Jon; the locking doc is genuinely the owner's. Fresh-heartbeat-on-recurrence ⟹ a LIVE owner bg task heart-beating from a session that navigated away (Async Ownership; presence≠activeExtractions). 3 real defects: (i) per-panel `remoteEditor` grey is DEAD (bare `panel.id` vs `_bgKey`-prefixed taskIds never match); (ii) staleness re-evaluated only on snapshot/re-render, no time-based self-clear (reacts to deletions ✓, can't expire a silently-aging doc ✗ — Freddy Q3); (iii) orphaned 'running' docs (no server TTL; cleanup relies on rbgDone/error/beforeunload). Decisive artifact = activeExtractions dump + is heartbeatAt advancing. HOLD for fix.
 
 
 ## Findings
@@ -1356,3 +1357,56 @@ That collapses the candidate set to one. **HOLD per Freddy — no fix proposed u
 - debug body showing "log in"/"call for price" → login/price-gating (#3).
 
 **HOLD per Freddy — no fix proposed until reconciled with the 5 SKUs' live `error`/`debug` (and the exact PN strings, to compare against Codale's catalog #).**
+
+---
+
+### C136 — PROD: non-owner (Andrew) repeatedly sees "{owner} is …ing this project" lock on PRJ402096 while manually adding BOM items (v1.23.3) — Code Trace (2026-07-08)
+
+**Type:** Read-only trace (recurring PROD bug, host-agnostic)
+**Status:** COMPLETE — banner is the remote-TASK lock (`activeExtractions`), NOT owner-priority. Marc checked the wrong collection. HOLD for Marc's `activeExtractions` dump before fix.
+**Routed by:** Freddy.
+
+---
+
+#### Which banner is it? — NOT owner-priority; it's the project-level remote-task lockout
+
+Two independent "someone is using this project" mechanisms exist:
+
+1. **Owner Priority Mode** (`ownerPriorityActive`, effect @36943-36953). Computed from `viewers` (`companies/{cid}/projectPresence`) + `project.ownerLockActive` + `ownerTakeoverActive`. `ownerIsWatching = ownerPresence && (lockHeld || lastSeen<90s)`. **Marc's live read (no Jon presence record, ownerLockActive=null) makes this correctly evaluate to FALSE.** This effect DOES react to presence changes/deletions (deps include `viewers`, updated by the presence onSnapshot) and auto-expires on the 90s window. **Not the culprit.**
+
+2. **Remote-task lock** (`projectLockTask` @38542 → `lockedOut` @38549 → full-page blocker @38726). Driven by **`companies/{cid}/activeExtractions`** via the `projectRemoteTasks` listener (@36842). **This is the banner Andrew sees.** ★ **Marc's "clean server state" checked presence + `ownerLockActive` — a DIFFERENT collection. The lock is fed by `activeExtractions`, which was not read.**
+
+Freddy's quote "{owner} is editing this project" is the per-panel wording (27908); the actual full-page text is "…is currently **processing** this project" (38732) — same mechanism family, paraphrase. (And the per-panel one can't be it — see dead-code finding below.)
+
+#### The lock predicate (`projectLockTask`, 38542-38549)
+
+```
+projectRemoteTasks.find(t => t.status==='running' && t.uid && t.uid!==uid
+    && t.projectId===init.id && (Date.now()-t.heartbeatAt)<30000)
+```
+`lockedOut = !!projectLockTask && !iAmProjectOwner`. Full-page "🔒 Project In Use" blocker replaces the whole view. **No taskId constraint** — matches ANY running task by another user on this project.
+
+`projectRemoteTasks` = listener on `activeExtractions` where `projectId==PRJ402096`, client-filtered to `uid!==me`, `status==='running'`, `heartbeatAt<30s` (36849), `startedAt<15min` (36850).
+
+#### Why it CANNOT be Andrew's own add creating the doc
+
+`rbgStart` (534/542) always stamps `docId=${_appCtx.uid}_${taskId}` and `uid:_appCtx.uid` — i.e., the CURRENT user (Andrew). Both the listener (36848) and the lock predicate (38544) require `t.uid!==uid`. So Andrew's own manual-add-triggered task (his BOM change fires `syncPlanningLinesToBC` → `bgStart` → `rbgStart`) is **filtered out for Andrew**. The doc locking Andrew is genuinely **another user's (the owner's) `activeExtractions` doc** — status=running, projectId=PRJ402096, heartbeat<30s.
+
+#### Strong inference: a LIVE owner bg-task heart-beating from a session that navigated away (Async Ownership)
+
+For the lock to RE-APPEAR on each add, the owner doc must be **fresh (<30s heartbeat) at that moment** — a frozen/stale doc would be filtered out on the next snapshot, not re-added. Fresh heartbeat ⟹ a live writer calling `rbgUpdate` (every 2s during a task). Reconciled with "no Jon presence on PRJ402096": **presence and `activeExtractions` are independent.** Consistent scenario — Jon launched a fire-and-forget bg task on PRJ402096 (extraction / pricing / a stuck bcsync), then navigated to another project; the task keeps running + heart-beating with `projectId=PRJ402096` captured in its closure, while Jon's *presence* now points at the other project (or is gone). This is exactly an **Async Project Ownership Rule** situation (module-scoped `_bgTasks` + `rbgUpdate` keyed by taskId, independent of the currently-open project). Marc can confirm by checking whether `heartbeatAt` is *advancing in real time*.
+
+#### Real code defects found regardless of Marc's dump
+
+- **(i) Per-panel `remoteEditor` grey is DEAD CODE (latent).** The IIFE @35411-35416 matches `t.taskId===panel.id || panel.id+'_bcsync'` (bare, e.g. `"panel-1"`), but every `bgStart` writer uses `_bgKey(projectId,panel.id)` = `"PRJ…:panel-1"` (24485 extract, 25468 bcsync, 25692 re-extract). Bare vs prefixed never match ⇒ per-panel greying never fires. (Explains why the *full-page* lock, not the softer per-panel banner, is what bites.)
+- **(ii) ★ Staleness is only re-evaluated on snapshot events / re-render — never on a timer.** `projectRemoteTasks` is recomputed only when the `activeExtractions` collection emits a snapshot (36844); `projectLockTask` recomputes `Date.now()-heartbeatAt<30000` only on re-render. A doc that ages past 30s with no further collection write AND no component re-render **lingers in state and keeps blocking** until the next event. The listener DOES react to doc **deletions** (onSnapshot delivers the removal → recompute → clears), but it CANNOT self-expire a silently-aging doc without an external tick. → **Freddy's Q3 answer: reacts to deletions ✓, but no time-based self-clear ✗.**
+- **(iii) Orphaned 'running' docs.** `rbgStart` writes a `status:'running'` doc with no server-side TTL; cleanup relies on `rbgDone`/`rbgError`/`beforeunload` (613/36930). A crash, mobile background-kill, or navigate-away-with-running-task (Async Ownership) leaves an orphan. The 30s heartbeat filter masks the *display* (once stale) but the doc persists in Firestore. Combined with (ii), a doc that briefly re-freshes (e.g. a stuck task's retry heartbeat) can flip the lock back on.
+
+#### DECISIVE ARTIFACT NEEDED FROM MARC (before any fix)
+
+1. Dump `companies/{cid}/activeExtractions` where `projectId==PRJ402096`. Per doc: `uid, userName, status, taskId, projectId, startedAt, heartbeatAt, now-heartbeatAt`.
+2. Is `heartbeatAt` **advancing in real time** (live writer) or frozen (orphan)? — distinguishes inference above from defect (ii)/(iii).
+3. Also dump activeExtractions docs whose `docId` starts with the **owner's uid** (catch a live owner task from a project he navigated away from — Async Ownership cross-context).
+4. Confirm `PRJ402096.createdBy` = the owner (Jon), so `iAmProjectOwner` is false for Andrew (required for `lockedOut`).
+
+**HOLD per Freddy — no fix proposed until reconciled with the dump.**
