@@ -39071,10 +39071,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       })}
                     </tbody>
                   </table>
-                  {quoteReview.unmatchedBom.length>0&&<div style={{marginTop:10,padding:"8px 10px",background:"#1a0a0a",border:`1px solid ${C.red}44`,borderRadius:6}}>
-                    <div style={{fontSize:11,fontWeight:700,color:C.red,marginBottom:4}}>{quoteReview.unmatchedBom.length} BOM items not quoted by supplier:</div>
-                    <div style={{fontSize:10,color:C.muted}}>{quoteReview.unmatchedBom.map(r=>r.partNumber||r.description).join(", ")}</div>
-                  </div>}
+                  {/* B003 (Jon 2026-07-07): hidden — the "N BOM items not quoted by supplier" list is
+                     noise (those parts belong to OTHER suppliers' RFQs). It was display-only; the Apply
+                     action below uses `quoteReview.matches` (not `unmatchedBom`), so hiding it does NOT
+                     affect the apply path — unmatched rows are simply not part of this supplier's apply. */}
                 </div>
                 <div style={{display:"flex",gap:8,justifyContent:"flex-end",flexShrink:0}}>
                   <button onClick={()=>setQuoteReview(null)} style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:C.muted,padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13}}>Cancel</button>
