@@ -2,7 +2,9 @@
 
 **Author:** Sam Wize (Coach) · **Date:** 2026-07-07
 **For:** Freddy (Analyst Review) → Jon (approve) → Marc (build).
-**Traced against tip:** current master. All edits in `src/app.jsx`. **HOLD — no code until Jon approves.**
+**Traced against tip:** current master. All edits in `src/app.jsx`.
+
+> ⛔ **PARKED — NOT SHIPPING (Jon, 2026-07-07).** Marc's multi-apply re-test came back conclusively NEGATIVE (4 scenarios incl. 3 sequential back-to-back, all clean). ROOT: `doApplyPortalPrices` **awaits** its `safeSave` (B004 fix @38406) **and** syncs `projectRef` synchronously → there is no pre-stamp snapshot for the stale-input/ref-lag race to hit. Jon confirmed his original sighting was a single pricing+lead-times apply, can't repro it now, and opted **not** to ship this defensive belt (it would guard a race the awaited save already prevents). This plan is retained as a designed-and-vetted option **only if B009 ever recurs** (instrumentation stays on test for opportunistic capture). The stale-input hypothesis was correct; it simply doesn't manifest under the awaited save. **Do not build.**
 
 ## 0. Context — this is PREVENTION, not a targeted fix
 B009 (TR auto-stamp self-clears after supplier upload) was **non-reproducible in v1.23.1** (Marc+Jon, 3 scenarios incl. 6-in-one-apply; zero post-apply clobbering writer fires; Jon can't manually repro). So there is **no specific stale writer to target** — the input-freshness half of the fix is moot. Jon chose to ship the **defensive save-time belt** as by-construction insurance: the TR flag governs the send-gate (a safety gate he saw fail once), so a belt that makes ANY stale-snapshot write unable to silently drop it is cheap protection independent of which writer might someday regress. Instrumentation stays on test for opportunistic capture.
