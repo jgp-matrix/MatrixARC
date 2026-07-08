@@ -1432,7 +1432,9 @@ Both save paths end in `ref.set(...)` (full-document replace) and both replace t
 
 #### Q2 — Does OPENING trigger a WRITE? → **YES. Save-on-open of a stale snapshot.**
 
-`useEffect(...,[])` at **37471-37476**: on first open, if `migrateProject` changed anything (`didMigrate.current`), fires `safeSave(uid, migrateProject(init))`. `init` is the **dashboard-cached** project prop — stale if the list was cached before another user's rows replicated. This save runs through `saveProject` → wholesale bom overwrite ⇒ **opening clobbers rows another user added since the dashboard cache was taken.** This is the "strips on open" symptom. (A sibling save-on-open was already deleted @37478-37494 for a related runaway-QuoteRev reason; this one survived.)
+`useEffect(...,[])` at **37471-37476**: on first open, if `didMigrate.current`, fires `safeSave(uid, migrateProject(init))`. `init` is the **dashboard-cached** project prop → this save runs through `saveProject` → wholesale bom overwrite. (A sibling save-on-open was already deleted @37478-37494 for a related runaway-QuoteRev reason; this one survived.)
+
+**★ CORRECTION (2026-07-08, per Marc's Phase A diff review):** the guard `didMigrate=useRef(!init.panels)` (37425) is true ONLY when `init` has **no `panels` array** — i.e. LEGACY flat-shape projects (`migrateProject` @10757 reshapes flat→panels only under `!q.panels`). **PRJ402096 has 3 panels → `didMigrate=false` → this effect NEVER fired for it.** So M1's real scope is legacy panel-less projects only (where it IS a genuine stale-write/strip-on-open + QuoteRev-inflation vector — Phase A correctly closes it). **M1 does NOT explain PRJ402096's loss.** PRJ402096's "reverts when the other user opens/works" is M2 (saveProjectPanel wholesale bom overwrite on the editing user's save) + M3 (soft-apply @37243 replacing the other user's unsaved local rows) — see below. Phase B fixes M2+M3, which are the operative mechanisms. (Whether a paneled project has any OTHER on-open write path — ECO backfill @37505, quote-number auto-assign, BC/budgetary auto-saves — is a runtime question for Marc's repro; it does not change Phase B's necessity.)
 
 #### Q3 — Live BOM onSnapshot refresh while open? → **YES, but it REPLACES, not merges.**
 
@@ -1440,7 +1442,7 @@ Both save paths end in `ref.set(...)` (full-document replace) and both replace t
 
 #### Data-loss mechanism (compounding)
 
-1. **M1 — save-on-open (37471)** writes stale `init` bom → drops rows added by another user since dashboard cache. ("Jon added 2 → Andrew opens → 2 gone.")
+1. **M1 — save-on-open (37471)** writes stale `init` bom → drops rows added by another user since dashboard cache. **Scoped to LEGACY panel-less projects only** (guard `!init.panels`) — see ★ CORRECTION above; **NOT PRJ402096's mechanism** (it has panels). Phase A closes M1.
 2. **M2 — every save (saveProject/saveProjectPanel)** overwrites the edited panel's bom wholesale with the saver's React copy → drops concurrent additions absent from that copy. ("Andrew added 6 → Jon opens+saves → some gone.")
 3. **M3 — soft-apply (37243)** replaces local state on a remote save → drops the local user's unsaved rows and can leave the two clients racing to overwrite each other.
 
