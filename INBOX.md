@@ -21,7 +21,7 @@
 
 ---
 
-_(no un-triaged items)_
+- [2026-07-07] GEN — "Remove leftover TEST upload section from Upload Supplier Quote modal" — the Upload Supplier Quote modal shows a "TEST" upload bar along the bottom (orange: "TEST | Test Upload to BC (PRJ402096) → Crum Electric Supply · 2760726-00 · Crum_Quote_2760726-00.pdf") — a remnant of old test scaffolding. Remove it (dev cleanup; user-facing). Note: it hardcodes PRJ402096 (a real customer project) — loosely ties to the G005 test-data-hygiene theme. — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
