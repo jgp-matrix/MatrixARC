@@ -1,6 +1,12 @@
 
 const {useState,useEffect,useRef,useCallback,useMemo}=React;
 
+// G005 Phase 1: test-environment side-effect firewall. TRUE only on the test host, so every
+// `if(IS_TEST_ENV)` gate below is byte-identical no-op on production (matrix-arc.web.app) — zero
+// prod behavior change. Defined FIRST so BC/config init + all side-effect choke points can read it.
+const IS_TEST_ENV=(typeof location!=="undefined"&&location.hostname==="matrix-arc-test.web.app");
+try{if(typeof window!=="undefined")window.IS_TEST_ENV=IS_TEST_ENV;}catch(e){}
+
 // DECISION(v1.19.990): Centralized Anthropic model registry — mirrors
 // functions/models.js. Single source of truth for every Anthropic alias
 // the client invokes. The earlier model-deprecation outage (v1.19.989)
@@ -337,6 +343,11 @@ function searchNIQ(niqDocs,terms){
 const BC_TENANT="d1f2c7f7-fab2-40b5-85c1-06a715e6a157";
 // Default BC config — can be overridden per company from Firestore
 const _BC_DEFAULTS={env:"MATR_SndBx_01152026",companyName:"Matrix Systems LLC",clientId:"75b9ff22-488d-4d4c-88ec-f803f7038716"};
+// G005 Phase 1: known BC SANDBOX environment(s). On the test host, BC WRITES are allowed only to a
+// sandbox env (real, isolated round-trip); a mutating request to any OTHER (production) env is
+// no-op'd by the bcGatedFetch belt (§4). URL-based check = authoritative for where the write lands.
+// Extend this list if the sandbox is re-provisioned under a new name.
+const _BC_SANDBOX_ENVS=["MATR_SndBx_01152026"];
 let _bcConfig={..._BC_DEFAULTS};
 // Legacy constants — computed from _bcConfig, used throughout the codebase
 function _bcApiBase(){return`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0`;}
@@ -406,6 +417,18 @@ function _bcRelease(){
   if(_bcSemaphore.queue.length)_bcSemaphore.queue.shift()();
 }
 async function bcGatedFetch(url,options){
+  // G005 Phase 1 — BC write belt (defense-in-depth). On the test host, a MUTATING request to a
+  // NON-sandbox (production) env is suppressed with a fake-200 so a misconfigured test company can't
+  // write to prod BC. Sandbox writes pass through untouched → real round-trip, real responses (so
+  // write-response readers like created-item id are unaffected in normal test use). Prod host:
+  // IS_TEST_ENV is false → this whole block is skipped → byte-identical behavior.
+  {
+    const _m=((options&&options.method)||"GET").toUpperCase();
+    if(IS_TEST_ENV&&_m!=="GET"&&_m!=="HEAD"&&!_BC_SANDBOX_ENVS.some(e=>String(url).includes(e))){
+      console.warn("[TEST-ENV] BC write suppressed (non-sandbox target):",_m,url);
+      return new Response('{"_testEnvBlocked":true}',{status:200,headers:{"Content-Type":"application/json"}});
+    }
+  }
   while(_bcSemaphore.inflight>=_bcSemaphore.max){
     await new Promise(r=>_bcSemaphore.queue.push(r));
   }
@@ -3469,7 +3492,7 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
     // Task exists — PATCH the description so it stays current with ARC.
     try{
       const url=`${BC_ODATA_BASE}/${taskPage}(${FT_NO}='${encodeURIComponent(projectNumber)}',${FT_TASK_NO}='${encodeURIComponent(taskNo)}')`;
-      await fetch(url,{
+      await bcGatedFetch(url,{
         method:"PATCH",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
         body:JSON.stringify({Description:taskDesc})
@@ -3500,7 +3523,7 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
     console.log(`[BC SVC] Created line 10000 on task ${taskNo} (Unit_Price=${total})`);
   }else{
     const url=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
-    const r=await fetch(url,{
+    const r=await bcGatedFetch(url,{
       method:"PATCH",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},
       body:JSON.stringify({Description:lineDescription,Quantity:1,Unit_Price:total})
@@ -3542,7 +3565,7 @@ async function bcDeleteEcoTask(projectNumber, panelIndex, ecoNumber){
   }catch(_){}
   async function deleteTask(){
     const url=`${BC_ODATA_BASE}/${taskPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}')`;
-    const r=await fetch(url,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
+    const r=await bcGatedFetch(url,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
     return{ok:r.ok||r.status===204||r.status===404,status:r.status,text:r.ok||r.status===204||r.status===404?"":await r.text()};
   }
   let res=await deleteTask();
@@ -3594,7 +3617,7 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   }
   for(const [taskNo,desc] of Object.entries(taskDescs)){
     const url=`${BC_ODATA_BASE}/${taskPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}')`;
-    const r=await fetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},body:JSON.stringify({Description:desc})});
+    const r=await bcGatedFetch(url,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":"*"},body:JSON.stringify({Description:desc})});
     if(r.ok){console.log(`bcSyncPanelTaskDescriptions: task ${taskNo} updated`);}
     else{const t=await r.text();console.warn(`bcSyncPanelTaskDescriptions: task ${taskNo} PATCH failed (${r.status}):`,t);}
   }
@@ -4548,7 +4571,7 @@ async function bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendor
           let lastErr=null,ok=false;
           for(const u of patchUrls){
             try{
-              const pr=await fetch(u,{
+              const pr=await bcGatedFetch(u,{
                 method:"PATCH",
                 headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*","Accept":"application/json"},
                 body:JSON.stringify(body),
@@ -5089,7 +5112,7 @@ async function bcPatchItemOData(itemNo,fields){
   const etag=rec["@odata.etag"];
   // 2. PATCH fields using the ETag
   const patchUrl=`${BC_ODATA_BASE}/ItemCard('${encodeURIComponent(itemNo)}')`;
-  const pr=await fetch(patchUrl,{
+  const pr=await bcGatedFetch(patchUrl,{
     method:"PATCH",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
     body:JSON.stringify(fields)
@@ -5250,7 +5273,7 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
         const etag=existing["@odata.etag"];
         const patchBody={Direct_Unit_Cost:unitCost,Starting_Date:dateStr};
         if(bcUom)patchBody.Unit_of_Measure_Code=bcUom;
-        const pr=await fetch(`${baseUrl}('${encodeURIComponent(existing.Item_No)}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(patchBody)});
+        const pr=await bcGatedFetch(`${baseUrl}('${encodeURIComponent(existing.Item_No)}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(patchBody)});
         if(pr.ok){console.log("bcPushPurchasePrice PATCH OK:",itemNo,vendorNo,unitCost,dateStr);return{ok:true};}
         const ptxt=await pr.text().catch(()=>"");
         console.warn("bcPushPurchasePrice PATCH failed:",pr.status,ptxt);
@@ -5260,7 +5283,7 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
     const payload={Item_No:itemNo,Vendor_No:vendorNo,Starting_Date:dateStr,Direct_Unit_Cost:unitCost};
     if(bcUom)payload.Unit_of_Measure_Code=bcUom;
     console.log("bcPushPurchasePrice POST:",JSON.stringify(payload));
-    const cr=await fetch(baseUrl,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const cr=await bcGatedFetch(baseUrl,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
     if(cr.ok){console.log("bcPushPurchasePrice POST OK:",itemNo,vendorNo,unitCost,dateStr);return{ok:true};}
     const txt=await cr.text().catch(()=>"");
     console.warn("bcPushPurchasePrice POST failed:",cr.status,txt);
@@ -5559,7 +5582,7 @@ async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
   }
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
-  const pr=await fetch(lineUrl,{
+  const pr=await bcGatedFetch(lineUrl,{
     method:"PATCH",
     headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
     body:JSON.stringify({Unit_Price:unitPrice})
@@ -5617,7 +5640,7 @@ async function bcPatchLaborPlanningLines(projectNumber,panelIndex,panel){
       const rec=await gr.json();
       if(rec.Quantity===qty){console.log(`bcPatchLabor ${label}: already ${qty}, skip`);continue;}
       const etag=rec["@odata.etag"];
-      const pr=await fetch(lineUrl,{
+      const pr=await bcGatedFetch(lineUrl,{
         method:"PATCH",
         headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
         body:JSON.stringify({Quantity:qty})
@@ -5642,7 +5665,7 @@ async function bcPatchPanelEndDate(projectNumber,panelIndex,endDate){
   if(!gr.ok){console.warn("bcPatchPanelEndDate: GET failed",gr.status);return;}
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
-  const pr=await fetch(lineUrl,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify({Ending_Date:endDate})});
+  const pr=await bcGatedFetch(lineUrl,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify({Ending_Date:endDate})});
   if(!pr.ok){const t=await pr.text();console.warn("bcPatchPanelEndDate: PATCH failed",pr.status,t);}
   else console.log("bcPatchPanelEndDate: Ending_Date →",endDate,"for task",taskNo);
 }
@@ -5669,7 +5692,7 @@ async function bcPatchJobOData(jobNo,fields){
     if(!rec)throw new Error(`Project '${jobNo}' not found in OData page '${page}'`);
     const etag=rec["@odata.etag"];
     const patchUrl=`${BC_ODATA_BASE}/${page}('${encodeURIComponent(jobNo)}')`;
-    const pr=await fetch(patchUrl,{
+    const pr=await bcGatedFetch(patchUrl,{
       method:"PATCH",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},
       body:JSON.stringify(fields)
@@ -6219,6 +6242,9 @@ let _bcQueueCountSetter=null; // injected by React to update badge
 // treated as "unknown env" and replayed against current env (legacy
 // behavior, preserves backward-compat).
 function bcEnqueue(type,params,description){
+  // G005 Phase 1: don't enqueue BC write-ops on the test host (a queued op would replay against
+  // prod BC on reconnect). Prod: IS_TEST_ENV false → enqueues normally.
+  if(IS_TEST_ENV){console.warn("[TEST-ENV] BC enqueue suppressed:",type,description||"");return;}
   const q=_bcQGet();
   q.push({
     id:`${Date.now()}-${Math.random().toString(36).slice(2,7)}`,
@@ -8305,6 +8331,9 @@ async function buildRfqPdf(group,projectName,rfqNum,rfqDate,responseBy,companyIn
 }
 
 async function sendGraphEmail(graphToken,to,subject,htmlBody,pdfBase64,pdfFilename,extraAttachments){
+  // G005 Phase 1: suppress ALL outbound email on the test host (Jon ruling). Prod: IS_TEST_ENV
+  // false → sends normally. Covers all client Graph sends routed through this choke point.
+  if(IS_TEST_ENV){console.warn("[TEST-ENV] email suppressed:",to,"·",subject);return{suppressed:true,ok:true};}
   // DECISION(v1.19.931): Optional `extraAttachments` — array of
   // {pdfBase64, pdfFilename} so the Send w/BOM flow can attach the BOM
   // Report alongside the Quote. Backwards-compatible: when not supplied,
@@ -8436,6 +8465,8 @@ async function graphReplyToMessage(graphToken,messageId,htmlBody,pdfBase64,pdfFi
     }
   }
   if(atts.length)replyBody.message.attachments=atts;
+  // G005 Phase 1: suppress the reply-all send on the test host (email stray outside sendGraphEmail).
+  if(IS_TEST_ENV){console.warn("[TEST-ENV] reply-all email suppressed for message",messageId);return;}
   const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages/${messageId}/replyAll`,{
     method:"POST",
     headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},
@@ -8455,7 +8486,7 @@ async function bcClearAssemblyBOMLines(parentItemNo,bomPage){
     const lineNo=line.Line_No;
     const etag=line["@odata.etag"];
     const delUrl=`${BC_ODATA_BASE}/${bomPage}(Parent_Item_No='${encodeURIComponent(parentItemNo)}',Line_No=${lineNo})`;
-    const dr=await fetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
+    const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":etag||"*"}});
     if(dr.ok||dr.status===204){deleted++;}
     else{const t=await dr.text();errors.push(`Line ${lineNo}: ${t.slice(0,80)}`);}
   }
@@ -19422,7 +19453,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         // OR-fallback (query both uid AND companyId, merge) so legacy docs
         // remain readable by the original sender forever, while new docs
         // are team-shared. Zero data migration; zero breaking change.
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:_normalizeEmails(emails[group.vendorName]),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||""}).catch(e=>console.warn("rfqUpload save failed:",e));
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:_normalizeEmails(emails[group.vendorName]),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||"",isTest:IS_TEST_ENV}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
@@ -22841,7 +22872,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                             try{var allPages=await bcDiscoverODataPages();var iPage=allPages.find(function(n){return /^ItemCard$/i.test(n);});
                               if(iPage){var gr=await fetch(BC_ODATA_BASE+"/"+iPage+"?$filter=No eq '"+item.number+"'",{headers:{"Authorization":"Bearer "+_bcToken}});
                                 if(gr.ok){var gd=await gr.json();var rec=(gd.value||[])[0];if(rec){var etag=rec["@odata.etag"]||"*";
-                                  await fetch(BC_ODATA_BASE+"/"+iPage+"('"+item.number+"')",{method:"PATCH",headers:{"Authorization":"Bearer "+_bcToken,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});
+                                  await bcGatedFetch(BC_ODATA_BASE+"/"+iPage+"('"+item.number+"')",{method:"PATCH",headers:{"Authorization":"Bearer "+_bcToken,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});
                                 }}}
                               setMfrCodes(function(prev){var n=Object.assign({},prev);n[item.number]=code;return n;});
                             }catch(ex){console.warn("MFR save failed:",ex);}
@@ -32936,6 +32967,8 @@ function CADLinkSendModal({project,onClose}){
         <p style="font-size:12px;color:#64748b;margin-top:16px">${panels.length} file${panels.length!==1?"s":""} attached. Generated by ARC.</p>
       </div>`;
       const msg={subject,body:{contentType:"HTML",content:htmlBody},toRecipients:toEmail.split(/[,;]\s*/).filter(e=>e.trim()).map(e=>({emailAddress:{address:e.trim()}})),attachments};
+      // G005 Phase 1: suppress the CADLink-BOM email send on the test host (stray outside sendGraphEmail).
+      if(IS_TEST_ENV){console.warn("[TEST-ENV] email suppressed:",toEmail,"·",subject);onClose();arcAlert("[TEST ENV] Email suppressed — CADLink BOMs NOT sent to "+toEmail+".");setSending(false);return;}
       const r=await fetch("https://graph.microsoft.com/v1.0/me/sendMail",{method:"POST",headers:{"Authorization":`Bearer ${graphToken}`,"Content-Type":"application/json"},body:JSON.stringify({message:msg,saveToSentItems:true})});
       if(!r.ok){const err=await r.text();throw new Error(err);}
       onClose();arcAlert("CADLink BOMs sent to "+toEmail);
@@ -49397,4 +49430,11 @@ function Root(){
   return(<><App user={user}/><ArcDialogHost/><PopupBlockedModal/></>);
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<Root/>);
+// G005 Phase 1: persistent, unmissable TEST-MODE banner. Renders only on the test host
+// (IS_TEST_ENV) — returns null on production, so zero prod impact. Mounted alongside Root so it
+// shows across every route (login, portal, main app).
+function TestEnvBanner(){
+  if(!IS_TEST_ENV)return null;
+  return <div style={{position:"fixed",top:0,left:0,right:0,zIndex:2147483647,background:"#b45309",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",padding:"4px 12px",letterSpacing:0.3,fontFamily:"inherit",boxShadow:"0 2px 10px rgba(0,0,0,0.45)"}}>⚠ TEST ENVIRONMENT — BC writes go to the sandbox; emails &amp; notifications suppressed. NOT production.</div>;
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<><TestEnvBanner/><Root/></>);
