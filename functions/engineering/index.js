@@ -31,6 +31,9 @@ exports.onCustomerReviewSubmitted = functions.firestore
     const before = change.before.data();
     const after = change.after.data();
     if (before.status === after.status || after.status !== 'submitted') return null;
+    // G005 Phase 1: test-env review docs are stamped isTest:true by the client at reviewUploads create.
+    // Skip all side-effects so a test customer-review can't fire real email. Prod: isTest absent → normal.
+    if (after.isTest === true) { functions.logger.info('[TEST-ENV] onCustomerReviewSubmitted skipped (isTest reviewUpload)', context.params.token); return null; }
 
     const { uid, projectName, bcProjectNumber, designerName, customerName, customerEmail, salespersonEmail } = after;
     const token = context.params.token;
@@ -156,6 +159,8 @@ exports.sendReviewEmail = functions.runWith({ maxInstances: 10 }).https.onCall(a
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   const { to, projectName, bcProjectNumber, reviewType, designerName, message } = data || {};
   if (!to) throw new functions.https.HttpsError('invalid-argument', 'Recipient email required');
+  // G005 Phase 1: the test client passes isTest:true → skip the real review email. Default false = prod-safe.
+  if (data && data.isTest === true) { functions.logger.info('[TEST-ENV] sendReviewEmail suppressed', to); return { success: true, suppressed: true }; }
 
   if (!SENDGRID_KEY) throw new functions.https.HttpsError('failed-precondition', 'Email not configured');
 

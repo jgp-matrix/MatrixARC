@@ -17784,7 +17784,8 @@ function EngineeringQuestionsModal({panel,uid,onUpdate,onSave,onClose,memberMap}
       await firebase.app().functions().httpsCallable("sendEngineerQuestionEmail")({
         to:emailTo,projectName:panel.drawingNo||panel.name||"Panel",
         bcProjectNumber:panel.bcProjectNumber||"",panelName:panel.name||"Panel",
-        questions:openQs.map(q=>({question:q.question,category:q.category,severity:q.severity,rowRef:q.rowRef}))
+        questions:openQs.map(q=>({question:q.question,category:q.category,severity:q.severity,rowRef:q.rowRef})),
+        isTest:IS_TEST_ENV
       });
       setEmailPicker(false);setEmailTo("");
     }catch(e){console.warn("Email failed:",e);}
@@ -18630,7 +18631,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
       if(!token)throw new Error("inviteTeamMember returned no token");
       const payload=btoa(JSON.stringify({c:companyId,r:inviteRole,e:email,t:token}));
       const url=`${window.location.origin}${window.location.pathname}?join=${payload}`;
-      await fbFunctions.httpsCallable("sendInviteEmail")({to:email,inviteUrl:url,role:inviteRole});
+      await fbFunctions.httpsCallable("sendInviteEmail")({to:email,inviteUrl:url,role:inviteRole,isTest:IS_TEST_ENV});
       setGeneratedLinks(l=>[...l,{email,role:inviteRole,url,sent:true}]);
       setPendingInvites(p=>[...p,{token,email,role:inviteRole,invitedAt:Date.now()}]);
       setInviteEmail("");
@@ -30249,7 +30250,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     salespersonEmail:project.quote?.salespersonEmail||project.bcSalespersonEmail||"",
                     notes:extNotes.map(n=>({id:n.id,number:n.number,text:n.text||"",detail:n.detail||"",x:n.x||5,y:n.y||5,pageNum:n.pageNum,initials:n.initials||"",date:n.date||"",visibility:"external"})),
                     drawingPages:pageUrls,
-                    status:"pending",sentAt:Date.now(),expiresAt:Date.now()+24*60*60*1000,token:tok
+                    status:"pending",sentAt:Date.now(),expiresAt:Date.now()+24*60*60*1000,token:tok,
+                    isTest:IS_TEST_ENV /* G005 Phase 1: gates onCustomerReviewSubmitted server-trigger */
                   };
                   await fbDb.collection("reviewUploads").doc(tok).set(reviewDoc);
                   // Build + send email

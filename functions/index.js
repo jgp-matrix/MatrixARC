@@ -603,6 +603,8 @@ exports.sendInviteEmail = functions.runWith({ maxInstances: 10 }).https.onCall(a
   const { to, inviteUrl, role } = data;
   if (!to || !inviteUrl) throw new functions.https.HttpsError('invalid-argument', 'Missing fields');
   if (!SENDGRID_KEY) throw new functions.https.HttpsError('failed-precondition', 'Email not configured');
+  // G005 Phase 1: the test client passes isTest:true → skip the real invite email. Default false = prod-safe.
+  if (data && data.isTest === true) { functions.logger.info('[TEST-ENV] sendInviteEmail suppressed', to); return { success: true, suppressed: true }; }
 
   await sgMail.send({
     to,
@@ -626,6 +628,10 @@ exports.onSupplierQuoteSubmitted = functions.firestore
     const before = change.before.data();
     const after = change.after.data();
     if (before.status === after.status || after.status !== 'submitted') return null;
+    // G005 Phase 1: test-env submissions are stamped isTest:true by the client at rfqUploads create.
+    // Skip ALL side-effects (bell notif + push + Teams + email) so a test supplier-quote can't fire
+    // real notifications. Prod: isTest is absent/false → normal. (Default-false = prod-safe.)
+    if (after.isTest === true) { functions.logger.info('[TEST-ENV] onSupplierQuoteSubmitted skipped (isTest rfqUpload)', context.params.token); return null; }
 
     const uid = after.uid;
     const projectName = after.projectName || '';
@@ -779,6 +785,9 @@ exports.onIssueReported = functions.firestore
 
     const companyId = context.params.companyId;
     const logId = context.params.logId;
+    // G005 Phase 1: skip issue notifications for the dedicated TEST company (companies/{cid}.isTestCompany:true)
+    // — a test user filing an issue must not email/Teams/push real admins. Prod companies lack the flag → normal.
+    try { const _tc = await db.doc(`companies/${companyId}`).get(); if (_tc.exists && _tc.data().isTestCompany === true) { functions.logger.info('[TEST-ENV] onIssueReported skipped (test company)', companyId); return null; } } catch (e) { /* company read failed → proceed normally */ }
     const reporterEmail = entry.userEmail || '';
     const reporterName = entry.userName || reporterEmail.split('@')[0] || 'A user';
     const description = (entry.description || entry.message || '').toString();
@@ -911,6 +920,8 @@ exports.sendEngineerQuestionEmail = functions.runWith({ maxInstances: 10 }).http
   if (!SENDGRID_KEY) throw new functions.https.HttpsError('failed-precondition', 'Email not configured');
   const { to, projectName, bcProjectNumber, panelName, questions, recipientUid } = data;
   if (!to || !questions?.length) throw new functions.https.HttpsError('invalid-argument', 'Missing recipient or questions');
+  // G005 Phase 1: the test client passes isTest:true → skip the engineer-question email + Teams post + push. Default false = prod-safe.
+  if (data && data.isTest === true) { functions.logger.info('[TEST-ENV] sendEngineerQuestionEmail suppressed', to); return { success: true, suppressed: true }; }
 
   const senderRecord = await admin.auth().getUser(context.auth.uid);
   const senderEmail = senderRecord.email || 'ARC System';
