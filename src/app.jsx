@@ -45995,7 +45995,7 @@ function ItemsTab({uid}){
             for(let i=0;i<allItems.length;i+=BATCH){
               const batch=allItems.slice(i,i+BATCH);
               setMfrLookupProgress(`Dry run: ${i+1}–${Math.min(i+BATCH,allItems.length)} of ${allItems.length}…`);
-              const r=await lookupFn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE,dryRun:true,items:batch});
+              const r=await lookupFn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE,dryRun:true,items:batch,isTest:IS_TEST_ENV});
               allResults.push(...(r.data.results||[]));
               allUnknown.push(...(r.data.unknownMfr||[]));
             }
@@ -46016,7 +46016,7 @@ function ItemsTab({uid}){
             for(let i=0;i<matchedItems.length;i+=BATCH){
               const batch=matchedItems.slice(i,i+BATCH);
               setMfrLookupProgress(`Pushing ${i+1}–${Math.min(i+BATCH,matchedItems.length)} of ${matchedItems.length}…`);
-              const r=await lookupFn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE,dryRun:false,items:batch});
+              const r=await lookupFn({bcToken:_bcToken,bcODataBase:BC_ODATA_BASE,dryRun:false,items:batch,isTest:IS_TEST_ENV});
               allResults.push(...(r.data.results||[]));
               totalPatched+=r.data.patched||0;
             }

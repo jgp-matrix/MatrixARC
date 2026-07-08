@@ -2197,6 +2197,10 @@ exports.bulkMfrLookup = functions.runWith({
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
 
   const { bcToken, bcODataBase, dryRun = true, items: inputItems } = data || {};
+  // G005 Phase 1: bulkMfrLookup is the ONE server-side BC-writer (POST Manufacturers + PATCH ItemCard).
+  // The client bcGatedFetch belt can't catch it, so the test client passes isTest:true → force dry-run
+  // for the WRITE portion (lookup/return still runs so the tool works in test; just no BC write).
+  const _skipMfrWrites = dryRun || (data && data.isTest === true);
   if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
   assertBcODataBase(bcODataBase);
   if (!Array.isArray(inputItems) || !inputItems.length) throw new functions.https.HttpsError('invalid-argument', 'items array required');
@@ -2249,7 +2253,7 @@ exports.bulkMfrLookup = functions.runWith({
         unknownMfr.push({ itemNo: pn, manufacturer });
         results.push({ itemNo: pn, desc, manufacturer, code: null, source, status: 'unknown_mfr' });
       } else {
-        if (!dryRun) {
+        if (!_skipMfrWrites) {
           try {
             // Ensure manufacturer record exists in BC before patching item
             const mfrChk = await fetch(`${bcODataBase}/Manufacturers?$filter=Code eq '${code}'&$top=1`, { headers: bcHeaders });
@@ -2273,7 +2277,7 @@ exports.bulkMfrLookup = functions.runWith({
             if (pr.ok || pr.status === 204) patched++;
           } catch (e) { /* continue */ }
         }
-        results.push({ itemNo: pn, desc, manufacturer, code, source, status: dryRun ? 'dry_run' : 'patched' });
+        results.push({ itemNo: pn, desc, manufacturer, code, source, status: _skipMfrWrites ? 'dry_run' : 'patched' });
       }
     }
 
