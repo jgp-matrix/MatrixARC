@@ -9,7 +9,9 @@
 
 ## Startup Directive — Run FIRST on Every New Session
 
-**First: which environment are you in?** (TRIAL 2026-07-01 — Freddy is being run in a terminal to eliminate copy-paste relay.)
+**★ You orchestrate team startup (as of 2026-07-02).** When Jon opens a fresh CCD session and runs `/team-startup`, that session is YOU — Freddy — and you run the boot. You took this over from Marc once you gained repo file access (Marc previously orchestrated only because he was the one who could read the handoff `.md` files and paste them to a browser-based you). The step-by-step lives in the `/team-startup` skill (`.claude/commands/team-startup.md`), driven by `orchestrator: "analyst"` in `.claude/team-config.json`. In brief: verify repo state (`./tools/startup-auto.sh`, regenerate `SESSION-STATE.md` if stale), generate path-based pastes for Marc + Coach, wait for Jon to bring both up, then run the **automated comms-check sync** over the cross-session `send_message` bus (locate their sessions via `list_sessions`, message both, verify their bus replies match on version / live master-tip SHA / top-of-queue / "comms OK"). Orchestration is a coordination duty — it does NOT widen your read-to-route lane. If the skill itself isn't loaded, invoke it; don't reconstruct the procedure from memory.
+
+**Environment: CCD with repo READ access (standing default since 2026-07-01).** You are NOT in the browser anymore. SKIP `conversation_search` (not available in CCD). Recover from the repo instead — read this file, then `SESSION-STATE.md` (esp. the ⭐ NEXT UP section), `TODO.md`, and the tail of `COACH.md`. You have direct read like Coach: read committed docs yourself (no waiting for Jon to drag/paste them), and deliver your Briefs / Analyst Reviews as committed repo files. (The recovery step below still describes the legacy browser path for reference only.)
 
 - **Terminal (repo access — current trial default):** SKIP `conversation_search` (not available in a terminal). Recover from the repo instead — read this file, then `SESSION-STATE.md` (esp. the ⭐ NEXT UP section), `TODO.md`, and the tail of `COACH.md`. You have direct read/write like Coach: read committed docs yourself (no more waiting for Jon to drag/paste them), and **deliver your Briefs / Analyst Reviews as committed repo files, not as pastes for Jon to relay.** LANE GUARDRAIL: repo access does NOT widen your lane — you still ANALYZE and ROUTE. Reading a file to inform a decision is fine; doing Coach's code-path tracing or Marc's implementation is not. When you need a code trace or runtime pull, still route it to Coach/Marc. Then do the "state what you recovered" step below.
 - **Browser (Claude.ai, no repo access):** perform the `conversation_search` recovery step below.
@@ -85,7 +87,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.21.23 (defined in `public/index.html`; master tip `1e9129c2`, 2026-07-01). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** v1.23.3 (defined in `public/index.html`; release `d373a510`, 2026-07-07). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -320,7 +322,35 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-01)
+## Recently Active Work (as of 2026-07-07)
+
+### Shipped 2026-07-07 — G005 Phase 1 + quick-win batch (huge session)
+- **G005 Phase 1 — test-env isolation firewall. SHIPPED v1.23.3.** `IS_TEST_ENV` (hostname) gates all external side-effects on `matrix-arc-test`: 14 client BC writes through one `bcGatedFetch` belt, client email (3 sites) suppressed, server triggers/callables gated (isTest/isTestCompany), `bulkMfrLookup` server-side BC write gated, TEST-MODE banner, test BC→sandbox. **Money-path/ERP-write harm PROVEN CLOSED.** Data-collision only Phase-1-partial (test-company convention is BLOCKED by 1-company-per-user → Phase 2 is the real fix + unblocks the deferred mutating-tail live demo). §10-8 prod-smoke is next session's first task. Lesson: the layered review caught 3 enumeration misses (BC 2→14, server sweep, bulkMfrLookup) — treat plan counts as a FLOOR.
+- **Quick-win batch v1.23.2** — G006/#190/#195/B002/B001/B003 (6 items, one patch).
+- **#192 fix FIRMED + ship-approved** (two correct-by-construction gates, `docs/192-FREDDY-FIX-BRIEF.md`) — build next, slots after the prod-smoke.
+- **B009 PARKED** (not reproducible; belt plan banked). Near-miss on PRJ402096 (real customer project) cleaned + restored.
+- **Backlog fully scoped (Briefs) + categorized** (91 legacy items tagged B=45/F=27/G=19 via a subagent; index `docs/LEGACY-BFG-CATEGORIZATION.md`; 4 stale closed).
+- *(Earlier this session, RESOLVED: F002 v1.21.26, F003 v1.22.0, checkbox/B006/B007 v1.22.1-.3, F001 v1.23.0, B010 v1.23.1.)*
+
+### Shipped 2026-07-03 (v1.21.25) — #199 Tech Review flag + team-protocol reset
+- **#199 — Per-line Tech Review flag + hard send-gate. SHIPPED v1.21.25, RESOLVED.** Per-BOM-line Tech-Review
+  checkbox; auto-stamps on supplier crosses (`@38978`, unconditional → a supplier re-cross re-arms a resolved
+  row); hard send-gate across all 7 send surfaces; reviewer per-row Resolve + approve-sweep. Full **T1–T18
+  live-passed** (Jon co-drove the React-checkbox clicks — automation can't set a controlled checkbox; Marc
+  ref-drove buttons + verified). Ran the full Brief→Supplement→Analyst Review→Plan→P1/P2/P3→verify pipeline;
+  MED-1/2/3 caught by Coach cross-check + fixed. Two in-pass fixes shipped with it: **await-fix `41824f6c`**
+  (portal-apply reload-race, pre-existing) + **count-fix `107b960b`** (Jon-found multi-line count display).
+  Commits P1 `13f06fcf`/`66494253`, P2 `a5253d42`, P3 `a0e39335`, MED-3 `c46184aa`, release `333f385d`.
+- **★ NEW TEAM PROTOCOLS (this session — internalize):**
+  - **PER-PHASE GATING** — the team HOLDS after each phase for Jon's explicit "go"; a question to Jon FREEZES
+    the whole team (no self-solving); Freddy MINIMIZES cross-session sends (each is a hardcoded per-send
+    Allow-Once prompt); deploy is its own Jon-released checkpoint; "HOLD"/"STOP" freezes all.
+  - **CLOSE-OUTS RUN FROM FREDDY** (Jon ruled 2026-07-03) — like startup. Freddy orchestrates the close-out
+    directly. Mechanism follow-up: update `.claude/commands/team-closeout.md` + team-config (still say
+    "Implementer orchestrates") to analyst/Freddy.
+  - **Comms:** the cross-session Allow-Once is per-SEND (not per-target) — confirmed live; only lever is fewer
+    sends. (Deeper investigation tabled by Jon.)
+  - Full detail: SESSION-STATE.md (2026-07-03) + CLAUDE.md.
 
 ### Shipped 2026-07-01 (v1.21.12 → v1.21.23)
 - **#182 — Item Vendor 3-part-key fix. RESOLVED, T3 VERIFIED LIVE (32 collisions → 0).**
@@ -675,117 +705,47 @@ Onboarding: Freddy gets BOTH FREDDY.md + FREDDY-PASTE.md at session start.
    [#192 REVERT-FIRE] logging) to CATCH the transient before building the fix, rather than fixing
    on strong-inference. This is the disciplined default for intermittent/timing bugs.
 
+
 ---
 
-# Session State — 2026-07-01 MDT (#182 verified · #187/#191 shipped · #192 regression · #193 pending-verify)
+# Session State — 2026-07-07 MDT (regen at close-out · G005 Phase 1 SHIPPED v1.23.3 · backlog fully scoped + categorized · B009 parked)
 
 ## Version
-**v1.21.23** (deployed 2026-07-01, PRODUCTION). Ten patch bumps this session over v1.21.13:
-- v1.21.14 = #187 Phase 2 (customer tier + relocation)
-- v1.21.15–.18 = #187 relocation fix + right-justify (on-screen + PDF)
-- v1.21.19 = #192 widen BUDGETARY auto-set to all red rows (⚠ regression, see below)
-- v1.21.20 = #191 quote-# assign on all send paths + subject recompute
-- v1.21.21 = #192 TEMP instrumentation ([#192 REVERT-FIRE] log)
-- v1.21.22 = #191 4th-path closer (handleGeneratePdf)
-- v1.21.23 = #193 Send-To-Sales tab
-- (v1.21.12/.13 earlier = #186 guard / #187 Phase 1)
+**v1.23.3** (deployed 2026-07-07, PRODUCTION). G005 Phase 1 test-env firewall (client) + Functions gates live.
 
 ## Deploy State
-- **Master tip:** `966f3055` (close-out doc/config commits; release = `1e9129c2` v1.21.23). **`master == origin/master`** (in sync). No feature branches.
-- Production hosting: **https://matrix-arc.web.app** serving v1.21.23. All session code committed + deployed.
-- **#192 instrumentation is LIVE** (temporary, tagged "#192 TEMP INSTRUMENTATION" — the `_redReasonBreakdown`
-  helper + the "[#192 REVERT-FIRE]" log at ~app.jsx:37246). STRIP it after the #192 regression fix.
-- Uncommitted at close-out (left for their owners): Coach's untracked docs (plans/verifications/supplements),
-  `.gitignore`, `.claude/settings.json`, `tools/arc-*.sh` — Coach commits these at Coach's close-out.
+- **Master tip:** `dc14eea8` (close-out docs). **Release commit = `d373a510` (v1.23.3)**. `master == origin/master`. No feature branches.
+- Production: **https://matrix-arc.web.app** serving **v1.23.3**. Functions ALSO deployed this session (G005 server gates; prod-safe default-false).
+- **Working tree:** 2 UNTRACKED files present — `BACKLOG-REVIEW.docx` + `BACKLOG-REVIEW.html` (NOT ours — likely Dez's legacy-screen output; left for their owner, do not sweep).
 
-## ⭐ NEXT UP — analyst leads (top 10 · #192 REGRESSION first)
+## ⭐ NEXT UP — analyst leads (ranked)
+1. **★ G005 §10-8 PROD-REGRESSION SMOKE — FIRST task.** G005 Phase 1 just shipped to prod; confirm on prod (v1.23.3) that a normal BC write + an email fire NORMALLY (IS_TEST_ENV false → byte-identical). Fast sanity that the flip didn't regress prod. Then §10-1 spot (banner absent on prod).
+2. **#192 BUDGETARY false auto-revert — fix FIRMED + SHIP-APPROVED (build it).** Two correct-by-construction gates before the auto-revert prompt: Gate 1 SETTLED (bail if bg reprice in-flight; `_bgTasks` signal), Gate 2 STABLE (re-confirm no-red after settle). Jon ruled ship-now. Build → Coach quick-review → deploy; keep instrumentation 1 cycle then strip. Spec: `docs/192-FREDDY-FIX-BRIEF.md`.
+3. **G005 mutating-tail live demo (§10-4/5/6/7)** — DEFERRED: BLOCKED by no isolated test company (1-company-per-user, no switcher). Needs a dedicated test USER account (Jon creates) OR Phase 2. Covered by-construction meanwhile (Coach). Resume: `docs/G005-VERIFY-CONTINUATION.md`.
+4. **Features cluster F004/F005/F007/F008** — scoped, build-ready as ONE batch. **F008 ~90% already built** (banner + `_system/version` broadcast); **F007 sort infra exists**; F004/F005 small. Next: Coach touch-point confirm → build. Brief: `docs/F004-F005-F007-F008-CLUSTER-BRIEF.md`.
+5. **Bugs cluster B008/B011/B005** — scoped. B008 (Supplier-Portal link keys `sub.id` not `uploadToken` @20354) + B005 (readOnly re-arm) small; B011 money-path (harden `lineItems` writes @31304/31340/32004/32147, `_nullifyUndefined` Date/Map caveat). Brief: `docs/B008-B011-B005-BUGS-SCOPING-BRIEF.md`.
+6. **MED features F006/#197/#198** — scoped, TRACE-GATED (Coach code-trace before build). #197 (ship-date calc EXISTS @1261, re-anchor to PO-received); #198 (review-lock has an auto-clear @34140 — trace WHY it sticks); F006 (needs per-send doc snapshot). Brief: `docs/F006-197-198-SCOPING-BRIEF.md`.
+7. **G005 Phase 2** — separate Firebase project + dedicated test user. The REAL data-collision fix AND what unblocks the mutating-tail live demo. Now well-motivated (Phase 1's test-company mitigation is blocked by the 1-company-per-user architecture).
+8. **#194 global email/metrics** — needs a PRODUCT conversation with Jon (what metrics matter) before scoping. Not blind-scopable.
+9. **Relevance/staleness pass over the remaining ~87 legacy items** — the bigger backlog-shrink lever (Dez teed up); needs Coach/Marc reads + Freddy ranking.
 
-**Start here.** Take the reins per your Startup Directive. Top priority is the #192 regression (teed up at #1);
-the rest is the ranked fallback (re-prioritize if you see a better next move).
+## What shipped this session (2026-07-07)
+- **G005 Phase 1 — test-env isolation firewall. SHIPPED v1.23.3.** `IS_TEST_ENV` (hostname) gates ALL external side-effects on the test host: all **14** client BC writes routed through the single `bcGatedFetch` belt (plan said 2 — caught by re-grep); client email (3 sites) suppressed; server triggers/callables gated (isTest/isTestCompany); `bulkMfrLookup` server-side BC write gated (the one exception to "BC is client-side"); TEST-MODE banner; test BC → sandbox `MATR_SndBx`. **Money-path/ERP-write harm PROVEN CLOSED** (§10-1/2/3/6 live). Three independent review passes each caught a real enumeration miss. Brief: `docs/G005-TEST-ENV-ISOLATION-BRIEF.md`; Plan: `docs/G005-COACH-BUILD-PLAN.md`.
+- **Quick-win batch — SHIPPED v1.23.2** (`9d89f26b`): G006 (portal copy), #190 ("Save"→full-modal confirmed), #195 (false BUDGETARY entry), B002 (state-aware TR message), B001 (OAuth trailing-dot), B003 (RFQ-Apply not-quoted list hidden).
+- *(Earlier in-session, RESOLVED in tracker: F002 v1.21.26, F003 v1.22.0, checkbox/B006/B007 v1.22.1-.3, F001 v1.23.0, B010 v1.23.1.)*
 
-1. **🔴 #192 REGRESSION (TEED UP — do first)** — auto-revert CLEARS BUDGETARY on red-row projects on OPEN
-   (Noah watched it uncheck). Mechanism strong-inferred (NOT directly observed): background reprice on open
-   transiently drives all-non-red ≥600ms → `_hasRedRows(latest)` false at the debounced fire (~app.jsx:37246) →
-   false "Remove Budgetary?" dialog. **Instrumentation is LIVE (v1.21.21)** — the "[#192 REVERT-FIRE]" console
-   log appearing AT ALL confirms the transient. **Awaiting Noah's intermittent repro w/ console open.** FIX
-   DIRECTION: don't auto-revert on the initial-open / bg-reprice re-fire; require a STABLE clean state (re-check
-   after settle) before prompting. Then STRIP the instrumentation. Trace: docs/192-BUDGETARY-REVERT-REGRESSION-TRACE.md.
-   **⚠ #192 is #1 but EVIDENCE-GATED** — not team-actionable until the "[#192 REVERT-FIRE]" log appears on Noah's
-   repro. **First UNBLOCKED team action = #188 build (#3 below); run it in PARALLEL so #192's #1 priority doesn't
-   idle Marc.** Routing state at close: Marc FREE (queue #188 build → #196 trace); Coach IDLE (#192 fix-plan
-   blocked on the capture). (Full analyst hand-off: docs/2026-07-01-FREDDY-BROWSER-FINAL-DUMP.md.)
-2. **#193 Send-To-Sales — VERIFY** (v1.21.23, done-pending) — Jon verify + Coach verify: default tab = Send To
-   Sales, recipient pre-fills own email (editable), tab-switch swaps recipient, real-send semantics, writes
-   `quote_send` to `qvHistory[]`. Plan: docs/193-SEND-TO-SALES-BUILD-PLAN.md.
-3. **#188 validate-at-push vendor fix** (MED, plan APPROVED, shovel-ready) — two-tier (#184-safe); heals
-   PRJ402124's V00102 rows on next push. Build not started. Plan: docs/188-VALIDATE-AT-PUSH-PLAN.md.
-4. **#197 ship-date on PO Received modal** (MED) — compute calendar ship date = PO received date + lead time
-   (ARC only stores duration today); mismatch OA messaging. PREREQ: Coach reads the lead-time formula → Brief.
-5. **#196 locked-quote overlay covers Receive PO** (LOW-MED, latent) — lock shouldn't gate forward workflow
-   (PO receipt). Trace not run. Workaround: unlock.
-6. **#198 Client Review approval step** (MED) — no "Approved" action; project stuck "Client Review In Progress —
-   Edits Locked". Add a client-facing approve that clears the lock. (Renumbered from #191.)
-7. **#190 "Save Defaults" → "Save" relabel** (LOW) — pending Coach confirm the button commits the full modal.
-8. **#184 push concurrency** (LOW) — Firestore "resource-exhausted" under broad Push (adjacent to #182).
-9. **#185 Send-RFQ Contacts dropdown** (LOW) — looks inert (correct dedup) + InterMtn duplicate-email artifact.
-10. **#194 global ARC email/metrics + click-tracing** (feature placeholder) — #193's `quote_send` log is the
-    first feed. Needs a Brief.
+## Key state carried forward
+- **B009 (supplier-cross TR auto-stamp clears) — PARKED.** Not reproducible in v1.23.1 (the awaited-save B004 prevents the hypothesized race); Jon "it's good." Belt fix plan BANKED (`docs/B009-COACH-FIX-PLAN.md`, recency-stamp) — ready if it recurs. Synthetic test data cleaned; PRJ402096 (a REAL customer project — near-miss) restored 11/11. BC writes landed in sandbox (not prod).
+- **Backlog fully SCOPED + CATEGORIZED.** All actionable items have Briefs (above). Legacy: 91 open `#N` items tagged B=45/F=27/G=19 (tag-only, keeps #N) — index `docs/LEGACY-BFG-CATEGORIZATION.md`; 4 stale closed (#24/#75/#76/#96). Backlog is ~50% bugs (several money-path/BC).
+- **G005 harm scoping (don't over-claim):** BC/ERP-write harm = PROVEN CLOSED. Firestore data-collision = Phase-1 PARTIAL (test-company convention, itself blocked) → full closure is Phase 2.
 
-Further carry (below the top 10): #195 (cosmetic — Print-as-Firm checklist shows auto-flagged BUDGETARY on
-override), #176/#177 (LOW residuals), #58/C15 Parts 2/4/7, #165(A) pending Jon eyeball, #159 (Copy-to-New-Quote),
-Coach C118 (#165 detector-diff).
+## Team workflow state (unchanged; see CLAUDE.md)
+- **Per-phase gating** (HOLD after each phase for Jon's "go"; a question FREEZES the team; deploy is its own Jon checkpoint; Freddy minimizes sends — Allow-Once is per-send/hardcoded, G001).
+- **Hub-and-spoke through Freddy**; **hybrid routing** (low-stakes mechanical → subagents, Jon-gated; high-stakes → 4 standing sessions). Subagent used successfully this session for the 91-item legacy categorization.
+- **Close-outs + startup orchestrated by Freddy.**
 
-## What shipped this session
-- **#182 (v1.21.11 `7cf55a82`) — Item Vendor EntityWithSameKeyExists.** 3-part PATCH key fix. **T3 VERIFIED
-  LIVE 2026-07-01: 32 collisions → 0.** RESOLVED.
-- **#187 (v1.21.13→.18) — quote-validity cascade + valid-until relocation + PDF right-justify.** 4-tier cascade,
-  single-source `project.quoteExpiresAt`; Phase 1 (`543e1700`) + Phase 2 customer tier (`ee085025`); combined
-  valid-until row (doubling + PDF orphan fixed), on-screen right-justified, PDF right-aligned. RESOLVED.
-- **#189 — global default won't persist.** Not a defect (Jon hadn't clicked "Save Defaults"). RESOLVED; relabel → #190.
-- **#191 (v1.21.20 `896c2e6e` + v1.21.22 `6ed639b5`) — quote # missing.** New idempotent `ensureQuoteNumber`;
-  all 4 quote-PDF paths assign before build; subject recompute. Backfilled PRJ402119→MTX-Q202030,
-  PRJ402118→MTX-Q202031. RESOLVED (Noah confirms send-flow as backstop).
-- **#192 (v1.21.19 `a30d975c`) — widened BUDGETARY auto-set to all red rows** (14 sites). DONE, but see the
-  🔴 regression above (auto-revert false-clear on open).
-- **#193 (v1.21.23 `39c8d6ac`) — Send-To-Sales tab.** DONE-PENDING-VERIFY.
-
-## New findings logged this session
-- **#188** (MED) stale/phantom bcVendorNo on Push (plan approved). **#190** (LOW) Save relabel. **#192 regression**
-  (🔴 top priority). **#194** (feature) metrics. **#195** (LOW cosmetic) Print-as-Firm checklist. **#196** (LOW)
-  locked overlay covers Receive PO. **#197** (MED) ship-date on PO Received modal. **#198** (MED) Client Review
-  approval step (renumbered from #191). See TODO.md for full text.
-
-## Team workflow state (2026-07-01)
-- **★ ANALYST PIVOT — browser-Freddy → terminal-Freddy (CCD), effective NEXT SESSION:** Freddy now runs in CCD
-  (Claude Code Desktop) with repo-READ access and boots from THIS SESSION-STATE, **REPLACING** browser-Freddy —
-  **ONE live analyst, no overlap** (never both concurrent; handoff is clean via this file). Boundary unchanged
-  (reads-to-route, does NOT build/trace); onboarding = FREDDY.md + FREDDY-PASTE.md (both). **CCD startup mechanics
-  are TBD — Marc establishes them with the first terminal-Freddy session** (launch/command, how pastes+reports
-  flow, how Freddy receives Coach/Marc outputs). See the "Terminal-Freddy (CCD) role addition" section in FREDDY.md.
-  NOTE: "terminal-Freddy" = CCD **Desktop** (not the Terminal CLI, which per the cross-session lesson below cannot
-  receive messages).
-- **Controlled-tab title marker:** the Claude-driven tab is stamped `🤖 CLAUDE-CONTROLLED ▸ ARC`
-  (`document.title`), re-stamped after every reload/navigation (app resets it). Per CLAUDE.md.
-
-## Session infrastructure lessons
-- **Controlled-tab instability:** heavy in-page JS (recursive React-fiber scans, large JSON.stringify dumps)
-  FREEZES/kills the Claude-in-Chrome tab. Keep probes lightweight (small DOM queries, bounded returns). Reading
-  Firestore/company data: capture companyId via a lightweight `firebase.firestore().collection/doc` path-logger
-  patch, then read `companies/{cid}/…` directly (the app renders from the company-scoped source, NOT
-  `users/{uid}/projects` — legacy). The MCP console reader does NOT reliably capture the app's own console.log
-  (e.g. `[BG PRICING]`/`[LEAD DRIVERS]`) — use a real DevTools console for those.
-- **Separate tabs share Firestore data but NOT in-memory state** — Jon's app session and Marc's controlled tab
-  are distinct; durable evidence (debug logs, project docs) is readable cross-tab, live UI state is not.
-- **Prod load-failure 2026-07-01 = Fastly Denver POP (DEN) edge timeout, NOT ARC.** `X-Served-By: cache-den-*`
-  (Firebase Hosting is fronted by Fastly). Origin was healthy throughout (version.json served, Firebase/Google
-  status clean, firebase.json intact — no deploy broke it). Regional/edge, recovered on its own. Response:
-  confirm-and-wait, NO redeploy (a redeploy re-pushes the same origin, does nothing for a Fastly edge).
-- **Cross-session messaging (`mcp__ccd_session_mgmt__send_message`) — tested 2026-07-01:** CCD↔CCD works
-  two-way. An idle Desktop window ingests an injected turn immediately and can reply back (tool returns
-  "Message sent", not "queued"). **TERMINAL sessions CANNOT receive** — the send queues (registry
-  `lastActivityAt` advances) but a Terminal CLI never surfaces/processes the turn, even when idle or nudged
-  with a keystroke. So **keep all team roles in CCD (Desktop) windows, not Terminal.** Each session must be in
-  **"Ask permissions"** mode for its OUTBOUND sends to fire — Auto/Bypass disables the tool entirely (that's
-  why sessions boot unable to send: global `defaultMode` is `bypassPermissions`). The per-send **"Allow Once"
-  prompt is HARDCODED** — NOT suppressible by permission allowlist or any mode. Accepted as the cost of the
-  three-independent-window workflow; do NOT re-test. For unattended runs, fall back to repo-commit handoff.
+## Session lessons (carry-forward)
+- **Treat plan enumerations as a FLOOR, verify independently.** On G005 the layered review caught 3 real misses: BC sites 2→14, the server-side sweep, and an ungated *server-side* BC write (`bulkMfrLookup`) that the "BC is 100% client-side" assumption hid. On a money-path change, re-grep every count.
+- **Test-env isolation is architecturally blocked at Phase 1:** `companyId` is 1-per-user-profile with no switcher, so a "test company" can't be cleanly used without a dedicated test USER; setting `isTestCompany` on the real company doc would regress prod. → Phase 2 (separate project + test user) is the real fix.
+- **Functions deploy is shared test+prod** — but prod-safe when every server gate is isTest-conditioned + defaults false (prod byte-identical). Deploying Functions to enable a test-only verify is safe by construction.
+- **Confirm a project is a throwaway before test-data injection** (the PRJ402096 near-miss); prefer the app's own save handlers over raw writes; there are 2 server-side BC writers (`bulkMfrLookup` gated; `writePricesToBC` in codaleScheduler — not test-reachable, latent follow-up if UI-wired).
