@@ -1,6 +1,34 @@
-# B009 — Runtime repro attempt (Marc, away-mode 2026-07-07)
+# B009 — Runtime repro attempt (Marc, 2026-07-07)
 
-**Env:** matrix-arc-test, instrumented bundle `?v=v1.23.0-b009` (gated `window.__B009=1`). **Prod clean at v1.23.0** (probes uncommitted, test-only).
+**Env:** matrix-arc-test, instrumented bundle `?v=v1.23.0-b010` (gated `window.__B009=1`). **Prod clean at v1.23.1** (probes uncommitted, test-only).
+
+## ★ FINAL RESULT (2026-07-07, live co-drive with Jon) — B009 NOT REPRODUCIBLE in v1.23.1
+Using synthetic-submission injection (write a `rfqUploads` doc with a real differing-base cross so the auto-stamp @39085 fires, then Review→Apply live), we ran **four** faithful scenarios on PRJ402096 with `window.__B009=1`. **In every one the TR flag PERSISTED — no post-apply writer ever clobbered it:**
+
+| # | Scenario | Result |
+|---|----------|--------|
+| 1 | Single **priced** cross (+ close/re-open) | STAMP → apply-save `TR:true` → APPLY-SAVED → **no later save**. Stayed yellow. |
+| 2 | Single **unpriced** cross (baits unpriced-reprice per Coach §3) | Same — flag persisted. Stayed yellow. |
+| 3 | **6 crosses in ONE apply** (mirrors Jon's "5–6 rows") | All 6 `TR:true`, apply-saved, **no later save**. All yellow. |
+| 4 | **3 SEPARATE submissions applied back-to-back** (the between-applies stale-input race) | 9 saves total; **every save shows all prior applies' rows `TR:true` — `anyFalse:false`**. All 3 yellow. |
+
+**The only `[B009] safeSave` in any run is `doApplyPortalPrices` itself, with `TR:true`.** Zero repricing writers, zero lead-time-flush re-saves, zero stale-input clobbers.
+
+### Why the between-applies race doesn't fire (root reason)
+`doApplyPortalPrices` **awaits its `safeSave`** (the B004 fix, [app.jsx:38406](../src/app.jsx)) and `update()` syncs `projectRef.current` synchronously. So apply #2/#3 always read **fresh, post-#1-stamp** state — there is no pre-stamp snapshot to race against. The stale-input/ref-lag mechanism Coach hypothesized (§7A) is architecturally plausible but **does not manifest on this path** because the save is awaited.
+
+### Conclusion + recommendation
+Per "prove a bug is ACTIVE with a runtime artifact before fixing it," **B009 cannot be confirmed active in current code** and there is **no clobbering writer to target**. Jon (who saw it on prod v1.22.3) also can't reproduce it now. Recommend:
+- **(A) PARK B009** as not-currently-reproducible (env/timing-specific, or resolved incidentally). Leave the instrumentation on test to opportunistically capture a recurrence.
+- **(B, optional) Defensive belt only** — save-time preserve of the 5 TR fields (mirror the cross-user `saveProject` guards). Pure prevention (no active bug), aligns with the data-retention rule; guards any future stale writer.
+
+**Do NOT ship the "input-freshness on the specific writer" fix — there is no such writer in current code.**
+
+**Cleanup loose end (G005):** synthetic "B009 REPRO" test data on PRJ402096 — imported submissions (B009 REPRO / REPRO 2 / MULTI / SEQ A-C) + crossed rows (3516000, 1032264 CS, 6× B009MULTI, 3× B009SEQ). Cleanable.
+
+---
+
+## (Earlier) away-mode attempt — superseded by the FINAL RESULT above
 **Result: RUNTIME REPRO NOT ACHIEVED — trigger path not reachable in away mode. NOT a confirmation; the exact clobbering writer is still un-pinned.**
 
 ## Why the repro couldn't run
