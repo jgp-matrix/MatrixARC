@@ -139,6 +139,7 @@ If the function under test is correct but its caller is a fire-and-forget inside
 - **2026-07-07 (Session 11, cont.)** — **G005 Phase 1 SERVER-half** diff-review (`a23f9ba9`). **APPROVE the committed gates + ONE FIX-BEFORE-DEPLOY finding.** Gates verified: engineering/index.js onCustomerReviewSubmitted (@36 after.isTest) + sendReviewEmail (@163) — the pre-commit "missing gate" was a FALSE POSITIVE (advisory only scanned index.js+app.jsx), gates ARE committed; triggers early-return before ALL side-effects reading the right markers (onSupplierQuoteSubmitted rfqUploads.isTest @634, onIssueReported companies/{cid}.isTestCompany @790, onCustomerReviewSubmitted reviewUploads.isTest @36); callable isTest threading confirmed BOTH ends (server skips @607/924/163; client PASSES isTest:IS_TEST_ENV @18634 sendInvite / @17788 engineerQ / @30254 reviewUploads stamp — all committed, so gates are LIVE not dead). Email/Teams/push enumeration complete (11 sgMail/4 Teams/3 push — 7 test-reachable gated, monitors+testTeamsWebhook left-on not-test-triggerable). purchasing/ confirmed no BC writes; poCreateOrder/poUpdateStatus have ZERO client call sites (not test-reachable). **★ FINDING (all 3 enumerations missed it — plan/Explore/Marc all assumed "BC writes are 100% client-side"): `bulkMfrLookup` (functions/index.js:2192, dryRun:false @46019 via the Bulk MFR Code Lookup tool) is a SERVER-SIDE BC WRITE — POSTs Manufacturers @2261 + PATCHes ItemCard.Manufacturer_Code @2267 — passing client `bcODataBase`. Under correct test-company config (sandbox env) it writes to SANDBOX (safe); but it's server-side so the client bcGatedFetch belt CANNOT catch it → under a MISCONFIGURED test company (prod env) it writes REAL BC, breaking the belt's "even-if-misconfigured, no prod BC write" guarantee. UNGATED.** Fix: ~3 lines — client passes isTest:IS_TEST_ENV @45998/46019; server forces dry-run (skip POST/PATCH) when isTest. Non-blocking notes: admin-alert emails (165/226/300 warnAdmins/modelFallback/portalFailure) left-on, company-scoped → contained to test-company admin under the convention but not hard-gated; onIssueReported isTestCompany gate fails-OPEN on company-read error (prod-preserving choice). Server gates APPROVED; bulkMfrLookup gate FIX-BEFORE-DEPLOY (or Jon-accepted). Then §10 verify (near-miss replay + test-company setup) → deploy.
 - **2026-07-07 (Session 11, cont.)** — **G005 bulkMfrLookup fix** (`f4880084`) re-review + **definitive server-BC-write sweep**. Fix APPROVE: `_skipMfrWrites=dryRun||isTest` skips the POST-Manufacturers + PATCH-ItemCard block when isTest (lookup still runs, status 'dry_run'); both client sites (45998/46019) thread isTest:IS_TEST_ENV; prod unchanged. ★ SWEEP found a SECOND server-side BC writer — `writePricesToBC` (codaleScheduler.js:202/218, BC purchase-price PATCH/POST) via `runCodaleScrape` — but it's **NOT test-reachable**: the only client-called Codale callable is `codaleTestScrape` (READ-ONLY, returns scraped prices, no BC write); the writer is reached only by `codaleRunScrape` (ZERO client call sites) + `codaleScheduledScrape` (Pub/Sub cron). Neither triggerable from the test-host UI → out of Phase-1 scope (like the scheduled monitors). Latent follow-up: gate `codaleRunScrape` if ever UI-wired. **NET: after f4880084, ZERO test-reachable ungated server-side BC writes.** G005 Phase 1 code (client c01e9a53 + server a23f9ba9 + fix f4880084) fully Coach-APPROVED → §10 live verify next (near-miss replay). 2 non-blocking notes (admin-alert emails, onIssueReported fail-open) deferred as Phase-1 follow-ups by Jon+Marc+Freddy.
 - **2026-07-07 (Session 11, cont.)** — **G005 §10 verify results-review** (money-path done; tail deferred to fresh continuation). Functions deployed (32, prod-safe default-false). MONEY-PATH PROOF **SOUND + SUFFICIENT**: bcGatedFetch (single choke point; I independently verified all 14 BC writes funnel there → proving the choke point proves the WHOLE BC-write class) live-BLOCKS a non-sandbox mutating write (_testEnvBlocked, no real write) + ALLOWS a sandbox write; bulkMfrLookup dryRun:false+isTest→patched:0. The demonstrated ERP/BC-write harm is CLOSED. Precise caveat: this closes the BC-WRITE harm; the near-miss's Firestore data-collision is the test-company convention's scope (Phase-1 partial per plan §6 honest-limit), NOT proven by this BC test — don't conflate. TAIL (§10-4 client email / -5 server triggers / -6 callables / -7 extraction+bcEnqueue / -8 prod regression) SAFE-TO-DEFER: same isTest/isTestCompany mechanism already proven live + functions-deployed, on email/trigger/callable surfaces — no new risk class. PROD FLIP is prod-safe BY CONSTRUCTION (IS_TEST_ENV false on prod → gates inert → byte-identical; only prod deltas = 14 BC writes gain semaphore/429 [benign] + B001 redirectUri [no-op normal]) → flip doesn't depend on the tail for prod safety. Recommend: continuation completes the tail (esp. §10-4 client email — only live-testable once the gated client bundle is on the TEST host) before declaring the test env's email/notification isolation verified; §10-8 prod spot-check post-flip.
+- **2026-07-08 (Session 12)** — C134/C135: two PROD bug traces on PRJ402096 (v1.23.3), routed by Freddy, HOLD-before-fix. **C134** ("BC Sync Incomplete: 61 items") — G005 hypothesis **REFUTED** (blame: this path's bcGatedFetch conversion is F-2d.1 @2026-06-01/02, pre-G005; and on prod IS_TEST_ENV=false makes bcGatedFetch ≡ raw fetch). ★ Disambiguation: the modal is `syncPlanningLinesToBC` (planning-lines auto-sync, Path B/#168) NOT the "Push Lead Times to BC" button (which uses a plain arcAlert). Failures are legitimate BC-side rejections; Text-fallback structure means 61 fallback-failures ⟹ line/task/project-level cause (not per-item) UNLESS they're PATCHes of existing lines (no fallback). Decisive artifact = per-row `error` text + POST-vs-PATCH (console @3882 / modal). **C135** (5 Codale items no price) — client faithfully reports server `found:false`; root cause is `extractFromPage` exact-normalized catalog-match gap on multi-result pages (Strategy 1/2/3 all miss when >1 product and no exact normalized match). "Data exists on site" ⟹ match/parse gap, not genuine absence. Decisive artifact = the 5 SKUs' `result.error`/`result.debug` (page body) in `codaleTestScrape` Functions logs.
 
 
 ## Findings
@@ -1270,3 +1271,88 @@ Full codebase verification of `QuoteSendModal` (line 32796). 8 sections: tab str
 **Build plan:** 8 changes, ~25 lines. Default `sendMode:"sales"`, 3-button tab bar with swap handlers, shared form rendering, 2 guard extensions, modal-open init with `_customerTo` stash, `_logQvHistory({type:"quote_send",...})` send log (1 line, fire-and-forget). Dead inline modal gets matching log line for hygiene.
 
 **Key finding:** `sendMode==="sales"` falls through existing `else` branch at send dispatch (line 33019) → `sendGraphEmail`. Zero new send logic. All #187 stamps, #191 quote number, BC sync, PDF build apply uniformly.
+
+---
+
+### C134 — PROD "BC Sync Incomplete: 61 items could not be pushed" (PRJ402096, v1.23.3) — Code Trace (2026-07-08)
+
+**Type:** Read-only code-path trace (PROD bug, host-agnostic)
+**Status:** COMPLETE — G005 hypothesis REFUTED; failures are legitimate BC-side rejections. HOLD for Marc's live per-row `error` text before fix.
+**Routed by:** Freddy. Reconcile with Marc's live-log evidence before proposing a fix.
+
+---
+
+#### ★ Disambiguation (fix-target-critical): the modal is NOT from the "Push Lead Times to BC" button
+
+Jon reported the error under "Push Lead Times to BC," but that button (`pushAllLeadTimesToBc`, app.jsx:27087, rendered @28710) reports results via a **plain `arcAlert("Push complete: N created, M updated, K failed …")`** (27212–27220) — it does **not** raise the "⚠ BC Sync Incomplete" modal.
+
+The "⚠ BC Sync Incomplete / N items could not be pushed to BC. Use the Item Browser to find each item and apply it, then retry sync." modal (@28051–28053) is driven **only** by `syncFailedAlert`, set **only** at line **25511** inside **`syncPlanningLinesToBC`** (the planning-lines sync, `bcSyncPanelPlanningLines` @3626). Its retry button (@28078) calls `syncPlanningLinesToBC()`. Modal wording matches verbatim.
+
+**So the failing path is the PLANNING-LINES sync, not the lead-time push.** `syncPlanningLinesToBC` is the sole foreground auto-sync (Path B, #168) — fired by a useEffect when the panel BOM hash changes. Jon's manual price/LT edits changed the hash → auto-sync re-fired → 61 planning lines failed. **ACTION: Marc to confirm which UI actually appeared** (I'm confident from the verbatim wording, but reconcile).
+
+#### Prime suspect (G005 bcGatedFetch) — REFUTED, two independent ways
+
+1. **Blame proves G005 didn't touch this path.** The POST/PATCH/DELETE in `bcSyncPanelPlanningLines` were converted raw-fetch→`bcGatedFetch` by the **F-2d.1** fix — commits `8dfdb552e` (2026-06-01) and `fc9e18ee9` (2026-06-02), **~5 weeks before G005** (2026-07-07). `postLine` @3809, `patchLine` @3820, DELETE @3877. This path has run on `bcGatedFetch` since early June without this symptom.
+2. **On PROD the belt is inert.** `bcGatedFetch` (@419) gates the fake-200 suppression behind `if(IS_TEST_ENV && method mutating && non-sandbox)` (425–431). On prod `IS_TEST_ENV===false` → block skipped → function reduces to semaphore-gate → real `fetch` → 429-retry → returns the **real `Response`**. `r.ok`/`r.status`/`await r.text()` behave identically to raw fetch. The belt cannot manufacture a failure on prod. (Matches the G005 client-half review, C138-equivalent.)
+
+**Verdict: the 61 failures are genuine BC-side rejections, not a G005 regression.**
+
+#### How a row lands in `failedRows` (the failure contract)
+
+`bcSyncPanelPlanningLines` builds skeleton lines (10000 billing, 30/40/50000 CUT/LAYOUT/WIRE) + BOM item lines (60000+, one per non-labor/non-ecoTag/non-restoreSkipped row). Then incremental diff vs existing BC lines:
+- **Existing line → PATCH** (3851). Non-ok/non-204 → `failedRows.push({partNumber, description, rowId, lineNo, error: <BC response body text>})` (3854-3855). **No fallback on the PATCH path.**
+- **New line → POST** (3859). On failure, retries as a **Type:"Text" fallback** line (`_fallback`, 3864). Only if the **fallback ALSO fails** → `failedRows` (3865).
+
+**Decisive structural inference:** BOM item lines always carry a `_fallback` Text line that has **no `No` field**. So a per-item *item-identity* failure (item not in BC, bad `No:_bcNo(row)` surrogate, missing posting group) fails the Item POST but the **Text fallback succeeds** → counts as `created`, NOT a failure. Therefore **61 failures where the Text fallback also failed ⟹ the cause is line/task/project-level, not per-item identity.** Candidates:
+- **Task block 20N10 missing** — backfilled at 3633 (`bcCreatePanelTaskBlock`) but failure is caught + "proceeding anyway"; if it truly failed, every POST+fallback 400s.
+- **Wrong field detection** — `FP_NO`/`FP_TASK_NO` probe (3660–3699) picked Project_No vs Job_No wrong → every line 400s regardless of Type.
+- **Project locked/released in BC** — status forbids planning-line edits.
+- **429 exhaustion** — 61 rows × (POST + posting-group GET/PATCH + PATCH) on a busy tenant could exhaust the 4-attempt backoff → 429 returned → `!r.ok` → failure. Semaphore(6)+backoff is designed to prevent this but isn't a guarantee under load.
+
+**BUT** — if the 61 are **PATCHes of pre-existing lines** (PRJ402096 is an established real project, likely synced before → lines exist), there is **no fallback**, so a PATCH rejection goes straight to `failedRows` for **any** reason including per-item (e.g., `No` changed to an item BC won't accept, or #163 surrogate `_bcNo(row)` mismatch). **POST-vs-PATCH determines the interpretation.**
+
+#### Reconcile with Jon's manual edits
+
+The unpriced guard (25461) requires every non-labor row with a partNumber to be `priceSource==="bc"||"manual"`; if not, it sets `unpricedAlert` and **returns before syncing**. So the sync ran → Jon's rows passed the guard (manual/bc priced). Manual edits don't directly cause line rejections **unless** a manually-edited row's `No:_bcNo(row)` isn't a valid BC item (then Item POST fails → but Text fallback saves it, unless PATCH path). Consistent with the POST-vs-PATCH pivot above.
+
+#### DECISIVE ARTIFACT NEEDED FROM MARC (before any fix)
+
+Every failed row already carries `error:<BC response body text>`, and `bcSyncPanelPlanningLines` logs the whole array: console `bcSyncPlanningLines: … N FAILED [ {partNumber, lineNo, error}, … ]` (3882). Also the modal itself renders per-row detail (28055+). **Two questions the error text answers instantly:**
+1. Are the failing lines **POSTs (new)** or **PATCHes (existing)**? (created/updated counts + whether lineNos pre-existed.)
+2. What is the **BC error body** — HTTP status + message? ("does not exist" / "not allowed" / posting-group / field-relation / 429 / project-status).
+
+That collapses the candidate set to one. **HOLD per Freddy — no fix proposed until reconciled with this live evidence.**
+
+---
+
+### C135 — PROD: 5 Codale-sourced items pulled no pricing though data exists on site (v1.23.3) — Code Trace (2026-07-08)
+
+**Type:** Read-only code-path trace (PROD bug, host-agnostic)
+**Status:** COMPLETE — root cause is server-side `extractFromPage` match/parse; "data exists on site" points to a match gap, not genuine absence. HOLD for Marc's live per-SKU `error`/`debug` before fix.
+**Routed by:** Freddy.
+
+---
+
+#### Path (client → server → back)
+
+- **Client** (`runPricingOnPanel`, Phase 1b Codale block, app.jsx:27448–27516): filters BOM rows whose `bcVendorName` matches /codale/i and that lack a recent BC price; sends **raw trimmed** `partNumber`s in batches of 30 to the **`codaleTestScrape`** callable (27462, read-only — no BC write; consistent with G005 sweep). Matches results back by `codaleMap[partNumber.toUpperCase()]`; the server echoes the queried PN as `result.partNumber`, so the round-trip re-match is sound.
+- **Silent-miss surface:** a returned result with no `r.price>0` → `console.warn("Codale: no price for", …)` (27475); the row is **left unchanged/unpriced** and pushed to `codaleMissed` (27508) → report entry `reason:"Price not found on Codale"` (27516). No error shown to user beyond the summary count. **So the 5 items = server returned `found:false`/no price.**
+- **Server** (`functions/codaleScraper.js`, `codaleTestScrape` → `scrapeBatch` → `searchPart` → `extractFromPage`): logs in (customer-specific pricing), navigates `productSearch?searchString=<pn>`, then `extractFromPage` scrapes the rendered page.
+
+#### Root-cause candidates in `extractFromPage` (codaleScraper.js:136), ranked
+
+`pnNorm = pn.replace(/[\s\-\.]/g,"").toUpperCase()` — strips ONLY spaces, hyphens, dots.
+
+1. **★ Multi-result exact-match gap (most likely given "data exists on site").** Strategy 1 requires a Catalog # whose normalized form `=== pnNorm` **exactly** (158/164). Its single-entry substring fallback fires only when there is **exactly one** catalog line (167). Strategy 3 fires only when the page says exactly **"1 Products found"** (235). So when Codale returns **multiple** products and none's catalog # normalizes exactly to the query, all three strategies miss → `found:false` **even though the correct product + price are on the page.** Triggers when the ARC PN differs from Codale's catalog # by anything other than separators: config suffixes (trailing `XXX`), mfr-code prefixes, or a differing canonical catalog #.
+2. **PN-normalization mismatch (subset of #1).** Normalization removes only `[\s\-\.]`. Any other character difference defeats the exact match; Strategy 2's DOM regex flexes only `-`/`/`/`.` separators — same ceiling.
+3. **Price-format / login-state variance.** Price regex demands `$[\d,]+\.\d{2}` (two decimals) + optional UOM. Silent miss if the price renders as "Call for price"/"Log in for pricing" (customer price gated and `login` only reached "status uncertain — proceeding", codaleScraper.js:123), a struck/promo price in another node, or a whole-dollar/no-cents price.
+4. **Render-timing / batch throw.** `searchPart` uses `networkidle2` + `randomDelay(2000-4000)`; late-XHR price paint can be read empty. A whole-batch throw (client 27477) fails the entire 30-item batch — so if the 5 are contiguous/one batch, suspect batch/login; if scattered, it's per-item parse (#1–#3).
+
+#### DECISIVE ARTIFACT NEEDED FROM MARC (before any fix)
+
+`extractFromPage` already captures, on "Price not found," **`result.error`** ("No results found" vs "Price not found") and **`result.debug = body.slice(0,800)`** (271) — the raw page text. In the `codaleTestScrape` **Functions logs**, for the 5 SKUs:
+- `error:"No results found"` → the site genuinely returned 0 products for our search string (search-string/PN issue) — NOT a parse bug.
+- `error:"Price not found"` with a **debug body that contains a `$…` price** → confirms the **match/parse gap (#1/#2)** — our matcher can't tie the SKU to the listing. This is the expected finding given Jon confirmed the price is visible on the site.
+- debug body showing "log in"/"call for price" → login/price-gating (#3).
+
+**HOLD per Freddy — no fix proposed until reconciled with the 5 SKUs' live `error`/`debug` (and the exact PN strings, to compare against Codale's catalog #).**
