@@ -1623,7 +1623,9 @@ async function ensureMsal(){
   await loadMsalScript();
   try{
     _msalInstance=new msal.PublicClientApplication({
-      auth:{clientId:BC_CLIENT_ID,authority:`https://login.microsoftonline.com/${BC_TENANT}`,redirectUri:window.location.origin},
+      /* B001: strip a trailing dot from the origin (a FQDN-dot URL like matrix-arc.web.app. otherwise
+         carries the dot into the redirect URI → Azure AADSTS50011 redirect-mismatch). */
+      auth:{clientId:BC_CLIENT_ID,authority:`https://login.microsoftonline.com/${BC_TENANT}`,redirectUri:window.location.origin.replace(/\.$/,"")},
       cache:{cacheLocation:"sessionStorage"}
     });
     await _msalInstance.initialize();
@@ -15998,6 +16000,7 @@ function findIncompleteQuoteItems(project){
         description:"Requires Technical Review sign-off",
         missing:["Technical Review sign-off"],
         isTechReviewBlock:true,
+        approved:project.preReviewStatus==="approved", // B002: in the approved state the "Send for Technical Review" button isn't rendered
       });
     }
   }
@@ -16017,7 +16020,12 @@ function formatIncompleteQuoteAlert(issues){
   if(techReviewIssues.length){
     // #199 P3 — distinct Tech-Review message (Analyst Q2/R2 wording).
     const _n=techReviewIssues.reduce((s,i)=>s+(i.count||1),0);
-    parts.push(`${_n} line${_n>1?"s":""} require${_n===1?"s":""} Technical Review sign-off before this quote can be sent. Click "Send for Technical Review", or have an engineer resolve the flagged lines.`);
+    // B002: state-aware — in the approved state the "Send for Technical Review" button isn't rendered,
+    // so don't name it; direct the user to the reviewer's per-row Resolve instead.
+    const _approved=techReviewIssues.some(i=>i.approved);
+    parts.push(_approved
+      ? `${_n} line${_n>1?"s":""} require${_n===1?"s":""} Technical Review sign-off before this quote can be sent. Have an engineer Resolve the flagged line${_n>1?"s":""} (the reviewer's green ✓).`
+      : `${_n} line${_n>1?"s":""} require${_n===1?"s":""} Technical Review sign-off before this quote can be sent. Click "Send for Technical Review", or have an engineer resolve the flagged lines.`);
   }
   if(pricingIssues.length){
     const maxShow=12;
@@ -18404,7 +18412,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
         <div style={{display:"flex",gap:10,marginTop:16}}>
           <button onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
           <button onClick={save} disabled={saving} style={btn(saved?C.green:C.accent,"#fff",{flex:2,opacity:saving?0.6:1})}>
-            {saving?"Saving…":saved?"✓ Saved":"Save Defaults"}
+            {saving?"Saving…":saved?"✓ Saved":"Save"}
           </button>
         </div>
         <button onClick={onClose} style={{display:"block",width:"100%",marginTop:10,background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 0",color:C.muted,cursor:"pointer",fontSize:13}}>Close</button>
@@ -37881,8 +37889,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // BUDGETARY banner. The user is warned about the auto-flip via a checklist entry below.
     // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary flip and print as
     // FIRM despite red rows.
+    // #195: hoisted so the pre-print checklist below can suppress the (false) "auto-flagged
+    // BUDGETARY" entry when an admin overrides the flip and prints as FIRM.
+    let _skipBudgFlip=false;
     if(_hasRedRows(projectRef.current)){
-      let _skipBudgFlip=false;
       if(isAdmin()){
         const _redC=_countRedRows(projectRef.current);
         const doBudg=await arcConfirm(
@@ -37909,7 +37919,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // DECISION(v1.19.740): Show the auto-flip as a checklist entry so the user sees it.
     // Not dismissible — informational. The print proceeds with BUDGETARY stamped.
     const redRowCount=_countRedRows(projectRef.current);
-    if(redRowCount>0){
+    if(redRowCount>0&&!_skipBudgFlip){
       issues.push({
         type:"ailead",
         label:`${redRowCount} item${redRowCount>1?"s":""} with incomplete pricing or lead times`,
@@ -48888,7 +48898,7 @@ function SupplierPortalPage({token}){
 .spn-drop::-webkit-scrollbar-track{background:#f1f5f9;border-radius:7px;}
 input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
 input[type=number]{-moz-appearance:textfield;}`}</style>
-        <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Analyzing Your Quote</div>
+        <div style={{fontSize:17,fontWeight:700,color:dark,marginBottom:8}}>Matrix ARC AI is currently scanning your quote</div>
         <div style={{fontSize:14,color:muted,lineHeight:1.6}}>{analyzeMsg}</div>
       </div>
     </div>
