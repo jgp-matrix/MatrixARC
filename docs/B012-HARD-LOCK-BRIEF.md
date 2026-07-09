@@ -54,7 +54,11 @@ Store an editing lease **on the project document** (the same pattern as the exis
 5. **"Hold priority while I'm away" (`ownerLockActive`) blocks ALL takeovers** including the 30-min force path; **admin-only override.**
 6. **Granularity: per-project** (Coach concrete).
 7. **Read-only scope: reuse `readOnly`; holder prints only** (no non-holder Print-Only carve-out — dropped).
-8. **Two tabs: per-session (`editingTabId`)** — the same user's 2nd tab is view-only, closing the self-clobber residual (Phase B stays shelved = no merge backstop). *(default; trivial to flip to per-uid.)*
+8. **Two tabs: per-session (`editingTabId`) with a THREE-STATE modal** (Jon 2026-07-09):
+   - (i) lease held by a **different uid** → view-only modal: **"🔒 `<HolderName>` is already editing this project in another location."**
+   - (ii) lease held by **my uid but a different tab/session id** → modal: **"You already have this project open in another tab — close this one and return to it."** (ARC distinguishes same-user-other-tab via `editingBy == me && editingTabId != mine`.)
+   - (iii) lease **free or this tab** → editable.
+   - Limit: a browser can't auto-focus the other tab — we instruct the user to close this one. Optional polish: `BroadcastChannel` within the same browser for instant same-tab detection + a "jump to that tab" nudge. Closes the self-clobber residual (Phase B shelved = no merge backstop).
 
 **Scope note:** this is bigger than the original TTL-lease — it adds a request → grant → force-with-warning → priority-hold state machine + UI. Phased build (Coach to plan): **P1** core lock + read-only · **P2** request/grant hand-off · **P3** force-takeover + warning/grace · **P4** priority-hold + admin override. Reuses existing `ownerLockActive` + `ownerTakeover` machinery.
 
