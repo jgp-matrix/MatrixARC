@@ -179,6 +179,14 @@ If the function under test is correct but its caller is a fire-and-forget inside
 
 **Out of scope (pre-existing, unchanged):** panel-level concurrent add (a local-only new PANEL is still dropped by soft-apply, exactly as before Phase B). C137 is row-level; panel-level concurrency is separate.
 
+**★ On-open-writer / merge-bypass enumeration (per Freddy — folded into this review):** the merge lives at the save layer, so the real question is whether any writer of the OPEN project's `panels`/`bom` BYPASSES `saveProject`/`saveProjectPanel`. Independent grep of every project-doc write:
+- **Full-document `.set()` with panels = ONLY `saveProject` (9158) + `saveProjectPanel` (9405)** — both now merge-protected. These are the sole complete-overwrite writers.
+- **Only raw `.update({panels})` is @10391** — the COPY/RESTORE path writing to a NEW `newProjectId` (+ ecos/_snapshots subcollections @10452/10467). Not the concurrently-edited open project → no concurrent editors mid-copy → no clobber risk.
+- **All other raw `.update()` on the open project are FIELD-LEVEL** (review fields @34597/34612/34631/34737/35521/35542, `qvHistory` arrayUnion @9278, resume state @43921, `restoredBy` @10371). Firestore `.update(fields)` replaces only the named top-level fields — `panels` is untouched → cannot drop BOM rows.
+- **Every conditional on-open auto-saver routes through `saveProject`/`safeSave`** (∴ merge-protected): ECO-unlock backfill (@37505→safeSave), quote-number auto-assign (@36686/36692→saveProject), budgetary auto set/clear (@33188/37628/37944→safeSave), BC price-check apply/dismiss (@37143/37171→safeSave), auto-assign (@34459→saveProject). None is an unconditional save-on-open like the deleted M1; each fires only under a specific condition, and Phase B's merge now protects the bom regardless of which one triggers.
+
+**Conclusion:** the save layer is a COMPLETE choke point for the open project's `panels`/`bom` — nothing bypasses the merge. This also confirms Phase B closes the paneled-project "reverts on open" symptom: whichever auto-saver (or the other user's save) fires on open, the save-layer merge preserves concurrent-add rows. (Bounded assumption: server-side Cloud Functions write ECO/engineering/notification fields + subcollections, not a full `panels` `.set` — the concurrent-edit harm is client-save-driven per Marc's runtime confirmation; a deep server-writer audit is out of this scope.)
+
 Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-case matrix (T3/T4 realistic-sequence, T7 M3-add-survives, T9 metadata, T6 Phase-A open/close, + A2 re-extract case) before prod; I re-review the PR before prod.
 
 ## Findings
