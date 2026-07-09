@@ -27,7 +27,7 @@
 - **Live matrix + watcher STOOD DOWN** — watcher is complete, read-only, parked.
 - **Brief written:** `docs/B012-HARD-LOCK-BRIEF.md`.
 
-- **📥 Intake:** **2 in INBOX** — BUG (Login "Continue with Microsoft" misleads existing users) *pending triage* · Debug Mode → **stamped F009 by Freddy** (promotion pending; **parked behind the hard lock**).
+- **📥 Intake:** **3 in INBOX** — BUG (Login "Continue with Microsoft" misleads existing users) *pending triage* · FEAT (Suggested alternates — multi-alt "ALT" picker + supplier-portal alternate sub-lines) *pending triage* · Debug Mode → **stamped F009 by Freddy** (promotion pending; **parked behind the hard lock**).
 - **🧭 Next gate:** Coach **Detailed Plan** (+ C-finding) → Jon **5 rulings** (TTL / same-user-two-tabs / granularity / read-only scope / takeover) → Jon approve → **Marc build (H-item pipeline)** → Coach review → Jon sign-off.
 - **WHO'S ON WHAT:**
   • **Coach** — investigating the lock stack + writing the Detailed Plan (+ C-finding).
@@ -35,7 +35,7 @@
   • **Marc** — stood down / standing by to build after plan + approval.
   • **Jon** — chose the strategy; awaiting rulings.
   • **Dez** — board + intake live.
-- **STATUS:** 🔁 STRATEGY PIVOT → **HARD ONE-EDITOR LOCK** (server-enforced editing lease) · prod **v1.23.3** (no deploy) · master **`db974e86`** · **Phase B PR #5 SHELVED** (backstop, not merged) · matrix + watcher **stood down** · Brief `docs/B012-HARD-LOCK-BRIEF.md` · **CONTAINMENT: manual 1 editor/project HOLDS until the hard lock ships** (then automatic); Jon holding sales off ARC · B013–B018 + #182 deferred · F009 Debug Mode parked · 2 in INBOX.
+- **STATUS:** 🔁 STRATEGY PIVOT → **HARD ONE-EDITOR LOCK** (server-enforced editing lease) · prod **v1.23.3** (no deploy) · master **`db974e86`** · **Phase B PR #5 SHELVED** (backstop, not merged) · matrix + watcher **stood down** · Brief `docs/B012-HARD-LOCK-BRIEF.md` · **CONTAINMENT: manual 1 editor/project HOLDS until the hard lock ships** (then automatic); Jon holding sales off ARC · B013–B018 + #182 deferred · F009 Debug Mode parked · 3 in INBOX.
 
 ## Progress Log (periodic snapshots, newest first)
 - **[2026-07-09 19:12 MDT]** **🔁 STRATEGY PIVOT (Jon) — B012 fix is now a HARD ONE-EDITOR LOCK, not the Phase B merge.** New approach: a **server-enforced editing lease** on the project doc → true hard one-editor lock. **Why:** current guardrails don't actually hard-block concurrent BOM edits (Owner Priority Mode allows row edits; a hard lock today needs manual `ownerLockActive`) — the exact gap that let B012 clobber PRJ402096. **Phase B (PR #5) SHELVED** — retained as a possible backstop, NOT merged/deployed. **Live matrix + watcher STOOD DOWN** (watcher complete, read-only, parked). Brief written: `docs/B012-HARD-LOCK-BRIEF.md`. **WHO:** Coach → investigating lock stack + Detailed Plan (+C-finding) · Freddy → Brief done, will take 5 open rulings to Jon after Coach's feasibility pass · Marc → stood down, standing by to build after plan+approval · Jon → chose strategy, awaiting rulings · Dez → board+intake. **NEXT GATE:** Coach Detailed Plan → Jon rulings (TTL / same-user-two-tabs / granularity / read-only scope / takeover) → Jon approve → Marc build (H-item pipeline) → Coach review → Jon sign-off. **CONTAINMENT: manual one-editor policy HOLDS until the hard lock ships** (then it becomes automatic); Jon holding sales off ARC. **Intake:** Debug Mode stamped **F009** (parked behind the hard lock); Login-button BUG still pending triage. Prod = v1.23.3, master `db974e86`.
