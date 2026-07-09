@@ -308,6 +308,24 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 
 **⇒ Fix B (eligibility-gated claim) resolves BOTH (a) and (b) with no rules change and no soft-apply change. Recommendation unchanged; the refined lead strengthens it.** (Belt-and-suspenders allowlist-widen is possible but unnecessary + brittle with Fix B — not recommended.)
 
+---
+
+**★ FINAL DESIGN CALL — gap #2 = FIX B ALONE (Coach architecture-authority; 2026-07-09). Marc's Part A + Part B NOT needed.**
+
+Freddy asked me to reconcile Marc's trace (which proposed Part A identity-exemption + Part B anti-clobber belt) against Fix B, and pin the concurrency model. **Verified in code — the review model is SERIALIZED, not concurrent:**
+- The green-circle per-row RESOLVE renders ONLY when `preReviewStatus==="pending"` — `_isReviewSignoffAuthority(project)` (@16003) returns false otherwise. A per-row TR sign-off ALWAYS happens inside a formal pre-review, never as a standalone concurrent action.
+- During `preReviewStatus==="pending"` the submitter (Sales) is locked out THREE independent ways: (1) client `reviewReadOnly=true` (non-assignee) → fires no content saves; (2) rules `isInReviewLocked` already REJECTS a non-reviewer's content write TODAY, lease or no lease; (3) under Fix B, Sales is ineligible → never claims/holds/heartbeats.
+- TR-cluster writes OUTSIDE pre-review (manual flag toggle `_onTrToggle`; supplier-cross auto-stamp @39321) are done by the current lease HOLDER during normal editing → single writer.
+
+**⇒ In every case the TR cluster has a SINGLE writer** → no concurrency → no clobber.
+
+Reconciling Marc's three findings:
+- **#1 (resolve is a whole-doc write; allowlist can't fix it) — CORRECT, but resolved by Fix B, not Part A.** Under Fix B the reviewer HOLDS the lease during pre-review → `isEditingLeaseLocked`=false for them → the whole-doc resolve passes because they're the holder, NOT via a carve-out. Part A (identity exemption) unnecessary.
+- **#2 (concurrent Sales save clobbers techReviewResolved) — does NOT materialize.** Sales cannot write during pre-review (three-way lockout). Part B (anti-clobber belt) solves a concurrency that can't occur here → NOT needed for gap #2. *(The banked B009 TR-preserve belt stays a SEPARATE, still-parked measure for the stale-reprice class — orthogonal to the lease; don't conflate.)*
+- **#3 allowlist-widening OUT — CONFIRMED** (futile for the whole-doc resolve; also unneeded under Fix B).
+
+**FINAL: build FIX B ALONE (eligibility-gated claim). No Part A, no Part B, no allowlist-widen.** Rationale (one line): the review model is serialized — the green-circle resolve only exists during `preReviewStatus==="pending"`, during which the submitter is triple-locked-out — so Fix B makes the reviewer the sole eligible lease-holder → every review write passes as the holder with no concurrent writer to clobber. **Jon's "Fix B" approval stands — no re-confirm needed** (the final is Fix B, not an escalation to Part A+B).
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
