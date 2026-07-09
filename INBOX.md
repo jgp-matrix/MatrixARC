@@ -21,9 +21,7 @@
 
 ---
 
-- [2026-07-07] GEN — "Remove leftover TEST upload section from Upload Supplier Quote modal" — the Upload Supplier Quote modal shows a "TEST" upload bar along the bottom (orange: "TEST | Test Upload to BC (PRJ402096) → Crum Electric Supply · 2760726-00 · Crum_Quote_2760726-00.pdf") — a remnant of old test scaffolding. Remove it (dev cleanup; user-facing). Note: it hardcodes PRJ402096 (a real customer project) — loosely ties to the G005 test-data-hygiene theme. — reported via Intake (source: Jon)
-- [2026-07-08] BUG — "PRJ402096: Push Lead Times to BC fails — 61 items could not be pushed" — PROD v1.23.3. After manual price/LT edits cleared the red rows, clicking "Push Lead Times to BC" returned "61 items could not be pushed to BC... use Item Browser to find/apply each, retry." G005-refactor regression suspected (all 14 BC writes were rerouted through bcGatedFetch this cycle). Adjacency note for triage: distinct from #188 (stale/phantom bcVendorNo on Push Lead Times — specific 2-row vendor-renumber on PRJ402124); this is a 61-item bulk failure on PRJ402096 with a G005 timing. — reported via Intake (source: Jon)
-- [2026-07-08] BUG — "PRJ402096: 5 Codale-sourced items pulled no pricing from scraper" — PROD v1.23.3. 5 Codale/scraper-sourced rows show no price/lead-time even though the pricing data exists on Codale's site (Jon spot-checked live). Scraper health in question (Codale scrape path). — reported via Intake (source: Jon)
+_(No items awaiting triage — all promoted to TODO.md as of 2026-07-08 close-out.)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
@@ -34,5 +32,5 @@
      2026-07-07 — B008 (RFQ History "Supplier Portal" link opens pre-submission portal, not submitted) promoted to TODO.md Bugs [Backlog] by Freddy (classified BUG: link points at wrong state).
      2026-07-07 — B010 (manual Upload-Supplier-Quote undefined crash) + B011 (harden other supplierQuotes sites) + F007/F008 + G006 (portal loading copy, cosmetic) promoted by Freddy.
      2026-07-07 — F007 (order projects by last-accessed) + F008 (new-version-available refresh notification) promoted to TODO.md Features [Backlog] by Freddy.
-     2026-07-07 — F007 (Order main-page projects by last-accessed, most-recent on top) promoted to TODO.md Features [Backlog] by Freddy (distinct from #200 color-by-quota-age). -->
-
+     2026-07-07 — F007 (Order main-page projects by last-accessed, most-recent on top) promoted to TODO.md Features [Backlog] by Freddy (distinct from #200 color-by-quota-age).
+     2026-07-08 — B013 (BC-401 hidden; from the "61 items could not be pushed" bullet — root cause OAuth token expiry, NOT G005) + B014 (Codale multi-result parse-gap; from the "5 Codale no pricing" bullet) INBOX bullets cleared (both stamped earlier @9a511e07). G007 (remove leftover TEST upload section) promoted to General by Freddy at close-out. INBOX now empty. -->
