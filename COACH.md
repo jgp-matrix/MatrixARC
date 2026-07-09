@@ -326,6 +326,17 @@ Reconciling Marc's three findings:
 
 **FINAL: build FIX B ALONE (eligibility-gated claim). No Part A, no Part B, no allowlist-widen.** Rationale (one line): the review model is serialized — the green-circle resolve only exists during `preReviewStatus==="pending"`, during which the submitter is triple-locked-out — so Fix B makes the reviewer the sole eligible lease-holder → every review write passes as the holder with no concurrent writer to clobber. **Jon's "Fix B" approval stands — no re-confirm needed** (the final is Fix B, not an escalation to Part A+B).
 
+---
+
+**★ COMBINED P1 RE-REVIEW — Fix B delta `a7c4bbf2` + keep-alive `d1b1b07e` — ✅ PASS. Clear for test-channel deploy.** (Range `b654c5d6..a7c4bbf2`; firestore.rules UNCHANGED — verified empty diff; keep-alive module fns unchanged — delta only relocates the effect + refactors readOnly + guards release.)
+- **(1) refactor value-preserving ✓** — `_structuralReadOnly = isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly`; `readOnly = _structuralReadOnly||leaseReadOnly` is byte-equivalent to the prior disjunction → no existing read-only path changes; `_eligibleEditor=!_structuralReadOnly`.
+- **(2) effect relocation safe ✓** — moved below the `readOnly` computation to reference `_eligibleEditor` (no TDZ); lease helpers are hoisted function declarations so below-definition refs are fine; deps `[init.id,uid,_eligibleEditor]` — `_eligibleEditor` is a boolean so the effect only re-runs on an eligibility FLIP (no spurious churn); keep-alive dedup/handoff intact.
+- **(3) ineligible-branch release safe ✓** — `_releaseEditingLease` now transactional + identity-guarded (`editingBy===uid && editingTabId===_ARC_TAB_ID`), so the unconditional call in the ineligible branch is a no-op unless THIS tab holds → can't null another session's lease.
+- **(4) L6 handoff end-to-end ✓** — Jon submits for review → `reviewReadOnly` → `_eligibleEditor`=false → effect re-runs → releases (identity-guarded) → Andrew (assignee, eligible) claims on his next tick → holds → resolve/approve/review-pass edits all pass AS THE HOLDER. Core B012 preserved (two eligible editors → one holder, first-come).
+- **Non-blocking:** (a) eligible→ineligible with a running bg task — cleanup briefly starts the keep-alive, the ineligible branch then stops it; net-correct (an ineligible submitter's writeback is review-locked anyway, so no legitimate writeback is lost). (b) ≤`LEASE_HEARTBEAT_MS` (≤30s) handoff latency (reviewer's tick claims after Jon releases) — Marc-flagged tuning, acceptable; could optimize via an onSnapshot-triggered immediate re-claim later. (c) an ineligible submitter holding a bg task at submit-time frees via 90s staleness rather than immediate release — writeback review-locked regardless.
+
+**Combined P1 verdict: PASS — clear for `hosting:test` deploy.** Deploy client + rules together (rules unchanged but ship as one release). Then Jon re-runs the live matrix — L5 (Async-Ownership writeback) + L6 (reviewer resolve/approve under another's presence), plus L1/L3/L8 — as the pre-prod gate. I re-review nothing further unless the matrix surfaces a gap; on green matrix → Jon prod sign-off.
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
