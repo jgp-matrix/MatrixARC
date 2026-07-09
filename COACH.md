@@ -189,6 +189,37 @@ If the function under test is correct but its caller is a fire-and-forget inside
 
 Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-case matrix (T3/T4 realistic-sequence, T7 M3-add-survives, T9 metadata, T6 Phase-A open/close, + A2 re-extract case) before prod; I re-review the PR before prod.
 
+### C139 — B012 STRATEGY PIVOT: hard one-editor lock (server-enforced editing lease) — Feasibility + Detailed Plan — FEASIBLE/MEDIUM (2026-07-09)
+
+**Type:** Architecture feasibility + Detailed Plan (read-only; NO implementation)
+**Status:** PLAN DELIVERED — `docs/B012-HARD-LOCK-COACH-PLAN.md`. Awaiting Jon's 5 rulings (2 made concrete) → Marc build → my rules+client re-review → Jon sign-off.
+**Routed by:** Freddy (Jon's 2026-07-09 pivot: primary B012 fix = hard lock, NOT Phase B merge; Phase B PR #5 shelved+retained as backstop).
+**Brief:** `docs/B012-HARD-LOCK-BRIEF.md`.
+
+---
+
+**Verdict: FEASIBLE, MEDIUM.** A server-enforced editing LEASE on the project doc is achievable exactly as the Brief hoped — Firestore rules CAN read a doc field (they cannot read `projectPresence`), so "one editor at a time" becomes a technical guarantee. No architectural blockers.
+
+**Why the current stack doesn't hard-block (grounded):** Owner Priority Mode (`app.jsx:36943`) is client-only AND by spec allows view+row/field edits; the only server write-lock `isOwnerPriorityLocked` (`firestore.rules:202`) fires only when the owner manually sets `ownerLockActive=true` (default off — B012 occurred with it off); the 90s presence lock is unreadable by rules. Everything automatic is client-only.
+
+**Scope = one rules block.** `users/{uid}` path (`rules:13`) is `auth.uid==uid` → inherently single-writer. Concurrent editing only on `companies/{cid}/projects` (`rules:352`) where B012 happened → the rules change is confined to that update rule (@370).
+
+**Design (reuses two existing mechanisms):**
+- Lease fields `editingBy/editingByName/editingClaimedAt/editingExpiresAt` on the project doc — mirrors `quotePrintLock`. Claim/heartbeat/release via the `quotePrintLock` transactional pattern (@37821) + presence heartbeat (@36912). Reactivity is FREE via the existing project-doc onSnapshot soft-apply (@37226).
+- Rules: add `isEditingLeaseLocked` + `isOnlyLeaseUpdate` carve-out to the `allow update` chain. **Load-bearing correctness:** a real content save = the two full-doc `.set()` (@9158/@9405) whose diff isn't hasOnly(lease fields) → non-holder REJECTED (the fix); holder passes (editingBy==self); stale ex-holder rejected once another claims (no clobber); state-machine flips (review/ECO-index/unlock-request) survive via their existing `isOnly…` carve-outs so the workflow can't deadlock.
+- UI: ONE added disjunct `||leaseReadOnly` on the composite `readOnly` (@37349) — already gates every affordance.
+- **3 save guards:** `saveProject` (@9156, in-memory build) needs a lease-field preserve step next to the takeover guard (@9055); `saveProjectPanel` (@9373, fresh-read build) already preserves ✅; new/copy/restore scrub (@10232) must null the 4 fields.
+
+**Write-path enumeration (Coach + verifier agent, cross-checked) — the floor:** content writers (@9158/@9405 + ECO-delete panels-rewrite @16301) are correctly lease-blocked for non-holders; state-machine field-flips carved out; new-doc restore/copy writes unaffected (fresh doc, no lease); the ONLY server project-doc write (`functions/engineering/index.js:141`) is Admin SDK + users-path + two non-content timestamps → bypasses the lease, benign. **§6-note (must-fix at build):** customer-review `.update()` sites (@30265/34154/34869) write `customerReview*` keys not in any existing allowlist → would be blocked for a non-holder; recommend holder-only (b) unless Jon wants a carve-out (a).
+
+**Async Project Ownership Rule — the important edge case:** bg tasks (`_bgTasks` keyed by projectId @475) write back client-side under the launcher's uid. Release-on-unmount MUST be suppressed while a running bg task exists for the project (module-scoped heartbeat keeps the lease alive), else a completing extraction is rules-rejected after another user claims. Lease lifetime = "editing OR has a running bg task for this project."
+
+**Reconciliation (one system, not two):** the lease SUPERSEDES the automatic 90s-presence half of Owner Priority Mode (retire that read-path in a fast-follow, left inert here to keep the diff tight); keep + absorb the manual `ownerLockActive` + `ownerTakeover` audit (takeover = the lease's force-takeover, reusing the single `ownerTakeoverActive` record); presence stays for the chime/who's-here UI but is no longer load-bearing for enforcement.
+
+**5 rulings for Jon (2 concrete):** Q1 TTL → rec **90s** (30s heartbeat). Q2 two-tabs per-uid vs per-tab → **open**, lean per-uid + Phase B backstop. **Q3 granularity → CONCRETE: per-project** (per-panel is NOT cleanly server-enforceable — full-doc `.set` writes the whole panels array; rules can't see which panel). **Q4 read-only scope → CONCRETE: reuse existing `readOnly`** (sub-decision: holder-prints vs non-holder Print-Only cf. F005). Q5 takeover → **owner+admin** (reuse ownerTakeovers audit) + Request-Access for editors.
+
+**Rollout caveat (flagged):** `firebase deploy --only firestore:rules` is PROJECT-WIDE, not host-scoped → the rule must be strictly backward-compatible (no lease fields ⇒ `isEditingLeaseLocked` false ⇒ behavior identical to today; true by construction via `.get(key,default)`). Ship client+rules together; verify on the test channel first. Live 2-session matrix L1–L7 (L5=Async-Ownership writeback is load-bearing) → Coach re-review → Jon sign-off.
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
