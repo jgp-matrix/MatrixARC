@@ -226,7 +226,39 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 - **Per-session tab keying (ruling #8 + refinement):** `editingTabId` compare is CLIENT-enforced (rules are per-uid — same user's 2nd tab is made read-only client-side; the cross-USER guarantee is server-enforced). Closes the self-clobber residual without Phase B's merge (Phase B stays shelved). **Refined (Jon 2026-07-09):** a THREE-STATE open-time modal in P1 — (i) different-uid → "🔒 `<Holder>` is already editing this project in another location"; (ii) my-uid-other-tab → "already open in another tab — close this one and return to it" (browser can't auto-focus the other tab); (iii) free/this-tab → editable. The `(editingBy, editingTabId)` pair gives all three directly. Optional polish (not P1): BroadcastChannel for instant same-browser two-tab detection + jump nudge.
 - **Read-only (ruling #7): holder prints only** — dropped the non-holder Print-Only sub-decision; customer-review writes are holder-only under the lock (no new carve-out).
 - **Phased build for Marc: P1 core lock+readonly (ships the fix) → P2 request/grant → P3 force+warning → P4 priority-hold+admin-override.** Each independently shippable+testable; Coach re-reviews each phase's rules+client diff before its prod deploy.
-- One sub-point flagged for Jon (§7-edge-6): a holder who sets priority-hold then CRASHES still frees on 90s staleness (crash-detection is independent of priority-hold, which only blocks the live-but-inactive force path) — confirm desired (no deadlock either way).
+- One sub-point flagged for Jon (§7-edge-6): a holder who sets priority-hold then CRASHES still frees on 90s staleness (crash-detection is independent of priority-hold, which only blocks the live-but-inactive force path) — confirm desired (no deadlock either way). [Jon RULED yes, 2026-07-09.]
+
+### C140 — B012 P1 (core lock + read-only + 3-state open modal) — DIFF REVIEW — PASS (2026-07-09)
+
+**Type:** Full-diff review (rules + client), read-only. **Status:** **PASS — clear for test-channel deploy** (client + rules together). No blocking findings. 3 non-blocking notes; design-note CONFIRMED sound; 2 Freddy flags ruled.
+**Diff:** `worktree-b012-hard-lock-p1` @ `b654c5d6` off master `adb13dad` — `firestore.rules` + `src/app.jsx` only, +208/-2. Built by Marc from `docs/B012-HARD-LOCK-COACH-PLAN.md` (C139 v2).
+
+---
+
+**RULES — correct. Traced every case against the `allow update` chain (@410):**
+- Non-holder content save (touches panels/bom) while another holds a fresh lease → `isEditingLeaseLocked`=true, `isOnlyLeaseUpdate.hasOnly()`=false, all other carve-outs false → **REJECTED.** ✓ (the B012 guarantee.)
+- **Steal a live lease** (non-holder writes lease-only `editingBy=me`) → `isOnlyLeaseUpdate.mayHold` = !valid(F) ∥ editingBy==me(F) ∥ takeover(F) ∥ forceExecute(stub F) = **false** → REJECTED. ✓ The `mayHold` gate is the load-bearing anti-steal.
+- Claim free/stale, holder heartbeat/release/GRANT (editingBy→requester while I'm current holder), backward-compat (no lease fields ⇒ `editingLeaseValid`=false ⇒ no lock ⇒ identical to today) → all pass. ✓
+- Stubs (`canForceExecute`/`isOnlyAccessRequestUpdate`/`isOnlyForceArmUpdate`) return false → inert in P1; the chain already carries its P2–P4 shape (later phases only change the bodies). ✓
+- **`hasLeaseTakeover` NOT admin-gated in P1** (deferred to P4) — I verified this is SAFE, actually safer than Marc's note claims: establishing an `ownerTakeoverActive` record is itself a project-doc write touching a non-lease field, so a non-holder attempting it under an active lease is REJECTED by the same rule (not lease-only ⇒ no carve-out). ⇒ no way to self-issue a takeover while locked in P1; admin override is genuinely deferred to P4 with no hole. (Also: an admin's full-doc takeover save is itself lease-blocked in P1, so admin force-override simply isn't wired until P4 — consistent with the phase boundary.)
+
+**CLIENT — correct.**
+- `_ARC_TAB_ID` per-tab (module-scoped, survives remounts) ✓. `LEASE_STALE_MS=90000 > LEASE_HEARTBEAT_MS=30000` (3 beats) ✓.
+- ONE tick interval double-duty (renew-while-holding / re-claim-while-locked via a Firestore tx) → auto-promote on holder clean-exit or ≤90s after crash (L2/L3) ✓. Claim is transactional → two racing tabs can't both win ✓. **Fail-open** on Firestore error (degraded→editable) mirrors quotePrintLock ✓.
+- **Async-Ownership (L5):** `_releaseEditingLease` suppressed while `_hasRunningBgTaskForProject` → an in-app navigate-away keeps the lease valid (heartbeat's 90s tail) so a completing extraction writeback lands under the holder's uid, NOT rejected ✓ — the load-bearing case, correct.
+- **Save guards:** `saveProject` lease-preserve loop sits in the SAME `_curDoc.data()` scope as the existing takeover guard (`_curDoc` guaranteed non-null — existing code derefs it unconditionally) → **no null-deref regression**; copies server lease fields (preserves explicit null = released; ignores absent = backward-compat) ✓. `saveProjectPanel` `{...proj}` spread carries server lease + an assertion comment ✓. New/copy/restore scrub nulls all 8 fields ✓.
+- 3-state open modal branches on `(editingBy, editingTabId)`: (i) other-user, (ii) other-tab, (iii) editable ✓. `||leaseReadOnly` added to composite `readOnly` @37432 ✓.
+
+**Marc's design note — CONFIRMED SOUND (and the right call).** Driving read-only off ONE tick-managed `leaseReadOnly` (authoritative from the tx result) rather than deriving from `project.editingBy` correctly dodges the **C137 same-uid onSnapshot-skip staleness trap**: a holder's own claim (updatedBy===uid) is skipped by the soft-apply (@37239), so `project.editingBy` never reflects the holder's own claim locally. Using the tx result as the source of truth avoids that entirely. Good architectural instinct.
+
+**3 NON-BLOCKING notes (for polish / later phases):**
+- **N1** `leaseReadOnly` initial state=false → a locked user sees a sub-second editable flash before the first tick resolves. Cosmetic only — any save in that window is server-rejected. Optional: seed from the init doc's lease fields.
+- **N2** Fail-open degraded mode leaves an errored-claim user optimistically editable; their content saves are server-rejected if another actually holds, AND a spurious `_releaseEditingLease` by a non-holder is also rules-rejected (not lease-only-authorized) → the rules backstop the client's optimism. Safe by construction; documented.
+- **N3** Heartbeat bumps `updatedAt` every 30s (raw tx.update, bypasses the save wrappers so NO quoteRev/bomVersion inflation ✓) → a held project floats to the top of other users' dashboards + 1 Firestore write/30s/holder (negligible). Non-blocking.
+
+**Freddy's 2 flags — ruled:** (1) 30s `setProject` re-render tick on viewers → **DEFER the skip-heavy-setProject optimization** (non-blocking re-render, keeps the P1 diff tight; clean P2+ follow-up). (2) per-save `editingLastActivityAt` stamping deferred to P3 → **CONFIRMED correct P1/P3 boundary** (P1 has no force path; seeding at claim is harmless; P3 adds per-save stamping + the 30-min gate).
+
+**Data-safety:** the lock REJECTS cleanly (server-side, no partial write); no field loss; save guards preserve the lease + all existing metadata guards intact. **Verdict: PASS.** Code review is my lane; the live 2-session matrix (L1 state-i / L3 crash-90s / **L5 Async-Ownership writeback** / L8 state-ii) still must run on the test channel (Jon-driven — the test host isn't reachable by my tooling) as the deploy gate. I re-review P2/P3/P4 diffs as they land.
 
 ## Findings
 
