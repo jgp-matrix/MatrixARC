@@ -487,6 +487,36 @@ const _ARC_TAB_ID=(()=>{try{return (typeof crypto!=="undefined"&&crypto.randomUU
 // used to SUPPRESS lease release on unmount so a completing writeback isn't rejected after
 // another user claims (Async Project Ownership Rule; plan §7 edge 2).
 function _hasRunningBgTaskForProject(projectId){return Object.values(_bgTasks).some(t=>t&&t.projectId===projectId&&t.status==="running");}
+// B012 keep-alive (plan §7 edge 2 / C140 addendum): when the holder navigates AWAY while a bg task
+// for this project is still running, ProjectView unmounts and its heartbeat stops — so this
+// MODULE-SCOPED renewer keeps the lease alive (independent of mount) until the task ends, else the
+// lease would go stale in ~90s and a concurrent user could claim it and reject the orphaned
+// writeback. Keyed by projectId (no duplicates). Renewal is TRANSACTIONAL + IDENTITY-GUARDED: it
+// renews ONLY while the server lease is still (uid, _ARC_TAB_ID) — if it was reclaimed/handed off,
+// it STOPS and never steals it back (the writeback then correctly fails, another session owns it).
+// On stop it does NOT release — it just stops renewing (90s staleness frees it if the user is gone).
+const _leaseKeepAlive={}; // { [projectId]: intervalHandle }
+function _projectDocPathFor(uid,projectId){return((_appCtx&&_appCtx.projectsPath)||`users/${uid}/projects`)+"/"+projectId;}
+function _stopLeaseKeepAlive(projectId){const h=_leaseKeepAlive[projectId];if(h){clearInterval(h);delete _leaseKeepAlive[projectId];}}
+function _startLeaseKeepAlive(projectId,uid){
+  if(!projectId||!uid||_leaseKeepAlive[projectId])return; // dedup — one renewer per project
+  const ref=fbDb.doc(_projectDocPathFor(uid,projectId));
+  _leaseKeepAlive[projectId]=setInterval(async()=>{
+    if(!_hasRunningBgTaskForProject(projectId)){_stopLeaseKeepAlive(projectId);return;} // task done → stop
+    let lost=false;
+    try{
+      await fbDb.runTransaction(async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists){lost=true;return;}
+        const cur=snap.data();
+        if(cur.editingBy===uid&&cur.editingTabId===_ARC_TAB_ID){
+          tx.update(ref,{editingExpiresAt:Date.now()+LEASE_STALE_MS,updatedAt:Date.now(),updatedBy:uid});
+        }else{lost=true;} // reclaimed / handed off → do NOT renew, do NOT steal back
+      });
+    }catch(e){/* transient — retry next tick, or 90s staleness frees it */}
+    if(lost)_stopLeaseKeepAlive(projectId);
+  },LEASE_HEARTBEAT_MS);
+}
 function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
 function bgStart(taskId,panelName,projectId,msg){
   // Cancel any pending delete timer so a re-upload within the cleanup window doesn't wipe the new task
@@ -36992,6 +37022,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // bg task for this project is still running (Async Project Ownership Rule; plan §7 edge 2).
   useEffect(()=>{
     if(!(init&&init.id)||!uid)return;
+    // If a module-scoped keep-alive was renewing this project's lease (this holder had navigated
+    // away while a bg task ran), stop it — the mounted tick below now owns renewal (dedup, no race).
+    _stopLeaseKeepAlive(init.id);
     let alive=true;let holds=false;
     const tick=async()=>{
       if(!alive)return;
@@ -37019,7 +37052,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       alive=false;
       clearInterval(interval);
       window.removeEventListener('beforeunload',onBeforeUnload);
-      if(holds)_releaseEditingLease(init.id);
+      if(holds){
+        // Clean exit → release now (this is a no-op/suppressed if a bg task is still running).
+        _releaseEditingLease(init.id);
+        // Navigated away WHILE a bg task for this project is still running → keep the lease alive
+        // out-of-band (module-scoped) so the orphaned writeback isn't rejected after 90s staleness
+        // lets another user claim it. Identity-guarded; stops itself when the task ends (plan §7).
+        if(_hasRunningBgTaskForProject(init.id))_startLeaseKeepAlive(init.id,uid);
+      }
     };
   },[init&&init.id,uid]);
 
