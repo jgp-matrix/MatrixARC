@@ -116,3 +116,26 @@ All BC traffic from **prod** `matrix-arc.web.app` is going to the BC **sandbox**
 ## Notes on what I did NOT conflate
 - The `bcPatchLaborPlanningLines` / `bcPatchProgressBilling` **404** "planning line not visible to this user … Project_Planning_Lines_Excel" warnings in `debugLogs` are **~14.5h old, from PRJ402134, against sandbox `MATR_SndBx_01152026`** — a separate pre-existing sandbox/OData-page quirk, unrelated to today's PRJ402096 401 issue.
 - An **03:27Z** (~14.5h ago) burst shows a *different* signature — `bcPushPurchasePrice POST 400 Internal_InvalidTableRelation` (bad Item/Vendor relation, #188-style) — also not today's 401 issue.
+
+---
+
+## EVENING ADDENDUM (2026-07-08 ~22:40–00:52Z) — live incident: B012 proof, B016 re-scope, B013, rules analysis
+
+All read-only. Company `XODxZ8xJc0dQXGZI7jbo`, prod. PRJ402096 doc id = `2vVsTW9goqJ1G9b8AMDC`; `status:draft`, `preReviewStatus:"rejected"`, no owner-lock/takeover/quote-lock; panels "costed".
+
+### 1. B012 CONCURRENT-CLOBBER — PROVEN (Jon's 2 originals: 534042, 534013)
+- **534042 and 534013 are GONE** from the current Firestore BOM (157 rows) — no `534*` PN anywhere — **and were already absent in the 22:59Z snapshot (155 rows).**
+- **534013 (Eriflex Busbar) provably existed as a BOM row:** it surfaced in the ~22:59Z "BC Sync Incomplete" popup (`"Type must not be Text in Project Planning Line"`, Task 20210, Lines 790000/800000) → it had been synced to a BC **planning line**, yet is **absent from the Firestore source-of-truth**. Present-in-BC-sync + absent-from-Firestore = the **clobber signature**. Timing fits **Andrew's 22:36–22:50Z concurrent-add burst** (his repeated `resource-exhausted` write-stream errors), before the 22:59 snapshot. ⇒ a row Jon added pre-Andrew was overwritten out of the BOM by concurrent whole-object saves = concrete **B012**, exactly what Phase B (row-merge, PR #5) fixes.
+- **Caveat:** 534013's clobber is strongly evidenced (BC artifact + Firestore absence). **534042** is per Jon's report — no independent artifact found (not in either snapshot, no BC trace); clobbered like 534013 or never-persisted (B016). Recovery = re-add both (they still need pricing) once concurrent editing is safe.
+
+### 2. Send-block "2 items incomplete" — NOT phantom; NOT the missing originals
+- Applying `findIncompleteQuoteItems`' exact predicate to the current BOM: the 2 blockers are **8660023** (price 186.44, **priceDate null**) and **8617502** (price 48.17, **priceDate null**), both panel-1, Rittal, `priceSource:bc`. Both have a price but **no priceDate** → the block ( #178/#179 pattern: BC Item-Card cost applied, no PurchasePrice Starting_Date).
+- The count is computed **live from the current BOM** (`findIncompleteQuoteItems(project)` on the live prop, app.jsx:15973 / called @36141) — **not** a cache/snapshot. So the "block stuck counting the 2 missing originals" theory is **disproven**; the block is accurate to current rows. (Of Jon's 6 visible reds, only the 2 null-priceDate rows actually trip the send-gate; 9345610/8660021/8660022 dated 06-29 (~10d) and 8617500 dated 07-08 are within the 60-day window.)
+
+### 3. B016 "add did nothing" — RE-SCOPED to a DELAY/write-race, NOT a deterministic silent no-op
+- Row count went **155 → 157**: Jon's adds **did persist**, just rendered minutes late.
+- `firestore.rules` ALLOW analysis **rules OUT permission-denied**: the project-update rule (rules:370) for PRJ402096 evaluates to allow — `canWrite()` true; `isOwnerPriorityLocked` false (`ownerLockActive` null); `isWonOrLostLocked` false; **`isInReviewLocked` false because it triggers only on `preReviewStatus=='pending'` and PRJ402096 is `'rejected'`** (rules:252-256). So the write is NOT rule-blocked for either user.
+- ⇒ B016 = intermittent **render/save DELAY under PRJ402096's heavy on-open BC churn** (132-item Purchase Prices, `bcSyncPlanningLines`, `bcPatchProgressBilling` ×3, repeated searches, 400s) starving the UI/save for minutes. The BC Item Browser add path DOES have a latent silent branch (`applyBcItem` @26830 `if(!row)return` before `commitBcItem`'s insert-manually fallback @26644; fire-and-forget save @26817 + empty catch @26578) — but the adds land on retry/settle, so the fix is resilience-under-load + surfacing the outcome, NOT a deterministic applyBcItem patch. (A `projectPresence` update *was* observed `permission-denied` in my tab — a SEPARATE subcollection rule / stale-heartbeat-after-leaving, not the BOM save.)
+
+### 4. B013 — BC connection degrades PER-SESSION (not account/tenant)
+- When Jon's BC Item Browser search went fully dead, a BC search from MY controlled tab (authed as Jon, live token) returned **HTTP 200** with results (`8660022`→1, `866`→10). No 401/429 → **BC is healthy at the tenant level.** ⇒ Jon's **session** token/state degraded from hours of heavy churn; **fix = hard-reload + reconnect BC** (the "BC Connected" indicator can lie). Own item (B013-class): the indicator should reflect real session health + auto-reconnect/backoff.
