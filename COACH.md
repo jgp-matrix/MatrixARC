@@ -230,7 +230,7 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 
 ### C140 — B012 P1 (core lock + read-only + 3-state open modal) — DIFF REVIEW — PASS (2026-07-09)
 
-**Type:** Full-diff review (rules + client), read-only. **Status:** **PASS PENDING one fix** — the §7 edge-2(b) module-scoped keep-alive (see ADDENDUM below; found in L5 live testing, a plan-omission I missed in this diff). Rules + all other client mechanics: clear. Revised from the initial "clear for deploy" — do NOT prod-deploy P1 until the keep-alive lands. 3 non-blocking notes; design-note CONFIRMED sound; 2 Freddy flags ruled.
+**Type:** Full-diff review (rules + client), read-only. **Status:** **PASS PENDING TWO fixes** — (#1) the §7 edge-2(b) module-scoped keep-alive (L5), and (#2) the reviewer-can't-approve-under-lease regression (L6). Both are ADDENDA below; both surfaced in live testing, both are gaps between plan-intent and as-built that this diff review should have caught. Rules core + other client mechanics: clear. Do NOT prod-deploy P1 until BOTH land. 3 non-blocking notes; design-note CONFIRMED sound; 2 Freddy flags ruled.
 **Diff:** `worktree-b012-hard-lock-p1` @ `b654c5d6` off master `adb13dad` — `firestore.rules` + `src/app.jsx` only, +208/-2. Built by Marc from `docs/B012-HARD-LOCK-COACH-PLAN.md` (C139 v2).
 
 ---
@@ -275,6 +275,26 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 **Revised verdict: PASS PENDING this keep-alive fix.** Everything else in the P1 diff stands (rules, save guards, 3-state modal, release-suppression). Marc holds until Jon approves; I re-review the keep-alive delta before test-channel deploy.
 
 **On the current 95%-pricing HANG (separate):** I agree with Marc — a rules-rejected writeback ERRORS (permission-denied → `safeSave` retry → fail banner), it does NOT hang at 95%. So the live hang is most likely a **pre-existing BC-fetch stall** (B013/B016 on-open churn / token degradation), NOT this lease gap. The lease gap manifests as a LOST/errored writeback, not a hang — a distinct defect. Both real; keep the two investigations separate. The keep-alive fix is required before P1 prod regardless of the hang's root cause.
+
+---
+
+**★ ADDENDUM #2 (2026-07-09) — L6 GAP: non-holder reviewer cannot approve/resolve under the lease. Client half of my carve-out was under-specified — but the fix is NOT a UI exemption.**
+
+**Symptom (live, PRJ402100):** Jon holds the edit lease; Andrew (the assigned reviewer, a non-holder) cannot approve a tech review — the controls are disabled by the composite `readOnly` (which now includes `leaseReadOnly`). Since the reviewer is normally NOT the current editor, P1 as-built **blocks the tech-review approval workflow whenever anyone else is in the project** → real regression.
+
+**End-to-end trace (Freddy asked me to verify the carve-out covers the reviewer's write path — it does NOT):**
+- **Approve** (34594) / **Reject** (34599) do a scoped `.update(reviewFields)`, but `reviewFields` includes `preReviewChangeLog` / `reviewChangeLog` / `reviewRevBumpedThisCycle` — **none in `isOnlyReviewStateUpdate`'s allowlist** (rules @262) → `hasOnly()` = FALSE → the carve-out does NOT match → a NON-HOLDER's approve/reject is REJECTED by the lease term. (Today it works only because `isInReviewLocked` is false FOR the reviewer — not via the carve-out.)
+- **Green-circle per-row Resolve** (`_onTrResolve` @29187) persists via `onSaveImmediate → saveImmediatePanel @34388 → saveProjectPanel` = a full-doc CONTENT write (touches `panels`) → not review-state → REJECTED for a non-holder. And Approve is gated on `_trOpen>0` (all TR rows resolved first), so on any project WITH tech-review flags the reviewer can't even reach Approve.
+
+**⇒ Freddy's proposed Fix A (exempt the review-approve/state controls from `leaseReadOnly`) is INSUFFICIENT** — it makes the buttons clickable but the writes still hit `permission-denied` at the rules layer (approve fields outside the allowlist; resolve is a content write). Chasing it via rules would mean expanding `isOnlyReviewStateUpdate`'s allowlist AND inventing a scoped per-row TR-resolve write path (the per-row resolve can't be rules-carved-out — a full-doc `.set` only shows `panels` changed, not which row-field) — brittle allowlist whack-a-mole (the enumeration-floor trap again).
+
+**★ RECOMMENDED Fix B — eligibility-gated claim (root fix, no rules change, no UI exemption):** the edit lease should be held by the **current eligible EDITOR**, not by a user who is structurally read-only for another reason. Gate the claim: a user does NOT claim/hold the lease while `isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly` is true (compute `_eligibleEditor` = none-of-those; the tick claims/renews only when eligible, and RELEASES if it becomes ineligible). Then during review: Sales (reviewReadOnly) does NOT hold; the reviewer (assignee, reviewReadOnly=false) IS the eligible editor and claims the lease → `isEditingLeaseLocked`=false for them → **every review op passes end-to-end** (approve, reject, per-row resolve, AND legitimate reviewer BOM edits during review), with NO rules change and NO per-control exemption. Also correct for the core B012 case (two eligible Sales editors still resolve to one holder).
+- Wiring: the claim effect must depend on `_eligibleEditor` and release-on-becoming-ineligible (e.g., Jon submits for review → becomes reviewReadOnly → releases → reviewer claims). Transition gap (released, not-yet-claimed) is safe (lease free).
+- Edge (P4, note only): an ADMIN override while another user holds the lease still needs a takeover (P4) — Fix B covers the normal reviewer path, not admin-override-while-locked.
+
+**Why this is the same class as gap #1:** the plan asserted "state-machine flips survive the lock" but I verified only the RULES half at C140 and did not trace the reviewer's ACTUAL write path (which fields, which save fn) end-to-end — so I missed that neither the approve NOR the resolve write is actually carve-out-covered. Both gaps = "verify the plan is fully + correctly implemented end-to-end, not that the present code is locally consistent." [[feedback_enumeration_is_a_floor]]
+
+**Revised verdict: PASS PENDING gaps #1 (keep-alive) + #2 (eligibility-gated claim).** I re-review both deltas before test-channel deploy.
 
 ## Findings
 
