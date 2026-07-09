@@ -45,6 +45,19 @@ Store an editing lease **on the project document** (the same pattern as the exis
 4. **Read-only scope** — fully read-only, or allow view + non-persisting local exploration?
 5. **Takeover authority** — owner-only, admin-only, or any editor with a warning?
 
+## ✅ FINALIZED RULINGS (Jon, 2026-07-09) — supersede the open questions above
+
+1. **No idle-TTL auto-release.** Lock is **held while the project is open, released on exit.** Heartbeat used only to detect exit/crash + measure inactivity (for the 30-min force threshold), NOT to auto-release at 90s.
+2. **Holder = first accessor** (any user, not just owner). Others view-only. **Ownership (`createdBy` / Salesman) is permanent and separate** from the edit lock.
+3. **Request access** → holder grants (hand-off).
+4. **Force-takeover only after 30 min holder inactivity + a pending request.** Holder gets a **warning + grace window to cancel** (proves presence); if not cancelled, control transfers to the requester.
+5. **"Hold priority while I'm away" (`ownerLockActive`) blocks ALL takeovers** including the 30-min force path; **admin-only override.**
+6. **Granularity: per-project** (Coach concrete).
+7. **Read-only scope: reuse `readOnly`; holder prints only** (no non-holder Print-Only carve-out — dropped).
+8. **Two tabs: per-session (`editingTabId`)** — the same user's 2nd tab is view-only, closing the self-clobber residual (Phase B stays shelved = no merge backstop). *(default; trivial to flip to per-uid.)*
+
+**Scope note:** this is bigger than the original TTL-lease — it adds a request → grant → force-with-warning → priority-hold state machine + UI. Phased build (Coach to plan): **P1** core lock + read-only · **P2** request/grant hand-off · **P3** force-takeover + warning/grace · **P4** priority-hold + admin override. Reuses existing `ownerLockActive` + `ownerTakeover` machinery.
+
 ## Coach investigation asks
 
 - Trace the current lock machinery: `ownerLockActive`, `ownerTakeoverActive`, Owner Priority Mode (client 90s presence), `quotePrintLock`, `isOwnerPriorityLocked` (`firestore.rules`).
