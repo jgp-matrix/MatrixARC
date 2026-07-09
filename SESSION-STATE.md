@@ -4,7 +4,7 @@
 **v1.23.3** (PRODUCTION — UNCHANGED this session). **No deploy occurred** — all session work on master is docs / TODO / traces / handoff. The one production code change (Phase B) is intentionally **held on a branch**, not merged/deployed.
 
 ## Deploy State
-- **Master tip:** `51351beb` (TODO triage). `master == origin/master`. **No prod deploy this session.**
+- **Master tip:** `2dd2e468` (triage close-out; docs/TODO only — `51351beb`→`cdb3ed76`→`2dd2e468`, no code/deploy). `master == origin/master`. **No prod deploy this session.**
 - Production: **https://matrix-arc.web.app** still serving **v1.23.3** (baseline).
 - **Retained branch (intentional):** `claude/phase-b-bom-merge` (commit `bd9134a9`, **PR #5**) — the B012 fix, **HELD** for the live matrix + Jon prod sign-off. **Do NOT auto-merge/deploy it** at next startup.
 - **Working tree:** clean.
