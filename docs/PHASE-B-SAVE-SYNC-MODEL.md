@@ -74,3 +74,84 @@ Both A and B on **P-AB**, same panel, screens in sync.
 - Drop the "don't save / then Save" language everywhere — replace with "add/edit (auto-saves)" + explicit **wait-for-propagation** or **offline** steps where an unsaved/stale condition is required.
 - Keep the **two-distinct-logins** and **fresh-throwaway-project** guards (unchanged).
 - The three ★ load-bearing asserts are unchanged in intent: T3 (no delete resurrection), T7 (unsaved/stale add survives inbound), T9 (concurrent-add row kept whole). Only the *how-to-trigger* changes.
+
+---
+
+## Ground-truth watcher (READ-ONLY) — instrument instead of eyeballing
+
+Jon writes the SAME project doc as Andrew (`companies/{cid}/projects/{id}`), so **ONE listener on that doc sees both writers** and records what actually persisted — independent of either session's React state.
+
+### Mechanism decision
+
+- **(A) firebase-admin node watcher — NOT viable now.** No local service-account key, `GOOGLE_APPLICATION_CREDENTIALS` unset, no ADC (`functions/node_modules/firebase-admin` exists but can't authenticate). Jon's Firebase CLI login does **not** grant admin-SDK access. Would need Jon to drop a service-account JSON — extra friction, and Option B needs none.
+- **(B) in-tab `onSnapshot` logger — RECOMMENDED.** Uses the page's already-authenticated `window.firebase` (compat SDK, confirmed exposed at `app.jsx:2639`). Runs in **Jon's (or Andrew's) matrix-arc-test tab** (host-agnostic to Marc's reachability limit). No creds, no deploy, read-only — an **independent** second listener that never touches app state. Keep it light (one doc + set-diff; no fiber scans, no full-collection pull) so it can't freeze the tab.
+
+### Start command (paste into DevTools Console, AFTER opening the Lebanon project)
+
+```js
+// ── ARC Phase-B ground-truth watcher (READ-ONLY) — one listener, both writers ──
+(async () => {
+  const db = firebase.firestore();
+  const uid = firebase.auth().currentUser.uid;
+  const cid = (await db.doc('users/'+uid).get()).get('companyId');
+  // light discovery: top 8 most-recently-updated projects, match name "lebanon" (no full scan)
+  const qs = await db.collection('companies/'+cid+'/projects').orderBy('updatedAt','desc').limit(8).get();
+  const hit = qs.docs.find(d => (d.get('name')||'').toLowerCase().includes('lebanon'));
+  if(!hit){ console.error('[WATCH] no recent project matching "lebanon" — open it first, or hard-set the id below'); return; }
+  // If two match: replace the finder with →  const hit = qs.docs.find(d=>d.id==='PASTE_PROJECT_ID');
+  const path = 'companies/'+cid+'/projects/'+hit.id;
+  const names = {}; (window._arcDesignerCache||[]).concat(window._arcSalespersonCache||[]).forEach(u=>{const k=u&&(u.uid||u.Uid); if(k)names[k]=u.name||u.Name||u.E_Mail||'';});
+  window.__arcWatchLog = []; let prev = null; const everDeleted = new Set(); window.__arcSnap = null;
+  console.log('%c[WATCH] '+path+' ('+hit.get('name')+')','color:#4ade80;font-weight:700');
+  window.__arcWatchUnsub = db.doc(path).onSnapshot(snap => {
+    if(!snap.exists) return;
+    const d = snap.data(); window.__arcSnap = d;
+    const t = new Date().toISOString().slice(11,23);
+    const by = d.updatedBy || '?'; const who = names[by] ? names[by]+' ('+by.slice(0,6)+')' : by;
+    const ids = []; (d.panels||[]).forEach(p => (p.bom||[]).forEach(r => { if(!r.isLaborRow) ids.push(String(r.id)); }));
+    const cur = new Set(ids); let flags = '';
+    if(prev){
+      const added = [...cur].filter(x=>!prev.has(x));
+      const removed = [...prev].filter(x=>!cur.has(x));
+      removed.forEach(x=>everDeleted.add(x));
+      const resurrected = added.filter(x=>everDeleted.has(x));
+      flags = ' +'+added.length+' -'+removed.length;
+      if(removed.length) flags += ' DEL:['+removed.join(',')+']';
+      if(resurrected.length) flags += ' RESURRECTED:['+resurrected.join(',')+']';
+    }
+    prev = cur;
+    window.__arcWatchLog.push({t,by,who,rows:cur.size,ids:[...cur]});
+    console.log((flags.includes('RESURRECTED')?'%c':'%c')+'[WATCH '+t+'] by='+who+' rows='+cur.size+flags, flags.includes('RESURRECTED')?'color:#f87171;font-weight:700':'color:inherit');
+  }, e => console.error('[WATCH] listener error', e));
+  window.__arcInspect = (needle) => { const d = window.__arcSnap||{}; const out=[];
+    (d.panels||[]).forEach(p => (p.bom||[]).forEach(r => { if(String(r.id)===String(needle)||(r.partNumber||'').toLowerCase().includes(String(needle).toLowerCase()))
+      out.push({id:r.id,pn:r.partNumber,priceSource:r.priceSource,unitPrice:r.unitPrice,leadTimeDays:r.leadTimeDays,leadTimeSource:r.leadTimeSource,bcNo:r.bcNo||r.bcItemNumber}); }));
+    console.table(out); return out; };
+  console.log('[WATCH] ready. Stop: window.__arcWatchUnsub()  |  Inspect a row: __arcInspect("PN-or-id")  |  Export: copy(JSON.stringify(window.__arcWatchLog))');
+})();
+```
+
+### What the output looks like
+
+```
+[WATCH] companies/…/projects/abc123 (Lebanon …)
+[WATCH 21:14:07.102] by=Jon (a1b2c3) rows=155
+[WATCH 21:14:22.880] by=Jon (a1b2c3) rows=154 -1 DEL:[1751998xxxxx.42]     ← A deleted X-DEL
+[WATCH 21:14:31.550] by=Andrew (d4e5f6) rows=155 +1                        ← B added B-NEW; X-DEL NOT back = PASS
+```
+
+Each line = one persisted write to the doc. `by=` is `updatedBy` (uid; name best-effort from the BC user cache — if blank, the two uids still distinguish Jon vs Andrew). `+N/-N` = rows added/removed vs the previous write; `DEL:[…]` lists removed ids; `RESURRECTED:[…]` (red) = a previously-deleted id came back.
+
+### How to read PASS/FAIL
+
+- **T1 concurrent add** — after both adds settle, `rows=` equals the expected total and both new ids appear in `ids`; no add's id shows up in a later `DEL:` without a real delete action. **FAIL** = a just-added id silently missing.
+- **T3 / T4 delete-safety (load-bearing)** — you see `-1 DEL:[<xid>]` on the delete, then the other user's add as `+1`. **PASS = no `RESURRECTED:[<xid>]` line and `<xid>` never reappears in `ids`.** **FAIL = any red `RESURRECTED:[…]`.**
+- **T7 stale/unsaved add survives** — the added row's id must stay in `ids` across the other user's write; **FAIL** = it appears in a `DEL:[…]` (dropped by the inbound write).
+- **T9 metadata-whole** — after the concurrent writes, run `__arcInspect("<T9 part number>")`. **PASS** = `priceSource:"bc"`, `unitPrice` set, `leadTimeDays`+`leadTimeSource` present, `bcNo` present. **FAIL** = those go null/blank after the stale save.
+- **Any run:** an id that vanishes with no corresponding delete = lost row = **FAIL**.
+
+### Caveats
+- Open Lebanon **before** pasting; discovery matches the name among the 8 most-recently-updated projects. If it can't find it or two match, hard-set `hit` to the exact project id (comment in the snippet shows how).
+- The `everDeleted` set means a *legitimate* re-add of the same row id would false-flag as RESURRECTED — but matrix delete rows are throwaways never re-added, so any RESURRECTED = the bug.
+- Independent read-only listener; safe to run alongside the app. Stop with `window.__arcWatchUnsub()`; export the full log with `copy(JSON.stringify(window.__arcWatchLog))` and send it to Freddy.
+- Pairs with the app's own console `BOM MERGE: preserved N …` warnings (those confirm the merge *fired*; the watcher confirms the *result* in Firestore).
