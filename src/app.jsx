@@ -473,6 +473,20 @@ function pendingPagesSet(projectId,panelId,data){const key=projectId+':'+panelId
 function pendingPagesClear(projectId,panelId){const key=projectId+':'+panelId;if(key in _pendingPagesCache){delete _pendingPagesCache[key];_pendingPagesNotify();}}
 function pendingPagesGet(projectId,panelId){return _pendingPagesCache[projectId+':'+panelId]||null;}
 function _bgKey(projectId,panelId){return projectId+':'+panelId;}
+// B012 hard one-editor lock (editing lease) — P1. See docs/B012-HARD-LOCK-COACH-PLAN.md.
+// LEASE_STALE_MS = crash/exit-detection window: the lease is VALID while editingExpiresAt
+// (heartbeat-renewed) is in the future. LEASE_HEARTBEAT_MS = renew cadence while the tab is
+// OPEN (regardless of user idleness — that's the "held while open, no idle release" ruling).
+// STALE must comfortably exceed HEARTBEAT so a couple of missed beats don't drop the lock.
+const LEASE_STALE_MS=90000;      // 90s — reclaimable this long after the last heartbeat (crash)
+const LEASE_HEARTBEAT_MS=30000;  // 30s — renew while the holder's tab is open
+// Per-BROWSER-TAB id, stable for this tab's lifetime (survives project switches / ProjectView
+// remounts). Distinguishes the SAME user's second tab from the holder's own tab (state (ii)).
+const _ARC_TAB_ID=(()=>{try{return (typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+"-"+Math.random().toString(36).slice(2);}catch(e){return String(Date.now())+"-"+Math.random().toString(36).slice(2);}})();
+// True while a background task (extraction/pricing/BC-sync) is still running for this project —
+// used to SUPPRESS lease release on unmount so a completing writeback isn't rejected after
+// another user claims (Async Project Ownership Rule; plan §7 edge 2).
+function _hasRunningBgTaskForProject(projectId){return Object.values(_bgTasks).some(t=>t&&t.projectId===projectId&&t.status==="running");}
 function _bgNotify(){_bgListeners.forEach(fn=>fn({..._bgTasks}));}
 function bgStart(taskId,panelName,projectId,msg){
   // Cancel any pending delete timer so a re-upload within the cleanup window doesn't wipe the new task
@@ -9067,6 +9081,19 @@ async function saveProject(uid,project){
           console.warn(`SAVE GUARD: preserving owner-set lock — incoming save by ${uid} would have cleared it`);
           data.ownerLockActive=true;
         }
+        // B012 SAVE GUARD (editing lease): a CONTENT save (saveProject) must never touch the
+        // lease — claim / heartbeat / release / grant all go through dedicated ref.update() calls.
+        // The holder's in-memory `data` doesn't carry the lease fields (their own claim wrote them
+        // to Firestore but the same-uid onSnapshot skip means local state never saw them), so a
+        // full-doc set() from `data` would WIPE the holder's own lease mid-edit. Carry the server's
+        // lease fields onto the outgoing write. (saveProjectPanel spreads the full server doc, so it
+        // preserves these automatically — see the assertion comment there.)
+        {
+          const _srvLease=_curDoc.data();
+          for(const _lf of ['editingBy','editingByName','editingTabId','editingClaimedAt','editingExpiresAt','editingLastActivityAt','editingAccessRequest','editingForcePending']){
+            if(_srvLease[_lf]!==undefined)data[_lf]=_srvLease[_lf];
+          }
+        }
         // SAVE GUARD: Preserve review fields from server when incoming save has no review state.
         // Race: review submit writes preReviewStatus="pending" via saveProject, but a concurrent
         // save (e.g. BC drawing sync, auto-save) reads stale Firestore and overwrites with a doc
@@ -9370,6 +9397,10 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       }
       return p;
     });
+    // B012 editing-lease note: this `{...proj,...}` spread carries the SERVER's lease fields
+    // (editingBy/editingExpiresAt/editingTabId/…) onto the write untouched, so a holder's content
+    // save never clobbers their own lease. Do NOT replace the spread with a field-by-field rebuild
+    // without re-adding an explicit lease-preserve (cf. the saveProject guard above).
     let liveProject={...proj,panels,updatedBy:uid,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
     // DECISION(v1.19.744): Quote Rev bump on per-panel save. Same logic as in saveProject —
     // hash the quote-relevant content; if it differs from the persisted hash, bump.
@@ -10230,6 +10261,15 @@ function buildRestoreProjectData(archive,remaps,options,uid,now,bcEnv,bcCompanyN
   data.ownerTakeoverLog=[];
   data.editUnlocked=false;
   data.quotePrintLock=null;
+  // B012 editing-lease fields — a fresh/copied/restored project starts with no lease.
+  data.editingBy=null;
+  data.editingByName=null;
+  data.editingTabId=null;
+  data.editingClaimedAt=null;
+  data.editingExpiresAt=null;
+  data.editingLastActivityAt=null;
+  data.editingAccessRequest=null;
+  data.editingForcePending=null;
   data.unlockRequestedBy=null;
   data.createdBy=uid;
   data.createdAt=now;
@@ -36866,6 +36906,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [ownerPriorityActive,setOwnerPriorityActive]=useState(false);
   const [takeoverActive,setTakeoverActive]=useState(null);
   const [showTakeoverModal,setShowTakeoverModal]=useState(false);
+  // B012 editing lease (P1): leaseReadOnly is the authoritative "someone else holds it" flag,
+  // (re)computed by the claim/heartbeat tick below (a Firestore transaction = server truth, so
+  // it can't drift off stale local state). leaseModal drives the one-time three-state open modal.
+  const [leaseReadOnly,setLeaseReadOnly]=useState(false);
+  const [leaseModal,setLeaseModal]=useState(null); // null | {kind:'other-user',holderName} | {kind:'other-tab'}
+  const _leaseModalShownRef=useRef(false);
   const [ownerPriorityToast,setOwnerPriorityToast]=useState(null); // {ownerName, shownAt} | null
   const iAmOwner=!project.createdBy||project.createdBy===uid;
   const iAmAdmin=_appCtx.role==="admin";
@@ -36934,6 +36980,46 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       window.removeEventListener('beforeunload',onBeforeUnload);
       unsub();
       fbDb.doc(presencePath).delete().catch(()=>{});
+    };
+  },[init&&init.id,uid]);
+
+  // ── B012 hard one-editor lock (editing lease) — P1 (docs/B012-HARD-LOCK-COACH-PLAN.md) ──
+  // ONE interval serves double duty: while I HOLD the lease it RENEWS it (heartbeat, so the lock
+  // is held while the tab is open regardless of idleness); while SOMEONE ELSE holds it, the same
+  // tick RE-ATTEMPTS the claim so I auto-promote to holder the moment they leave (clean exit) or
+  // their lease goes stale (crash, within LEASE_STALE_MS). Claim is a Firestore transaction, so
+  // leaseReadOnly reflects server truth. Release on exit frees it immediately — SUPPRESSED while a
+  // bg task for this project is still running (Async Project Ownership Rule; plan §7 edge 2).
+  useEffect(()=>{
+    if(!(init&&init.id)||!uid)return;
+    let alive=true;let holds=false;
+    const tick=async()=>{
+      if(!alive)return;
+      const res=await _tryAcquireEditingLease(init.id);
+      if(!alive)return;
+      if(res.ok){
+        holds=true;
+        setLeaseReadOnly(false);
+        setLeaseModal(null);
+        _leaseModalShownRef.current=false;
+      }else{
+        holds=false;
+        setLeaseReadOnly(true);
+        if(!_leaseModalShownRef.current){
+          _leaseModalShownRef.current=true;
+          setLeaseModal(res.kind==="other-tab"?{kind:"other-tab"}:{kind:"other-user",holderName:res.holderName});
+        }
+      }
+    };
+    tick();
+    const interval=setInterval(tick,LEASE_HEARTBEAT_MS);
+    const onBeforeUnload=()=>{if(holds)_releaseEditingLease(init.id);};
+    window.addEventListener('beforeunload',onBeforeUnload);
+    return()=>{
+      alive=false;
+      clearInterval(interval);
+      window.removeEventListener('beforeunload',onBeforeUnload);
+      if(holds)_releaseEditingLease(init.id);
     };
   },[init&&init.id,uid]);
 
@@ -37346,7 +37432,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       :customerReviewReadOnly
         ?"Client review in progress — edits locked"
         :null;
-  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly;
+  // B012: leaseReadOnly = another user (or my own other tab) holds the editing lease. Server-enforced
+  // by firestore.rules (isEditingLeaseLocked); this is the matching client gate for edit affordances.
+  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly||leaseReadOnly;
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
@@ -37847,6 +37935,55 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   async function _releaseQuotePrintLock(projectId){
     const ref=fbDb.doc(_projectDocPath(projectId));
     try{await ref.update({quotePrintLock:null});}catch(e){/* harmless */}
+  }
+  // B012 editing lease — claim (on free/stale), renew (when I already hold this tab's lease), or
+  // report who holds it. Runs as a transaction so two racing tabs can't both win. Mirrors
+  // _tryAcquireQuotePrintLock, incl. FAIL-OPEN on a Firestore error (a blip must not brick editing).
+  async function _tryAcquireEditingLease(projectId){
+    const ref=fbDb.doc(_projectDocPath(projectId));
+    try{
+      return await fbDb.runTransaction(async tx=>{
+        const snap=await tx.get(ref);
+        if(!snap.exists)return{ok:true,reason:"missing-project"}; // no doc yet → don't block
+        const cur=snap.data();
+        const now=Date.now();
+        const valid=cur.editingBy&&(cur.editingExpiresAt||0)>now;   // a fresh (heartbeat-alive) lease exists
+        if(valid&&cur.editingBy!==uid){
+          return{ok:false,kind:"other-user",holderName:cur.editingByName||"another user"};
+        }
+        if(valid&&cur.editingBy===uid&&cur.editingTabId&&cur.editingTabId!==_ARC_TAB_ID){
+          // Held by MY OWN other tab. Rules would allow a same-uid claim, so we refuse CLIENT-side
+          // (per-session enforcement) to avoid stealing the lease from my first tab.
+          return{ok:false,kind:"other-tab"};
+        }
+        // Free / crashed-stale / already-mine-this-tab → claim or renew.
+        const mineThisTab=cur.editingBy===uid&&cur.editingTabId===_ARC_TAB_ID;
+        tx.update(ref,{
+          editingBy:uid,
+          editingByName:fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"another user",
+          editingTabId:_ARC_TAB_ID,
+          editingClaimedAt:mineThisTab?(cur.editingClaimedAt||now):now,
+          editingExpiresAt:now+LEASE_STALE_MS,
+          // P3 field, seeded here; per-save activity stamping arrives in P3 (force-takeover gate).
+          editingLastActivityAt:mineThisTab?(cur.editingLastActivityAt||now):now,
+          updatedAt:now,updatedBy:uid,
+        });
+        return{ok:true};
+      });
+    }catch(e){
+      console.warn("[editingLease] acquire failed (non-fatal — proceeding editable):",e.message);
+      return{ok:true,degraded:true};
+    }
+  }
+  async function _releaseEditingLease(projectId){
+    // Suppress release while a bg task for this project is still running (Async Ownership Rule):
+    // a completing extraction/pricing/BC writeback must still land under this holder's identity.
+    if(_hasRunningBgTaskForProject(projectId))return;
+    const ref=fbDb.doc(_projectDocPath(projectId));
+    try{await ref.update({
+      editingBy:null,editingByName:null,editingTabId:null,editingClaimedAt:null,
+      editingExpiresAt:null,editingLastActivityAt:null,updatedAt:Date.now(),updatedBy:uid,
+    });}catch(e){/* harmless — 90s staleness reclaims it */}
   }
   async function handlePrintQuote(){
     if(quotePrinting)return;
@@ -38718,6 +38855,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           ownerName={(viewers.find(v=>v.isOwner&&v.uid===project.createdBy)?.userName)||(viewers.find(v=>v.isOwner&&v.uid===project.createdBy)?.userEmail||"").split("@")[0]||"owner"}
           onClose={()=>setShowTakeoverModal(false)}
           onConfirm={handleAdminTakeover}/>
+      )}
+      {/* B012 three-state editing-lease open modal (P1). Dismiss → view the project read-only. */}
+      {leaseModal&&(
+        <div style={{position:"fixed",inset:0,zIndex:900,background:"rgba(3,6,20,0.72)",display:"flex",alignItems:"center",justifyContent:"center",padding:40}}>
+          <div style={{background:"#1e2a4a",border:"2px solid #818cf8",borderRadius:16,padding:"32px 40px",maxWidth:520,boxShadow:"0 20px 60px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",alignItems:"center",gap:14}}>
+            <div style={{fontSize:52}}>🔒</div>
+            <div style={{fontSize:20,fontWeight:800,color:"#c4b5fd",textAlign:"center"}}>
+              {leaseModal.kind==="other-tab"?"Already open in another tab":"Project in use"}
+            </div>
+            <div style={{fontSize:15,color:"#e0e7ff",textAlign:"center",lineHeight:1.55}}>
+              {leaseModal.kind==="other-tab"
+                ?"You already have this project open in another tab. Close this one and return to that tab to keep editing."
+                :<><strong style={{color:"#fcd34d"}}>{leaseModal.holderName||"Another user"}</strong> is already editing this project in another location. You can view it, but edits are locked until they're done.</>}
+            </div>
+            <button onClick={()=>setLeaseModal(null)} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>View read-only</button>
+          </div>
+        </div>
       )}
       {view==="quote"?(
         <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
