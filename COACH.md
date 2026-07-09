@@ -296,6 +296,18 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 
 **Revised verdict: PASS PENDING gaps #1 (keep-alive) + #2 (eligibility-gated claim).** I re-review both deltas before test-channel deploy.
 
+---
+
+**★ RE-REVIEW (2026-07-09) — gap #1 keep-alive delta: CLEARED. Refined L6 lead: CONFIRMS gap #2 + Fix B still the answer.**
+
+**Gap #1 — keep-alive delta `d1b1b07e` (src/app.jsx +41/-1) — ✅ CLEARED.** Module-scoped `_leaseKeepAlive` map (keyed by projectId, dedup); `_startLeaseKeepAlive` on unmount only when `holds && _hasRunningBgTaskForProject`; renewal is TRANSACTIONAL + IDENTITY-GUARDED (`editingBy===uid && editingTabId===_ARC_TAB_ID`) → never steals back a reclaimed/handed-off lease; stops on reclaim/handoff/task-done; no explicit release (90s staleness frees it). Mount calls `_stopLeaseKeepAlive` → mounted tick takes over renewal (no double-renewer). Verified edge cases: stale-`holds` (lost-offline) is safe (identity guard finds `editingBy≠uid` → stops, no steal); fail-open degraded claim likewise stops harmlessly; A→B navigation with two running tasks keys independently. Minor/non-blocking: after a post-navigation task completes, the lease lingers ≤~30s (next tick detects task-done) + 90s staleness before freeing — acceptable, matches "no explicit release." **Matches the C140-addendum spec. Gap #1 clear for the combined P1 deploy.**
+
+**Refined L6 lead (Andrew): green-circle approve IS clickable → on click it UNCHECKS + "updated by team member."** This CONFIRMS the gap-#2 mechanism I traced: the approve write is REJECTED (permission-denied via `isEditingLeaseLocked`, because the payload isn't pure review-state → `isOnlyReviewStateUpdate`=false), the optimistic local flip isn't persisted, and the next onSnapshot (Jon's heartbeat truth) re-syncs → the flip reverts with the "updated by team member" toast. Freddy's two factors, resolved:
+- **(a) approve payload vs the carve-out:** already verified — approve/reject write `preReviewChangeLog`/`reviewChangeLog`/`reviewRevBumpedThisCycle`, all OUTSIDE `isOnlyReviewStateUpdate`. Under **Fix B the reviewer HOLDS the lease** → `isEditingLeaseLocked`=false for them → the approve passes REGARDLESS of the allowlist → **no allowlist-widen needed** (widening is brittle whack-a-mole across approve/reject/reassign/invalidate/reviewerEdit field-sets — avoid).
+- **(b) soft-apply revert of an accepted flip:** under Fix B, Jon (reviewReadOnly ⇒ INELIGIBLE) does NOT claim/hold/heartbeat → he emits no `updatedBy=Jon` writes → no soft-apply churn to clobber the reviewer's flip; and the reviewer's own writes skip their own soft-apply (updatedBy===self). The "updated by team member" revert is a symptom of the current (broken) state where Jon holds + heartbeats; Fix B removes that writer. More broadly, the hard lock means **only the holder writes content**, so the C137 soft-apply REPLACE-not-merge clobber class is moot under the lock (no concurrent writer) — no soft-apply-merge change needed for P1.
+
+**⇒ Fix B (eligibility-gated claim) resolves BOTH (a) and (b) with no rules change and no soft-apply change. Recommendation unchanged; the refined lead strengthens it.** (Belt-and-suspenders allowlist-widen is possible but unnecessary + brittle with Fix B — not recommended.)
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
