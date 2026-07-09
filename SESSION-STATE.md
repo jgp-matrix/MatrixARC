@@ -1,11 +1,12 @@
-# Session State — 2026-07-08 MDT (regen at close-out · PROVEN B012 data-loss incident · Phase B fix built + HELD for live matrix · no prod deploy)
+# Session State — 2026-07-09 MDT (B012 fix PIVOTED to hard one-editor lock · P1 built+deployed to TEST · live lock-matrix pending · F011 shipped v1.23.4)
 
 ## Version
-**v1.23.3** (PRODUCTION — UNCHANGED this session). **No deploy occurred** — all session work on master is docs / TODO / traces / handoff. The one production code change (Phase B) is intentionally **held on a branch**, not merged/deployed.
+**v1.23.4** (PRODUCTION — F011 CSV-export columns shipped 2026-07-09 · release `ebe0cbc2`; prior baseline v1.23.3). The **B012 hard-lock P1** is deployed to the **TEST channel only** (matrix-arc-test serves the P1 build @ v1.23.3 + project-wide Firestore rules) — **not on prod yet**, pending the live lock-matrix + Jon prod sign-off.
 
 ## Deploy State
-- **Master tip:** `2dd2e468` (triage close-out; docs/TODO only — `51351beb`→`cdb3ed76`→`2dd2e468`, no code/deploy). `master == origin/master`. **No prod deploy this session.**
-- Production: **https://matrix-arc.web.app** still serving **v1.23.3** (baseline).
+- **Master tip:** `ebe0cbc2` (Release v1.23.4 — F011 CSV export: Supplier/Lead Time/Priced Date columns). `master == origin/master`.
+- Production: **https://matrix-arc.web.app** serving **v1.23.4**.
+- **Test channel:** **https://matrix-arc-test.web.app** serving the **B012 P1 build** (lease/lock code); **Firestore rules are live PROJECT-WIDE** but verified **inert on prod** (prod bundle has zero lease markers).
 - **Retained branch (intentional):** `claude/phase-b-bom-merge` (commit `bd9134a9`, **PR #5**) — the Phase B row-merge, now **SHELVED** (superseded as the primary B012 fix by the hard one-editor lock, Jon 2026-07-09). Retained as a possible future backstop for same-user-two-tab + background-write residuals. **Do NOT auto-merge/deploy it.**
 - **Working tree:** clean.
 
