@@ -22,6 +22,7 @@
 ---
 
 - [2026-07-09] BUG — "Login box 'Continue with Microsoft' misleads existing users (it's account-setup only)" — On the sign-in screen the Login box shows a "Continue with Microsoft" button, but that path is only for SETTING UP A NEW ACCOUNT. Existing/already-setup users just need to log in — yet they all click "Continue with Microsoft" expecting it to log them in with their Microsoft account, taking the wrong path. Misleading affordance / label. Fix direction (for team triage): relabel/reposition so an already-setup user sees a clear plain "log in" path distinct from new-account Microsoft setup. — reported via Intake (source: Jon)
+- [2026-07-09] FEAT — "Debug Mode — persistent cross-user activity tracing" — a debug mode that persistently traces cross-user activity (extends the existing debug-logging system). Surfaced during the B012/Phase B concurrent-edit work as a durable diagnostic for multi-user scenarios. Parked behind Phase B; pending Freddy F-number. — reported via Intake (source: Jon, relayed via Freddy)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
