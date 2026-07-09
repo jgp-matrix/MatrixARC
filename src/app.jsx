@@ -27830,11 +27830,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
   function exportCSV(){
     const sourceLabel=s=>s==="bc"?"BC":s==="ai"?"AI":s==="manual"?"Manual":"";
-    const header=["Qty","Part Number","Description","Manufacturer","Unit $","Cost Source","Notes"];
+    // F011: added Supplier (r.bcVendorName — the SAME field the on-screen BOM shows as the
+    // supplier/vendor, see the _supplier column @~29270), Lead Time (r.leadTimeDays) and
+    // Priced Date (r.priceDate, ms timestamp). Additive — no data-model change.
+    const header=["Qty","Part Number","Description","Manufacturer","Unit $","Priced Date","Cost Source","Supplier","Lead Time","Notes"];
     const rows=[header,...(panel.bom||[]).map(r=>[
       r.qty,r.partNumber,r.description,r.manufacturer,
       r.unitPrice!=null?"$"+Number(r.unitPrice).toFixed(2):"",
+      r.priceDate?new Date(r.priceDate).toLocaleDateString():"",
       sourceLabel(r.priceSource),
+      r.bcVendorName||"",
+      r.leadTimeDays!=null?r.leadTimeDays:"",
       r.notes
     ])];
     const csv=rows.map(r=>r.map(c=>`"${String(c||"").replace(/"/g,'""')}"`).join(",")).join("\n");
