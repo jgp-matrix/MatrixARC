@@ -322,7 +322,16 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-07)
+## Recently Active Work (as of 2026-07-08)
+
+### 2026-07-08 — PRJ402096 concurrent-edit incident (PROVEN B012 data loss; Phase B built + HELD)
+- **B012 — CRITICAL concurrent-edit BOM data loss, PROVEN.** Whole-document `ref.set()` BOM saves with NO row merge → last-write-wins; Jon + Andrew editing PRJ402096 concurrently clobbered each other's rows. **Proven instance: 534013 clobbered** (added pre-Andrew, reached BC planning-lines, absent from Firestore). Fix = **Phase B** (row-level merge + baseline delete-safety + soft-apply merge; Phase A stale-save-on-open folded in). Built + unit-tested **25/25** + Coach **C138 PASS** + on TEST + **PR #5** — **HELD** for the live 2-session matrix (`docs/PHASE-B-MATRIX-SCRIPT.md`) + Jon prod sign-off. NOT merged/deployed. **★ SHIP IT FIRST next session.**
+- **CONTAINMENT LIVE:** one editor per project, ALL projects, until Phase B ships. **Jon holding sales off ARC** until Phase B + the BC-connection fix land.
+- **B013 escalated → chronic multi-user BC connection reliability.** Andrew's & Ryan's pills often RED; Jon's stayed GREEN-but-dead. BC healthy at account level (Marc's session 200s) → per-session token degradation. Fix: honest health indicator (probe validity) + auto-reconnect/retry + token refresh. Priority behind Phase B.
+- **B016 re-scoped → mutation write-race/delay under PRJ402096's on-open BC churn.** Adds render late (persist though), lead-time + Est-Prod-Done-date edits revert, deletes don't stick. **Phase B does NOT fully cover this** (merge is new-rows-only) → also reduce on-open churn + await/confirm mutations.
+- **New: B017** (special-char part numbers 400 the BC price/invoice lookups — OData escaping) + **B018** (send-block overlay counts only pricing-incomplete, not all red rows — clarity/product decision).
+- **No prod deploy this session** — prod stays **v1.23.3**; all master work is docs/TODO/traces/handoff. Phase B code is on branch `claude/phase-b-bom-merge` (PR #5) only.
+- **Lesson:** on live/intermittent/timing bugs, hold the diagnosis LOOSELY and get the decisive artifact first — several confident root-cause calls were overturned by the next data point tonight (see [[feedback_surface_first_and_instrument_timing_bugs]]).
 
 ### Shipped 2026-07-07 — G005 Phase 1 + quick-win batch (huge session)
 - **G005 Phase 1 — test-env isolation firewall. SHIPPED v1.23.3.** `IS_TEST_ENV` (hostname) gates all external side-effects on `matrix-arc-test`: 14 client BC writes through one `bcGatedFetch` belt, client email (3 sites) suppressed, server triggers/callables gated (isTest/isTestCompany), `bulkMfrLookup` server-side BC write gated, TEST-MODE banner, test BC→sandbox. **Money-path/ERP-write harm PROVEN CLOSED.** Data-collision only Phase-1-partial (test-company convention is BLOCKED by 1-company-per-user → Phase 2 is the real fix + unblocks the deferred mutating-tail live demo). §10-8 prod-smoke is next session's first task. Lesson: the layered review caught 3 enumeration misses (BC 2→14, server sweep, bulkMfrLookup) — treat plan counts as a FLOOR.
