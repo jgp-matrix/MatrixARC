@@ -37013,55 +37013,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     };
   },[init&&init.id,uid]);
 
-  // ── B012 hard one-editor lock (editing lease) — P1 (docs/B012-HARD-LOCK-COACH-PLAN.md) ──
-  // ONE interval serves double duty: while I HOLD the lease it RENEWS it (heartbeat, so the lock
-  // is held while the tab is open regardless of idleness); while SOMEONE ELSE holds it, the same
-  // tick RE-ATTEMPTS the claim so I auto-promote to holder the moment they leave (clean exit) or
-  // their lease goes stale (crash, within LEASE_STALE_MS). Claim is a Firestore transaction, so
-  // leaseReadOnly reflects server truth. Release on exit frees it immediately — SUPPRESSED while a
-  // bg task for this project is still running (Async Project Ownership Rule; plan §7 edge 2).
-  useEffect(()=>{
-    if(!(init&&init.id)||!uid)return;
-    // If a module-scoped keep-alive was renewing this project's lease (this holder had navigated
-    // away while a bg task ran), stop it — the mounted tick below now owns renewal (dedup, no race).
-    _stopLeaseKeepAlive(init.id);
-    let alive=true;let holds=false;
-    const tick=async()=>{
-      if(!alive)return;
-      const res=await _tryAcquireEditingLease(init.id);
-      if(!alive)return;
-      if(res.ok){
-        holds=true;
-        setLeaseReadOnly(false);
-        setLeaseModal(null);
-        _leaseModalShownRef.current=false;
-      }else{
-        holds=false;
-        setLeaseReadOnly(true);
-        if(!_leaseModalShownRef.current){
-          _leaseModalShownRef.current=true;
-          setLeaseModal(res.kind==="other-tab"?{kind:"other-tab"}:{kind:"other-user",holderName:res.holderName});
-        }
-      }
-    };
-    tick();
-    const interval=setInterval(tick,LEASE_HEARTBEAT_MS);
-    const onBeforeUnload=()=>{if(holds)_releaseEditingLease(init.id);};
-    window.addEventListener('beforeunload',onBeforeUnload);
-    return()=>{
-      alive=false;
-      clearInterval(interval);
-      window.removeEventListener('beforeunload',onBeforeUnload);
-      if(holds){
-        // Clean exit → release now (this is a no-op/suppressed if a bg task is still running).
-        _releaseEditingLease(init.id);
-        // Navigated away WHILE a bg task for this project is still running → keep the lease alive
-        // out-of-band (module-scoped) so the orphaned writeback isn't rejected after 90s staleness
-        // lets another user claim it. Identity-guarded; stops itself when the task ends (plan §7).
-        if(_hasRunningBgTaskForProject(init.id))_startLeaseKeepAlive(init.id,uid);
-      }
-    };
-  },[init&&init.id,uid]);
+  // ── B012 editing-lease claim/heartbeat/release effect was MOVED below (to just after the
+  // readOnly computation) so it can gate the CLAIM on _eligibleEditor (Fix B). See that useEffect. ──
 
   // DECISION(v1.19.678): Compute Owner Priority Mode from viewers + project doc.
   // Active when owner is present (recent heartbeat OR lockActive checkbox) AND
@@ -37472,9 +37425,63 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       :customerReviewReadOnly
         ?"Client review in progress — edits locked"
         :null;
-  // B012: leaseReadOnly = another user (or my own other tab) holds the editing lease. Server-enforced
-  // by firestore.rules (isEditingLeaseLocked); this is the matching client gate for edit affordances.
-  const readOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly||leaseReadOnly;
+  // B012 Fix B (eligibility-gated claim): factor the STRUCTURAL read-only reasons (everything except
+  // the lease itself) so the lease effect can gate the CLAIM on them. A session read-only for a
+  // structural reason (role / won-lost / sent-quote / review / customer-review / ECO-scope) must NOT
+  // hold the editing lease — so the currently-eligible editor (e.g. the assigned reviewer once Jon
+  // submits for review) can claim, and their resolve/approve/review-pass BOM writes pass end-to-end
+  // as the lease holder (no rules or client UI exemption needed; core B012 first-come still holds
+  // between two eligible editors).
+  const _structuralReadOnly=isReadOnly()||lockReadOnly||sentReadOnly||reviewReadOnly||customerReviewReadOnly||_baseScopeReadOnly||_ecoScopeReadOnly;
+  const _eligibleEditor=!_structuralReadOnly;
+  // leaseReadOnly = another user (or my own other tab) holds the lease. Server-enforced by
+  // firestore.rules (isEditingLeaseLocked); this is the matching client gate for edit affordances.
+  const readOnly=_structuralReadOnly||leaseReadOnly;
+
+  // ── B012 editing lease — claim / heartbeat / release (placed AFTER the readOnly computation so it
+  // can gate on _eligibleEditor). ONE interval double-duties: renew while I hold; re-claim while
+  // locked (auto-promote the moment the holder cleanly exits or their lease goes stale). Fix B: only
+  // an ELIGIBLE editor claims/holds; on becoming ineligible (e.g. Jon submits for review) it releases
+  // so the eligible editor takes over. Keep-alive covers nav-away-with-a-running-bg-task (plan §7).
+  useEffect(()=>{
+    if(!(init&&init.id)||!uid)return;
+    _stopLeaseKeepAlive(init.id); // the mounted/eligible path owns renewal (dedup)
+    if(!_eligibleEditor){
+      // Structurally read-only → never hold the lease. Release if we held (identity-guarded no-op
+      // otherwise) so the now-eligible editor can claim. The lease is NOT the read-only reason here,
+      // so clear the lease UI state (structural readOnly already gates the affordances).
+      setLeaseReadOnly(false);setLeaseModal(null);_leaseModalShownRef.current=false;
+      _releaseEditingLease(init.id);
+      return;
+    }
+    let alive=true;let holds=false;
+    const tick=async()=>{
+      if(!alive)return;
+      const res=await _tryAcquireEditingLease(init.id);
+      if(!alive)return;
+      if(res.ok){
+        holds=true;setLeaseReadOnly(false);setLeaseModal(null);_leaseModalShownRef.current=false;
+      }else{
+        holds=false;setLeaseReadOnly(true);
+        if(!_leaseModalShownRef.current){
+          _leaseModalShownRef.current=true;
+          setLeaseModal(res.kind==="other-tab"?{kind:"other-tab"}:{kind:"other-user",holderName:res.holderName});
+        }
+      }
+    };
+    tick();
+    const interval=setInterval(tick,LEASE_HEARTBEAT_MS);
+    const onBeforeUnload=()=>{if(holds)_releaseEditingLease(init.id);};
+    window.addEventListener('beforeunload',onBeforeUnload);
+    return()=>{
+      alive=false;clearInterval(interval);
+      window.removeEventListener('beforeunload',onBeforeUnload);
+      if(holds){
+        _releaseEditingLease(init.id);
+        if(_hasRunningBgTaskForProject(init.id))_startLeaseKeepAlive(init.id,uid);
+      }
+    };
+  },[init&&init.id,uid,_eligibleEditor]);
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
 
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
@@ -38020,10 +38027,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // a completing extraction/pricing/BC writeback must still land under this holder's identity.
     if(_hasRunningBgTaskForProject(projectId))return;
     const ref=fbDb.doc(_projectDocPath(projectId));
-    try{await ref.update({
-      editingBy:null,editingByName:null,editingTabId:null,editingClaimedAt:null,
-      editingExpiresAt:null,editingLastActivityAt:null,updatedAt:Date.now(),updatedBy:uid,
-    });}catch(e){/* harmless — 90s staleness reclaims it */}
+    // Identity-guarded release: only null a lease THIS tab actually holds. Lets Fix B's ineligible
+    // branch call release unconditionally without risk of nulling another session's lease.
+    try{
+      await fbDb.runTransaction(async tx=>{
+        const snap=await tx.get(ref);if(!snap.exists)return;
+        const cur=snap.data();
+        if(cur.editingBy===uid&&cur.editingTabId===_ARC_TAB_ID){
+          tx.update(ref,{editingBy:null,editingByName:null,editingTabId:null,editingClaimedAt:null,
+            editingExpiresAt:null,editingLastActivityAt:null,updatedAt:Date.now(),updatedBy:uid});
+        }
+      });
+    }catch(e){/* harmless — 90s staleness reclaims it */}
   }
   async function handlePrintQuote(){
     if(quotePrinting)return;
