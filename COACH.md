@@ -230,7 +230,7 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 
 ### C140 — B012 P1 (core lock + read-only + 3-state open modal) — DIFF REVIEW — PASS (2026-07-09)
 
-**Type:** Full-diff review (rules + client), read-only. **Status:** **PASS — clear for test-channel deploy** (client + rules together). No blocking findings. 3 non-blocking notes; design-note CONFIRMED sound; 2 Freddy flags ruled.
+**Type:** Full-diff review (rules + client), read-only. **Status:** **PASS PENDING one fix** — the §7 edge-2(b) module-scoped keep-alive (see ADDENDUM below; found in L5 live testing, a plan-omission I missed in this diff). Rules + all other client mechanics: clear. Revised from the initial "clear for deploy" — do NOT prod-deploy P1 until the keep-alive lands. 3 non-blocking notes; design-note CONFIRMED sound; 2 Freddy flags ruled.
 **Diff:** `worktree-b012-hard-lock-p1` @ `b654c5d6` off master `adb13dad` — `firestore.rules` + `src/app.jsx` only, +208/-2. Built by Marc from `docs/B012-HARD-LOCK-COACH-PLAN.md` (C139 v2).
 
 ---
@@ -258,7 +258,23 @@ Verdict: PASS. Clear for Freddy to branch + PR + deploy to test. Then the 12-cas
 
 **Freddy's 2 flags — ruled:** (1) 30s `setProject` re-render tick on viewers → **DEFER the skip-heavy-setProject optimization** (non-blocking re-render, keeps the P1 diff tight; clean P2+ follow-up). (2) per-save `editingLastActivityAt` stamping deferred to P3 → **CONFIRMED correct P1/P3 boundary** (P1 has no force path; seeding at claim is harmless; P3 adds per-save stamping + the 30-min gate).
 
-**Data-safety:** the lock REJECTS cleanly (server-side, no partial write); no field loss; save guards preserve the lease + all existing metadata guards intact. **Verdict: PASS.** Code review is my lane; the live 2-session matrix (L1 state-i / L3 crash-90s / **L5 Async-Ownership writeback** / L8 state-ii) still must run on the test channel (Jon-driven — the test host isn't reachable by my tooling) as the deploy gate. I re-review P2/P3/P4 diffs as they land.
+**Data-safety:** the lock REJECTS cleanly (server-side, no partial write); no field loss; save guards preserve the lease + all existing metadata guards intact. **Verdict: PASS PENDING the keep-alive fix.** Code review is my lane; the live 2-session matrix (L1 state-i / L3 crash-90s / **L5 Async-Ownership writeback** / L8 state-ii) still must run on the test channel (Jon-driven — the test host isn't reachable by my tooling) as the deploy gate.
+
+---
+
+**★ ADDENDUM (2026-07-09) — L5 GAP: missing §7 edge-2(b) module-scoped keep-alive. A MISS in this review — owning it.**
+
+**What was missed.** Plan §7 edge-2 specified TWO parts for Async-Ownership: **(a)** suppress release-on-exit while a bg task runs, and **(b)** a MODULE-SCOPED heartbeat that keeps the lease ALIVE until the task ends. Marc built (a) (`_releaseEditingLease` early-return @37981) but NOT (b). My C140 review confirmed (a) and leaned on "the heartbeat's 90s tail" — but the heartbeat lives INSIDE the ProjectView effect (renew via `_tryAcquireEditingLease` @37966), so on nav-away the component unmounts → `clearInterval` → the lease is **neither released (suppressed) NOR renewed** → `editingExpiresAt` ages out in ~90s → another session can CLAIM → the orphaned bg pricing task's `saveProjectPanel` writeback is then rules-rejected. A 25-item pricing run exceeds 90s, so the window is real. **This defeats the L5 guarantee** — the exact case I called "load-bearing." Verified the omission directly: the only `editingExpiresAt` renewal in the branch is the component tick; no module-scoped keeper exists. **Root of the miss: I verified the diff against itself, not against my own plan's completeness — the "enumeration is a floor / verify the plan is fully implemented, not just that what's present is correct" lesson.** [[feedback_enumeration_is_a_floor]]
+
+**Fix approach — CONFIRMED (Marc's proposal = §7(b)), with specifics:**
+- On ProjectView unmount, if this session holds the lease AND `_hasRunningBgTaskForProject(projectId)` → start a **module-scoped** keep-alive interval (keyed by projectId in a module map to avoid duplicates) that renews `editingExpiresAt` every `LEASE_HEARTBEAT_MS`, independent of component mount.
+- Renew must be **transactional + identity-guarded**: renew ONLY while the server lease still has `editingBy===uid && editingTabId===_ARC_TAB_ID`. If the lease was reclaimed/handed off, STOP (don't steal it back) — the writeback then correctly fails because another session legitimately owns the project.
+- **Stop** when `_hasRunningBgTaskForProject` goes false. On stop, do NOT explicitly release — just stop renewing; the lease frees via 90s staleness (user gone) or is managed by the component tick (user returned). This avoids the keeper dropping an active editor's lease on a re-mount. (Idempotent if both the keeper and a re-mounted tick renew the same identity.)
+- Net: the lease stays valid across the whole bg task → the writeback (by the holder's uid) passes `isEditingLeaseLocked` → L5 restored.
+
+**Revised verdict: PASS PENDING this keep-alive fix.** Everything else in the P1 diff stands (rules, save guards, 3-state modal, release-suppression). Marc holds until Jon approves; I re-review the keep-alive delta before test-channel deploy.
+
+**On the current 95%-pricing HANG (separate):** I agree with Marc — a rules-rejected writeback ERRORS (permission-denied → `safeSave` retry → fail banner), it does NOT hang at 95%. So the live hang is most likely a **pre-existing BC-fetch stall** (B013/B016 on-open churn / token degradation), NOT this lease gap. The lease gap manifests as a LOST/errored writeback, not a hang — a distinct defect. Both real; keep the two investigations separate. The keep-alive fix is required before P1 prod regardless of the hang's root cause.
 
 ## Findings
 
