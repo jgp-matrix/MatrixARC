@@ -37016,20 +37016,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // ── B012 editing-lease claim/heartbeat/release effect was MOVED below (to just after the
   // readOnly computation) so it can gate the CLAIM on _eligibleEditor (Fix B). See that useEffect. ──
 
-  // DECISION(v1.19.678): Compute Owner Priority Mode from viewers + project doc.
-  // Active when owner is present (recent heartbeat OR lockActive checkbox) AND
-  // no takeover is currently overriding it AND I am not the owner.
-  useEffect(()=>{
-    if(iAmOwner){setOwnerPriorityActive(false);setTakeoverActive(null);return;}
-    const now=Date.now();
-    const ownerPresence=viewers.find(v=>v.isOwner&&v.uid===project.createdBy);
-    const lockHeld=!!project.ownerLockActive;
-    const ownerIsWatching=ownerPresence&&(lockHeld||(now-(ownerPresence.lastSeen||0))<90000);
-    const ta=project.ownerTakeoverActive;
-    const takeoverValid=ta&&ta.expiresAt>now;
-    setTakeoverActive(takeoverValid?ta:null);
-    setOwnerPriorityActive(!!ownerIsWatching&&!takeoverValid);
-  },[viewers,project.createdBy,project.ownerLockActive,project.ownerTakeoverActive,iAmOwner,uid]);
+  // DECISION(v1.19.678 / P1 gap #3): the Owner Priority Mode compute was RELOCATED below the
+  // reviewReadOnly computation so it can reference reviewReadOnly for the reviewer exemption
+  // (_reviewerExempt) without a TDZ. See the useEffect just below the readOnly block.
 
   // DECISION(v1.19.683): Owner-side — chime when a teammate opens my project. Preference
   // stored in localStorage per uid. Default OFF — opt-in via Settings. Owner-only.
@@ -37483,6 +37472,28 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     };
   },[init&&init.id,uid,_eligibleEditor]);
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
+
+  // DECISION(v1.19.678): Compute Owner Priority Mode from viewers + project doc. Active when the
+  // owner is present (recent heartbeat OR lockActive checkbox) AND no takeover is overriding it AND
+  // I am not the owner. RELOCATED here (below the reviewReadOnly computation) for P1 gap #3.
+  // P1 gap #3 (Jon: "change anything without guardrails"): during a pending Tech Review the acting
+  // reviewer gets FULL control regardless of the owner — so ownerPriorityActive is cleared for them
+  // via _reviewerExempt. SSOT: reuse reviewReadOnly (FALSE for the assignee/admin/override during a
+  // pending pre/post review) rather than re-inlining assignee logic. Scope: assignee + pending only;
+  // no F013 (admin request/force + consent) and no owner-priority retirement — those are P4/F013.
+  useEffect(()=>{
+    if(iAmOwner){setOwnerPriorityActive(false);setTakeoverActive(null);return;}
+    const now=Date.now();
+    const ownerPresence=viewers.find(v=>v.isOwner&&v.uid===project.createdBy);
+    const lockHeld=!!project.ownerLockActive;
+    const ownerIsWatching=ownerPresence&&(lockHeld||(now-(ownerPresence.lastSeen||0))<90000);
+    const ta=project.ownerTakeoverActive;
+    const takeoverValid=ta&&ta.expiresAt>now;
+    // "pending && !reviewReadOnly" = "I am the acting reviewer" (assignee/admin/override) — exempt.
+    const _reviewerExempt=(project.preReviewStatus==="pending"||project.postReviewStatus==="pending")&&!reviewReadOnly;
+    setTakeoverActive(takeoverValid?ta:null);
+    setOwnerPriorityActive(!!ownerIsWatching&&!takeoverValid&&!_reviewerExempt);
+  },[viewers,project.createdBy,project.ownerLockActive,project.ownerTakeoverActive,iAmOwner,uid,reviewReadOnly,project.preReviewStatus,project.postReviewStatus]);
 
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
   // company admins. Non-owner/non-admin requesters trigger this from the locked banner.
