@@ -9,18 +9,19 @@ item advances — only the status moves.
 Written form:  `<PREFIX><NNN> — "<short title>" — description [Status]`
 Example:       `B012 — "Quote # missing from PDF" — quote number absent on sent PDF/filename [Verified]`
 
-## Categories (B/F/G) — adopted 2026-07-02
-New intake is classified into three categories, **each its own number sequence with its own
+## Categories (B/F/G/M) — B/F/G adopted 2026-07-02, M added 2026-07-10
+New intake is classified into four categories, **each its own number sequence with its own
 priority ranking**:
 
 | Prefix | Category | Meaning |
 |--------|----------|---------|
 | **B###** | **Bug** | Something is broken / behaving wrong. |
 | **F###** | **Feature** | New capability or enhancement request. |
-| **G###** | **General** | Anything else (process, docs, infra, telemetry, cleanup). |
+| **G###** | **General** | Anything else (process, docs, infra, one-off telemetry, cleanup). |
+| **M###** | **Metrics** | Usage/engagement analytics + metrics reporting (the standing analytics track; persistent, consumer-facing). Distinct from G's one-off infra/telemetry. Added 2026-07-10 (Jon directive). |
 
-- Each category ranks independently. Jon may request **"top 5 of each"** (B/F/G) — display the
-  three ranked shortlists on request.
+- Each category ranks independently. Jon may request **"top 5 of each"** (B/F/G/M) — display the
+  ranked shortlists on request.
 - Every item carries a **short identifying title** so lists are scannable.
 
 ## Allocation (single-allocator rule)
@@ -59,6 +60,7 @@ Status is orthogonal to category — a B/F/G item moves through the same lifecyc
 ## Numbering history (notable)
 - **B/F/G taxonomy adopted 2026-07-02** (Jon directive via Dez). Replaces the unified `#N` scheme for
   new items; existing #1–#198 retained (no renumber), open items category-tagged.
+- **M (Metrics) category added 2026-07-10** (Jon directive via Dez). New standing analytics/telemetry track, own sequence + ranking. First item = **M001** (user engagement telemetry). Dez uses `METRICS`/`M` at intake going forward; Freddy stamps `M###`.
 - **#177 = denylist fail-open hazard** (firm-LT predicate `!=="ai"`). During the 2026-06-30 session,
   #177 was briefly used as a working label for the RFQ pre-fill cluster, but that cluster landed as
   **#178**. The repo's #177 is, and stays, the denylist hazard — no collision in the registry.
