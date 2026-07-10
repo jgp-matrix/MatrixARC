@@ -36960,7 +36960,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // B012 editing lease (P1): leaseReadOnly is the authoritative "someone else holds it" flag,
   // (re)computed by the claim/heartbeat tick below (a Firestore transaction = server truth, so
   // it can't drift off stale local state). leaseModal drives the one-time three-state open modal.
-  const [leaseReadOnly,setLeaseReadOnly]=useState(false);
+  // gap #4 #2b PRE-TICK GUARD: seed read-only from the project we're opening if it ALREADY has a
+  // VALID lease held by another (different uid, OR my own other tab) — so a freshly-opened tab is
+  // read-only from the FIRST render, with NO editable/no-modal window before the async claim tick.
+  // A FREE/expired lease → false, so the legitimate sole editor is never flashed read-only (the exact
+  // #2b concern — scoped to "only when a valid lease already exists"). The tick then refines as today.
+  const [leaseReadOnly,setLeaseReadOnly]=useState(()=>{
+    try{return !!(init&&init.editingBy&&(init.editingExpiresAt||0)>Date.now()
+      &&!(init.editingBy===uid&&init.editingTabId===_ARC_TAB_ID));}catch(e){return false;}
+  });
   const [leaseModal,setLeaseModal]=useState(null); // null | {kind:'other-user',holderName} | {kind:'other-tab'}
   const _leaseModalShownRef=useRef(false);
   const _prevLeaseHolderRef=useRef(null); // gap #4 #2a: last-seen lease holder uid (re-arm modal on change)
@@ -37323,6 +37331,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const migrated=migrateProject({...remote,id:init.id});
         projectRef.current=migrated;
         setProject(migrated);
+        // gap #4 #2b PRE-TICK GUARD (authoritative fresh value): if the server load shows a VALID
+        // lease held by another, lock to read-only NOW — before the async claim tick — closing any
+        // residual window the (possibly-stale) init-cache seed missed. Only sets TRUE; a free lease is
+        // left to the tick, which claims + clears. Display/state only — does NOT touch the claim path.
+        if(migrated.editingBy&&(migrated.editingExpiresAt||0)>Date.now()&&!(migrated.editingBy===uid&&migrated.editingTabId===_ARC_TAB_ID))setLeaseReadOnly(true);
         console.log('[CONCURRENT] Initial load — synced to Firestore truth');
         return;
       }
