@@ -360,6 +360,16 @@ Reconciling Marc's three findings:
 
 **★★ GAP #3 = design only (this finding). Marc builds the exemption per (1)+(2) → I re-review the delta (verify: compute-level injection, SSOT reuse of `reviewReadOnly`, effect-relocation didn't break the owner-priority/takeover lifecycle, scoped to assignee+pending, no non-reviewer/outside-review exposure) → combined P1 (+ gap-#3 delta) re-deploy to test → Jon re-runs L6. Pull-based; no send.**
 
+**★ GAP #3 RE-REVIEW — delta `6871b280` (src/app.jsx +25/-14) — ✅ PASS. (Jon back → active send-mode; verdict sent to Freddy.)** All six checks confirmed:
+- **Compute-level injection ✓** — `setOwnerPriorityActive(!!ownerIsWatching&&!takeoverValid&&!_reviewerExempt)` @37495; `setTakeoverActive` untouched @37494.
+- **SSOT reuse ✓** — `_reviewerExempt=(preReviewStatus==="pending"||postReviewStatus==="pending")&&!reviewReadOnly` @37493; reuses `reviewReadOnly` (@37378, so reviewOverrideSession flows through it — correct reactivity), NO re-inlined assignee/bcDesigner logic.
+- **Effect relocation clean ✓** — old effect fully removed (comment only, no dup); exactly ONE owner-priority compute effect (`setOwnerPriorityActive` @36936 useState + the single effect @37485/37495); relocated below `reviewReadOnly` (@37378) → no TDZ; deps add `reviewReadOnly`+`preReviewStatus`+`postReviewStatus`; effect body otherwise identical (iAmOwner short-circuit @37485, presence/lockHeld/ownerIsWatching/takeoverValid all intact).
+- **Lifecycle intact ✓** — useEffect timing unchanged by relocation (runs post-render regardless of textual position); takeover path (`setTakeoverActive`) preserved; `ownerPriorityToast`/banners unaffected.
+- **Scope safety ✓** — `iAmOwner` short-circuits first; non-reviewer during pending has `reviewReadOnly=true` → not exempt; outside review (not pending) → `_reviewerExempt=false` → owner-priority behaves exactly as before. No non-reviewer / outside-review exposure. Full exemption for the acting reviewer during pending (Jon-confirmed).
+- **Fix B interaction ✓** — orthogonal gates; reviewer is the sole lease-holder (Fix B) + owner-priority-exempt (gap #3) → full control; single editor → no concurrency; no conflict.
+
+**COMBINED P1 = `b654c5d6` (base) + `d1b1b07e` (keep-alive) + `a7c4bbf2` (Fix B) + `6871b280` (gap #3) — ✅ CLEAR for the `hosting:test` deploy (client + rules together; firestore.rules unchanged since b654c5d6).** Next gate: Jon re-runs the live matrix (L6 reviewer full-control under owner presence + L1/L3/L5/L8) → green → prod sign-off. No further Coach review unless the matrix surfaces a gap.
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
