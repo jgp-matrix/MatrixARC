@@ -1,7 +1,7 @@
 # gap #5b (close-ghost) + F015 (non-dismissible 2nd-tab hard-block) — Coach Design/Plan
 
 **To:** Freddy (Analyst Review) → Jon (approve) → Marc (build). **Author:** Sam Wize (Coach), 2026-07-10.
-**Fast-follow after** B012 P1 (v1.23.5). Design only — NO code yet. Per-phase gated.
+**Fast-follow after** B012 P1 (v1.23.5). **v2 (2026-07-10): Freddy Analyst Review APPROVE (`docs/GAP5B-F015-ANALYST-REVIEW.md`) + Jon's 3 rulings + R1–R4 folded in — ready to build.** Per-phase gated.
 **One-line thesis:** a single primitive — **BroadcastChannel same-browser tab-liveness** — solves both halves: it lets a reopening tab tell a *ghost* prior tab (→ adopt) from a *live* 2nd tab (→ block), AND lets a *duplicated* tab (which shares the sessionStorage id) detect the live original and self-regenerate its id. Same-uid adopt is the robust close-ghost fix; the liveness signal is what makes F015's hard-block safe.
 
 ---
@@ -30,22 +30,41 @@ Probes are fire-and-collect with a short timeout (~250–400ms): **no reply ⇒ 
 ## 2. Chosen mechanisms
 
 ### 2a. Tab-id uniqueness — collision-regenerate (F015 prerequisite; lands in gap #5b)
-On mount, after reading `_ARC_TAB_ID` from sessionStorage (gap #5a, app.jsx:489), broadcast `ID_PING {_ARC_TAB_ID}`. If a live peer replies `ID_COLLISION` (a duplicate shares my id), **regenerate** `_ARC_TAB_ID` (fresh uuid, overwrite sessionStorage) so this tab is now distinguishable. Tie-break so only the **newer** tab regenerates: the reply carries `since` (the peer's claim time); the tab with the later mount regenerates (the established tab keeps its id). Result: **every LIVE tab has a unique `_ARC_TAB_ID`**, so a duplicated tab is now correctly seen as a genuine 2nd tab (L8 + F015 detect it). Reload-stability (gap #5a) is preserved — a lone reload finds no collision and keeps its id.
+On mount, **as early as possible** (before any edit/save can fire — see R1), after reading `_ARC_TAB_ID` from sessionStorage (gap #5a, app.jsx:489), broadcast `ID_PING {tabId, since, nonce}`. If a live peer replies `ID_COLLISION` (a duplicate shares my id), **regenerate** `_ARC_TAB_ID` (fresh uuid, overwrite sessionStorage) so this tab is distinguishable, and **synchronously force a `leaseReadOnly` recompute** (the regenerated tab's id no longer matches the holder → it flips to blocked). Result: **every LIVE tab has a unique `_ARC_TAB_ID`** → a duplicated tab is correctly seen as a genuine 2nd tab (L8 + F015 detect it). Reload-stability (gap #5a) preserved — a lone reload finds no collision, keeps its id.
+- **Tie-break (R4):** only the **newer** tab regenerates. Compare `since` (mount time); if `since` ties, compare a per-tab random `nonce` (deterministic: e.g. lower nonce regenerates). Guarantees exactly one regenerates — never both (churn) or neither (undetected duplicate).
+- **Dup-tab pre-regenerate window (R1):** the pre-tick guard (37b15953) sees the shared id as "my tab holds" → seeds `leaseReadOnly=false` (editable) until the collision reply lands. BroadcastChannel delivery within one browser is near-instant (single-digit ms; the 250–400ms timeout applies only to the *no-reply* ghost/unique case), so a duplicate is blocked within ~ms — before a user could act. **Belt:** gate the save path behind a `_leaseInitResolved` flag (no persist until the first claim/ID_PING round resolves), so even a pathological fast edit can't land in the window. Asserted by test G12.
 
 ### 2b. Same-uid ADOPT — the robust close-ghost fix (gap #5b primary)
 Extend `_tryAcquireEditingLease` (app.jsx:38050). Today the other-tab branch (38065) fires when `valid && editingBy===uid && editingTabId && editingTabId!==_ARC_TAB_ID` → `{ok:false,kind:"other-tab"}`. **New:** before returning other-tab, run the `WHO_HOLDS` liveness probe:
-- **A live peer replies holding `editingTabId`** → it's a genuine live 2nd tab → return `{ok:false,kind:"other-tab"}` (block; L8 preserved).
-- **No reply (timeout)** → the prior tab is a **ghost** → **ADOPT**: `tx.update(editingBy:uid, editingByName, editingTabId:_ARC_TAB_ID, editingClaimedAt:now, editingExpiresAt:now+LEASE_STALE_MS, editingLastActivityAt:now)` → `{ok:true}`. No ≤90s wait.
+- **A live peer replies holding `editingTabId`** → a genuine live 2nd tab → `{ok:false,kind:"other-tab"}` (block; L8 preserved).
+- **No reply (timeout ~300ms)** → the prior tab is a **ghost / frozen / on another device** → **ADOPT**: `tx.update(editingBy:uid, editingByName, editingTabId:_ARC_TAB_ID, editingClaimedAt:now, editingExpiresAt:now+LEASE_STALE_MS, editingLastActivityAt:now)` → `{ok:true}`. No ≤90s wait.
 
-**Why adopt is always data-safe:** it only fires for `editingBy===uid` (same user). The adopt write is rules-permitted (server `editingBy===uid` ⇒ `isEditingLeaseLocked`=false for me). A DIFFERENT uid never reaches this branch (different-uid stays `kind:"other-user"`, and a different user isn't on my BroadcastChannel anyway). Covers close-release-failure AND browser-restart. Matches Jon's "edit pushes back to the user if they have it open."
+**Q3 (Jon overrode my block-rec): ADOPT ACROSS DEVICES.** No cross-device guard — same-uid + no live BC reply → adopt. This *naturally* covers another device (device A can't answer device B's `WHO_HOLDS`, so B sees no reply → adopts). The safety cost of a same-uid cross-device dual-write is closed by **relinquish-on-takeover (§2e)** — the load-bearing safeguard Jon accepted the brief residual window for.
+
+**Why adopt is data-safe:** fires only for `editingBy===uid` (same user); the adopt write is rules-permitted (server `editingBy===uid` ⇒ `isEditingLeaseLocked`=false for me). A DIFFERENT uid never reaches this branch (stays `kind:"other-user"`; a different user isn't on my BroadcastChannel). Covers close-release-failure, browser-restart, AND cross-device.
+
+**Simultaneous-adopt race (R3):** two new tabs adopting one ghost — the adopt is inside the Firestore transaction, so it serializes. The tx must **re-check inside the transaction**: adopt only if the lease is still the ghost it saw (`editingTabId` unchanged, or expired/free); if `editingTabId` changed to another id (the other tab won), **abort adopt → return `{ok:false,kind:"other-tab"}`** (block; the winner is now holder). Firestore contention-retry makes this deterministic — exactly one adopts. Test G11.
 
 Interaction with the pre-tick guard (37b15953): on reopen the guard seeds `leaseReadOnly=true` (init shows my ghost, different tab) → brief read-only until the adopt resolves (~probe + tx, sub-second) → then editable. Acceptable (vs 90s); note-only.
+
+### 2e. RELINQUISH-ON-TAKEOVER — the load-bearing shared safeguard (Q3 + R2, unified)
+**One mechanism, used by both cross-device adopt (Q3) and frozen-tab demotion (R2).** A tab must STOP writing the instant its lease is taken over by another of the same user's tabs/devices — otherwise two same-uid sessions both pass the (per-uid) rules and clobber each other (the B012 class *within one user's own sessions*).
+- **Trigger:** the project-doc `onSnapshot` (and an on-**resume** re-check — `visibilitychange:visible` / `pagehide`-`persisted` bfcache-restore / freeze-resume) observes `valid && editingBy===uid && editingTabId && editingTabId !== _ARC_TAB_ID`. (My uid still holds, but a DIFFERENT tab/device of mine now holds it.)
+- **Action:** `setLeaseReadOnly(true)` + indicator **"✋ Editing moved to your other session — read-only here"** + **STOP writing** (readOnly gates the UI; also drop any in-flight/queued save). **Do NOT auto-reclaim** — that would ping-pong two same-uid tabs. The user may explicitly re-take (re-claim action) to move editing back; otherwise this tab stays read-only until the other releases.
+- **Consistency with adopt (§2b):** adopt fires only when there is NO live holder (WHO_HOLDS silent). If a live same-uid holder exists (WHO_HOLDS reply, or `editingExpiresAt` advancing), this tab does NOT adopt — it relinquishes/blocks. So adopt (reopen onto a dead lease) and relinquish (my live lease got taken) are the two sides of the same coin, and never ping-pong.
+- **R2 frozen-tab:** a frozen holder can't answer `WHO_HOLDS` (Chrome Page-Lifecycle freeze) → a reopening same-uid tab adopts (thinks ghost) → on **un-freeze/resume** the demoted tab hits this relinquish trigger (`editingTabId` moved) → read-only, never blind-writes. Benign (same-uid), and the residual takeover→relinquish window is the tradeoff Jon accepted; **minimize it** (relinquish on the first onSnapshot/resume tick).
 
 ### 2c. Best-effort reliable-release-on-close (latency improvement — NOT the guarantee)
 Upgrade the close handler (app.jsx:37504 `beforeunload`) to also fire on **`pagehide`** (fires in more close/navigate/mobile cases than `beforeunload`; keep `beforeunload` as fallback). Keep the **existing identity-guarded transaction** — it completes on in-app navigation and often on `pagehide`; it best-effort reduces the CROSS-USER ghost window after a close. **Do NOT use `visibilitychange:hidden` for release** — a tab-switch/minimize would wrongly drop a live holder's lease. **Recommendation: NO server endpoint** (sendBeacon-to-callable) in this pair — 2b (adopt) fully handles the SAME-user case, and the residual is only a ≤90s CROSS-user handoff delay after a hard close, which degrades gracefully via staleness. (See §6 Q1 — Jon ruling on whether the ≤90s cross-user close-delay is acceptable or worth a future sendBeacon endpoint.)
 
-### 2d. F015 — non-dismissible hard-block (rides on 2a+2b)
-Once 2a (duplicates detected) + 2b (ghosts adopted, not blocked) are in: revert the same-user other-tab modal to **"Close the tab" ONLY** (best-effort `window.close()`, non-dismissible otherwise) — reversing the P1 restore (89e289f7). The modal now fires ONLY for a **genuine live 2nd/duplicate tab** (never a ghost — ghosts adopt; never a false duplicate — duplicates regenerate), so it can't self-trap. The cross-user **"Project in use"** modal is UNCHANGED (keeps "View read-only" — viewing another user's project is intended).
+### 2d. F015 — non-dismissible hard-block (rides on 2a+2b) [Q2 confirmed]
+Once 2a (duplicates detected) + 2b (ghosts adopted, not blocked) are in: revert the same-user other-tab modal to **"Close the tab" ONLY** (best-effort `window.close()`, non-dismissible otherwise — manual close if the browser blocks it for a user-opened tab) — reversing the P1 restore (89e289f7). The modal now fires ONLY for a **genuine live 2nd/duplicate tab** (never a ghost — ghosts adopt; never a false duplicate — duplicates regenerate), so it can't self-trap. **Q2 (Jon confirmed): non-dismissible, applies to the manual-close case.** The cross-user **"Project in use"** modal is UNCHANGED (keeps "View read-only") — but gains a countdown (§2f).
+
+### 2f. Cross-user "Project in use" modal — countdown + auto-grant (Q1)
+The cross-user held state (`kind:"other-user"`) gets a **live countdown + auto-grant** so the waiting user isn't left refreshing. Critical nuance (Jon): the countdown is valid ONLY when the lease is genuinely **AGING** toward a fixed `editingExpiresAt` (holder gone / not renewing); a **live-renewing** holder must NOT show a resetting countdown.
+- **Distinguish aging vs live-renewed** from the viewer's `onSnapshot` stream: track the last-seen `editingExpiresAt`. If it **advances** between snapshots (holder heartbeat pushing it forward, ~every 30s) → holder is LIVE → mode **"currently editing"** (indefinite, NO countdown). If it stays **fixed** (no advance across ~one renewal interval) and `now` approaches it → mode **"countdown"**: show "🔒 `<holder>` is editing — available in `##s`" ticking `editingExpiresAt − now`.
+- **Auto-grant at 0:** when the countdown reaches 0 (lease expired, holder gone), fire an **immediate claim tick** (don't wait for the 30s interval) → the now-stale lease is claimable → auto-claim + auto-dismiss the modal → editable. (This is the existing tick's stale-claim, triggered eagerly at t=0.)
+- Scope: **cross-user only.** Same-user is instant-**adopt** (§2b) — no wait, no countdown. If the holder resumes renewing mid-countdown (`editingExpiresAt` advances), switch back to "currently editing" (cancel the countdown) — never show it resetting.
 
 ---
 
@@ -54,11 +73,13 @@ Once 2a (duplicates detected) + 2b (ghosts adopted, not blocked) are in: revert 
 | Change | Location |
 |---|---|
 | BroadcastChannel join + `WHO_HOLDS`/`ID_PING` responder (new effect, cleanup on unmount) | new, in ProjectView near the lease effect (~app.jsx:37480) |
-| Tab-id collision-regenerate (2a) | `_ARC_TAB_ID` init path (app.jsx:489) + a mount-time collision check |
-| Same-uid adopt (2b) | `_tryAcquireEditingLease` other-tab branch (app.jsx:38065) — add the `WHO_HOLDS` probe + adopt-vs-block decision |
-| Close-release upgrade (2c) | lease-effect `beforeunload` handler (app.jsx:37504) → add `pagehide`; `_releaseEditingLease` (38094) unchanged |
-| F015 hard-block (2d) | `leaseModal` render, `kind==="other-tab"` branch (~app.jsx:38970) — remove "View read-only", keep "Close the tab" only |
-| Keep-alive / cross-user rules / gap#4 identity-guard | **UNCHANGED** |
+| Tab-id collision-regenerate + tie-break (2a, R1/R4) | `_ARC_TAB_ID` init path (app.jsx:489) + early mount-time `ID_PING`; `_leaseInitResolved` save-gate |
+| Same-uid adopt + in-tx re-check (2b, R3) | `_tryAcquireEditingLease` other-tab branch (app.jsx:38065) — `WHO_HOLDS` probe + adopt-vs-block; adopt tx re-checks `editingTabId` at commit |
+| **Relinquish-on-takeover (2e, Q3+R2) — load-bearing** | new: project-doc `onSnapshot` handler + on-resume re-check (`visibilitychange`/bfcache) → if `editingBy===uid && editingTabId!==_ARC_TAB_ID` → read-only + stop writing + indicator; NO auto-reclaim |
+| Cross-user countdown + auto-grant (2f, Q1) | `leaseModal` `kind==="other-user"` render — aging-vs-live detection from `editingExpiresAt` stream + eager claim at t=0 |
+| Close-release upgrade (2c) | lease-effect `beforeunload` handler (app.jsx:37504) → add `pagehide`; `_releaseEditingLease` (38094) unchanged (do NOT use `visibilitychange` for release) |
+| F015 hard-block (2d, Q2) | `leaseModal` render, `kind==="other-tab"` branch (~app.jsx:38970) — remove "View read-only", keep "Close the tab" only |
+| Keep-alive / **cross-user firestore.rules** / **gap#4 identity-guard** | **UNCHANGED** (data-safety invariant) |
 
 ---
 
@@ -79,17 +100,17 @@ Once 2a (duplicates detected) + 2b (ghosts adopted, not blocked) are in: revert 
 
 ---
 
-## 6. Jon rulings needed
+## 6. Jon rulings — RESOLVED (2026-07-10)
 
-- **Q1 — cross-user close-handoff latency.** After a hard browser-close, a DIFFERENT user reopening within 90s waits ≤90s for the ghost to expire (adopt is same-uid-only). Accept the ≤90s cross-user delay (recommended — degrades gracefully; no new server surface), OR invest in a `sendBeacon`→HTTP-function guaranteed server-side release now (adds an auth'd endpoint)? **Coach lean: accept ≤90s; defer sendBeacon unless it's a real complaint.**
-- **Q2 — same-uid, two GENUINE live tabs under F015.** With 2a+2b, a real 2nd live tab gets the non-dismissible "Close the tab" modal. `window.close()` is best-effort (browsers block it for user-opened tabs) → the user must close it manually. Confirm that's the intended UX (a truly non-dismissible modal that instructs "close this tab"), vs a softer "this tab is read-only; your other tab has edit" persistent lock. **Coach lean: Jon already ruled non-dismissible; confirm it applies to the manual-close case.**
-- **Q3 — cross-browser/device same user.** BroadcastChannel does NOT reach another browser/device. Same uid on device A (holds) + device B (opens): device B can't probe A → device B sees a valid same-uid lease it can't confirm live. Adopt (steal from A) or block? **Coach lean: block+adopt-on-staleness like today (treat a cross-device same-uid as "held elsewhere" — don't silently steal across devices); i.e., the adopt fast-path is same-browser-only, cross-device falls back to the 90s-staleness path.** Confirm.
+- **Q1 — cross-user close-handoff latency → ACCEPT ≤90s (no sendBeacon endpoint) + ADD A COUNTDOWN.** The cross-user "held" modal shows a live "available in `##s`" countdown that auto-grants (auto-claim + auto-dismiss) at 0 — **but only for an AGING lease** (holder gone); a live-renewing holder shows indefinite "currently editing" (no resetting countdown). See §2f. Same-user is instant-adopt (no wait).
+- **Q2 — non-dismissible CONFIRMED.** A genuine live 2nd tab → "Close the tab" only (best-effort `window.close()`, manual close otherwise). See §2d.
+- **Q3 — ADOPT ACROSS DEVICES (Jon overrode the block-rec).** Same-uid + no live BC reply → adopt (covers cross-device naturally). **Required safeguard = relinquish-on-takeover (§2e):** the losing device flips to read-only + stops writing when it sees `editingBy===uid` but `editingTabId` moved. Brief takeover→relinquish window is the accepted tradeoff. Cross-device guard DROPPED (simpler).
 
 ---
 
 ## 7. Fallback (no BroadcastChannel)
 
-If `BroadcastChannel` is unavailable (old browser / blocked): the liveness probe can't run. Options for the same-uid-different-tab case: (i) **adopt-anyway** (data-safe — same uid; loses L8 single-tab enforcement for that user on that browser, but no data loss and no self-trap), or (ii) block+90s-wait (preserves L8, reintroduces the same-uid reopen delay). **Coach recommendation: (i) adopt-anyway on the no-BC fallback** — trap-free + data-safe; F015's hard-block simply doesn't engage there (the "2nd tab" adopts and becomes holder). Legacy browsers thus get gap #5a's reload-safety + a trap-free reopen, without F015's single-tab enforcement. Log the fallback path.
+If `BroadcastChannel` is unavailable (old browser / blocked): the liveness probe can't run. Options for the same-uid-different-tab case: (i) **adopt-anyway** (data-safe — same uid; loses L8 single-tab enforcement for that user on that browser, but no data loss and no self-trap), or (ii) block+90s-wait (preserves L8, reintroduces the same-uid reopen delay). **Coach recommendation: (i) adopt-anyway on the no-BC fallback** — trap-free + data-safe; F015's hard-block simply doesn't engage there (the "2nd tab" adopts and becomes holder). Legacy browsers thus get gap #5a's reload-safety + a trap-free reopen, without F015's single-tab enforcement. Log the fallback path. **Note:** relinquish-on-takeover (§2e) is `onSnapshot`-driven (observes `editingTabId` moved) and does NOT depend on BroadcastChannel — so even on the no-BC fallback, a losing tab still relinquishes when adopted-over → the same-uid dual-write safeguard holds regardless of BC availability.
 
 ---
 
@@ -107,12 +128,19 @@ If `BroadcastChannel` is unavailable (old browser / blocked): the liveness probe
 | G8 | No-BroadcastChannel browser: close→reopen | Adopt-anyway (§7) → editable, trap-free; F015 not enforced |
 | G9 | Data-safety regression: two DIFFERENT users, concurrent edit attempt | Server rules still reject the non-holder (cross-user lock intact) — the whole point of B012 |
 | G10 | gap #4 post-review hand-back still works | Reviewer approves → owner adopts/holds → editable (no regression) |
+| G11 | Simultaneous-adopt (R3): TWO new tabs reopen onto one ghost at once | Adopt tx serializes → exactly ONE adopts (editable); the other re-reads live `editingTabId` → blocks |
+| G12 | Dup-tab no-self-clobber window (R1): Chrome Duplicate Tab, try to edit instantly | No write lands pre-regenerate (`_leaseInitResolved` gate); duplicate flips to blocked within ~ms |
+| G13 | Cross-user countdown + auto-grant (Q1): holder closes, waiter watching | Aging lease → countdown ticks → auto-grants (editable) at 0; if holder resumes renewing → switches to "currently editing", no reset |
+| G14 | Cross-device adopt + relinquish (Q3/§2e): device A holds, device B opens same project | B adopts (A silent); A's next onSnapshot/resume → A relinquishes (read-only, "editing moved", stops writing) — no dual-write |
+| G15 | Frozen-tab demotion (R2/§2e): background holder frozen >probe-timeout, same-user reopens | Reopener adopts; on un-freeze the frozen tab relinquishes (read-only), never blind-writes |
 
 ---
 
 ## 9. Summary
 
-- **BroadcastChannel liveness** is the enabling primitive for the whole pair.
-- **gap #5b = same-uid ADOPT** (ghost → reclaim, no 90s wait) + **tab-id uniqueness** (collision-regenerate) + best-effort **pagehide** release. Robust, same-uid, no rules change.
+- **BroadcastChannel liveness** is the enabling primitive for the pair.
+- **gap #5b = same-uid ADOPT** (ghost/frozen/cross-device → reclaim, no 90s wait) + **tab-id uniqueness** (collision-regenerate, R1/R4) + best-effort **pagehide** release + **relinquish-on-takeover (§2e)** — the load-bearing shared safeguard (Q3 cross-device adopt + R2 frozen-tab demotion, unified: a tab whose lease was taken by another same-uid session flips read-only + stops writing; `onSnapshot`-driven, BC-independent).
 - **F015 = non-dismissible hard-block** riding safely on the above (ghosts adopt, duplicates detected → the modal only fires for a genuine live 2nd tab → no self-trap).
-- **Data-safety:** cross-user server lock + gap#4 identity-guard untouched; every new mechanism is same-uid + client-side + advisory. Sequencing: #5b before/with F015. 3 Jon rulings (Q1 cross-user close latency, Q2 non-dismissible UX confirm, Q3 cross-device same-uid).
+- **Cross-user Q1** = countdown + auto-grant on an AGING lease; "currently editing" for a live-renewing holder.
+- **Data-safety:** cross-user server lock + gap#4 identity-guard UNTOUCHED; every new mechanism is same-uid + client-side + advisory; relinquish closes the same-uid cross-session dual-write. Sequencing: #5b before/with F015.
+- **Rulings RESOLVED (Jon):** Q1 accept ≤90s + countdown; Q2 non-dismissible confirmed; Q3 adopt-across-devices + relinquish. **R1–R4 folded** (dup-window save-gate; frozen-tab→relinquish; simultaneous-adopt in-tx serialize; tie-break `since`+`nonce`). Test matrix G1–G15.
