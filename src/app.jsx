@@ -486,11 +486,48 @@ const LEASE_HEARTBEAT_MS=30000;  // 30s — renew while the holder's tab is open
 // pre-reload lease still held the OLD id → the reloaded tab false-flagged itself "open in another
 // tab" for ~90s. sessionStorage survives reloads of the same tab but is per-tab, so a genuinely
 // different tab still gets a distinct id → L8 same-user-2nd-tab detection stays intact.
-const _ARC_TAB_ID=(()=>{
-  const _gen=()=>{try{return (typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+"-"+Math.random().toString(36).slice(2);}catch(e){return String(Date.now())+"-"+Math.random().toString(36).slice(2);}};
-  try{const _k="_arcTabId";let id=sessionStorage.getItem(_k);if(!id){id=_gen();sessionStorage.setItem(_k,id);}return id;}
-  catch(e){return _gen();} // sessionStorage unavailable → fresh id (pre-fix fallback)
-})();
+function _genTabId(){try{return (typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+"-"+Math.random().toString(36).slice(2);}catch(e){return String(Date.now())+"-"+Math.random().toString(36).slice(2);}}
+// gap #5a: persisted in sessionStorage (reload-stable). gap #5b §2a: now `let` so a DUPLICATE tab
+// (Chrome "Duplicate Tab" copies sessionStorage → shares the id) can REGENERATE to a unique id.
+let _ARC_TAB_ID=(()=>{try{const _k="_arcTabId";let id=sessionStorage.getItem(_k);if(!id){id=_genTabId();sessionStorage.setItem(_k,id);}return id;}catch(e){return _genTabId();}})();
+const _ARC_TAB_SINCE=Date.now();   // this tab's load time — §2a tie-break: the NEWER tab regenerates
+let _ARC_TAB_NONCE=Math.random();  // NOT persisted → a duplicate tab gets a fresh nonce (distinguishes it); §2a tie-break when `since` ties
+
+// ── B012 gap #5b / F015 — BroadcastChannel same-browser tab-liveness ("arc-lease") ──
+// The unifying primitive: a reopening/duplicated tab tells a GHOST prior tab (→ adopt / regenerate)
+// from a LIVE peer (→ block). Same-origin, per browser profile — reaches new/duplicated/reopened tabs
+// in THIS browser only (other browsers/devices are genuinely separate → no reply → adopt). ADVISORY
+// ONLY: it chooses adopt-vs-block + de-dupes ids; it NEVER gates a write's data-safety (the per-uid
+// firestore rules do). Unavailable → null → §7 fallback (adopt-anyway; F015 hard-block simply doesn't
+// engage). A BroadcastChannel does NOT receive its own posts, so a tab never answers its own probe.
+const _leaseSelf={uid:null,projectId:null,holdsLease:false}; // kept current by ProjectView; responder answers from it
+const _leaseBC=(()=>{try{return typeof BroadcastChannel!=="undefined"?new BroadcastChannel("arc-lease"):null;}catch(e){return null;}})();
+if(_leaseBC){
+  _leaseBC.onmessage=(ev)=>{
+    const m=ev&&ev.data;if(!m||!m.t)return;
+    if(m.t==="WHO_HOLDS"){
+      if(_leaseSelf.holdsLease&&_leaseSelf.projectId===m.projectId){try{_leaseBC.postMessage({t:"HOLDER",projectId:m.projectId,tabId:_ARC_TAB_ID});}catch(e){}}
+    }else if(m.t==="ID_PING"){
+      // Another live tab shares my _ARC_TAB_ID (a duplicate) but has a different nonce → announce the collision.
+      if(m.tabId===_ARC_TAB_ID&&m.nonce!==_ARC_TAB_NONCE){try{_leaseBC.postMessage({t:"ID_COLLISION",tabId:_ARC_TAB_ID,since:_ARC_TAB_SINCE,nonce:_ARC_TAB_NONCE});}catch(e){}}
+    }
+  };
+}
+// Fire-and-collect: post `msg`, resolve with the first `replyType` reply matching `pred` within timeoutMs, else null (no live peer).
+function _bcProbe(msg,replyType,pred,timeoutMs){
+  return new Promise((resolve)=>{
+    if(!_leaseBC){resolve(null);return;}
+    let done=false;
+    const finish=(v)=>{if(done)return;done=true;try{_leaseBC.removeEventListener("message",onMsg);}catch(e){}resolve(v);};
+    const onMsg=(ev)=>{const m=ev&&ev.data;if(m&&m.t===replyType&&pred(m))finish(m);};
+    try{_leaseBC.addEventListener("message",onMsg);_leaseBC.postMessage(msg);}catch(e){finish(null);return;}
+    setTimeout(()=>finish(null),timeoutMs||300);
+  });
+}
+function _bcWhoHolds(projectId,timeoutMs){return _bcProbe({t:"WHO_HOLDS",projectId},"HOLDER",(m)=>m.projectId===projectId,timeoutMs);}
+function _bcIdPing(timeoutMs){return _bcProbe({t:"ID_PING",tabId:_ARC_TAB_ID,since:_ARC_TAB_SINCE,nonce:_ARC_TAB_NONCE},"ID_COLLISION",(m)=>m.tabId===_ARC_TAB_ID,timeoutMs);}
+// §2a: mint a fresh unique id + nonce (a duplicate was detected) and overwrite sessionStorage.
+function _regenerateTabId(){_ARC_TAB_ID=_genTabId();_ARC_TAB_NONCE=Math.random();try{sessionStorage.setItem("_arcTabId",_ARC_TAB_ID);}catch(e){}return _ARC_TAB_ID;}
 // True while a background task (extraction/pricing/BC-sync) is still running for this project —
 // used to SUPPRESS lease release on unmount so a completing writeback isn't rejected after
 // another user claims (Async Project Ownership Rule; plan §7 edge 2).
@@ -36978,6 +37015,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [leaseModal,setLeaseModal]=useState(null); // null | {kind:'other-user',holderName} | {kind:'other-tab'}
   const _leaseModalShownRef=useRef(false);
   const _prevLeaseHolderRef=useRef(null); // gap #4 #2a: last-seen lease holder uid (re-arm modal on change)
+  const [leaseRelinquished,setLeaseRelinquished]=useState(false); // gap #5b §2e: my live lease was taken by my OTHER session (cross-device/frozen)
+  const _leaseInitResolvedRef=useRef(false); // gap #5b §2a: save-gate — no persist until the first claim/ID_PING round resolves
+  const _wasHolderRef=useRef(false);         // gap #5b §2e: this tab held the lease at some point (distinguishes relinquished-loser from a never-held 2nd tab)
   const [ownerPriorityToast,setOwnerPriorityToast]=useState(null); // {ownerName, shownAt} | null
   const iAmOwner=!project.createdBy||project.createdBy===uid;
   const iAmAdmin=_appCtx.role==="admin";
@@ -37485,27 +37525,46 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       return;
     }
     let alive=true;let holds=false;
+    _leaseSelf.uid=uid;_leaseSelf.projectId=init.id; // keep the BroadcastChannel responder's self-state current
     const tick=async()=>{
       if(!alive)return;
       const res=await _tryAcquireEditingLease(init.id);
       if(!alive)return;
       if(res.ok){
-        holds=true;setLeaseReadOnly(false);setLeaseModal(null);_leaseModalShownRef.current=false;
+        holds=true;_leaseSelf.holdsLease=true;_wasHolderRef.current=true; // §2b: now answer WHO_HOLDS as holder
+        setLeaseReadOnly(false);setLeaseModal(null);_leaseModalShownRef.current=false;setLeaseRelinquished(false);
       }else{
-        holds=false;setLeaseReadOnly(true);
+        holds=false;_leaseSelf.holdsLease=false;setLeaseReadOnly(true);
         if(!_leaseModalShownRef.current){
           _leaseModalShownRef.current=true;
           setLeaseModal(res.kind==="other-tab"?{kind:"other-tab"}:{kind:"other-user",holderName:res.holderName});
         }
       }
     };
-    tick();
+    // §2a: de-dupe THEN claim. Fire ID_PING; if a live peer shares my sessionStorage _ARC_TAB_ID (a
+    // Chrome "Duplicate Tab"), the NEWER tab (tie-break: since, then lower nonce) regenerates to a
+    // unique id BEFORE the first claim → the duplicate is seen as a genuine 2nd tab (not "my tab
+    // holds"). A lone reload finds no live collision → keeps its id (gap #5a reload-stability intact).
+    (async()=>{
+      try{
+        const collision=await _bcIdPing(350);
+        if(collision){
+          const iAmNewer=_ARC_TAB_SINCE>collision.since||(_ARC_TAB_SINCE===collision.since&&_ARC_TAB_NONCE<collision.nonce);
+          if(iAmNewer){_regenerateTabId();console.log("[editingLease] duplicate tab → regenerated _ARC_TAB_ID (gap #5b §2a)");}
+        }
+      }catch(e){}
+      if(!alive)return;
+      await tick();
+      _leaseInitResolvedRef.current=true; // §2a save-gate: content writes allowed only after this resolves
+    })();
     const interval=setInterval(tick,LEASE_HEARTBEAT_MS);
-    const onBeforeUnload=()=>{if(holds)_releaseEditingLease(init.id);};
-    window.addEventListener('beforeunload',onBeforeUnload);
+    const onClose=()=>{if(holds)_releaseEditingLease(init.id);};
+    window.addEventListener('beforeunload',onClose);
+    window.addEventListener('pagehide',onClose); // §2c: pagehide fires in more close/nav/mobile cases than beforeunload
     return()=>{
       alive=false;clearInterval(interval);
-      window.removeEventListener('beforeunload',onBeforeUnload);
+      window.removeEventListener('beforeunload',onClose);window.removeEventListener('pagehide',onClose);
+      _leaseSelf.holdsLease=false;
       if(holds){
         _releaseEditingLease(init.id);
         if(_hasRunningBgTaskForProject(init.id))_startLeaseKeepAlive(init.id,uid);
@@ -38047,10 +38106,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // B012 editing lease — claim (on free/stale), renew (when I already hold this tab's lease), or
   // report who holds it. Runs as a transaction so two racing tabs can't both win. Mirrors
   // _tryAcquireQuotePrintLock, incl. FAIL-OPEN on a Firestore error (a blip must not brick editing).
-  async function _tryAcquireEditingLease(projectId){
+  function _leaseName(){return fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"another user";}
+  async function _tryAcquireEditingLease(projectId,opts){
     const ref=fbDb.doc(_projectDocPath(projectId));
+    const _forceAdopt=!!(opts&&opts.forceAdopt); // §2g "Edit here": unconditional same-uid re-take (skip WHO_HOLDS)
     try{
-      return await fbDb.runTransaction(async tx=>{
+      const res=await fbDb.runTransaction(async tx=>{
         const snap=await tx.get(ref);
         if(!snap.exists)return{ok:true,reason:"missing-project"}; // no doc yet → don't block
         const cur=snap.data();
@@ -38059,30 +38120,57 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(valid&&cur.editingBy!==uid){
           return{ok:false,kind:"other-user",holderName:cur.editingByName||"another user"};
         }
-        if(valid&&cur.editingBy===uid&&cur.editingTabId&&cur.editingTabId!==_ARC_TAB_ID){
-          // Held by MY OWN other tab. Rules would allow a same-uid claim, so we refuse CLIENT-side
-          // (per-session enforcement) to avoid stealing the lease from my first tab.
-          return{ok:false,kind:"other-tab"};
+        if(valid&&cur.editingBy===uid&&cur.editingTabId&&cur.editingTabId!==_ARC_TAB_ID&&!_forceAdopt){
+          // My OWN uid holds via a DIFFERENT tab-id. Could be a LIVE 2nd tab (→ block, L8) or a
+          // GHOST / frozen / cross-device dead lease (→ adopt, gap #5b §2b). Defer the decision to a
+          // WHO_HOLDS liveness probe OUTSIDE the tx (can't await BroadcastChannel inside a tx).
+          return{ok:false,kind:"other-tab",_ghostTabId:cur.editingTabId};
         }
-        // Free / crashed-stale / already-mine-this-tab → claim or renew.
+        // Free / crashed-stale / already-mine-this-tab / §2g force-adopt → claim, renew, or take over.
         const mineThisTab=cur.editingBy===uid&&cur.editingTabId===_ARC_TAB_ID;
         tx.update(ref,{
-          editingBy:uid,
-          editingByName:fbAuth.currentUser?.displayName||fbAuth.currentUser?.email||"another user",
-          editingTabId:_ARC_TAB_ID,
+          editingBy:uid,editingByName:_leaseName(),editingTabId:_ARC_TAB_ID,
           editingClaimedAt:mineThisTab?(cur.editingClaimedAt||now):now,
           editingExpiresAt:now+LEASE_STALE_MS,
-          // P3 field, seeded here; per-save activity stamping arrives in P3 (force-takeover gate).
           editingLastActivityAt:mineThisTab?(cur.editingLastActivityAt||now):now,
           updatedAt:now,updatedBy:uid,
         });
         return{ok:true};
       });
+      // §2b: same-uid other-tab → liveness probe decides block-vs-adopt.
+      if(res&&res.kind==="other-tab"){
+        const liveHolder=await _bcWhoHolds(projectId,350);
+        if(liveHolder)return{ok:false,kind:"other-tab"}; // a LIVE peer holds → block (L8 / F015)
+        // No live reply (BC silent = ghost/frozen/cross-device, or §7 no-BC) → ADOPT via a 2nd tx that
+        // RE-CHECKS the lease at commit (R3: exactly one of two racing reopeners adopts; the loser blocks).
+        try{
+          return await fbDb.runTransaction(async tx=>{
+            const snap=await tx.get(ref);
+            if(!snap.exists)return{ok:true,reason:"missing-project"};
+            const cur=snap.data();const now=Date.now();
+            const stillGhost=cur.editingBy===uid&&cur.editingTabId===res._ghostTabId;
+            const freeOrExpired=!cur.editingBy||(cur.editingExpiresAt||0)<=now;
+            const nowMine=cur.editingBy===uid&&cur.editingTabId===_ARC_TAB_ID;
+            if(!(stillGhost||freeOrExpired||nowMine)){
+              // Lost the adopt race (another tab now holds) or a different user took it → block.
+              return cur.editingBy&&cur.editingBy!==uid
+                ?{ok:false,kind:"other-user",holderName:cur.editingByName||"another user"}
+                :{ok:false,kind:"other-tab"};
+            }
+            tx.update(ref,{editingBy:uid,editingByName:_leaseName(),editingTabId:_ARC_TAB_ID,
+              editingClaimedAt:now,editingExpiresAt:now+LEASE_STALE_MS,editingLastActivityAt:now,updatedAt:now,updatedBy:uid});
+            console.log("[editingLease] adopted a ghost/frozen/cross-device same-uid lease (gap #5b §2b)");
+            return{ok:true,adopted:true};
+          });
+        }catch(e){
+          if(e&&(e.code==="permission-denied"||e.code==="firestore/permission-denied"))return{ok:false,kind:"other-tab"};
+          return{ok:true,degraded:true};
+        }
+      }
+      return res;
     }catch(e){
-      // gap #4 #2 ROOT: distinguish a rules rejection from a transient blip. The tick only runs when
-      // _eligibleEditor, so a permission-denied here means another VALID holder owns the lease →
-      // FAIL CLOSED (read-only) so we never show editable-then-silently-revert. Transient/offline
-      // (unavailable/deadline-exceeded/network) → keep fail-OPEN so a blip doesn't brick editing.
+      // gap #4 #2 ROOT: permission-denied ⇒ another VALID holder → FAIL CLOSED (read-only). Transient
+      // /offline ⇒ fail-OPEN (a blip must not brick editing). The tick only runs when _eligibleEditor.
       if(e&&(e.code==="permission-denied"||e.code==="firestore/permission-denied")){
         console.warn("[editingLease] claim permission-denied → fail-closed (another holder):",e.message);
         return{ok:false,kind:"other-user",holderName:"another user"};
