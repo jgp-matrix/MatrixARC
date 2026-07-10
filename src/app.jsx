@@ -38987,12 +38987,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 ?"You already have this project open in another tab. Close this one and return to that tab to keep editing."
                 :<><strong style={{color:"#fcd34d"}}>{leaseModal.holderName||"Another user"}</strong> is already editing this project in another location. You can view it, but edits are locked until they're done.</>}
             </div>
-            {/* Jon pre-ship fold-in: the SAME-USER other-tab modal gets NO view-only escape hatch —
-                the only action is to close this tab (best-effort window.close(); if the browser blocks
-                it for a non-script-opened tab, the non-dismissible modal forces a manual close). The
-                cross-user "Project in use" case keeps View-read-only (viewing another's project is intended). */}
+            {/* P1: the SAME-USER other-tab modal is DISMISSIBLE — "View read-only" (escape hatch) +
+                "Close the tab". Coach caught that a non-dismissible modal + a ghost lease = a ≤90s
+                self-trap on your own only tab, so the non-dismissible hard-block ships WITH gap #5b
+                (reliable close-release + adopt). The cross-user "Project in use" modal keeps
+                View-read-only (viewing another user's project is intended). */}
             {leaseModal.kind==="other-tab"
-              ? <button onClick={()=>{try{window.close();}catch(e){}}} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>Close the tab</button>
+              ? <div style={{display:"flex",gap:8,marginTop:8}}>
+                  <button onClick={()=>setLeaseModal(null)} style={{background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>View read-only</button>
+                  <button onClick={()=>{try{window.close();}catch(e){}}} style={{background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>Close the tab</button>
+                </div>
               : <button onClick={()=>setLeaseModal(null)} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>View read-only</button>}
           </div>
         </div>
