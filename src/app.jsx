@@ -38974,7 +38974,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 ?"You already have this project open in another tab. Close this one and return to that tab to keep editing."
                 :<><strong style={{color:"#fcd34d"}}>{leaseModal.holderName||"Another user"}</strong> is already editing this project in another location. You can view it, but edits are locked until they're done.</>}
             </div>
-            <button onClick={()=>setLeaseModal(null)} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>View read-only</button>
+            {/* Jon pre-ship fold-in: the SAME-USER other-tab modal gets NO view-only escape hatch —
+                the only action is to close this tab (best-effort window.close(); if the browser blocks
+                it for a non-script-opened tab, the non-dismissible modal forces a manual close). The
+                cross-user "Project in use" case keeps View-read-only (viewing another's project is intended). */}
+            {leaseModal.kind==="other-tab"
+              ? <button onClick={()=>{try{window.close();}catch(e){}}} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>Close the tab</button>
+              : <button onClick={()=>setLeaseModal(null)} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>View read-only</button>}
           </div>
         </div>
       )}
