@@ -397,6 +397,17 @@ Reconciling Marc's three findings:
 
 **No rules change (all client-side). P1-scoped, no F013.** → Marc builds → I re-review the delta (verify: hand-back bundled+atomic+`editingTabId=null`+owner-present-else-release; identity-guard still protects; persistent banner reactive to `leaseReadOnly` reading `project.editingByName`; `_leaseModalShownRef` re-arm on holder change; #2b deferred) → re-deploy test → Jon re-tests the L6 post-review handoff + the live indicator. **This is the last P1 gap.**
 
+**★ GAP #4 RE-REVIEW — delta `93607beb` (src/app.jsx +43/-3) — ✅ PASS. (Verdict sent to Freddy.)** All four parts built to design; scope verified.
+- **#1 hand-back ✓** — SSOT helper `_reviewLeaseHandBack()` in **PanelListView** (@33845, which receives `viewers` prop @39030 + has `project` — no ReferenceError); bundled ATOMICALLY into both approve (@34604) + reject (@34620) via `..._reviewLeaseHandBack()` in the same `.update`; owner-present-in-`viewers` → `editingBy=owner, editingByName, editingClaimedAt=now, editingExpiresAt=now+STALE, editingTabId=NULL`; owner-absent → full null release. Fix-B identity-guarded `_releaseEditingLease` protects the handed-back lease from the reviewer's later unmount.
+- **#2 fail-closed ✓** — `_tryAcquireEditingLease` catch: `e.code==="permission-denied"||"firestore/permission-denied"` → `{ok:false,kind:"other-user"}` (→ `leaseReadOnly=TRUE`); transient/offline → keep fail-open-editable. No false positives (tick only runs when `_eligibleEditor` → permission-denied ⟹ real holder).
+- **#2a banner ✓** — persistent, at ProjectView TOP LEVEL (z860, below the z900 modal) → shows across ALL sub-views (fixes the root of Jon-saw-nothing: the old VIEW-ONLY pill @34555 was PanelListView-scoped, Marc-confirmed); reactive to `leaseReadOnly`; holder from `project.editingByName`; distinguishes other-user vs my-other-tab; re-arm `_leaseModalShownRef` on `editingBy`→new-uid via `_prevLeaseHolderRef` effect. Clears reactively on `leaseReadOnly`=false.
+- **#2b ✓ deferred** (not in delta).
+- **Primary case traced ✓** — Andrew approves → atomic write (`preReviewStatus="approved"` + `editingBy=Jon`, `editingTabId=null`) → Jon's soft-apply delivers both → Jon eligible + tick adopts (null tabId → skips other-tab, stamps his tab) → `leaseReadOnly=false` → Jon EDITABLE, no spurious modal. Rules: Jon's adopt-write passes (`editingBy=Jon` on server → `isEditingLeaseLocked`=false).
+- **Banner-label freshness checked ✓** — the writer's optimistic `onUpdate({...project,...reviewFields})` sets local `editingBy=owner` immediately; viewers get it via soft-apply (console-confirmed "[CONCURRENT] Soft-applied…"); so the same-uid soft-apply-skip seam does NOT mislabel the banner in practice. `leaseReadOnly` (the correctness flag) is tick-managed and always right regardless.
+- **No blocking findings; no non-blocking findings of note.**
+
+**COMBINED P1 = `b654c5d6` + `d1b1b07e` + `a7c4bbf2` + `6871b280` + `93607beb` — ✅ CLEAR for the `hosting:test` deploy (client-only; firestore.rules unchanged since b654c5d6).** Next gate: Jon re-tests L6 post-review handoff-back + the live lease indicator (+ L1/L3/L5/L8) → green → prod sign-off. Fast-follow (NOT P1): gap #5 (tab-close ghost lease — Fix B's transactional `_releaseEditingLease` doesn't fire on `beforeunload`; ≤90s handoff delay) + F015 (hard-block 2nd-tab modal — MUST sequence behind gap #5, else a hard-block on the ghost false-positive traps a user out of their own project ~90s).
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
