@@ -66,6 +66,12 @@ The cross-user held state (`kind:"other-user"`) gets a **live countdown + auto-g
 - **Auto-grant at 0:** when the countdown reaches 0 (lease expired, holder gone), fire an **immediate claim tick** (don't wait for the 30s interval) → the now-stale lease is claimable → auto-claim + auto-dismiss the modal → editable. (This is the existing tick's stale-claim, triggered eagerly at t=0.)
 - Scope: **cross-user only.** Same-user is instant-**adopt** (§2b) — no wait, no countdown. If the holder resumes renewing mid-countdown (`editingExpiresAt` advances), switch back to "currently editing" (cancel the countdown) — never show it resetting.
 
+### 2g. Manual "Edit here" re-take on a RELINQUISHED same-user session (completes Q3's round-trip)
+**Why needed:** with Q3 adopt-across-devices + §2e relinquish + NO auto-reclaim, the round-trip strands the loser. User edits on device A → opens B → B adopts, A relinquishes (read-only, "editing moved"). B is now LIVE-RENEWING (`editingExpiresAt` keeps advancing) → never goes stale → A's §2f aging-countdown NEVER triggers → **A is stuck read-only permanently with no path back.** Returning to A, the user can't edit there.
+- **Fix:** on the RELINQUISHED same-user state (§2e — "editing moved to your other session"), show an **"✋ Edit here"** affordance ("Take editing on this device"). Click → **unconditional same-uid ADOPT** (reuse §2b's adopt write: `editingTabId=mine`, renew) — **skip the WHO_HOLDS probe** (this is a deliberate user override of a known-live other session, not a reopen-onto-ghost decision). The OTHER session then observes the takeover via §2e `onSnapshot` → IT relinquishes. Clean, user-initiated handoff.
+- **No ping-pong:** §2g is MANUAL; §2e's no-auto-reclaim rule stands, so the loser does NOT auto-grab back — it flip-flops only when a user clicks "Edit here" on a device. Same-uid → data-safe (rules permit; the loser relinquishes so no dual-write).
+- **Distinct from the F015 hard-block (§2d) and the P2 request/grant:** §2g appears ONLY on the **relinquished** state (a session that USED to hold, adopted-over cross-device/frozen) — NOT on a same-browser 2nd tab that never held (that's §2d's non-dismissible "Close the tab"; a cross-device loser can't "close a tab on another device" so it gets "Edit here" instead). And it needs NO grant from the other side (it's your OWN session) — unlike the cross-USER P2 request→grant. Keep them separate.
+
 ---
 
 ## 3. Exact touch points
@@ -77,6 +83,7 @@ The cross-user held state (`kind:"other-user"`) gets a **live countdown + auto-g
 | Same-uid adopt + in-tx re-check (2b, R3) | `_tryAcquireEditingLease` other-tab branch (app.jsx:38065) — `WHO_HOLDS` probe + adopt-vs-block; adopt tx re-checks `editingTabId` at commit |
 | **Relinquish-on-takeover (2e, Q3+R2) — load-bearing** | new: project-doc `onSnapshot` handler + on-resume re-check (`visibilitychange`/bfcache) → if `editingBy===uid && editingTabId!==_ARC_TAB_ID` → read-only + stop writing + indicator; NO auto-reclaim |
 | Cross-user countdown + auto-grant (2f, Q1) | `leaseModal` `kind==="other-user"` render — aging-vs-live detection from `editingExpiresAt` stream + eager claim at t=0 |
+| **"Edit here" re-take (2g)** — completes Q3 round-trip | the relinquished-state indicator (§2e) — add an "✋ Edit here" button → unconditional same-uid adopt (skip WHO_HOLDS) → other session relinquishes |
 | Close-release upgrade (2c) | lease-effect `beforeunload` handler (app.jsx:37504) → add `pagehide`; `_releaseEditingLease` (38094) unchanged (do NOT use `visibilitychange` for release) |
 | F015 hard-block (2d, Q2) | `leaseModal` render, `kind==="other-tab"` branch (~app.jsx:38970) — remove "View read-only", keep "Close the tab" only |
 | Keep-alive / **cross-user firestore.rules** / **gap#4 identity-guard** | **UNCHANGED** (data-safety invariant) |
@@ -133,6 +140,7 @@ If `BroadcastChannel` is unavailable (old browser / blocked): the liveness probe
 | G13 | Cross-user countdown + auto-grant (Q1): holder closes, waiter watching | Aging lease → countdown ticks → auto-grants (editable) at 0; if holder resumes renewing → switches to "currently editing", no reset |
 | G14 | Cross-device adopt + relinquish (Q3/§2e): device A holds, device B opens same project | B adopts (A silent); A's next onSnapshot/resume → A relinquishes (read-only, "editing moved", stops writing) — no dual-write |
 | G15 | Frozen-tab demotion (R2/§2e): background holder frozen >probe-timeout, same-user reopens | Reopener adopts; on un-freeze the frozen tab relinquishes (read-only), never blind-writes |
+| G16 | "Edit here" round-trip (§2g): A edits → B adopts → A relinquished → user clicks "Edit here" on A | A re-adopts (unconditional same-uid) → B relinquishes; editable on A; NO ping-pong (B does not auto-grab back) |
 
 ---
 
@@ -142,5 +150,6 @@ If `BroadcastChannel` is unavailable (old browser / blocked): the liveness probe
 - **gap #5b = same-uid ADOPT** (ghost/frozen/cross-device → reclaim, no 90s wait) + **tab-id uniqueness** (collision-regenerate, R1/R4) + best-effort **pagehide** release + **relinquish-on-takeover (§2e)** — the load-bearing shared safeguard (Q3 cross-device adopt + R2 frozen-tab demotion, unified: a tab whose lease was taken by another same-uid session flips read-only + stops writing; `onSnapshot`-driven, BC-independent).
 - **F015 = non-dismissible hard-block** riding safely on the above (ghosts adopt, duplicates detected → the modal only fires for a genuine live 2nd tab → no self-trap).
 - **Cross-user Q1** = countdown + auto-grant on an AGING lease; "currently editing" for a live-renewing holder.
+- **§2g "Edit here"** = manual same-uid re-take on a relinquished session — completes Q3's round-trip (a cross-device loser isn't stranded read-only; user-initiated, no ping-pong, no grant needed for your own session).
 - **Data-safety:** cross-user server lock + gap#4 identity-guard UNTOUCHED; every new mechanism is same-uid + client-side + advisory; relinquish closes the same-uid cross-session dual-write. Sequencing: #5b before/with F015.
 - **Rulings RESOLVED (Jon):** Q1 accept ≤90s + countdown; Q2 non-dismissible confirmed; Q3 adopt-across-devices + relinquish. **R1–R4 folded** (dup-window save-gate; frozen-tab→relinquish; simultaneous-adopt in-tx serialize; tie-break `since`+`nonce`). Test matrix G1–G15.
