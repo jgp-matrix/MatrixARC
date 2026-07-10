@@ -34548,6 +34548,19 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
   const _isPostReviewAssignee=project.postReviewAssignedTo
     ?project.postReviewAssignedTo===_appCtx.uid
     :(project.bcDesignerUid&&project.bcDesignerUid===_appCtx.uid);
+  // gap #4 #1 (DIRECTED HAND-BACK): the lease fields to write when a review leaves "pending" (approve
+  // /reject). Hand the editing lease BACK to the project owner if they're present (editingTabId=null
+  // → the owner's next tick ADOPTS it, skipping the other-tab branch); else fully release it (null)
+  // so the next eligible opener claims. The reviewer holds the lease at this point, so bundling these
+  // into the same review-state .update is permitted (holder write). The Fix-B identity guard then
+  // stops the reviewer's later unmount from clobbering the handed-back lease.
+  const _reviewLeaseHandBack=()=>{
+    const _now=Date.now();
+    const _ownerV=(viewers||[]).find(v=>v.isOwner&&v.uid===project.createdBy);
+    return _ownerV
+      ?{editingBy:project.createdBy,editingByName:(_ownerV.userName||(_ownerV.userEmail||"").split("@")[0]||"owner"),editingTabId:null,editingClaimedAt:_now,editingExpiresAt:_now+LEASE_STALE_MS,editingLastActivityAt:_now}
+      :{editingBy:null,editingByName:null,editingTabId:null,editingClaimedAt:null,editingExpiresAt:null,editingLastActivityAt:null};
+  };
 
   return(<>
     <div style={{height:"calc(100vh - 130px)",display:"flex",background:C.bg,overflow:"hidden"}}>
@@ -34591,7 +34604,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     return <button disabled={_apDisabled}
                     title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:_trOpen>0?`Resolve ${_trOpen} flagged line${_trOpen>1?"s":""} (green circles) before approving`:""}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                    const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
+                    const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid,..._reviewLeaseHandBack()};
                     _logQvHistory(project.id,{type:"review_approve"});
                     delete _pendingPreReviewOverrides[project.id];
                     onUpdate({...project,...reviewFields});
@@ -34607,7 +34620,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
                     const notes=await arcPrompt("Notes for the salesperson (reason for return):",{multiline:true,placeholder:"What needs to be fixed?",okLabel:"Return"});
                     if(notes===null)return;
-                    const reviewFields={preReviewStatus:"rejected",preReviewNotes:notes,reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid};
+                    const reviewFields={preReviewStatus:"rejected",preReviewNotes:notes,reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid,..._reviewLeaseHandBack()};
                     delete _pendingPreReviewOverrides[project.id];
                     onUpdate({...project,...reviewFields});
                     const _prjPath=_appCtx.projectsPath||`users/${uid}/projects`;
@@ -36942,6 +36955,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [leaseReadOnly,setLeaseReadOnly]=useState(false);
   const [leaseModal,setLeaseModal]=useState(null); // null | {kind:'other-user',holderName} | {kind:'other-tab'}
   const _leaseModalShownRef=useRef(false);
+  const _prevLeaseHolderRef=useRef(null); // gap #4 #2a: last-seen lease holder uid (re-arm modal on change)
   const [ownerPriorityToast,setOwnerPriorityToast]=useState(null); // {ownerName, shownAt} | null
   const iAmOwner=!project.createdBy||project.createdBy===uid;
   const iAmAdmin=_appCtx.role==="admin";
@@ -37495,6 +37509,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setOwnerPriorityActive(!!ownerIsWatching&&!takeoverValid&&!_reviewerExempt);
   },[viewers,project.createdBy,project.ownerLockActive,project.ownerTakeoverActive,iAmOwner,uid,reviewReadOnly,project.preReviewStatus,project.postReviewStatus]);
 
+  // gap #4 #2a: re-arm the open-lease modal when the holder changes to a NEW uid, so a fresh holder
+  // (e.g. after a review hand-back or a takeover) re-notifies instead of staying silent (the modal is
+  // otherwise shown-once via _leaseModalShownRef). The persistent banner below is the always-on cue.
+  useEffect(()=>{
+    const _h=project.editingBy||null;
+    if(_h&&_h!==_prevLeaseHolderRef.current)_leaseModalShownRef.current=false;
+    _prevLeaseHolderRef.current=_h;
+  },[project.editingBy]);
+
   // DECISION(v1.19.755): Send "Unlock requested" notification to project owner + all
   // company admins. Non-owner/non-admin requesters trigger this from the locked banner.
   // Also stamps `lastUnlockRequest` on the project so the owner sees who/when when they
@@ -38029,7 +38052,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         return{ok:true};
       });
     }catch(e){
-      console.warn("[editingLease] acquire failed (non-fatal — proceeding editable):",e.message);
+      // gap #4 #2 ROOT: distinguish a rules rejection from a transient blip. The tick only runs when
+      // _eligibleEditor, so a permission-denied here means another VALID holder owns the lease →
+      // FAIL CLOSED (read-only) so we never show editable-then-silently-revert. Transient/offline
+      // (unavailable/deadline-exceeded/network) → keep fail-OPEN so a blip doesn't brick editing.
+      if(e&&(e.code==="permission-denied"||e.code==="firestore/permission-denied")){
+        console.warn("[editingLease] claim permission-denied → fail-closed (another holder):",e.message);
+        return{ok:false,kind:"other-user",holderName:"another user"};
+      }
+      console.warn("[editingLease] acquire failed (transient — proceeding editable):",e.message);
       return{ok:true,degraded:true};
     }
   }
@@ -38937,6 +38968,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             </div>
             <button onClick={()=>setLeaseModal(null)} style={{marginTop:8,background:"none",border:"1px solid #818cf866",borderRadius:8,padding:"8px 22px",fontSize:13,color:"#c4b5fd",cursor:"pointer",fontWeight:600}}>View read-only</button>
           </div>
+        </div>
+      )}
+      {/* gap #4 #2a: PERSISTENT live lease banner — shown across ALL sub-views whenever the lease holds
+          me read-only. The open-time modal is shown-once; this is the always-on cue so a mid-session
+          lease flip (into/out of review, takeover) is NEVER silent. A user must SEE they're locked. */}
+      {leaseReadOnly&&(
+        <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:860,background:"#2a1a05",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 16px",display:"flex",alignItems:"center",gap:8,boxShadow:"0 4px 20px rgba(0,0,0,0.55)",fontSize:12,color:"#fcd34d",fontWeight:700}}>
+          <span style={{fontSize:14}}>🔒</span>
+          <span>{project.editingBy&&project.editingBy!==uid?`${project.editingByName||"Another user"} is editing — read-only`:"Open in another tab — read-only"}</span>
         </div>
       )}
       {view==="quote"?(
