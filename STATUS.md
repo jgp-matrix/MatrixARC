@@ -5,47 +5,38 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🧪 HARD-LOCK P1 — BOTH FIXES LIVE ON TEST → PRE-PROD MATRIX RE-RUN (2026-07-10) · prod v1.23.4 · master `c8a69538` · Phase B PR #5 SHELVED
+## Current — 🔧 HARD-LOCK P1 — GAP #3 (owner-priority reviewer block) IN BUILD (2026-07-10) · prod v1.23.4 · master `c8a69538` · Phase B PR #5 SHELVED
 
 > # ⛔ CONTAINMENT — PLATFORM-WIDE, STILL IN FORCE
-> ## ONE EDITOR PER PROJECT — **ALL PROJECTS** — until Phase B ships.
-> **Concurrent editing (2 users in the same project) DESTROYS BOM ROWS.** No second editor on any project until the row-level merge (Phase B) is deployed. Jon is holding sales off ARC meanwhile.
+> ## ONE EDITOR PER PROJECT — **ALL PROJECTS** — until the hard-lock P1 ships on prod.
+> **Concurrent editing (2 users in the same project) DESTROYS BOM ROWS.** No second editor on any project until the B012 hard one-editor lock (P1) is deployed to prod. Jon is holding sales off ARC meanwhile.
 
-**👥 Team up + comms-checked:** Freddy (hub) · Marc · Coach · Dez — all on **v1.23.3 / `db974e86`**.
+**🎯 TOP OF QUEUE — B012 HARD ONE-EDITOR LOCK, P1** (server-enforced editing lease = the B012 data-loss fix; **Phase B PR #5 SHELVED** as a backstop, not merged). P1 = core lock + read-only + 3-state open modal → delivers the B012 guarantee on its own. Gated follow-on: P2/P3/P4.
+- **Deployed on TEST** (matrix-arc-test.web.app + Firestore rules project-wide). **Prod client verified INERT** (v1.23.4, no lease markers). Run sheet: `P1-Lock-Matrix.docx`.
+- **Matrix so far (Jon + Andrew):** **L1/L2/L3 PASS · L5 load-bearing PASS · L7 PASS.** L6 re-run drove out three small gaps (matrix doing its job).
 
-**🎯 TOP OF QUEUE — SHIP PHASE B (B012 concurrent-edit BOM data-loss fix).**
-- **Status:** ✅ **BUILT + HELD on PR #5** (`claude/phase-b-bom-merge` @ `bd9134a9`) — **25/25 unit tests** + **Coach C138 PASS** + on TEST. **Do NOT auto-merge PR #5.**
-- **Remaining gate (in order):** live **2-session matrix** on matrix-arc-test (**T3 / T7 / T9** + Coach's **A2** case) → **Coach C138 PR re-review** → **Jon prod sign-off** → merge + deploy → **relax the one-editor containment.**
-- **⚠ Matrix is JON-DRIVEN** — needs 2 distinct logins; Marc's tab can't reach the test host. Marc cannot run it solo.
+**🔧 P1 GAPS — 2 fixed, #3 in build:**
+- **Gap #1 — keep-alive heartbeat** (`d1b1b07e`) — ✅ fixed, Coach re-review PASS (`a5d33dab`) + admin co-sign (`2541cd52`); deployed test (`7c696356`).
+- **Gap #2 — Fix B eligibility-gated claim** (`a7c4bbf2`, reviewer becomes lease-holder during review) — ✅ WORKING (reviewer resolves rows + Review Drawings + redlines).
+- **★ Gap #3 (NEW, L6 re-run) — the review "Approved" button was greyed by OWNER PRIORITY MODE** (owner present → non-owner reviewer blocked) — **NOT the lease.** Coach designed the fix (`1af77a0c`); **Jon ruled + confirmed FULL exemption** (an assigned reviewer has full control during a pending review, exempt from owner-priority). **Marc BUILDING now** (compute-level exemption).
 
-**🆕 Deferred under B012 (all stamped in TODO.md):** B013 (chronic BC connection) · B014 (Codale parse-gap) · B015 (lock reactivity) · B016 (RE-SCOPED mutation write-race) · B017 (special-char PN pricing 400s) · B018 (send-block overlay clarity) · #182 stale-LT re-push remediation.
-**⏭ Also queued:** #192 BUDGETARY false auto-revert · G005 §10-8 prod-regression smoke · features cluster F004/F005/F007/F008 · bugs cluster B008/B011/B005 · G005 Phase 2.
-
-**🧪 B012 HARD ONE-EDITOR LOCK — P1 on the test channel; live lock-matrix IN PROGRESS (Jon + Andrew).**
-- **Deployed:** client on **matrix-arc-test.web.app** + **Firestore rules live project-wide**. **Prod client verified INERT** — zero lease markers in the prod bundle; behaves as before. (Separately, **prod shipped v1.23.4** = F011 CSV-export — see below; P1 client remains test-only.)
-- **P1** = core lock + read-only + 3-state open modal → **delivers the B012 data-loss guarantee ON ITS OWN.** Gated follow-on: P2/P3/P4. Run sheet: `P1-Lock-Matrix.docx`.
-- **Phase B (PR #5)** still **shelved + retained** as a backstop (NOT merged/deployed).
-
-- **✅ BOTH P1 GAPS FIXED + combined P1 LIVE ON TEST:**
-  • **Gap #1 — keep-alive heartbeat** (`d1b1b07e`) · **Gap #2 — Fix B eligibility-gated claim** (`a7c4bbf2`, reviewer becomes holder during review) → **Coach combined re-review PASS** (`a5d33dab`) + **admin co-sign** (`2541cd52`).
-  • **Marc deployed combined P1 to test** (away-mode, `7c696356`), verified serving. **PROD clean/untouched (v1.23.4).**
-- **🧪 PRE-PROD MATRIX RE-RUN (NOW, Jon + Andrew):** **L6** (reviewer-approve = Fix B check, clean/high-value) + **L5** (async writeback = keep-alive check; may hit the B021 pricing hang, separate) + **L1 / L3 / L8** regression re-checks.
-- **Prior results stand:** **L1 / L2 / L3 PASS · L5 load-bearing PASS · L7 PASS** (no-clobber).
-- **⚠ RUN ON ISOLATED THROWAWAY PROJECTS** — the Firestore rules are **project-wide**, so a test-channel lock could reject a prod user's edit on a shared real project.
-- **🧭 Next gate:** green matrix → **Jon prod sign-off** → merge/deploy P1 to prod → **RELAX the manual one-editor containment.** Then **P2/P3/P4** (request-grant / force / priority-hold) as follow-on phases.
+- **🧭 Next gate:** Marc build gap #3 → **Coach re-review delta** → re-deploy test → **Jon re-runs L6** → **Jon prod sign-off** → merge/deploy P1 to prod → **RELAX containment.** Then P2/P3/P4 as follow-on.
 - **WHO'S ON WHAT:**
-  • **Jon + Andrew** — re-running the pre-prod gate matrix (L6 + L5 + L1/L3/L8 regressions).
-  • **Marc** — standing by to turn any findings fast (both fixes built + deployed).
-  • **Coach** — done (combined re-review PASS + admin co-sign) unless the re-run surfaces a gap.
-  • **Freddy** (hub) — routing; matrix results → Jon prod gate.
+  • **Marc** — building gap #3 (owner-priority reviewer exemption).
+  • **Coach** — on deck to re-review the gap-#3 delta.
+  • **Jon** — will re-run L6 after the fix; owns the prod gate.
+  • **Freddy** (hub) — routing.
   • **Dez** — board + intake live.
-- **STATUS:** 🧪 **HARD-LOCK P1 — BOTH FIXES LIVE ON TEST → PRE-PROD MATRIX RE-RUN** (keep-alive `d1b1b07e` + Fix B `a7c4bbf2` → Coach combined PASS `a5d33dab` + admin co-sign `2541cd52`; deployed to test `7c696356`; prod untouched) · Jon+Andrew re-running L6+L5+L1/L3/L8; prior L1/L2/L3/L5/L7 PASS stand · prod **v1.23.4** (F011; P1 client INERT on prod) · master **`c8a69538`** · **NEXT = green matrix → Jon prod sign-off → merge/deploy P1 to prod → relax containment → then P2/P3/P4** · **Phase B PR #5 SHELVED** (backstop) · **CONTAINMENT: manual 1 editor/project HOLDS until P1 ships on prod**; Jon holding sales off ARC · B013–B018 + #182 deferred · 3 in INBOX · *(housekeeping: COACH.md ~1565 lines >1500 — flagged for close-out).*
+- **STATUS:** 🔧 **HARD-LOCK P1 — GAP #3 IN BUILD** (owner-priority-mode blocked the non-owner reviewer's Approve button, NOT the lease → Jon ruled FULL reviewer exemption during pending review; Coach fix `1af77a0c`; Marc building compute-level exemption) · Gaps #1 keep-alive + #2 Fix B ✅ done/working · matrix L1/L2/L3/L5/L7 PASS · prod **v1.23.4** (F011; P1 client INERT on prod) · master **`c8a69538`** · **NEXT = build → Coach delta re-review → re-deploy test → Jon re-run L6 → prod sign-off → P1 to prod → relax containment → then P2/P3/P4** · **Phase B PR #5 SHELVED** (backstop) · **CONTAINMENT: manual 1 editor/project HOLDS until P1 ships on prod**; Jon holding sales off ARC · B013–B018 + #182 deferred · 3 in INBOX · *(housekeeping: COACH.md ~1565 lines >1500 — flagged for close-out).*
+
+**🆕 Deferred under B012 (in TODO.md):** B013 (chronic BC connection) · B014 (Codale parse-gap) · B015 (lock reactivity) · B016 (mutation write-race) · B017 (special-char PN pricing 400s) · B018 (send-block overlay clarity) · #182 re-push. **⏭ Also queued:** #192 · G005 §10-8 smoke · F004/F005/F007/F008 · B008/B011/B005 · G005 Phase 2.
 
 **🗂️ TRACKER — items stamped by Freddy this session (all in TODO.md; no INBOX capture needed):**
 - **F009** — Debug Mode: persistent cross-user activity tracing [Backlog · parked behind B012]
 - **F010** — Suggested alternates: multi-alt ALT picker + supplier-portal alt sub-lines [Backlog]
 - **F011** — CSV BOM export: add Supplier / Lead Time / Priced Date columns [✅ RESOLVED — shipped **v1.23.4**, `ebe0cbc2`, Jon-confirmed]
 - **F012** — Sort the BOM by column (non-destructive view sort) [Backlog]
+- **F013** — Reviewer full control + Admin request/force-takeover + reviewer-consent flow (the fuller review-workflow) [Backlog · follow-on after P1]
 - **B019** — Extraction progress bar bounces (non-monotonic) [OPEN · LOW/cosmetic · deferred behind P1]
 - **B020** — "BC Purchase Price Updates" modal re-prompts every project open [OPEN · MED · cross-ref B016/B012]
 - **B021** — Pricing phase hangs at 95% [OPEN · MED · **pre-existing, NOT a P1 regression**; confounded L5's e2e run]
@@ -53,6 +44,7 @@
 - **📥 Still in INBOX (3 pending Freddy triage/B-number):** BUG "Login 'Continue with Microsoft' misleads existing users" (2026-07-09) · BUG "BOM row RED despite reqs met — PRJ402100 item 3044102, 1-cent bump clears; priceDate read / `_isBomRowFlaggedRed`" (2026-07-10; **overlaps B018 secondary** — Freddy to dedup) · BUG "Quote Summary line-row overflow clips total price (long 'IN PRE-REVIEW' text); Jon suggests truncate → 'IN ETR'" (2026-07-10; cosmetic).
 
 ## Progress Log (periodic snapshots, newest first)
+- **[2026-07-10 16:42 MDT]** **🔧 P1 — L6 re-run found a THIRD small gap (owner-priority, not the lease); fix in build.** **Gap #2 Fix B WORKING** (reviewer resolves rows + Review Drawings + redlines). **★ Gap #3:** the review **"Approved" button was greyed by OWNER PRIORITY MODE** (owner present → non-owner reviewer blocked) — NOT the lease. Coach designed the fix (`1af77a0c`); **Jon ruled + confirmed FULL exemption** (assigned reviewer has full control during a pending review, exempt from owner-priority); **Marc BUILDING now** (compute-level exemption). **Pipeline:** Marc build → Coach re-review delta → re-deploy test → Jon re-runs L6 → prod gate. **NEW FEATURE stamped: F013** (Reviewer full control + Admin request/force-takeover + reviewer-consent flow — the fuller workflow; follow-on after P1). **Intake:** Dez's 2 new captures (Quote Summary overflow clips price; red-row-despite-reqs PRJ402100 3044102 overlaps B018) noted by Freddy → triage next pass (INBOX = 3 pending). **WHO:** Marc → gap #3 · Coach → on deck to re-review · Jon → will re-run L6 · Freddy → routing. **Prod v1.23.4 untouched; containment HOLDS.** Master `c8a69538`.
 - **[2026-07-10 15:13 MDT]** **🧪 AWAY MODE ENDED (Jon back) — both P1 gaps FIXED + combined P1 LIVE ON TEST; pre-prod matrix RE-RUN in progress.** Gap #1 keep-alive (`d1b1b07e`) + Gap #2 Fix B eligibility-gated claim (`a7c4bbf2`, reviewer becomes holder during review) → **Coach combined re-review PASS (`a5d33dab`) + admin co-sign (`2541cd52`)**. Marc deployed combined P1 to test in away-mode (`7c696356`), verified serving; **PROD clean/untouched (v1.23.4)**. **NOW:** Jon + Andrew re-running the pre-prod gate — **L6** (reviewer-approve = Fix B check) + **L5** (async writeback = keep-alive check; may hit B021 pricing hang, separate) + **L1/L3/L8** regression re-checks. **Prior results stand:** L1/L2/L3 PASS, L5 load-bearing PASS, L7 PASS (no-clobber). **NEXT GATE:** green matrix → Jon prod sign-off → merge/deploy P1 to prod → RELAX containment → then P2/P3/P4 (request-grant / force / priority-hold). **Open bugs this session:** B019, B020, **B021 (BC-fetch timeout)**, G008 (test CORS) + F009/F010/F012 (F011 shipped v1.23.4). **Phase B (PR #5) shelved. Containment HOLDS until P1 ships on prod.** Prod = v1.23.4, master `c8a69538`.
 - **[2026-07-09 22:21 MDT]** **🔧 P1 = PASS-PENDING 2 FIXES (matrix surfaced a 2nd small gap — working as intended).** Both gaps small + Coach-owned: **GAP #1 keep-alive heartbeat** (nav-away → lease stale in ~90s → could reject an orphaned writeback) — **FIX BUILT `d1b1b07e`, Coach re-reviewing**; **GAP #2 (L6) reviewer can't approve/resolve tech-review while someone holds the lock** (lease lacked the review-lock's reviewer exemption; Marc+Coach verified e2e) — **Jon APPROVED Coach's Fix B** (eligibility-gated claim: only an eligible editor holds the lease → reviewer becomes holder during review) — **Marc BUILDING.** **Matrix so far:** L1/L2/L3 PASS · **L5 load-bearing PASS** (no lease rejection; e2e confounded by B021 pricing hang + G008 CORS) · **L6 FAIL→Fix B** · L7 in progress (Jon role-swapped the offline step; Andrew stays a simple user) · L8/L8b solo next. **NEXT:** Coach re-reviews both deltas → Marc re-deploys to test → Jon re-runs L5+L6 (+ finish L7/L8/L8b) → prod gate. **Open items logged this session:** B019/B020/B021/G008 + F009/F010/F012 (F011 shipped v1.23.4). **Phase B (PR #5) shelved. Containment HOLDS until P1 ships on prod.** Prod = v1.23.4, master `c8a69538`.
 - **[2026-07-09 22:07 MDT]** **🔧 MILESTONE — P1 = PASS-PENDING keep-alive fix; ★★L5 assertion PASSED.** Live matrix (test, Jon+Andrew): **L1/L2/L3 PASS**; **L5 load-bearing assertion PASS** — no lease rejection, the orphaned writeback was NOT blocked (the core B012 guarantee held), though the end-to-end run was confounded by a pre-existing pricing hang (**B021**) + test-channel CORS (**G008**). **L6/L7/L8 in progress (Jon).** **★ P1 GAP (Coach C140 addendum, `69434745`):** keep-alive heartbeat missing (plan §7b) — nav-away during a bg task lets the lease go stale in ~90s → a 2-user claim could reject the orphaned writeback ⇒ **P1 verdict = "PASS PENDING the keep-alive fix," required before prod.** **Jon APPROVED the fix → Marc BUILDING the module-scoped keep-alive + the G008 CORS fix now** (parallel to L6–L8) → Coach re-reviews the delta → re-deploy to test → re-run L5 clean → prod gate. **New items this session:** B021 (pricing hangs at 95%, MED, pre-existing NOT P1), G008 (test channel missing from Storage CORS allowlist, MED test-env), plus F012/B019/B020 already logged. **WHO:** Jon → L6/L7/L8 · Marc → keep-alive + G008 · Coach → on deck for the keep-alive delta re-review · Freddy → routing. **Phase B (PR #5) shelved. Containment HOLDS until P1 ships on prod.** Prod = v1.23.4, master `c8a69538`.
