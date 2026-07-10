@@ -304,6 +304,47 @@ service cloud.firestore {
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
 
+      // ── B012 hard one-editor lock (editing lease) — P1 core (docs/B012-HARD-LOCK-COACH-PLAN.md).
+      // Server-enforced so a SECOND user's content write is REJECTED while another holds a fresh
+      // lease — the actual B012 fix. All access via map.get(key,default): a project with NO lease
+      // fields makes editingLeaseValid()=false ⇒ no lock ⇒ behavior identical to today (backward-safe).
+      function editingLeaseValid(p) {
+        return p.get('editingBy', null) != null
+            && p.get('editingExpiresAt', 0) > request.time.toMillis();   // tab-alive (heartbeat-renewed)
+      }
+      // Admin override — reuse the existing ownerTakeoverActive record (shape: {byUid,byName,atMs,expiresAt}).
+      // NOTE(P4): tighten to also require isAdminMember() so a non-admin can't self-issue a takeover to
+      // bypass the lease/priority-hold; deferred to P4 to keep the P1 diff tight (matches today's ungated
+      // takeover behavior — no regression). See plan §4-P4.
+      function hasLeaseTakeover(p) {
+        let t = p.get('ownerTakeoverActive', null);
+        return t != null
+            && t.get('byUid', '') == request.auth.uid
+            && t.get('expiresAt', 0) > request.time.toMillis();
+      }
+      function isEditingLeaseLocked(p) {
+        let heldByOther = editingLeaseValid(p) && p.get('editingBy', null) != request.auth.uid;
+        return heldByOther && !hasLeaseTakeover(p);
+      }
+      // P2/P3 carve-out helpers — STUBBED to false in P1; they light up in later phases so the
+      // allow-update chain below already carries its final shape (P2/P3 only change these bodies).
+      function canForceExecute(p) { return false; }            // P3 — grace-expired force claim
+      function isOnlyAccessRequestUpdate() { return false; }   // P2 — view-only user writes their own request
+      function isOnlyForceArmUpdate() { return false; }        // P3 — requester arms a force-takeover
+      // Lease-management writes: claim (on free/stale), heartbeat renew, release, or GRANT hand-off.
+      // A real content save also touches panels/bom ⇒ fails hasOnly() ⇒ falls through to the lock check.
+      function isOnlyLeaseUpdate() {
+        let allowed = ['editingBy','editingByName','editingTabId','editingClaimedAt','editingExpiresAt',
+                       'editingLastActivityAt','editingAccessRequest','editingForcePending','updatedAt','updatedBy'];
+        let onlyLease = request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
+        let cur = resource.data;
+        let mayHold = !editingLeaseValid(cur)                          // free / crashed-stale → anyone may claim
+                   || cur.get('editingBy', null) == request.auth.uid   // I'm the holder (heartbeat/release/grant)
+                   || hasLeaseTakeover(cur)                            // admin override
+                   || canForceExecute(cur);                            // P3 grace expired (stub=false in P1)
+        return onlyLease && mayHold;
+      }
+
       allow read: if isMember();
       // Existing admins can update/delete; any authenticated user can create a new company they own
       allow create: if request.auth != null && request.resource.data.createdBy == request.auth.uid;
@@ -367,9 +408,20 @@ service cloud.firestore {
         // state, which is exactly when the project is "won" — so the lock would otherwise
         // block our own ECO indexing writes. The carve-out is narrowly scoped to those
         // exact field names.
+        // B012 editing-lease term: a non-holder content write (changes panels/bom → not a
+        // lease-only diff) is REJECTED while another holds a fresh lease. Lease-management,
+        // access-request (P2), force-arm (P3), review-state, unlock-request and ECO-index
+        // updates carve out so the state machine + existing flows still work under the lock.
         allow update: if canWrite() && !isOwnerPriorityLocked(resource.data)
                                     && (!isWonOrLostLocked(resource.data) || isOnlyUnlockRequestUpdate() || isOnlyEcoIndexUpdate())
-                                    && (!isInReviewLocked(resource.data) || isOnlyReviewStateUpdate());
+                                    && (!isInReviewLocked(resource.data) || isOnlyReviewStateUpdate())
+                                    && (!isEditingLeaseLocked(resource.data)
+                                          || isOnlyLeaseUpdate()
+                                          || isOnlyAccessRequestUpdate()
+                                          || isOnlyForceArmUpdate()
+                                          || isOnlyReviewStateUpdate()
+                                          || isOnlyUnlockRequestUpdate()
+                                          || isOnlyEcoIndexUpdate());
         allow delete: if canWrite();
 
         match /_snapshots/{snapshotId} {
