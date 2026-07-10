@@ -8252,3 +8252,1100 @@ Three independently deployable phases, 39 test criteria:
 5. #157 logged for stale-project bug (separate from #156)
 
 ---
+
+---
+
+## C100–C130 (archived 2026-07-10 — #153–#191 era, 2026-06-17→07-01; all resolved/shipped, superseded, lessons in CLAUDE.md, not cited by any live finding)
+
+### C100 — #153 Revision-Gate Structural Trace (2026-06-17)
+
+**Type:** Read-only code-path trace
+**Status:** COMPLETE — root cause identified, runtime verification needed
+**Deliverable:** `docs/153-REVISION-GATE-TRACE.md`
+
+---
+
+#### Verdict: gate IS on the executed path
+
+Jon's hypothesis — "the condition probably isn't on the executed path" — is **REFUTED**. The complete call chain is:
+
+```
+handleDrawingDrop (24236)
+  → addFiles (23955): appends pages (24088), AI detects, sets awaitingConfirm
+  → USER clicks Confirm button (27924)
+  → confirmAndExtract (24414): quality gate → revision gate (24534) → extraction (24602)
+```
+
+There is NO alternative path from drop to extraction. `addFiles` does NOT extract, does NOT call `onUpdate`, does NOT call `confirmAndExtract`. The user MUST click Confirm, which MUST call `confirmAndExtract`, which contains the gate.
+
+#### Why three fixes produced zero behavior change
+
+**The condition is correct. The INPUTS are wrong.** All four BOM-detection signals (`_refBomRows`, `_propBomRows`, `_priorDv`, `_persistedHasBom`) fail simultaneously because:
+
+1. **In-memory signals (A/B/C):** `latestPanelRef.current = panel` (line 23920) on every render. If the `panel` prop loses its BOM during the addFiles→confirm window, all three zero out together. The v1.20.138 comment confirms this diagnosis ("BOTH latestPanelRef.current AND the panel prop are stale, no bom AND no bomVersion").
+
+2. **Firestore signal (D):** The v1.20.138 read at line 24519 uses `_appCtx.projectsPath || users/${uid}/projects`. If the path is wrong for a team project, the read returns no document and `_persistedHasBom` stays false.
+
+**Three fixes modified the condition. None investigated what STRIPS the BOM from the panel prop between addFiles and confirmAndExtract.**
+
+#### Recommended next step
+
+Reproduce with console open. The debug log at line 24533 (`[#153 REVISION-GATE]`) dumps every signal value and will immediately reveal which input is wrong. Based on output:
+
+- If `refBomRows=0, propBomRows=0` → add `console.trace` inside parent's `onUpdate` callback (line 34722), filtering for calls where `updatedPanel.bom` is empty/undefined. This catches the caller that strips the BOM.
+- If `persistedReadErr` is populated → log `_appCtx.projectsPath` at read time. Verify it points to the correct Firestore collection.
+- If `newItemsLen=0` → `pendingNewItemsRef` was cleared between addFiles and confirm. Add sentinel logs.
+
+---
+
+### C101 — #153 Full Flow Read: End-to-End Revision Path Audit (2026-06-17)
+
+**Type:** Comprehensive code-path read vs. C96/C97 plan
+**Status:** COMPLETE
+**Deliverable:** `docs/153-FULL-FLOW-READ.md`
+**Builds on:** C100
+
+---
+
+#### Scope
+
+Complete end-to-end read of the #153 revision-drop flow (drop → addFiles → gate → both branches → staging → ReconciliationModal → commit) against the C96/C97 plan. Two confirmed bugs investigated (v1.20.138, project DCeU9GGjJLgB1NP0MJuJ).
+
+#### Key findings
+
+1. **Code structurally matches C96/C97** at all 6 phases (A-F). All specified components exist and are wired correctly.
+
+2. **BUG 1 (gate intermittency):** Cannot be pinned via static analysis. Every examined code path preserves BOM. The `projectRemoteTasks` listener churn creates re-render windows, but the `didInitialFirestoreSyncRef` and `updatedBy!==uid` guards prevent state clobbering. Root cause is timing-dependent — needs runtime `console.trace` in parent onUpdate to catch the exact caller that strips BOM.
+
+3. **BUG 2 (Replace → no modal):** Code is wired correctly per C97. `handleRevisionDrop` IS called (return at 24553 prevents normal path). The "50-page extraction" is a display discrepancy — extraction runs on 25-page transient panel while UI shows 50 from panel prop. Most likely failure: silent `try{...}catch(e){}` at line 14876 swallows onDone errors. Secondary: `_currentProjectId` guard discards result.
+
+4. **5 divergences found (D1-D5):** D1 (architectural — gate at confirm not drop) is root cause of both bugs. D2 (silent catch) masks BUG 2. D3 (pendingNewItemsRef types stale after tagPage). D4 (cosmetic page count). D5 (Signal D path for team projects).
+
+5. **Recommendation: Branch at DROP (Option A).** Move gate upstream to `handleDrawingDrop` before addFiles. Eliminates the async window (BUG 1) and ensures Revise path controls the full pipeline (BUG 2). Consolidated fix plan in 4 phases.
+
+---
+
+### C102 — #153 Reconciliation Cross Trace (2026-06-17)
+
+**Type:** Read-only structural trace (urgent — potential data-loss)
+**Status:** COMPLETE — runtime verification needed
+**Deliverable:** `docs/153-RECON-CROSS-TRACE.md`
+**Builds on:** C100, C101
+
+---
+
+#### Symptom
+
+ReconciliationModal opened (47 unchanged / 4 changed / 3 new / 1 deleted) but the
+"Prior Part#" column shows PRE-CROSSED (original extracted) PNs — not Jon's crossed
+replacements. Committing would carry pre-cross state forward, wiping all crosses.
+Jon cancelled (safe).
+
+#### Key findings
+
+1. **Cross data model confirmed:** `partNumber` is OVERWRITTEN with the replacement;
+   `crossedFrom` stores the original. Both auto-crosses (`applyLearnedCorrections`)
+   and manual crosses (BC Item Browser) use this model.
+
+2. **Prior BOM source confirmed:** `latestPanelRef.current.bom`, deep-copied at modal
+   mount. All examined code paths preserve crosses. No code path found that strips them.
+
+3. **Root cause unpinnable statically:** Most likely a runtime race where something
+   replaces the panel state with a pre-cross BOM during the drop→extraction→modal
+   window.
+
+4. **Design defect found:** `applyLearnedCorrections` at line 14583 runs on the staging
+   extraction with NO `stagingMode` gate. This auto-crosses the new extraction
+   identically to the prior BOM, causing reconcileBom to report "unchanged" for rows
+   where the underlying drawing PN actually changed. **Recommended fix:** gate behind
+   `!cbs.stagingMode`.
+
+5. **4-point diagnostic log plan** provided for CCD (~10 lines of console.log). One
+   reproduction will pin whether crosses are missing from the prior (Candidate A) or
+   masked by double auto-cross (Candidate B).
+
+---
+
+### C103 — #153 Cross-Aware Reconciliation Fix Plan (2026-06-17)
+
+**Type:** Finalized two-part fix plan (diff-gated, Marc builds)
+**Status:** READY FOR IMPLEMENTATION
+**Deliverable:** `docs/153-CROSS-FIX-PLAN.md`
+**Builds on:** C102 (root cause confirmed by v1.20.140 RECON TRACE logs)
+
+---
+
+#### Root cause confirmed
+
+Candidate B (C102) validated by runtime logs. All 4 diagnostic points returned:
+prior has 17 crosses (Candidate A dead), staging extraction output has 16 crosses
+(the smoking gun — `applyLearnedCorrections` re-applied DB crosses to the raw
+extraction, masking all differences).
+
+#### Two-part fix
+
+1. **Gate `applyLearnedCorrections`** behind `!cbs.stagingMode` (line 14581, ~1 line).
+   Staging extraction produces raw PNs.
+
+2. **Cross-aware pre-pass in `reconcileBom`** (~18 lines, inserted before Pass 1).
+   Matches crossed prior rows by `normPart(crossedFrom)` against extraction's
+   `normPart(partNumber)`. Same underlying part → unchanged → `carryUnchanged`
+   preserves cross + pricing + all user edits. Pass 1 guard added to skip
+   already-matched rows.
+
+Part 1 alone makes the problem WORSE (all crossed rows → pn_changed → strips cross).
+Both parts must ship together.
+
+#### Carry-forward behavior (5 scenarios verified)
+
+- A: Drawing unchanged → cross pre-pass matches → unchanged → cross preserved
+- B: Drawing changed PN → no match → Pass 2 → pn_changed → cross stripped (correct)
+- C: Drawing updated to replacement PN → Pass 1 matches → unchanged → cross preserved
+- D: Non-crossed row → Pass 1 as before → no regression
+- E: Qty change on crossed row → cross pre-pass → changed-qty → cross preserved, qty updated
+
+Pass 2 interaction verified clean — no changes to Pass 2 or Pass 3.
+
+---
+
+### C104 — #159 Copy-to-New-Quote Customer Selection Scope (2026-06-17)
+
+**Type:** Scoping read + fix plan
+**Status:** SCOPED — ready for implementation
+**Deliverable:** `docs/159-COPY-CUSTOMER-SCOPE.md`
+
+---
+
+#### Problem
+
+`CopyProjectModal` (line 43622) creates projects with no customer and no PRJ#.
+Customer is assignable only at creation — copies are permanently stranded.
+
+#### Scope
+
+~70 lines, low risk. All BC functions already exist in `NewProjectModal`:
+
+1. **Customer picker UI** (~35 lines): Reuse `bcLoadAllCustomers()` (line 4041) +
+   `bcFilterCustomers()` (line 4111). Pre-fill from source project's customer.
+
+2. **BC project creation** (~25 lines): After `copyProject()`, call
+   `bcCreateProject()` (line 3984) → generates PRJ# + BC Job card. Update Firestore
+   doc with `bcProjectId`, `bcProjectNumber`, `bcCustomerNumber`, `bcCustomerName`.
+   Optional `bcCreatePanelTaskStructure()` for panel task lines.
+
+3. **Progress + info text** (~10 lines): Add "BC project" step, update copy
+   description from "No BC linkage" to "Fresh BC project — no purchasing state
+   carried from source."
+
+#### Tension resolved
+
+Customer + PRJ# requires `bcCreateProject()` (creates a BC Job card). This IS a BC
+connection, but it's the copy's OWN identity — not source carry-over. The copy still
+excludes `bomSyncHash`, vendor assignments, pricing sources, BC item matches.
+
+#### Decision for Jon
+
+Should customer be REQUIRED on Copy? Recommendation: required when BC connected,
+allowed-without when BC down (with warning).
+
+#### Future
+
+Post-creation customer reassignment flagged as separate enhancement.
+
+---
+
+### C105 — #160 Reconciliation Modal: Reject/Keep-Prior for Changed Rows (2026-06-17)
+
+**Type:** Scoping read + fix plan
+**Status:** SCOPED — ready for implementation
+**Deliverable:** `docs/160-RECON-REJECT-SCOPE.md`
+
+---
+
+#### Problem
+
+Changed rows in the ReconciliationModal offer only "Accept." No way to reject a
+change and keep the prior row — critical for crossed rows where the prior contains
+the user's deliberate substitution + pricing.
+
+#### Key findings
+
+1. **Gating already works** — `unresolved` computation at line 23113 counts changed
+   rows without a resolution. Both `"accepted"` and `"rejected"` satisfy the gate.
+   No changes needed.
+
+2. **Silent drop bug** — `buildReconciledBom` (line 47422) only handles `"accepted"`.
+   Any other resolution value causes the row to be silently dropped from the output
+   BOM. Adding a Reject button without fixing this would cause rejected rows to vanish.
+
+3. **Reject semantics** — `{...m.prior}` (shallow copy of prior row, exactly as-is).
+   No position update for rejects: for `pn_changed` rejects, the extraction's position
+   corresponds to the NEW PN's location, not the prior's. Consistent behavior regardless
+   of change reason.
+
+#### Scope
+
+~6 lines, very low risk:
+
+1. **Add Reject button** to changed row actions (line 23165) — `btn("#dc2626")`
+   with toggled "✕ Keep Prior" state + "kept prior — differs from revision" indicator.
+
+2. **Handle rejected resolution** in `buildReconciledBom` (line 47422) — `else if
+   (res === "rejected") changedMerged.push({...m.prior})`.
+
+3. **Footer text cleanup** (line 23190) — remove "(deletions individually)" parenthetical.
+
+No new functions. No data model changes. No changes to `reconcileBom`. Fully contained
+within `ReconciliationModal` + `buildReconciledBom`.
+
+---
+
+### C106 — Pre-Print Checklist "AI Prices" Overcount (2026-06-26)
+
+**Type:** Read-only trace
+**Status:** RESOLVED — NO BUG (misidentified source)
+**Trigger:** PRJ402124 Pre-Print Checklist shows "28 AI" — Jon reports zero AI-priced rows in BOM table.
+
+---
+
+#### Initial trace (incorrect)
+
+Analyzed the Check 2 pricing block (lines 37203-37224). Found the pricing predicate `r.priceSource==="ai"` (line 37210) is an exact match — no default-bucket, no inversion. Source array is `projectRef.current.panels` flatMapped — same as BOM table. Concluded the predicate was sound and hypothesized multi-panel aggregation as cause.
+
+#### Correction (Marc runtime read)
+
+Marc read PRJ402124 Firestore data: **0 of 89 rows** have `priceSource:"ai"` across all 4 panels. All 89 are `priceSource:"bc"`. The "28" is NOT from Check 2 (pricing). It is from the **AI lead-time checklist entry** at line 37183-37191:
+
+```js
+const aiLeadCount=_countAiLeadTimes(projectRef.current);
+if(aiLeadCount>0){
+  issues.push({
+    type:"ailead",
+    label:`${aiLeadCount} AI-estimated lead time${aiLeadCount>1?"s":""}`,
+    ...
+  });
+}
+```
+
+28 rows have `leadTimeSource:"ai"` with `leadTimeEstimated:true` — clustered on Line 1 (17) and Line 4 (11). The modal text reads "AI-estimated lead times," not "AI prices." The budgetary stamp via `_markProjectBudgetaryForAiLeads` is working as designed.
+
+#### Lesson
+
+The symptom description said "AI prices" but the checklist entry said "AI-estimated lead times." I should have confirmed which checklist line item Jon was reading before tracing the pricing predicate. The pricing code path is correct and was never implicated.
+
+---
+
+### C107 — #163 Expanded: BC 20-Char PN Field Limit — Scoping Trace (2026-06-26)
+
+**Type:** Read-only scoping trace (territory map, no fix)
+**Status:** COMPLETE — ready for Brief
+**Tip:** `bea037e5`
+
+---
+
+#### 1. THE PIVOT — WHERE DOES TRUNCATION HAPPEN?
+
+**There is no ARC-side truncation.** No `.slice(0,20)`, `.substring(0,20)`, or any 20-char limit applied to `partNumber` anywhere in `src/app.jsx` or `functions/index.js`. Grep confirmed zero hits.
+
+**Truncation is server-side in BC.** The `bcCreateItem` function (line 4889) sends the full PN as `body.number` to BC's `/companies(id)/items` REST API (line 4900, POST). BC enforces the 20-character limit on its `number` field server-side — it silently truncates or rejects. The API response returns the truncated `item.number`, which ARC then uses everywhere downstream.
+
+**The truncated value enters ARC's BOM via `commitBcItem`.** At line 26249: `const newPN=bcItem.number` (the BC response's `.number`, already truncated). At line 26262: `partNumber:newPN` overwrites the BOM row's `partNumber` with the truncated value. This persists to Firestore via `saveProjectPanel` at line 26357.
+
+**Once committed, the full PN is gone.** It exists only in the original AI extraction output (pre-`commitBcItem`). The `crossedFrom` field preserves the original extraction PN for crossed items, but for direct BC matches (not crosses), the extraction PN is overwritten with no breadcrumb.
+
+#### 2. BC ITEM-CREATE PATH
+
+**Create flow** (`bcCreateItem`, line 4889):
+1. POST to `/companies(id)/items` with `body.number = fullPN` (line 4894/4900)
+2. BC creates the item, truncating `number` to 20 chars server-side
+3. Response: `item.number` = truncated value
+4. Follow-up OData PATCH (line 4913-4931): sets `Vendor_No`, `Gen_Prod_Posting_Group`, `Inventory_Posting_Group`, `Manufacturer_Code`, and **`Vendor_Item_No`**
+
+**Critical finding on Vendor_Item_No:** Line 4921:
+```js
+if(vendorNo)patch.Vendor_Item_No=item.number;
+```
+This sets `Vendor_Item_No` to **the already-truncated `item.number`**, NOT the full PN. The full PN is available in the `number` parameter passed to `bcCreateItem`, but it's never consulted after the POST. The PATCH uses the response's `item.number`.
+
+**Is the full PN available in scope at create time?** YES. The `number` parameter to `bcCreateItem` carries the full PN. It survives until line 4894 where it's placed in `body.number`. After the POST, the function switches entirely to `item.number` (the response). The original `number` param is still in scope (closure) but never referenced again.
+
+**Can a follow-up write issue after item creation?** YES. The PATCH at line 4913 already runs after item creation (with a 3-second wait for BC indexing, line 4925). Adding `Vendor_Item_No = number` (the param, not `item.number`) to that same PATCH is structurally trivial — the PATCH infrastructure is already there.
+
+**Three call sites for `bcCreateItem`:**
+- BC Item Browser "Create in BC" button (line 22375) — `createNumber` from user input
+- Portal "Create New Item" flow (line 31481) — `newItemForm.itemNo` pre-filled from `item.partNumber`
+- Supplier CSV import create (line 41866) — `row.partNumber`
+
+#### 3. VENDOR ITEM NO. — CURRENT STATE
+
+**Already written, but incorrectly.** `Vendor_Item_No` is actively used in 3 contexts:
+
+(a) **`bcCreateItem` PATCH** (line 4921): `Vendor_Item_No = item.number` — copies the truncated "No." back in. This is the bug site for Jon's fix.
+
+(b) **`bcUpsertItemVendorLeadTime`** (line 4365): Writes `Vendor_Item_No` on `ItemVendorCatalog` records (not `ItemCard`). Lines 4425-4426:
+```js
+if(vendorItemNo&&String(vendorItemNo).trim()&&String(vendorItemNo).trim()!==String(partNumber).trim()){
+  body.Vendor_Item_No=String(vendorItemNo).trim();
+}
+```
+Conditional: only written when `vendorItemNo` differs from `partNumber`. Called from portal apply (line 26052: `vendorItemNo:row.supplierPartNumber`), lead-time batch flush (line 26089), and pricing lead-time paths (lines 26680, 31361, 37684). These already pass supplier part numbers that may differ from BC's "No." — this path is correct for its purpose (ItemVendorCatalog, not ItemCard).
+
+(c) **`bcFuzzyLookup` step 5** (line 4808): Searches across `No`, `Vendor_Item_No`, and `Common_Item_No` via `startswith()` — already reads `Vendor_Item_No` for matching. Once full PNs are stored there, fuzzy lookup would find them automatically.
+
+(d) **`_bcFetchItemsViaItemCard`** (line 4566): Maps `item.Vendor_Item_No` to `_vendorItemNo` on search results. Used in scoring/filtering at line 4731.
+
+**The field is NOT free** — it's actively written and read. But the current value (`item.number`, truncated) is wrong. Correcting it to the full PN would improve lookup AND fix display. No existing logic would break from a longer value there.
+
+#### 4. partNumber AS A KEY — BLAST RADIUS
+
+Every place `partNumber` is used as matching/lookup identity:
+
+| # | Path | Line(s) | Key usage | Truncation impact |
+|---|------|---------|-----------|-------------------|
+| 1 | `bcLookupItem` | 4328 | `number eq '${pn}'` — exact match against BC "No." | If ARC stores full PN, this would FAIL (BC's No. is truncated). Must query by `Vendor_Item_No` or accept No.-based identity. |
+| 2 | `bcFuzzyLookup` | 4758-4848 | Multi-step search: exact No., stripped search, contains, prefix. Step 5 already searches `Vendor_Item_No`. | Full PN in ARC → step 1 exact would fail. Step 5 (Vendor_Item_No startswith) would succeed IF backfill populates the field. |
+| 3 | `applyLearnedCorrections` | 10711, 10728, 10737, 10747 | Alternates: `_altMatchesPN(a,pn)`. Corrections: `c.badPN===pn \|\| normPN(c.badPN)===normPN(pn)`. Part library: key match. Desc crosses: description-keyed. | Alternates DB stores the PN as learned (currently truncated for affected items). Un-truncating new rows won't match old DB entries that stored truncated PNs. One-time DB correction needed for affected items. |
+| 4 | `reconcileBom` | 47290+ | `normPart(partNumber)` matching between prior BOM and new extraction | Extraction returns full PN. If prior BOM holds full PN, match succeeds. If prior BOM holds truncated (from old BC commit), match fails → shows as changed. One-time transition issue, self-corrects on re-extraction. |
+| 5 | `bcSyncPanelPlanningLines` | 3662 | `No:row.partNumber` — pushed directly as BC planning line's Item No. | **CRITICAL.** If ARC stores full PN, this would push >20 chars into BC planning line `No` field → BC 400 rejection. This is the BC-push boundary Jon described — truncation MUST happen here. |
+| 6 | `bcPushPurchasePrice` | 5126 | `Item_No:itemNo` on PurchasePrice record | Same as #5: BC field limit. Must use BC "No." (truncated), not full PN. |
+| 7 | `bcPatchItemOData` | 4949 | `ItemCard?$filter=No eq '${itemNo}'` | Must use BC "No." for this lookup. |
+| 8 | `bcFetchPurchasePrices` | 5152 | `Item_No eq '${pn}'` filter | Must use BC "No." |
+| 9 | Quote PDF BOM hash | various | `computePanelBomHash` / `computeBomHash` | Display-only, no BC interaction. Full PN fine. |
+| 10 | `normPart` matching (crosses, dedup) | ~20 sites | Cross detection: `normPart(crossedFrom)!==normPart(partNumber)` | If `partNumber` is full and `crossedFrom` is the extraction PN (also full), matching works. If `crossedFrom` stored a truncated value from a previous BC commit, the cross detection would break. Transition-period issue. |
+
+**Summary of blast radius:** Paths 1, 5, 6, 7, 8 all send `partNumber` directly to BC fields with a 20-char limit. Un-truncating ARC's `partNumber` without adding a truncation-at-boundary layer would break BC sync. Path 3 (learning DB) has a stale-data transition issue for items learned while truncated.
+
+#### 5. DOCUMENT + BROWSER RENDER SOURCES
+
+| Surface | Field rendered | Line(s) | Fix difficulty |
+|---------|---------------|---------|----------------|
+| **RFQ email/PDF** | `item.partNumber` | 6435, 6446 (`_esc(item.partNumber\|\|"—")`) | Trivial — once ARC BOM stores full PN, RFQ shows it automatically. Zero code change on this surface. |
+| **Traveler BOM (cover page PDF)** | `r.partNumber` | 8053 (`r.partNumber\|\|"—"`) | Same — auto-fixed when BOM row has full PN. Zero code change. |
+| **BC Item Browser (picker modal)** | `item.number` | 22421 (`{item.number}`) | This reads BC's "No." field directly from the search result, NOT the ARC BOM row. Changing to `item._vendorItemNo\|\|item.number` is a ~1-line swap. Requires `_vendorItemNo` to be populated (the backfill). |
+| **BOM table inline** | `row.partNumber` | 28558 column config | Auto-fixed when BOM row has full PN. |
+| **Quote PDF** | `r.partNumber` | via `buildQuotePdfDoc` | Auto-fixed. |
+
+#### Architecture summary for the Brief
+
+Jon's proposed direction aligns well with the code. The fix has 3 layers:
+
+**Layer A (storage):** ARC's BOM `partNumber` carries the full PN. The only mutation point is `commitBcItem` line 26262 — currently `partNumber:newPN` where `newPN = bcItem.number` (truncated). Change: keep ARC's original `partNumber` when it's longer than BC's "No.", or store full PN from a new field.
+
+**Layer B (BC-push boundary):** Every path that writes `partNumber` into a BC field with a 20-char limit (planning lines, purchase prices, item lookups) must use the BC "No." (truncated), not the full PN. This is 5-8 call sites (paths #1, #5, #6, #7, #8 above). A helper like `bcItemNo(row)` that returns `row.bcItemNumber || row.partNumber.slice(0,20)` would centralize this.
+
+**Layer C (Vendor_Item_No):** Fix `bcCreateItem` line 4921 to write the full PN (`number` param) instead of `item.number`. One-time backfill seeds existing items. BC Item Browser display (line 22421) swaps to `item._vendorItemNo||item.number`.
+
+**Blast-radius caution:** The learning DB (alternates, corrections) has entries keyed by truncated PNs for affected items. A transition strategy is needed so old DB entries still match during the changeover period.
+
+---
+
+### C108 — #158 Region Learning 1MB Scope Trace (2026-06-29)
+
+**Type:** Read-only scoping trace (pre-design)
+**Status:** COMPLETE — scope doc delivered at `docs/158-REGION-LEARNING-SCOPE.md`
+**Tip:** master `fdad5f36` (no code changes — read-only trace)
+
+---
+
+#### Root cause confirmed
+
+Single Firestore document at `config/region_learning` stores up to 30 entries in a flat
+`{examples:[...]}` array. Each entry carries an inline base64 JPEG thumbnail (30–130 KB
+encoded). The 30-entry sliding window was designed to bound the doc, but the code comment
+"thumbnails at ≤100KB give headroom" miscalculated: 30 × ~37 KB average = ~1.1 MB,
+routinely breaching the 1,048,576-byte hard limit. Company XODxZ8xJc0dQXGZI7jbo is
+frozen at 1.1–1.18 MB — all writes silently fail via `.catch(console.warn)` at lines
+13325, 13331, 13336.
+
+#### Reader enumeration (5 read sites + 1 passthrough)
+
+All readers consume `loadRegionLearning(uid)` (R1, line 13312) which returns the flat
+array. R1 is the ONLY function that touches Firestore directly. Downstream consumers:
+
+- R2: `extractBomPage` client (line 12340) — feeds AI extraction prompt
+- R3: `detectPageTypes` (line 15268) — feeds page classification prompt
+- R4: Settings UI (line 17717) — admin display/prune
+- R5: `_captureRegionForLearning` (line 21362) — dedup check before save
+- R6: CF `extractBomPage` (functions/index.js:2395) — passthrough, no Firestore read
+
+**Refactor is contained to R1.** All others consume R1's return value (array) unchanged.
+
+#### Proposed fix: subcollection per entry
+
+`config/region_learning/entries/{entryId}` — one doc per example. Individual thumbnails
+are 50–150 KB, well under the 1 MB per-doc limit. `loadRegionLearning` becomes a
+`getDocs()` subcollection query returning the same array. Five write/delete/update
+functions refactored. Backward-compatible dual-path read (subcollection-first, old-doc
+fallback). Firestore rules: add explicit `entries/{entryId}` match.
+
+#### Migration: one-time admin-triggered batch
+
+Read the frozen doc → batch write entries to subcollection → delete old doc → write
+manifest. Atomic via Firestore batch (≤32 ops). **Marc runtime pull dependency:**
+need actual entry count + thumbnail sizes from the frozen doc before finalizing.
+
+#### Gap noted
+
+`extractBomBatch` (line 12297) does not pass region learning context — pre-existing gap,
+not caused by #158, not in scope.
+
+Full detail: `docs/158-REGION-LEARNING-SCOPE.md`
+
+---
+
+### C108 Rev 1 — #158 Detailed Plan (2026-06-29)
+
+**Type:** Detailed implementation plan (read-only — no build, no deploy)
+**Status:** COMPLETE — plan delivered at `docs/158-DETAILED-PLAN.md`
+**Tip:** master `fdad5f36` (no code changes)
+
+---
+
+#### Retargeting from C108 scope
+
+Marc's runtime pull showed the frozen doc has **9 entries** (not 30) at **1,044,357
+bytes**. Thumbnails average ~115K chars each (range 58K–203K), not the ~37K the scope
+assumed. Root driver is **uncapped thumbnail height** in `cropRegionToBase64` (line
+13339): `maxWidth=800` but height proportional to region aspect ratio. A full-page BOM
+region yields a ~200K blob. The 30-entry sliding window is irrelevant — 9 entries blew
+the limit.
+
+#### Plan structure (5 phases, ordered for frozen-company safety)
+
+1. **Thumbnail cap** — step-down algorithm in `cropRegionToBase64` (line 13339): render
+   → measure → if over 250K chars, reduce quality then dimensions → re-render. Bounds
+   future entries. Does not retroactively resize existing entries.
+
+2. **Subcollection restructure** — `config/region_learning/entries/{entryId}`. Rewrite
+   `_rlPath` → `_rlDocPath`/`_rlEntriesPath`. `loadRegionLearning` (R1, the ONLY
+   Firestore-touching read) gets dual-path: subcollection-first, old-doc fallback.
+   Merges both sources during transition window (prevents split-brain between deploy
+   and migration). Write functions (W1/W2/W3) write to subcollection only. NO lazy
+   migration from the read path.
+
+3. **Loud failures + rules** — Remove `.catch(console.warn)` at lines 13325/13331/13336;
+   functions now throw. `_captureRegionForLearning` (line 21373) stays non-blocking but
+   routes failures to `logDebugEntry` (admin Debug Logs). Firestore rules: add
+   `entries/{entryId}` match under `config/region_learning`.
+
+4. **Migration** (post-deploy, admin-triggered) — Read frozen doc → batch write 9
+   entries to subcollection → overwrite old doc with slim manifest (`.set()` is
+   load-bearing — it unfreezes the doc path). 10 ops, atomic batch. Marc executes
+   per-company.
+
+5. **Verify** — Settings renders all entries; new capture writes succeed; extraction
+   feeds learning context; tall-region thumbnail ≤250K chars.
+
+#### Rollout sequence
+
+Phases 1–3 deploy together. **Phase 4 runs IMMEDIATELY after deploy, same session,
+before new captures** — shrinks the transition window to ~zero for the frozen company.
+
+#### Accepted limitation: transition-window write holes (Rev 2)
+
+Between deploy and migration, the merged read returns entries from BOTH sources, but
+writes target the subcollection only. Two non-destructive edge cases for old-doc-only
+entries during the window: (1) `.update()` on an old-doc-only entry throws (caught by
+`_captureRegionForLearning` try/catch — non-blocking); (2) `.delete()` of an old-doc-only
+entry no-ops and the entry resurrects on next merged read. Both self-clear at migration.
+Mitigated by process (immediate Phase 4), NOT by gold-plating the write path.
+
+Full detail: `docs/158-DETAILED-PLAN.md`
+
+---
+
+### C110 — #168 Auto vs Manual BC Sync Divergence Trace (2026-06-29)
+
+**Type:** Read-only trace (evidence-first)
+**Status:** RACE PROVEN + SHIPPED (v1.21.2) — race was real but was NOT the popup's cause
+**Tip:** master (no code changes — read-only trace)
+**Disposition (2026-06-29):** Race correctly identified and removed in v1.21.2 (Path A
+deleted). Runtime evidence then showed the popup originated from Path B (the path we kept),
+driven by deterministic per-item POST failures — not duplicate-record race collisions.
+Posting-group theory also dead (all three flagged items have valid posting groups in BC).
+Reported symptom did not survive once the race was removed; only reproduction is legitimately
+missing items (e.g. JOB BUYOFF not in BC), which is correct behavior. #168 tabled.
+
+---
+
+#### Root cause: concurrent execution, not lookup key or async prerequisite
+
+`runPricingOnPanel` fires `bcSyncPanelPlanningLines` directly at line 27460 (fire-and-forget,
+no guards, no popup, no `bcSyncing` interlock). The `useEffect` auto-sync at line 25098–25120
+independently detects the `priceSource:"bc"` count increase and fires `syncPlanningLinesToBC()`
+→ `bcSyncPanelPlanningLines` 3 seconds later. Both calls operate on the same BC task with the
+same panel data. No mutex exists between them.
+
+#### How the race produces the popup
+
+1. Path A (direct, line 27460) starts first — GETs 0 existing lines, enters Step 2b
+   posting-group checks (~10–25s serial).
+2. Path B (useEffect, line 25120) fires 3s later — GETs 0 existing lines (Path A hasn't
+   created any yet, still in Step 2b).
+3. Both enter Step 3 and POST the same lines (60000, 70000, …) concurrently.
+4. For each Line_No, one POST wins and one gets a BC rejection (duplicate record). The
+   loser tries `_fallback` (Type:"Text", same Line_No) → also fails. Items go into
+   Path B's `failedRows` → `setSyncFailedAlert` → **popup**.
+
+#### Why manual works
+
+By the time the user dismisses the popup and clicks "BC Sync," both calls have finished.
+BC has all lines (created by whichever POST won each Line_No). The manual sync (same
+`syncPlanningLinesToBC` function) GETs the complete state, PATCHes or skips each line,
+reports zero failures.
+
+#### Hypotheses ruled out
+
+- **Lookup key (bcNo vs partNumber):** Both paths use `_bcNo(row)` (line 4325). `bcNo` is
+  populated during pricing (line 27020). Same key, same values.
+- **VIN resolution (`_resolveVendorItemNo`):** Only used in `commitBcItem` (Item Browser
+  flow). NOT on the pricing → auto-sync path.
+- **BC token:** Both paths guard on `_bcToken`. Same token, same BC environment.
+- **Timing of `bcNo` population:** `bcNo` is set before either sync call fires (pricing
+  stamps it, `onUpdate` propagates it).
+
+#### Why Path A exists alongside the useEffect auto-sync
+
+Path A (line 27459 comment: "Auto-sync to BC after pricing is complete") appears to be a
+direct sync convenience added without awareness that the useEffect at line 25098 already
+triggers on the same state change (bcCount increase → 3s debounce → syncPlanningLinesToBC).
+Path A bypasses `syncPlanningLinesToBC` entirely — it doesn't set `bcSyncing`, doesn't set
+`bomSyncHash`, and doesn't clear the useEffect timer. Path B has no way to know Path A is
+already running.
+
+#### Marc runtime pull (confirmatory, not blocking)
+
+Capture the raw `r.error` string from `result.failed` on the next occurrence. The
+`parseBcError` helper at line 27701 classifies the error, but the raw BC response would
+confirm whether BC says "record already exists" vs another rejection. Console output from
+Path A's `"Post-pricing BC sync: N items failed"` (line 27462) would also show whether
+Path A saw concurrent failures.
+
+Full detail: `docs/168-BC-SYNC-DIVERGENCE-SCOPE.md`
+
+---
+
+### C111 — #168 Detailed Plan: Consolidate BC Auto-Sync (2026-06-29)
+
+**Type:** Detailed implementation plan (read-only — no build, no deploy)
+**Status:** SHIPPED (v1.21.2) — Path A deletion + guard comments deployed
+**Depends on:** C110 divergence trace
+**Disposition (2026-06-29):** Plan executed, v1.21.2 shipped. The race removal was a real
+improvement (eliminated duplicate-trigger + premature POST). However, #168's reported popup
+symptom was NOT caused by the race — it was deterministic per-item failures. Two surviving
+diagnostics items logged as LOW for Marc: (1) Type:"Text" fallback on
+Project_Planning_Lines_Excel is dead logic — BC always rejects it, masking the real
+Type:"Item" POST error; (2) line 3762 discards the primary POST error body (`txt` read but
+not stored), so `failedRows` only carries the misleading fallback error. Neither blocks
+current work; both are first-move if #168 ever resurfaces with a genuinely-in-BC item.
+
+---
+
+#### Decision (Jon)
+
+Delete Path A (direct fire-and-forget `bcSyncPanelPlanningLines` at line 27460).
+Path B (useEffect → `syncPlanningLinesToBC`) becomes the sole foreground auto-sync.
+Manual button (Path C) unchanged. Failure popup stays.
+
+#### Verification results (both settled before plan was written)
+
+**V1 — Task-Description Sync Coverage: NO ORPHAN.** Path A chains
+`bcSyncPanelTaskDescriptions` in its `.then()`, but `syncPlanningLinesToBC` already
+calls the same function at line 25181. Deleting Path A loses nothing.
+`runPricingBackground` (line 15191) also has its own — untouched by this fix.
+
+**V2 — Unpriced Guard Coverage: AIRTIGHT (two layers).** The useEffect guard at
+line 25115 blocks when `bcCountIncreased && !ecoChanged` and unpriced rows exist.
+ECO path deliberately bypasses this (comment at 25112-25114 — rows inherit base
+pricing). But `syncPlanningLinesToBC` has its own unpriced guard at line 25160 that
+catches AI-priced items on ALL paths including ECO. Two independent guards prevent
+AI-estimated items from auto-syncing to BC.
+
+#### Plan structure (3 phases)
+
+1. **Delete Path A** — remove lines 27459–27467 (the `if(bcProjectNumber&&_bcToken
+   &&updatedBom.length>0){...}` block inside `runPricingOnPanel`). Leave
+   `runPricingBackground` sync at line 15190 untouched (separate concern, no race).
+
+2. **Load-bearing guard comments** — mark both unpriced guard sites with `LOAD-BEARING
+   GUARD (#168)` comments to prevent future sessions from "simplifying" away the
+   gate that blocks AI-item auto-sync.
+
+3. **Verify (Marc)** — T1: race eliminated (fully priced quote, no popup, one
+   console log line); T2: task descriptions still sync; T3: AI-item quote does NOT
+   auto-sync; T4: re-sync idempotency (hash guard skips unchanged BOM).
+
+#### Scope boundary
+
+In scope: delete Path A, add guard comments, verify. Out of scope:
+`runPricingBackground` (line 15190), useEffect trigger logic, `syncPlanningLinesToBC`
+function body, failure popup.
+
+Full detail: `docs/168-DETAILED-PLAN.md`
+
+---
+
+### C117 — #165 Admin-Only Cross-Strip Detector Scope (2026-06-29)
+
+**Type:** Scope note for CCD (Marc builds, Coach scopes)
+**Status:** SHIPPED (v1.21.3, commit 65d898e8)
+**Depends on:** C102 (reconciliation cross trace), C105 (#160 reject/keep-prior)
+
+#### Background
+
+#165's remaining risk: a Changed row with `reason:"pn_changed"` AND `m.prior.isCrossed`
+Accepted → `carryChangedPnChanged` whitelist strips cross fields (isCrossed, crossedFrom,
+crossedTo, crossedDate) + pricing + BC data. By design (whitelist only carries id,
+partNumber, qty, description, manufacturer, itemNo, coordinates) but creates data loss
+when the prior row was a user cross/substitution.
+
+#### Scope (4 elements)
+
+1. **Predicate:** `matchResult.changed.filter(m => m.reason === "pn_changed" && m.prior.isCrossed)`.
+   Both fields present in match result — `reason` set by Pass 2 of `reconcileBom`,
+   `isCrossed` carried on `m.prior` from the prior BOM row.
+
+2. **Role gate:** `isAdmin()` (line 1994) — module-global, reads `_appCtx.role === "admin"`.
+   No prop threading needed.
+
+3. **Render point:** Inside ReconciliationModal's changed-rows section. Non-blocking inline
+   banner naming the at-risk crossed-to PN(s). Fires only when `cands.length > 0`.
+
+4. **Inertness:** Pure render. No auto-accept, no auto-reject, no resolve-state mutation,
+   no commit-path change. Arms the manual Accept-on-crossed test for #165(B).
+
+#### Deployed behavior
+
+Shipped v1.21.3. Force-render verified via harness. Named PN confirmed = crossed-to
+value. No banner on non-pn_changed reconciliations (confirmed by PRJ402096 commit).
+This is #165 TOOLING, not a fix.
+
+---
+
+### C118 — #165 Detector-Diff Verification (2026-06-29)
+
+**Type:** Code-path verification
+**Status:** QUEUED — carried through Sessions 7, 8. Low priority. Open for Coach next session.
+**Depends on:** C117
+
+Verify deployed diff (`git show 65d898e8 -- src/app.jsx`) matches C117 scope exactly.
+Confirm: predicate, role gate, render point, inertness — no unscoped logic changes.
+
+---
+
+### C119 — #175 RFQ Lead-Time Visibility: Scope Trace (2026-06-30)
+
+**Type:** Scope trace + supplement (pre-implementation, read-only)
+**Status:** COMPLETE — feeds Detailed Plan
+**Deliverable:** `docs/175-SUPPLEMENT.md`
+**Decision locked:** FULL RED (Jon)
+
+---
+
+#### Trace summary
+
+1. **Row-color source:** `_isBomRowFlaggedRed` at line 15771 — confirmed name, location, single call site (BOM table row bg at 28715). Three current conditions: qty=0, unitPrice=0, priceDate missing/stale. Exclusions: labor, customerSupplied, `_isExcludedFromPriceCheck`, vendor=customer.
+
+2. **Lead-time state:** `leadTimeDays` (number|null), `leadTimeSource` (6 firm values + `"ai"` non-firm + undefined), `leadTimeUpdatedAt`, `leadTimeEstimated` (legacy). Firm sources: `bc_vendor`, `bc_item`, `supplier`, `scraper`, `manual`. Non-firm: `ai`, absent.
+
+3. **RFQ predicate confirmed:** `isFirmLT = r.leadTimeDays != null && r.leadTimeSource && r.leadTimeSource !== "ai"` at line 6337 inside `_eligibilityReason` (line 6314). Lines current. Predicate is correct for factoring into a shared `_hasFirmLeadTime(r)` helper — pure function on row, orthogonal to per-caller exclusions.
+
+4. **Scope:** ~5 lines total. New `_hasFirmLeadTime(r)` helper, add COND 4 to `_isBomRowFlaggedRed` (same exclusion gate as COND 3), refactor `_eligibilityReason` to use shared helper. NOT in scope: `findIncompleteQuoteItems` (send gate), RFQ breadth policy (HARD FENCE), pre-print checklist.
+
+#### Visual-impact note
+
+PRJ402096-class projects (~34/64 rows with AI lead times) will see ~34 additional red rows. Intended per FULL RED decision. Existing italic/asterisk/muted on the lead-time cell value provides secondary signal for why.
+
+#### Regression surface
+
+Zero behavioral regression. Single new visual condition in an existing predicate. All other lead-time consumers (pre-print checklist, budgetary auto-stamp, lead-time drivers, pricing skip guards) are independent paths — none touched.
+
+---
+
+### C120 — #175 Detailed Plan: RFQ Lead-Time Visibility (FULL RED) (2026-06-30)
+
+**Type:** Detailed implementation plan (read-only — no build, no deploy)
+**Status:** READY FOR APPROVAL
+**Deliverable:** `docs/175-DETAILED-PLAN.md`
+**Builds on:** C119 scope trace
+
+---
+
+#### Plan structure (3 sections, ~5 lines)
+
+1. **§1 — New `_hasFirmLeadTime(r)` helper** (3 lines, before `_isBuyoffOrCrate` at line 15747). Pure predicate: `leadTimeDays!=null && leadTimeSource && leadTimeSource!=="ai"`.
+
+2. **§2 — SINGLE DEFINITION (load-bearing):** Delete the inline `const isFirmLT=...` at line 6337, replace with `if(!_hasFirmLeadTime(r))return "missingLeadTime"`. Pre-deploy grep gate: `isFirmLT` → 0 hits, `leadTimeSource!=="ai"` → 0 hits in predicate context.
+
+3. **§3 — COND 4 in `_isBomRowFlaggedRed`:** Add `if(!_hasFirmLeadTime(r))return true;` inside the existing `!_isExcludedFromPriceCheck(r) && !vendorIsCustomer` gate (line 15776). Same exclusion set as stale-price check.
+
+#### Exclusion-gate analysis (§4)
+
+Full side-by-side comparison of `_isExcludedFromPriceCheck` (row-color) vs `_eligibilityReason` (RFQ) exclusion sets. Two divergences:
+
+- **`priceSource==="manual"`** (RFQ excludes, row-color doesn't): Correct — manual price doesn't imply known delivery. Row turns red, RFQ skips. Guarantee holds.
+
+- **DIN rail / duct** (RFQ excludes via `RFQ_EXCLUDE_ITEMS`, row-color doesn't): Wrong-looking red but harmless — guarantee holds (not-red ⇒ not-RFQ'd). Logged as follow-up #176.
+
+**Guarantee intact:** row-color ⊇ RFQ for lead-time flagging. "Not red" always means "won't be RFQ'd for lead time."
+
+#### Regression surface
+
+Single call site for `_isBomRowFlaggedRed` (line 28715, BOM table only). No print/PDF/export path reads it. `findIncompleteQuoteItems` (send gate) NOT touched — lead-time send-gating is a separate decision. All other `leadTimeSource` consumers are independent read/write paths — none affected. 11 test criteria (T1–T11).
+
+---
+
+### C121 — #178 RFQ Pre-fill Fix Cluster Scope Trace (2026-06-30)
+
+**Type:** Read-only scope trace (A/B/C)
+**Status:** SCOPE COMPLETE — feeds Detailed Plan
+**Deliverable:** `docs/178-SUPPLEMENT.md`
+
+---
+
+#### Part A — "Lead Time Only" auto-checkbox bug
+
+**Root cause:** Cooldown interaction with `_eligibilityReason`'s short-circuit.
+
+When a row is in RFQ cooldown (rfqSentDate within 30 days), `_eligibilityReason` skips price checks and falls through to the lead-time check. A row with `unitPrice===0` but in cooldown returns `"missingLeadTime"` instead of `"missingPrice"`. The per-group counter `itemsMissingPrice` stays 0, so the auto-set at line 6380 fires:
+
+```js
+g.defaultLeadTimeOnly=(g.itemsMissingPrice===0&&g.itemsStalePrice===0&&g.itemsMissingLeadTime>0);
+```
+
+**Correct rule:** `defaultLeadTimeOnly = true` ONLY when every row has `unitPrice > 0` AND at least one row needs a lead time. Evaluate price presence directly, not via the reason classification.
+
+#### Part B — Unit Price column blank in normal mode
+
+**Answer to KEY QUESTION:** POPULATION DECISION, not data-fetch gap. Price IS present on `item.unitPrice` at RFQ-gen time. Deliberately excluded from normal-mode payload:
+
+- Firestore payload (line 19193): `referencePrice` gated by `if(ltOnly)`
+- Email HTML (line 6509): normal mode → `&nbsp;`
+- PDF (line 8216): normal mode → `""`
+- Portal (line 48367): blank editable input
+
+Infrastructure exists in leadTimeOnly mode — extend to normal mode (editable, not read-only).
+
+#### Part C — Lead Time column blank (conditional pre-fill)
+
+**Answer to KEY QUESTION:** RENDERING GAP. `referenceLeadTimeDays` IS stored unconditionally in Firestore (line 19191). Portal never reads it. Grep: single hit at line 19191 = write-only.
+
+**Fix:** Conditional pre-fill using `_hasFirmLeadTime` logic on stored `referenceLeadTimeSource`. Pre-fill firm sources (bc_vendor, bc_item, supplier, scraper, manual). Leave blank for AI/absent.
+
+#### Regression surface
+
+6 code sites across 2 paths (ARC-side build + portal render). ~30 lines estimated. Parts are independent but share payload path — ship together. Full enumeration in `docs/178-SUPPLEMENT.md`.
+
+---
+
+### C122 — #179 Supplier Portal Submit Validation (2026-06-30)
+
+**Type:** Read-only scope trace (A/B)
+**Status:** SCOPE COMPLETE — feeds Detailed Plan
+**Deliverable:** `docs/179-SUPPLEMENT.md`
+
+---
+
+#### Part A — Spurious global lead time gate
+
+**Line 48016:** `if(!leadTime.trim()){arcAlert("Please enter the lead time in days ARO...");return;}`
+
+This is the normal-mode (non-leadTimeOnly) branch of submit validation. Requires the global "Fill all Lead Times at once" input to be non-empty — even when every per-line lead time is already filled. The global field is a convenience auto-fill tool, not an authoritative source. Auto-propagation (lines 47990–48001, which fills blank per-line entries from the global value) is preserved.
+
+**Fix:** Delete the global gate. Replace with per-line validation (Part B).
+
+#### Part B — No price validation, no per-line LT validation in normal mode
+
+Current validation in `handleSubmit`:
+- **leadTimeOnly:** Per-line LT validation (each non-cannotSupply line must have LT). No price check (prices read-only).
+- **Normal:** Global LT required. **No price check. No per-line LT check.**
+
+A supplier can submit in normal mode with entirely blank prices. No blocking.
+
+**Fix:** Per-line check — each non-cannotSupply row must have both `unitPrices[i]` (non-empty, > 0) AND `_itemLeadTimesEffective[i]` (non-empty, > 0). Blocking `arcAlert` on failure with generic message (don't enumerate rows — existing red indicators for missing prices guide the supplier).
+
+**Visual gap noted:** Missing prices render red (border `#fca5a5`, bg `#fff5f5`, `⚠ Missing`). Missing lead times have NO visual indicator. **Promoted to Part C in C123 Detailed Plan** — correctness hazard, not cosmetic.
+
+#### Scope
+
+~15 lines as scoped in C122. Expanded to ~20 lines in C123 Detailed Plan (Part C added).
+
+---
+
+### C123 — #179 Detailed Plan (2026-06-30)
+
+**Type:** Detailed Plan (A/B/C — scope expanded from C122)
+**Status:** READY FOR APPROVAL
+**Deliverable:** `docs/179-DETAILED-PLAN.md`
+**Builds on:** C122
+
+---
+
+#### Scope expansion
+
+Part C (missing LT visual indicator) pulled in per analyst ruling: if the submit blocks
+on missing LT, the row must show it. Without the red indicator, the supplier hits an
+invisible wall — the #175 failure mode inverted.
+
+#### Shared predicate guarantee (Rev 1 — per Freddy amendment)
+
+Two shared validity helpers at component level (§1a):
+```js
+function _isValidPrice(x){return x!==undefined&&x!=='';}
+function _isValidLT(x){return x!=null&&String(x).trim()!==''&&(+x>0);}
+```
+
+Per-row computed values (§1b) call these:
+```js
+const hasPrice=!cant&&_isValidPrice(unitPrices[i]);
+const hasLeadTime=!cant&&_isValidLT(itemLeadTimes[i]);
+```
+
+Submit block (§4) calls the same functions:
+```js
+if(!_isValidPrice(unitPrices[i])||!_isValidLT(_itemLeadTimesEffective[i]))hasIncomplete=true;
+```
+
+One rule, two sources. The validity test is shared — can't drift even though the inputs differ (React state vs post-propagation effective). `setItemLeadTimes(filled)` at line 48000 syncs them before the supplier sees the visual post-submit.
+
+#### Plan structure (6 sections, ~22 lines)
+
+1. **§1a — `_isValidPrice` / `_isValidLT` helpers** — 2 lines, component level
+   **§1b — Per-row `hasPrice` / `hasLeadTime`** — 2 lines (1 refactored, 1 new) at 48281
+2. **§2 — Part A** — delete global gate (48015-48016) + remove red border (48238) + remove red asterisk (48239)
+3. **§3 — Part C** — red border + light red bg on LT input (48385-48391). Optional `⚠` indicator if cell layout permits (Marc's call)
+4. **§4 — Part B** — per-line price+LT check in `else` branch, calls `_isValidPrice` / `_isValidLT`. Generic arcAlert, no enumeration
+5. **§5 — Guarantee statement** — one function, two inputs. visual ⊆ submit block. Every blocked row shows red.
+6. **§6 — Regression surface** — zero behavioral regression. leadTimeOnly unchanged. No payload/Firestore/ARC-side changes.
+
+13 test criteria (T1–T13). No test changes from Rev 0 — the amendment is structural (shared function), not behavioral.
+
+---
+
+### C124 — #178 Detailed Plan (2026-06-30)
+
+**Type:** Detailed Plan (A/B/C)
+**Status:** SHIPPED (v1.21.6, commit `80b863c0`)
+**Deliverable:** `docs/178-DETAILED-PLAN.md`
+**Builds on:** C121
+
+---
+
+#### Design
+
+`_hasPrice(r)` helper (`r.unitPrice!=null&&+r.unitPrice>0`) replaces counter-based auto-set
+for the `defaultLeadTimeOnly` checkbox — decouples from cooldown-masked `_eligibilityReason`.
+Cross-boundary alignment: `_hasPrice` gates what's STORED in Firestore; portal's `_isValidPrice`
+gates what the portal ACCEPTS. Different tests, different data, consistent pipeline: a no-price
+row writes null referencePrice → no portal pre-fill → `_isValidPrice(undefined)` → false.
+
+`referencePrice` stored in ALL modes (not just leadTimeOnly). Portal pre-fills prices and firm
+LTs. `processFile` uses merge (`prev=>({...prev,...allPrices})`) instead of full replacement to
+preserve pre-filled values for AI-unmatched rows. Email/PDF show reference data (italic gray).
+
+#### Rev 1 — per Freddy review
+
+Extended §5 to cover `setItemLeadTimes` merge (same full-replacement wipe bug as prices at
+lines 47938/47966). Added T16 (Start Over + re-upload clears pre-fills). Data flow consistency
+and re-process durability confirmed.
+
+#### Plan structure (9 sections, ~34 lines)
+
+1. **§1** — `_hasPrice(r)` helper
+2. **§2** — auto-checkbox fix (uses `_hasPrice` instead of `eligibleItemCount`)
+3. **§3** — Firestore payload (remove `if(ltOnly)` guard on referencePrice)
+4. **§4** — portal pre-fill (prices in all modes, firm LTs via `_hasFirmLeadTime` inline)
+5. **§5a** — processFile merge: `setUnitPrices(prev=>({...prev,...allPrices}))`
+   **§5b** — processFile merge: `setItemLeadTimes(prev=>({...prev,...allLeadTimes}))`
+6. **§6** — email rendering (reference price/LT in normal-mode rows)
+7. **§7** — PDF rendering (reference price/LT gated by leadTimeOnly)
+8. **§8** — separation guarantee (`_hasPrice`/`_isValidPrice` alignment)
+9. **§9** — regression surface
+
+16 test criteria (T1–T16).
+
+---
+
+### C125 — #180 Long-Lead Confirmation Modal Bug (2026-06-30)
+
+**Type:** Bug trace (read-only)
+**Status:** SHIPPED (v1.21.7, commit `5653ccfa`)
+**Deliverable:** Trace note (inline — no separate doc)
+
+---
+
+#### The bug
+
+`handleSubmit(bypassLongLeadCheck)` at line 48446 bound as `onClick={handleSubmit}`.
+React passes the SyntheticEvent as the first argument → `bypassLongLeadCheck` is a
+truthy object → `!bypassLongLeadCheck` is false → the long-lead check at lines
+48034–48042 (`days > 60`) is ALWAYS skipped. The confirmation modal (lines 48454–48490)
+is fully built and wired — amber warning, row table, "Go Back & Fix" / "Confirm & Submit"
+buttons — but can never appear.
+
+The modal's own "Confirm & Submit" button correctly uses `onClick={()=>handleSubmit(true)}`.
+Only the outer submit button was wrong.
+
+#### Fix
+
+`onClick={()=>handleSubmit()}` — 1 line. Wraps in arrow function so no argument is passed,
+`bypassLongLeadCheck` defaults to `undefined` (falsy), long-lead check executes normally.
+
+---
+
+### LESSON — "No-Op" Verdict Must Trace the Function Signature
+
+An advisory "no-op" verdict must trace the function signature before dismissing a binding
+change. The #180 near-miss: a review called `onClick={()=>handleSubmit()}` a no-op compared
+to `onClick={handleSubmit}` without tracing that `handleSubmit`'s first parameter is
+`bypassLongLeadCheck`. Wrapping in an arrow function IS the fix — it changes what the
+function receives as its first argument from SyntheticEvent (truthy) to undefined (falsy).
+
+**Rule:** When a function reference is changed to/from an arrow-function wrapper, check the
+target function's parameter list. If the first parameter has semantic meaning (flag, ID,
+config), the wrapping is NOT a no-op — it's a behavioral change.
+
+---
+
+### C126 — #186 Frozen-State Predicate Trace (2026-07-01)
+
+**Type:** Predicate analysis (read-only)
+**Status:** RESOLVED — informed #186 guard (v1.21.12) + #187 gate design
+**Deliverable:** Inline analysis; context in `docs/186-LOCKED-QUOTE-PRICECHECK-review.md`
+
+---
+
+Marc's candidate fix used `quoteSentAt` as the frozen-state signal. Traced both candidates:
+
+- **`quoteSentAt`** — set once at first send, never cleared on unlock/revise. Persists across
+  the revision window: user unlocks quote for revision → `quoteSentAt` is still set → guard
+  blocks the price check even though the quote is actively being revised and SHOULD accept
+  updated pricing. Wrong for the revision use case.
+
+- **`quoteLocked`** — set `true` at send, explicitly cleared on unlock. Accurately reflects
+  whether the quote is currently in a frozen/locked state vs an active revision window.
+  Correct signal.
+
+**Verdict:** `quoteLocked` is the correct frozen-state predicate. Marc's deployed fix
+(v1.21.12) uses `quoteLocked` in the tryCheck guard. The same predicate drives the #187
+expiry gate: `if((_fp.quoteLocked && !_quoteExpired) || _fp.wonAt || _fp.lostAt) return;`
+— locked AND not expired → suppress; locked AND expired → let price check run (stale
+prices need refreshing).
+
+---
+
+### C127 — #186 Expiration Gap Finding (2026-07-01)
+
+**Type:** Architectural finding (read-only)
+**Status:** RESOLVED — spawned feature #187 (Quote Validity Cascade)
+**Deliverable:** Inline finding; led to `docs/187-DETAILED-PLAN.md`
+
+---
+
+While tracing the #186 frozen-quote guard, discovered that **ARC has no quote expiration
+concept.** The `q.validUntil` field (on the quote sub-object) is a free-text display string
+used only in the print path — it drives no gate, enforces no deadline, and has no structured
+date behind it. The user types "July 31, 2026" as a string; nothing in ARC compares it to
+today or prevents a stale quote from being re-sent.
+
+Consequences:
+1. The #186 guard blocks price checks on ALL locked quotes forever — even a 6-month-old
+   quote that should be re-priced before re-sending.
+2. The printed "PRICES VALID UNTIL" date and the frozen-state guard are completely
+   decoupled — a user can type anything in the free-text field, and the guard ignores it.
+3. No send-time snapshot of the expiry date exists — reprinting a sent quote on a later
+   day shows a different "valid until" date (today+30, not the date the customer received).
+
+**This finding spawned #187** — a structured four-tier cascade that replaces the free-text
+field with a computed `quoteExpiresAt` epoch-ms timestamp, stamped at send time, driving
+both print and gate from a single source of truth.
+
+---
+
+### C128 — #187 Cascade Design Trace (2026-07-01)
+
+**Type:** Architecture / design trace (read-only)
+**Status:** SHIPPED — Phase 1 v1.21.13, Phase 2 v1.21.14; relocation fix in progress
+**Deliverable:** `docs/187-DETAILED-PLAN.md` (rev 3)
+
+---
+
+Design trace for the four-tier quote validity cascade. Key architectural decisions:
+
+**Config surface location:** `_pricingConfig` (the existing `config/pricing` Firestore doc).
+The Pricing Config modal already has a save handler that writes all fields via `.set(cfg)` —
+adding `quoteValidityDays` to the object literal is the only change needed. No new collection
+or UI surface required for the global tier.
+
+**Customer tier — BC-only, no ARC customer entity:** ARC has no customer model — projects
+carry a `bcCustomerNumber` string but there is no customer doc. Created a new
+`customerDefaults/{bcCustomerNumber}` collection keyed by that string. Firestore rules:
+read=isMember, write=isAdminMember (line 474-477). Admin CRUD via PricingConfigModal.
+
+**Single source of truth — Option A (`quoteExpiresAt` epoch-ms):** At send time, the
+cascade resolves to a day count → `sentAt + days * 86400000` → stamped as
+`project.quoteExpiresAt`. This single timestamp drives:
+- Print path: `new Date(project.quoteExpiresAt).toLocaleDateString(...)` — frozen, no drift
+- Expiry gate: `Date.now() > project.quoteExpiresAt` — same comparison point
+- Preview: when `quoteExpiresAt` is absent (unsent), falls to `Date.now() + cascade`
+
+**Rev 2 additions (Jon-directed):** Structured quote-edit tier
+(`project.quote.quoteValidityDays` as tier 1), line-number re-anchoring, Phase 2 send-time
+race guard (`_customerValidityLoadedFor` key matching to prevent cross-project bleed).
+
+**Rev 3 fix (Jon-caught defect):** Print path was reading `q.quoteExpiresAt` (quote
+sub-object, never stamped) instead of `project.quoteExpiresAt` (project-level, where send
+stamps it). Fixed to read from `project.quoteExpiresAt`. Also strengthened T4 to verify
+print==gate source location.
+
+**Phase 2 mechanism deviation (verified C129):** Plan §2.3 specified a component `useRef`
+for the customer tier cache, but `resolveQuoteValidityDays` is called from
+`buildQuotePdfDoc` — a module-level function unreachable by component refs. Marc correctly
+used module globals `_customerValidityDays` / `_customerValidityLoadedFor` (lines 2050-2051),
+house-consistent with `_pricingConfig` / `_appCtx` / `_bcToken`. All 4 call sites confirmed
+reachable. Cross-project bleed closed via the `_customerValidityLoadedFor` key-matching
+guard. Verification: `docs/187-PHASE2-VERIFICATION.md`.
+
+**Current:** Relocation fix in progress — the valid-until row emits its own "BUDGETARY - "
+prefix (doubling) and orphans across pages in the PDF (separate `arcDocCheckBreak`).
+Fix locate: `docs/187-RELOCATION-FIX-LOCATE.md`.
+
+---
+
+### C129 — #188 Validate-at-Push Plan (2026-07-01)
+
+**Type:** Implementation plan (read-only — no build)
+**Status:** READY FOR APPROVAL → Marc build
+**Deliverable:** `docs/188-VALIDATE-AT-PUSH-PLAN.md`
+
+---
+
+Two-tier vendor validation for `pushAllLeadTimesToBc()` (line 26952). Root cause: `directlyQualifying` rows use cached `bcVendorNo` WITHOUT revalidation — a vendor renumbered in BC (V00102→V00111) stays stale via the preserve-stale pricing mechanism (`bcVendorNo: item.vendorNo || row.bcVendorNo || ""`).
+
+**Tier 1:** Validate unique vendor numbers via `bcGetVendorName` (uses `_vendorMapCache` — free after first call). Dead vendors identified in O(unique vendors) ≈ 3-6 calls typical.
+
+**Tier 2:** Re-resolve dead-vendor rows via `bcGetItemVendorNo` deduped by item number. Updates `bcVendorNo` in-memory; existing persist-back block (lines 27025-27036) writes corrected values to Firestore. PRJ402124 self-heals on next push.
+
+~25 lines added, 3 modified. Normal case: zero additional network calls (vendors cached). Stale case: ~2-4 calls. Worst case: ~36 calls. All within `bcGatedFetch` capacity.
+
+---
+
+### C130 — #191 Fix Verification (v1.21.20) (2026-07-01)
+
+**Type:** Post-deploy code-path verification
+**Status:** ALL 5 CHECKS PASS
+**Deliverable:** `docs/191-FIX-VERIFICATION.md`
+
+---
+
+Marc shipped `ensureQuoteNumber` helper + assign-before-PDF on all send paths + subject recompute (commits 896c2e6e / c6e12319).
+
+1. **HELPER** — `ensureQuoteNumber(project, uid)` at line 2377. Idempotent: checks `MTX-Q\d{6}`, throws on failure, does NOT persist. ✓
+2. **CALL SITES** — 3 confirmed: print (37522, soft-fail), modal send (32923, hard-fail), inline send (38495, hard-fail). ✓
+3. **#187 ORDERING** — Quote number assigned BEFORE `buildQuotePdfDoc` on all paths. Stamps cascade runs after, cannot overwrite. ✓
+4. **SUBJECT RECOMPUTE** — Both modal (33018) and inline (38515) replace "Quote Quote" with "Quote MTX-Q######". ✓
+5. **ERROR SURFACING** — Print: arcAlert warning, continues. Send: arcAlert + return (blocks). ✓
+
+**handleGeneratePdf (line 36353):** NO `ensureQuoteNumber` yet. Placement specified for Marc: `const`→`let populated`, insert after line 36358, soft-fail matching print path. ~8 lines.
+
+---
