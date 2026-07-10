@@ -337,6 +337,10 @@ Reconciling Marc's three findings:
 
 **Combined P1 verdict: PASS — clear for `hosting:test` deploy.** Deploy client + rules together (rules unchanged but ship as one release). Then Jon re-runs the live matrix — L5 (Async-Ownership writeback) + L6 (reviewer resolve/approve under another's presence), plus L1/L3/L8 — as the pre-prod gate. I re-review nothing further unless the matrix surfaces a gap; on green matrix → Jon prod sign-off.
 
+**★ ADMIN CO-SIGN PATH — explicitly confirmed covered (per Freddy, on-record; 2026-07-09).** A NON-assignee admin is `reviewReadOnly=true` during `pending` — `reviewReadOnly` (@~37436) exempts *assignees* (`!(_outerIsPreReviewAssignee||_outerIsPostReviewAssignee)`), NOT admins, unless `reviewOverrideSession`. So under Fix B a non-assignee admin is `_eligibleEditor=false` → does NOT hold the lease UNLESS they use the EXISTING admin review-override (`reviewOverrideSession=true` → `reviewReadOnly=false` → eligible → claims → acts). ⇒ admins retain exactly the path they have today; **no new hole** (nothing becomes writable that shouldn't be) and no capability removed. The one behavioral delta is the intended hard-lock one: an override-admin and the assignee can no longer edit CONCURRENTLY — single-holder wins (first-come), and if the assignee holds, the admin uses P4 admin-takeover as the smooth path (already noted as P4). `_isReviewSignoffAuthority` grants admins the green circle during `pending`, but the WRITE still requires holding the lease (override → eligible → claim), so the resolve/approve writes pass as the holder. Confirmed covered.
+
+**★★ DEPLOY-CLEAR (plain, for Marc via git pull — AWAY MODE, pull-based): Fix B `a7c4bbf2` PASS. Combined P1 = `b654c5d6` + `d1b1b07e` (keep-alive, confirmed unchanged) + `a7c4bbf2` (Fix B) is CLEAR for the `hosting:test` deploy — client + rules together. firestore.rules verified UNCHANGED. No blockers; 3 non-blocking notes above. Next gate = Jon's live matrix on test (L1/L3/L5/L6/L8), then prod sign-off. No further Coach review needed unless the matrix surfaces a gap.**
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
