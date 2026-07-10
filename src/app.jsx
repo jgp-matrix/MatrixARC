@@ -480,9 +480,17 @@ function _bgKey(projectId,panelId){return projectId+':'+panelId;}
 // STALE must comfortably exceed HEARTBEAT so a couple of missed beats don't drop the lock.
 const LEASE_STALE_MS=90000;      // 90s — reclaimable this long after the last heartbeat (crash)
 const LEASE_HEARTBEAT_MS=30000;  // 30s — renew while the holder's tab is open
-// Per-BROWSER-TAB id, stable for this tab's lifetime (survives project switches / ProjectView
-// remounts). Distinguishes the SAME user's second tab from the holder's own tab (state (ii)).
-const _ARC_TAB_ID=(()=>{try{return (typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+"-"+Math.random().toString(36).slice(2);}catch(e){return String(Date.now())+"-"+Math.random().toString(36).slice(2);}})();
+// Per-BROWSER-TAB id — distinguishes the SAME user's second tab from the holder's own tab (state (ii)).
+// gap #5a: PERSISTED in sessionStorage so it's stable across a PAGE RELOAD of the same tab. A hard-
+// refresh (Ctrl+Shift+R) re-runs this module; without persistence it minted a NEW id while the
+// pre-reload lease still held the OLD id → the reloaded tab false-flagged itself "open in another
+// tab" for ~90s. sessionStorage survives reloads of the same tab but is per-tab, so a genuinely
+// different tab still gets a distinct id → L8 same-user-2nd-tab detection stays intact.
+const _ARC_TAB_ID=(()=>{
+  const _gen=()=>{try{return (typeof crypto!=="undefined"&&crypto.randomUUID)?crypto.randomUUID():String(Date.now())+"-"+Math.random().toString(36).slice(2);}catch(e){return String(Date.now())+"-"+Math.random().toString(36).slice(2);}};
+  try{const _k="_arcTabId";let id=sessionStorage.getItem(_k);if(!id){id=_gen();sessionStorage.setItem(_k,id);}return id;}
+  catch(e){return _gen();} // sessionStorage unavailable → fresh id (pre-fix fallback)
+})();
 // True while a background task (extraction/pricing/BC-sync) is still running for this project —
 // used to SUPPRESS lease release on unmount so a completing writeback isn't rejected after
 // another user claims (Async Project Ownership Rule; plan §7 edge 2).
