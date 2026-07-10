@@ -21,7 +21,7 @@
 
 ---
 
-_(No items awaiting triage — all promoted to TODO.md as of 2026-07-10.)_
+- [2026-07-10] METRIC (M) / FEAT — "★ NEW CATEGORY REQUEST: METRICS (prefix 'M') · M001 — Track user page-access + keystrokes + per-project engagement" — **Jon is establishing a NEW feature group "METRICS" with prefix "M"** (routes to Freddy as NUMBERING-CONVENTION.md owner + sole allocator — Dez does NOT mint the M-prefix or "M001"). Jon expects more Metrics features to follow. FIRST item = M001: track USER PAGE ACCESS + KEYSTROKES. Build a log/monitor that captures: (a) keystrokes + access time; (b) time BETWEEN clicks; (c) WHICH project was being accessed and HOW LONG the user was in it; (d) within-project ACTIVITY classified as **"engaged" / "periodic" / "no activity"** based on click cadence. DEDUP/DESIGN NOTE for Freddy+Coach: overlaps F009 (Debug Mode — cross-user activity tracing) on the CAPTURE mechanism, but differs in intent — F009 = ephemeral admin-toggled DEBUG diagnostic (TTL, metadata-only, batched async flush to avoid the observer-effect / B012 write-queue contention); M001 = PERSISTENT metrics/analytics (engagement reporting). Likely share a capture pipeline, different consumer. FLAGS to weigh at scoping (not Dez's call): user-privacy of keystroke logging; write-volume/observer-effect (apply F009's batched-flush + metadata-not-verbatim + TTL lessons); data-retention rules. — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
