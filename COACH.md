@@ -423,6 +423,13 @@ Reconciling Marc's three findings:
 - **Coach recommendation:** ship P1 with the other-tab modal **DISMISSIBLE** (restore the "View read-only" escape), and ship the non-dismissible hard-block WITH gap #5b/F015 — honoring Freddy's own stated sequencing. (Alt: pull gap #5b into P1 so there's no ghost to trap on — but that expands P1.) **Jon's call — it's his pre-ship ruling; surfacing the trap so he decides with full information.**
 - **This does NOT block the `hosting:test` deploy** (test-channel retest is exactly where Jon would hit/confirm the reopen trap). It's a PROD-gate concern: resolve the 97c8ec31 decision before prod.
 
+**★ PROD-GATE CONFIRM — dismissible-modal restore `89e289f7` = ✅ PASS. Full P1 stack CLEAR for prod (pending Jon's re-confirm).** Jon ruled per my rec: ship P1 with the other-tab modal DISMISSIBLE; the non-dismissible hard-block moves to the gap #5b/F015 fast-follow. Marc's restore verified:
+- **(1) Dismissible restored ✓** — the `kind==="other-tab"` branch now renders BOTH "View read-only" (`setLeaseModal(null)` escape) + "Close the tab"; dismissing drops to read-only VIEW (leaseReadOnly stays true → still no edit/no self-clobber → no trap; persistent banner remains). Cross-user "Project in use" branch unchanged. The ≤90s reopen self-trap is removed.
+- **(2) Guard + tick intact ✓** — the full `97c8ec31..89e289f7` range is exactly 3 hunks: the two Root-A guard hunks (`37b15953`: useState seed @36960 + onSnapshot line @37331, both RETAINED) + this one modal-button hunk. `_tryAcquireEditingLease`, the L8-proven claim/detect tick, other-tab detection (`editingTabId!==_ARC_TAB_ID`), release, keep-alive — all untouched. The restore itself (`37b15953..89e289f7`) is a single button-JSX hunk.
+- **(3) No write/save path ✓** — button JSX only (`setLeaseModal(null)` / `window.close()`), display/state-only, no Firestore write, no data-retention/save impact.
+
+**★★ FULL P1 STACK = `b654c5d6` + `d1b1b07e` + `a7c4bbf2` + `6871b280` + `93607beb` + `98576f8e` + `97c8ec31` + `37b15953` + `89e289f7` — ✅ COACH-CLEARED FOR PROD (client-only; firestore.rules unchanged since b654c5d6; pending Jon's clean-slate re-confirm).** Deferred to the fast-follow (NOT prod-blocking): gap #5b (tab-close ghost — reliable close-release + adopt) → then the non-dismissible 2nd-tab hard-block (F015, sequenced behind #5b) + the gap #5a duplicate-tab L8 gap (same-tab-copy of sessionStorage) folded into the F015 design.
+
 ## Findings
 
 *(Architecture observations, risks, recommendations — dated, numbered)*
