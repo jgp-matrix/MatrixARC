@@ -37018,6 +37018,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [leaseRelinquished,setLeaseRelinquished]=useState(false); // gap #5b §2e: my live lease was taken by my OTHER session (cross-device/frozen)
   const _leaseInitResolvedRef=useRef(false); // gap #5b §2a: save-gate — no persist until the first claim/ID_PING round resolves
   const _wasHolderRef=useRef(false);         // gap #5b §2e: this tab held the lease at some point (distinguishes relinquished-loser from a never-held 2nd tab)
+  const _relinquishedRef=useRef(false);      // gap #5b §2e: mirror of leaseRelinquished for the tick closure (suppress auto-adopt → no ping-pong)
   const [ownerPriorityToast,setOwnerPriorityToast]=useState(null); // {ownerName, shownAt} | null
   const iAmOwner=!project.createdBy||project.createdBy===uid;
   const iAmAdmin=_appCtx.role==="admin";
@@ -37528,11 +37529,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     _leaseSelf.uid=uid;_leaseSelf.projectId=init.id; // keep the BroadcastChannel responder's self-state current
     const tick=async()=>{
       if(!alive)return;
-      const res=await _tryAcquireEditingLease(init.id);
+      // §2e: suppress auto-adopt if I've relinquished OR currently hold (a takeover of my own live lease
+      // must NOT be stolen back → no ping-pong; the `|| holds` belt closes the first-round race before
+      // the onSnapshot relinquish-detector fires).
+      const res=await _tryAcquireEditingLease(init.id,{suppressAdopt:_relinquishedRef.current||holds});
       if(!alive)return;
       if(res.ok){
         holds=true;_leaseSelf.holdsLease=true;_wasHolderRef.current=true; // §2b: now answer WHO_HOLDS as holder
-        setLeaseReadOnly(false);setLeaseModal(null);_leaseModalShownRef.current=false;setLeaseRelinquished(false);
+        setLeaseReadOnly(false);setLeaseModal(null);_leaseModalShownRef.current=false;
+        setLeaseRelinquished(false);_relinquishedRef.current=false;
+      }else if(res.kind==="relinquished"){
+        // §2e: my live lease is held by my OTHER session (cross-device/frozen). Read-only, stop
+        // writing, NO auto-reclaim — the user re-takes via "✋ Edit here" (§2g). No 2nd-tab modal.
+        holds=false;_leaseSelf.holdsLease=false;setLeaseReadOnly(true);setLeaseModal(null);
+        setLeaseRelinquished(true);_relinquishedRef.current=true;
       }else{
         holds=false;_leaseSelf.holdsLease=false;setLeaseReadOnly(true);
         if(!_leaseModalShownRef.current){
@@ -37572,6 +37582,28 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     };
   },[init&&init.id,uid,_eligibleEditor]);
   const quoteLocked=sentReadOnly; // back-compat alias for UI checks (sent-quote soft-block only)
+
+  // gap #5b §2e: FAST relinquish-on-takeover (onSnapshot-synced project state + on-resume re-check;
+  // BroadcastChannel-INDEPENDENT). If my uid holds via a DIFFERENT tab-id (a live lease = my OTHER
+  // session/device took over) and this tab previously held → read-only + STOP writing + "editing
+  // moved" (NO auto-reclaim; re-take is the manual §2g "Edit here"). Clears when the lease returns to
+  // this tab or frees. The tick's `|| holds` belt covers the sub-second window before this fires.
+  useEffect(()=>{
+    const check=()=>{
+      const p=projectRef.current||project;
+      const taken=!!p&&p.editingBy===uid&&p.editingTabId&&p.editingTabId!==_ARC_TAB_ID&&(p.editingExpiresAt||0)>Date.now();
+      if(taken&&_wasHolderRef.current){
+        if(!_relinquishedRef.current){_relinquishedRef.current=true;_leaseSelf.holdsLease=false;setLeaseRelinquished(true);setLeaseReadOnly(true);setLeaseModal(null);}
+      }else if(_relinquishedRef.current&&!taken){
+        _relinquishedRef.current=false;setLeaseRelinquished(false); // came back (Edit here) or freed → tick re-claims
+      }
+    };
+    check();
+    const onResume=()=>{if(document.visibilityState==="visible")check();};
+    document.addEventListener("visibilitychange",onResume);
+    window.addEventListener("pageshow",onResume); // bfcache / freeze restore
+    return()=>{document.removeEventListener("visibilitychange",onResume);window.removeEventListener("pageshow",onResume);};
+  },[project.editingBy,project.editingTabId,project.editingExpiresAt,uid]);
 
   // DECISION(v1.19.678): Compute Owner Priority Mode from viewers + project doc. Active when the
   // owner is present (recent heartbeat OR lockActive checkbox) AND no takeover is overriding it AND
@@ -38141,6 +38173,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(res&&res.kind==="other-tab"){
         const liveHolder=await _bcWhoHolds(projectId,350);
         if(liveHolder)return{ok:false,kind:"other-tab"}; // a LIVE peer holds → block (L8 / F015)
+        // §2e: if THIS session already relinquished (my live lease was taken by my other session), do
+        // NOT auto-adopt on the silent probe — that would ping-pong with a cross-device holder. Stay
+        // relinquished; the user re-takes only via the manual "Edit here" (§2g, forceAdopt).
+        if(opts&&opts.suppressAdopt)return{ok:false,kind:"relinquished"};
         // No live reply (BC silent = ghost/frozen/cross-device, or §7 no-BC) → ADOPT via a 2nd tx that
         // RE-CHECKS the lease at commit (R3: exactly one of two racing reopeners adopts; the loser blocks).
         try{
@@ -38196,6 +38232,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }
       });
     }catch(e){/* harmless — 90s staleness reclaims it */}
+  }
+  // gap #5b §2g: manual "Edit here" — unconditional same-uid re-take on a RELINQUISHED session (skip
+  // WHO_HOLDS; deliberate override of a known-live other session). The OTHER session then sees the
+  // takeover via §2e onSnapshot → IT relinquishes. Manual only → no ping-pong; same-uid → data-safe.
+  async function _editHereReTake(projectId){
+    try{
+      const res=await _tryAcquireEditingLease(projectId,{forceAdopt:true});
+      if(res&&res.ok){_relinquishedRef.current=false;setLeaseRelinquished(false);_wasHolderRef.current=true;_leaseSelf.holdsLease=true;setLeaseReadOnly(false);setLeaseModal(null);}
+    }catch(e){console.warn("[editingLease] Edit-here re-take failed:",e&&e.message);}
   }
   async function handlePrintQuote(){
     if(quotePrinting)return;
@@ -39098,12 +39143,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       {/* gap #4 #2a: PERSISTENT live lease banner — shown across ALL sub-views whenever the lease holds
           me read-only. The open-time modal is shown-once; this is the always-on cue so a mid-session
           lease flip (into/out of review, takeover) is NEVER silent. A user must SEE they're locked. */}
-      {leaseReadOnly&&(
+      {leaseReadOnly&&(leaseRelinquished?(
+        // gap #5b §2e/§2g: my live lease was taken by my OTHER session/device → read-only + "Edit here".
+        <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:860,background:"#0d2033",border:"1px solid #38bdf8",borderRadius:8,padding:"6px 16px",display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 20px rgba(0,0,0,0.55)",fontSize:12,color:"#7dd3fc",fontWeight:700}}>
+          <span style={{fontSize:14}}>✋</span>
+          <span>Editing moved to your other session — read-only here</span>
+          <button onClick={()=>_editHereReTake(init.id)} style={{background:"none",border:"1px solid #38bdf8",borderRadius:6,padding:"3px 12px",fontSize:12,color:"#7dd3fc",cursor:"pointer",fontWeight:700}}>✋ Edit here</button>
+        </div>
+      ):(
         <div style={{position:"fixed",top:76,left:"50%",transform:"translateX(-50%)",zIndex:860,background:"#2a1a05",border:"1px solid #f59e0b",borderRadius:8,padding:"6px 16px",display:"flex",alignItems:"center",gap:8,boxShadow:"0 4px 20px rgba(0,0,0,0.55)",fontSize:12,color:"#fcd34d",fontWeight:700}}>
           <span style={{fontSize:14}}>🔒</span>
           <span>{project.editingBy&&project.editingBy!==uid?`${project.editingByName||"Another user"} is editing — read-only`:"Open in another tab — read-only"}</span>
         </div>
-      )}
+      ))}
       {view==="quote"?(
         <div style={autoPrint?{height:0,overflow:"hidden"}:undefined}>
           <QuoteView project={project} uid={uid} onBack={()=>setView("panels")} onUpdate={update}/>
