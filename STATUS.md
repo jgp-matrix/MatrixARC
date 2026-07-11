@@ -9,7 +9,8 @@
 
 **🟢 2026-07-11 — subagent fleet running (Jon away; Freddy is sole notifier via Pushover).** Standing Marc/Coach/Dez sessions closed clean (no commits). Freddy runs read-only analysis subagents in-session and persists their output to the mapped files; escalates to Jon only on a critical question.
 - **Coach lane** — delta review of the never-yet-reviewed gap #5b core (branch `gap5b-f015`, tip `40153e82`) vs the approved plan + analyst review → findings to `COACH.md`. STATUS: 🔄 running.
-- **Marc lane** — F014 part-B research: identify a per-customer payment-terms field in BC that ARC can READ (not hand-entered) → findings doc. STATUS: 🔄 running.
+- **Marc lane** — F014 part-B research → ✅ DONE (`docs/F014-BC-PAYMENT-TERMS-RESEARCH.md`). Finding: **ARC already reads per-customer terms from BC** (standard v2.0 `customers.paymentTermsId` → `paymentTerms` code, live in `ensureQuoteFieldsPopulated`). F014(B) ≈ surface/broaden, not greenfield. ⭐ Open decision for F014 kickoff (non-blocking): live-read-on-demand (exists) vs ARC-editable per-customer default seeded from BC (new; precedent = `customerDefaults`/`_loadCustomerValidity`).
+- **Coach lane** — still 🔄 running.
 - **Freddy** — orchestrating, aggregating results, board-keeping.
 - prod **v1.23.5** · master `be625821` · gap #5b/F015 build HELD on branch `gap5b-f015`; verify + prod deploy still need Jon + Andrew + a 2nd device.
 
