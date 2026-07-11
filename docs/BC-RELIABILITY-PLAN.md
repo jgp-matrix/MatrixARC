@@ -1,7 +1,9 @@
 # BC-Reliability Plan (B021 · B013 · B016) — Freddy synthesis
 
 > **Author:** Freddy (synthesizing away-mode subagent lanes) · **Date:** 2026-07-11 · **Mode:** headless away-mode fleet (read-only scoping → build-ready plans).
-> **Status:** SCOPING COMPLETE (both lanes done). B021 = BUILD-READY (pending Jon sign-off + Coach review + headless tests). B013/B016 = build-ready design, PR + Jon sign-off gated for the money-path parts. 3 CRITICAL design questions for Jon at the tail (build-time, not blocking). Recommended build order: B021 → B013-1 → B013-2/3 → B016-1 → B016-2/3.
+> **Status:** SCOPING COMPLETE (both lanes done). B021 = BUILD-READY. B013/B016 = build-ready design, PR + Jon sign-off gated for the money-path parts. Build order: B021 → B013-1 → B013-2/3 → B016-1 → B016-2/3.
+>
+> **✅ DECISIONS LOCKED (Jon 2026-07-11):** (1) B021 timeout **45s** + `_BC_FETCH_TIMEOUT_MS` as **`let`** ✓; (2) B016-2 conflict policy = **last-writer-by-timestamp**; (3) 401 POST auto-replay = **approved** (single retry); (4) owner-vs-member auth = **separate probe** (NOT folded into B013); (5) F014 = **cached ARC-editable per-customer default seeded from BC**; (6) gap#5b save-gate = **HOLD**; (7) build order = **B021 first, then B013-1 on top.**
 > **Theme:** all three touch the one BC-call choke point (`bcGatedFetch`). Changes are factored there once (single-source-of-truth), not per-site.
 
 ---

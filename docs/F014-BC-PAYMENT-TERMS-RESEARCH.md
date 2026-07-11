@@ -26,7 +26,11 @@ ARC uses **standard BC API v2.0** (not a custom extension):
 - **Per-customer defaults precedent:** `_loadCustomerValidity(bcCustomerNumber)` (`src/app.jsx:2159`) reads `companies/{companyId}/customerDefaults/{bcCustomerNumber}` for per-customer quote-validity days; `resolveQuoteValidityDays` (`src/app.jsx:2145`). If F014 wants an ARC-editable per-customer terms **default** (BC-seeded, overridable), `customerDefaults/{bcCustomerNumber}.paymentTerms` is the natural home — mirror these exactly.
 - Also relevant: `bcLookupCustomer` direct-by-number lookup (`src/app.jsx:4211`).
 
-## 4. ⭐ OPEN DECISION for Jon (fold into F014 kickoff — not blocking today)
+## 4. ⭐ DECISION — RESOLVED
+
+**✅ RULING (Jon 2026-07-11): option (b) — cached, ARC-editable per-customer default seeded from BC.** Build F014(B) as a `companies/{companyId}/customerDefaults/{bcCustomerNumber}.paymentTerms` store (mirror `_loadCustomerValidity` / `resolveQuoteValidityDays` at `src/app.jsx:2145-2166`), with the live BC value (`customers.paymentTermsId` → `paymentTerms` code) as the SEED, editable/overridable in ARC. This eliminates hand-entry across all entry points and survives BC being disconnected.
+
+### (original) OPEN DECISION for Jon — fold into F014 kickoff
 The build differs significantly depending on what F014(B) actually wants:
 - **(a) Live BC read on demand** — *already exists* in the quote-populate flow. Work = extend its reach (remove the project-card / `bcProjectNumber` dependency so terms populate for any BC-linked project, not just those with a project card + live token).
 - **(b) Cached, ARC-editable per-customer default, BC-seeded** — *new*, but has a clean precedent (`customerDefaults` + `_loadCustomerValidity`). This is the option that actually **eliminates hand-entry across all entry points** and survives BC being disconnected.
