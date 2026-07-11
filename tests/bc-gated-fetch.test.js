@@ -1,29 +1,40 @@
-// B021 — bcGatedFetch timeout / guaranteed-release harness test.
+// B021 + B013-1 — bcGatedFetch timeout / guaranteed-release / 401-recovery harness test.
 //
 // OPTION (b): This harness MIRRORS (does NOT import) the bcGatedFetch implementation
 // from src/app.jsx. A true in-place unit test is impractical: src/app.jsx is a ~3.3MB
 // browser JSX bundle with no module exports, and bcGatedFetch closes over module-scoped
-// _bcSemaphore / _bcRelease / fetch / IS_TEST_ENV / _BC_SANDBOX_ENVS. Importing it into
-// Node would require executing the whole app (React/DOM/Firebase globals) or refactoring
-// app.jsx to add exports — explicitly out of scope (fix > testability).
+// _bcSemaphore / _bcRelease / fetch / IS_TEST_ENV / _BC_SANDBOX_ENVS / acquireBcToken /
+// _bcLast401At. Importing it into Node would require executing the whole app (React/DOM/
+// Firebase globals) or refactoring app.jsx to add exports — explicitly out of scope
+// (fix > testability).
 //
-// The function body below is a VERBATIM copy of the B021 bcGatedFetch in src/app.jsx
-// (lines ~419-471). If you change the impl in app.jsx, mirror the change here.
+// The function body below is a VERBATIM copy of the bcGatedFetch in src/app.jsx
+// (B021 loop + B013-1 401 branch). If you change the impl in app.jsx, mirror the change here.
 // Run: node tests/bc-gated-fetch.test.js   (Node 18+; uses global fetch/Response/AbortController)
 
 "use strict";
 
-// ── Mirrored module-scoped state (matches src/app.jsx :350, :414-418) ──
+// ── Mirrored module-scoped state (matches src/app.jsx :350, :414-421) ──
 const IS_TEST_ENV = false; // prod-equivalent: G005 write-belt is a no-op here
 const _BC_SANDBOX_ENVS = ["MATR_SndBx_01152026"];
 let _BC_FETCH_TIMEOUT_MS = 45000; // mutable (locked `let`) so tests can shrink it
+let _bcLast401At = 0; // B013-1 — stamped on unrecovered 401
 const _bcSemaphore = { inflight: 0, max: 6, queue: [] };
 function _bcRelease() {
   _bcSemaphore.inflight--;
   if (_bcSemaphore.queue.length) _bcSemaphore.queue.shift()();
 }
 
-// ── VERBATIM MIRROR of src/app.jsx bcGatedFetch (B021) ──
+// Stub for src/app.jsx acquireBcToken(interactive). Tests reassign this to control
+// silent-refresh behavior. Also counts calls to assert exactly-one re-auth.
+let _acquireCalls = 0;
+let _acquireImpl = async () => null;
+async function acquireBcToken(interactive = true) {
+  _acquireCalls++;
+  return _acquireImpl(interactive);
+}
+
+// ── VERBATIM MIRROR of src/app.jsx bcGatedFetch (B021 + B013-1) ──
 async function bcGatedFetch(url, options) {
   {
     const _m = ((options && options.method) || "GET").toUpperCase();
@@ -34,6 +45,7 @@ async function bcGatedFetch(url, options) {
   }
   const callerSignal = options && options.signal;
   let depth = (options && options._bcRetryDepth) || 0;
+  let _bc401RetryDepth = 0; // B013-1 — re-auth budget, distinct from the 429 `depth`. Max 1 silent-refresh replay.
   while (true) {
     while (_bcSemaphore.inflight >= _bcSemaphore.max) {
       await new Promise(r => _bcSemaphore.queue.push(r));
@@ -71,6 +83,22 @@ async function bcGatedFetch(url, options) {
       await new Promise(resolve => setTimeout(resolve, Math.min(retryAfter, 30) * 1000));
       continue;
     }
+    if (r.status === 401) {
+      if (_bc401RetryDepth < 1) {
+        let t = null;
+        try { t = await acquireBcToken(false); } catch (e) { t = null; }
+        const usedAuth = options && options.headers && (options.headers.Authorization || options.headers.authorization);
+        if (t && `Bearer ${t}` !== usedAuth) {
+          _bc401RetryDepth++;
+          if (!options) options = {};
+          if (!options.headers) options.headers = {};
+          options.headers.Authorization = `Bearer ${t}`;
+          continue;
+        }
+      }
+      _bcLast401At = Date.now();
+      return r;
+    }
     return r;
   }
 }
@@ -84,6 +112,7 @@ function ok(cond, label) {
 }
 function reset() {
   _bcSemaphore.inflight = 0; _bcSemaphore.queue.length = 0; _BC_FETCH_TIMEOUT_MS = 45000;
+  _bcLast401At = 0; _acquireCalls = 0; _acquireImpl = async () => null;
 }
 
 // A fetch that never resolves on its own but rejects (AbortError) when its signal aborts.
@@ -160,18 +189,110 @@ async function test4_429Retry() {
   ok(_bcSemaphore.inflight === 0, "inflight === 0 after 429 retry");
 }
 
+async function test5_401SilentRefreshSucceeds() {
+  console.log("Case 5 — 401 → silent refresh succeeds → header rewritten → retry → 200");
+  reset();
+  _acquireImpl = async () => "NEWTOKEN"; // silent refresh yields a fresh, different token
+  let n = 0;
+  const seenAuth = [];
+  global.fetch = (url, opts) => {
+    n++;
+    seenAuth.push(opts && opts.headers && opts.headers.Authorization);
+    if (n === 1) return Promise.resolve(new Response("", { status: 401 }));
+    return Promise.resolve(new Response("{}", { status: 200 }));
+  };
+  const r = await bcGatedFetch("https://bc.example/w", {
+    method: "POST",
+    headers: { Authorization: "Bearer OLDTOKEN", "Content-Type": "application/json" },
+    body: "{}"
+  });
+  ok(n === 2, "fetch called twice (one 401 replay)");
+  ok(r && r.status === 200, "final response is 200");
+  ok(_acquireCalls === 1, "acquireBcToken called EXACTLY once (single re-auth)");
+  ok(seenAuth[0] === "Bearer OLDTOKEN", "first attempt used the old token");
+  ok(seenAuth[1] === "Bearer NEWTOKEN", "retry header rewritten to the refreshed token");
+  ok(_bcSemaphore.inflight === 0, "inflight === 0 after 401 recovery");
+  ok(_bcLast401At === 0, "_bcLast401At NOT stamped on a recovered 401");
+}
+
+async function test6_401RefreshFailsReturns401() {
+  console.log("Case 6 — 401 → silent refresh fails (null) → returns 401, no loop");
+  reset();
+  _acquireImpl = async () => null; // silent refresh fails
+  let n = 0;
+  global.fetch = (url, opts) => {
+    n++;
+    return Promise.resolve(new Response("", { status: 401 }));
+  };
+  const r = await bcGatedFetch("https://bc.example/w", {
+    method: "POST",
+    headers: { Authorization: "Bearer OLDTOKEN" },
+    body: "{}"
+  });
+  ok(n === 1, "fetch called ONCE (no replay when refresh fails)");
+  ok(r && r.status === 401, "returns the 401 response unchanged");
+  ok(_acquireCalls === 1, "acquireBcToken attempted once");
+  ok(_bcLast401At > 0, "_bcLast401At stamped on unrecovered 401");
+  ok(_bcSemaphore.inflight === 0, "inflight === 0 after unrecovered 401");
+}
+
+async function test7_401RetryStill401NoLoop() {
+  console.log("Case 7 — 401 → fresh token → retry STILL 401 → returns 401 (cap at 1 replay)");
+  reset();
+  _acquireImpl = async () => "NEWTOKEN"; // always a fresh token, but BC keeps rejecting
+  let n = 0;
+  global.fetch = (url, opts) => {
+    n++;
+    return Promise.resolve(new Response("", { status: 401 }));
+  };
+  const r = await bcGatedFetch("https://bc.example/w", {
+    method: "POST",
+    headers: { Authorization: "Bearer OLDTOKEN" },
+    body: "{}"
+  });
+  ok(n === 2, "fetch called exactly twice (one replay, then give up — no infinite loop)");
+  ok(r && r.status === 401, "returns 401 after the single replay still fails");
+  ok(_acquireCalls === 1, "acquireBcToken called exactly once (budget = 1)");
+  ok(_bcLast401At > 0, "_bcLast401At stamped after the failed replay");
+  ok(_bcSemaphore.inflight === 0, "inflight === 0 after capped 401");
+}
+
+async function test8_401TokenUnchangedNoReplay() {
+  console.log("Case 8 — 401 → silent refresh returns SAME token → no replay, returns 401");
+  reset();
+  _acquireImpl = async () => "OLDTOKEN"; // refresh returns the same (degraded) token
+  let n = 0;
+  global.fetch = (url, opts) => {
+    n++;
+    return Promise.resolve(new Response("", { status: 401 }));
+  };
+  const r = await bcGatedFetch("https://bc.example/w", {
+    method: "POST",
+    headers: { Authorization: "Bearer OLDTOKEN" },
+    body: "{}"
+  });
+  ok(n === 1, "fetch called ONCE (unchanged token → no pointless replay)");
+  ok(r && r.status === 401, "returns 401 when the refreshed token is identical");
+  ok(_bcLast401At > 0, "_bcLast401At stamped (unrecovered)");
+  ok(_bcSemaphore.inflight === 0, "inflight === 0");
+}
+
 (async () => {
   try {
     await test1_timeoutFiresAndReleases();
     await test2_deadlockRecovery();
     await test3_callerAbortIsAbortError();
     await test4_429Retry();
+    await test5_401SilentRefreshSucceeds();
+    await test6_401RefreshFailsReturns401();
+    await test7_401RetryStill401NoLoop();
+    await test8_401TokenUnchangedNoReplay();
   } catch (e) {
     console.error("HARNESS ERROR:", e);
     _failed++;
   } finally {
     global.fetch = _realFetch;
   }
-  console.log(`\nB021 harness: ${_passed} passed, ${_failed} failed.`);
+  console.log(`\nB021+B013-1 harness: ${_passed} passed, ${_failed} failed.`);
   process.exit(_failed === 0 ? 0 : 1);
 })();
