@@ -15,7 +15,7 @@
 - **Freddy** — orchestrating, aggregating results, board-keeping.
 
 **🟢 2026-07-11 (cont.) — BC-RELIABILITY scoping fleet launched** (Jon-selected next big item; read-only scoping → build-ready plans, no cold deploys):
-- **Lane 1 (B021)** — `bcGatedFetch` timeout/abort + `finally` semaphore-release fix (stalled BC request freezes pricing at 95% + can deadlock all BC calls). Producing the exact diff-ready code. STATUS: 🔄 running.
+- **Lane 1 (B021)** — ✅ DONE → build-ready fix in `docs/BC-RELIABILITY-PLAN.md`. `bcGatedFetch` (`app.jsx:419-454`) confirmed: NO timeout, releases only on settle → a hung BC request freezes pricing at 95% + deadlocks all BC calls. Fix: AbortController timeout (45s const) + single `finally` release + caller-signal compose + catchable `BcTimeoutError` (pricing phases already log+proceed). ⚠ NOT build-cold (whole BC surface, money-path) → needs Jon sign-off (45s value + const→let) + Coach review + headless tests. Non-blocking now.
 - **Lane 2 (B013 + B016)** — honest BC connection health (token-validity pill, retry-on-401 + token refresh, fix misleading 401 modal) + mutation resilience (reduce on-open churn, await/confirm add/edit/delete). Composes on top of B021's choke-point fix. STATUS: 🔄 running.
 - **Freddy** — will synthesize both into a coherent BC-reliability plan, persist, and roll up to Jon. Nothing needs Jon urgently.
 - prod **v1.23.5** · master `be625821` · gap #5b/F015 build HELD on branch `gap5b-f015`; verify + prod deploy still need Jon + Andrew + a 2nd device.
