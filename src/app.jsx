@@ -47679,14 +47679,6 @@ INSTRUCTIONS:
     }
     action();
   }
-  // F019 nav-away guard: nudge before leaving a project to the dashboard while a background pricing task
-  // is still running. Pricing NOW survives in-app nav-away (registered bg task + lease keep-alive), so
-  // the message is informational — "still running, leave?" — NOT "you'll lose it". Returns true=proceed.
-  async function _confirmNavAwayWithBgPricing(){
-    const p=openProject;
-    if(!p||!_hasRunningBgTaskForProject(p.id))return true;
-    return await arcConfirm("Pricing is still running for this project. It will keep going in the background and the prices will save when it finishes.\n\nLeave this project?",{okLabel:"Leave anyway"});
-  }
   // F019: a HARD browser reload/close DOES kill the tab (module-scoped _bgTasks state is lost), so warn
   // on beforeunload while a pricing bg task runs for the open project. Native prompt text is browser-set.
   useEffect(()=>{
@@ -47835,7 +47827,7 @@ INSTRUCTIONS:
         {/* Main toolbar row */}
         <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",height:78,gap:6,position:"relative",pointerEvents:"auto"}}>
           {/* CoreVega logo — left side */}
-          <img src="/corevega_logo.png" alt="CoreVega Software" style={{width:220,maxHeight:60,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(async()=>{if(!await _confirmNavAwayWithBgPricing())return;setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
+          <img src="/corevega_logo.png" alt="CoreVega Software" style={{width:220,maxHeight:60,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
           {/* ARC branding — centered */}
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
@@ -48055,7 +48047,7 @@ INSTRUCTIONS:
           const isReturnBtn=isOriginTab&&hasOpenProject&&!active;
           return(
           <button key={t.id} onClick={()=>{
-            if(isBackBtn){checkQuoteRevWarn(async()=>{if(!await _confirmNavAwayWithBgPricing())return;setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);});return;}
+            if(isBackBtn){checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);});return;}
             // Switching tabs (also handles return-to-project when clicking the origin tab)
             setNavTab(t.id);
           }}
