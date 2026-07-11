@@ -734,3 +734,21 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **Nits (non-blocking):** N1 — reconciliation auto-price (`:24988`) is non-standalone → still uncovered on nav-away, but IDENTICAL to pre-F019 + outside F019's locked scope (flag only). N2 — plan A6 (button disable while `aiPricing`) not implemented; correctness fully covered by the A2 running-guard (2nd click early-returns), purely a missing visual disable — optional. N3 — `projectId` vs `project.id` style (same value; `projectId` is the more-correct choice). 
 
 **Pre-deploy gate:** Coach couldn't run `validate_jsx` (read-only); braces balance on inspection + the build lane replicated babel = PASS, but **deploy.sh's `validate_jsx` is the real gate at deploy** (confirmed green there). **Jon-driven test-channel verify required** (browser tool can't reach the test host): tile bar · persist-across-reload · lease releases after bgDone (no teammate lockout) · headless BC sync · error-terminal · double-click no-op · regressions (in-place pricing, Refresh-All, report modal, extraction post-pricing).
+
+---
+
+### C145 — B013-2/3 (honest BC health pill + 401-aware sync modal) review — APPROVE WITH NITS
+
+**Date:** 2026-07-11 · **Mode:** read-only branch review (away-mode lane; persisted by Freddy) · branch `b013-23-bc-health` @ `982e5863` (+116/−21 app.jsx). Layers on deployed B013-1.
+
+**Verdict: APPROVE WITH NITS — no blocker before Jon's deploy sign-off.** Diff confined to the health-pill + sync-modal surfaces; branch parses OK; B013-1/B021/F019/beforeunload verified untouched.
+
+**Item 1 — pill correctness CONFIRMED (no false red/green):** RED emitted at exactly one place (`:528`, right after B013-1's `_bcLast401At` give-up) → a self-healing transient goes amber→refresh→2xx→green, never red. GREEN only on a real `r.ok` 2xx (`:534`), refresh-recovery, pill-click, or boot. A dead token can only 401→amber→red, cannot read green. `checkBc`'s ok-block has no explicit green emit but is correct (it probes *through* `bcGatedFetch` which fires green on its 2xx → the 5-min probe clears a latched red). `_setBcHealth` transition-guarded → no broadcast churn during extraction bursts.
+
+**Item 2 — bcGatedFetch retry/replay BYTE-FOR-BYTE unchanged CONFIRMED:** the `_bc401RetryDepth<1` gate, silent `acquireBcToken(false)`, header-rewrite, `continue`, give-up return, 429 branch, AbortController/timeout/`finally`-release all intact. Only insertions = three pure-observation `_setBcHealth()` calls (amber `:508`, red `:528`, green `:534`), none altering control flow.
+
+**Items 3-7:** B021+F019+beforeunload not in diff (intact) · sync-modal 401 classification correct (`status` stamp additive on base + ECO paths; `parseBcError` 401-first; `_is401Row`/`anyAuth`/`authDominated` correct; Reconnect button `acquireBcToken(true)`→`syncPlanningLinesToBC()` retries the correct base-vs-ECO scope; Item-Browser suppressed for 401/429) · the 3 build-flagged deviations all additive/safe · data-retention CLEAN (status stamp additive, transient UI state, no schema/save-path change).
+
+**Item 6 — untouched per-BOM-row `⚠` pill (`:29674`, `parsePillErr`): ship now, file separate LOW item.** It ignores the now-available `.status` and always routes 401s to Item Browser (useless for session-expired), but it's NOT a regression (identical to pre-B013-3), not the primary surface (the modal is, and it's correct), and only shows if the user dismisses the modal without reconnecting. `bcSyncErrors[row.id]` already carries `status` → later fix is small. → filed as **B029**.
+
+**Nits (none blocking):** (1) theoretical burst race (a 2xx completing just after give-up could briefly flip green; next 401 re-reds + 5-min probe backstops — strictly better than the old always-blind window); (2) `\b401\b` body-regex fallback negligible (status===401 is authoritative); (3) ECO catch-thrown row carries no status (falls to generic parse, acceptable); (4) debug hooks `_arcBcHealth`/`_arcForceBc401` ship but are prod-guarded + self-only; (5) `pulse` keyframe verified present. **Clear for deploy.**
