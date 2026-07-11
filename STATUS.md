@@ -12,7 +12,12 @@
 - **Marc lane** — F014 part-B research → ✅ DONE (`docs/F014-BC-PAYMENT-TERMS-RESEARCH.md`). Finding: **ARC already reads per-customer terms from BC** (standard v2.0 `customers.paymentTermsId` → `paymentTerms` code, live in `ensureQuoteFieldsPopulated`). F014(B) ≈ surface/broaden, not greenfield. ⭐ Open decision for F014 kickoff (non-blocking): live-read-on-demand (exists) vs ARC-editable per-customer default seeded from BC (new; precedent = `customerDefaults`/`_loadCustomerValidity`).
 - **Coach lane** — gap #5b core review → ✅ DONE (C141 in `COACH.md`). **Verdict SOUND** — core is data-safe + mergeable on its own; all invariants PASS (rules/functions untouched, cross-user lock + gap#4 guard untouched, advisory-only, data-retention honored, Babel OK). **ONE MAJOR build fix:** the `_leaseInitResolvedRef` save-gate (R1 belt / test G12) is inert (declared+set, never read) → G12 can't pass → **must be wired before F015 §2d ships** (its R1 precondition). +1 MINOR (bfcache `pageshow` claim-tick), +1 NOTE (adopt degraded path, acceptable). **No blocking design question for Jon.**
 - **⏭ Resume path (when work restarts):** Marc wires the save-gate (`saveImmediatePanel`:34439 / `onSaveImmediate`:40002 — hold persist while `!_leaseInitResolvedRef`, flush on resolve) → Coach re-reviews the delta → then build §2f/§2d → validate_jsx → test deploy → verify G1–G16 (needs Jon + Andrew + 2nd device) → Jon prod deploy.
-- **Freddy** — orchestrating, aggregating results, board-keeping. Both away-mode lanes complete; nothing needs Jon urgently.
+- **Freddy** — orchestrating, aggregating results, board-keeping.
+
+**🟢 2026-07-11 (cont.) — BC-RELIABILITY scoping fleet launched** (Jon-selected next big item; read-only scoping → build-ready plans, no cold deploys):
+- **Lane 1 (B021)** — `bcGatedFetch` timeout/abort + `finally` semaphore-release fix (stalled BC request freezes pricing at 95% + can deadlock all BC calls). Producing the exact diff-ready code. STATUS: 🔄 running.
+- **Lane 2 (B013 + B016)** — honest BC connection health (token-validity pill, retry-on-401 + token refresh, fix misleading 401 modal) + mutation resilience (reduce on-open churn, await/confirm add/edit/delete). Composes on top of B021's choke-point fix. STATUS: 🔄 running.
+- **Freddy** — will synthesize both into a coherent BC-reliability plan, persist, and roll up to Jon. Nothing needs Jon urgently.
 - prod **v1.23.5** · master `be625821` · gap #5b/F015 build HELD on branch `gap5b-f015`; verify + prod deploy still need Jon + Andrew + a 2nd device.
 
 ## Prior snapshot — 🌙 SESSION END (2026-07-10) · ★★ B012 P1 SHIPPED v1.23.5 (containment RELAXED) · gap #5b + F015 → verify+deploy NEXT SESSION · prod v1.23.5 · master `ee6659e9`
