@@ -415,6 +415,10 @@ let _msalReady=false;
 // responds) would otherwise await forever, pinning a semaphore slot and eventually
 // deadlocking the whole BC surface + freezing background pricing at 95%.
 let _BC_FETCH_TIMEOUT_MS=45000; // 45s
+// B013-1 — timestamp of the last UNRECOVERED 401 (silent re-auth failed / token unchanged / retry
+// still 401). Stamped inside bcGatedFetch's 401 branch on the give-up path. Consumed later by
+// B013-2 (honest-health pill) to flip bcOnline red on a real dead token. 0 = never seen.
+let _bcLast401At=0;
 const _bcSemaphore={inflight:0,max:6,queue:[]};
 function _bcRelease(){
   _bcSemaphore.inflight--;
@@ -435,6 +439,7 @@ async function bcGatedFetch(url,options){
   }
   const callerSignal=options&&options.signal;
   let depth=(options&&options._bcRetryDepth)||0;
+  let _bc401RetryDepth=0; // B013-1 — re-auth budget, distinct from the 429 `depth`. Max 1 silent-refresh replay.
   while(true){
     while(_bcSemaphore.inflight>=_bcSemaphore.max){
       await new Promise(r=>_bcSemaphore.queue.push(r));
@@ -471,6 +476,28 @@ async function bcGatedFetch(url,options){
       const retryAfter=parseInt(r.headers.get("Retry-After")||"2",10);
       await new Promise(resolve=>setTimeout(resolve,Math.min(retryAfter,30)*1000));
       continue; // re-acquire a fresh slot (already released in finally)
+    }
+    if(r.status===401){
+      // B013-1 — silent token auto-refresh + single 401 replay. Mirrors the 429 branch: no manual
+      // _bcRelease() (B021's `finally` already returned the slot); `continue` re-acquires a fresh slot.
+      // A 401 is pre-processing (BC never handled the body) → replaying ONE POST is idempotent-safe.
+      if(_bc401RetryDepth<1){
+        let t=null;
+        try{t=await acquireBcToken(false);}catch(e){t=null;} // silent refresh only (no interactive popup)
+        const usedAuth=options&&options.headers&&(options.headers.Authorization||options.headers.authorization);
+        if(t&&`Bearer ${t}`!==usedAuth){
+          // Fresh token differs from the one just used — callers build their own header, so the retry
+          // MUST rewrite it or the replay re-sends the dead token.
+          _bc401RetryDepth++;
+          if(!options)options={};
+          if(!options.headers)options.headers={};
+          options.headers.Authorization=`Bearer ${t}`;
+          continue; // one more attempt with the refreshed token
+        }
+      }
+      // Unrecovered: budget spent, silent refresh failed, or token unchanged → stamp + return the 401 as-is.
+      _bcLast401At=Date.now();
+      return r;
     }
     return r;
   }
