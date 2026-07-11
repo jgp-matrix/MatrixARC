@@ -419,6 +419,25 @@ let _BC_FETCH_TIMEOUT_MS=45000; // 45s
 // still 401). Stamped inside bcGatedFetch's 401 branch on the give-up path. Consumed later by
 // B013-2 (honest-health pill) to flip bcOnline red on a real dead token. 0 = never seen.
 let _bcLast401At=0;
+// B013-2 — honest BC-health pub-sub. Mirrors the _bcQueueCountSetter / _bgListeners pattern so the
+// toolbar pill can subscribe and react IMMEDIATELY (no up-to-5-min wait for the next checkBc probe)
+// to a real, unrecovered 401. Three states drive the three-color pill:
+//   'green'  — no degradation signal (defers to the checkBc validity probe / live token for display)
+//   'amber'  — a 401 was seen and silent refresh is in flight, or a transient 429/5xx blip ("Reconnecting…")
+//   'red'    — B013-1's silent refresh has ALREADY failed → token is dead ("Offline — Click to connect")
+// _setBcHealth only broadcasts on a REAL transition, so the hundreds of successful BC calls during a
+// heavy extraction don't spam subscribers. RED is stamped only on the give-up path (never on a single
+// self-healing transient) — see the bcGatedFetch 401 branch below.
+let _bcHealthState='green';
+const _bcHealthSubs=new Set();
+function _setBcHealth(state){
+  if(state===_bcHealthState)return; // transition-only — no churn on the common green→green path
+  _bcHealthState=state;
+  _bcHealthSubs.forEach(fn=>{try{fn(state);}catch(_){}});
+}
+// DEBUG (B013-2 manual verification): drive the pill directly to eyeball all three states + the
+// bcOnline side-effects without a real BC round-trip. e.g. window._arcBcHealth('amber').
+try{if(typeof window!=="undefined")window._arcBcHealth=function(s){if(s==='green'||s==='amber'||s==='red')_setBcHealth(s);};}catch(_){}
 const _bcSemaphore={inflight:0,max:6,queue:[]};
 function _bcRelease(){
   _bcSemaphore.inflight--;
@@ -470,6 +489,13 @@ async function bcGatedFetch(url,options){
       }
       throw fetchErr; // caller abort or genuine network/DNS error — propagate as-is
     }
+    // DEBUG (B013-2 manual verification): window._arcForceBc401=N synthesizes the next N BC responses
+    // as a 401 so Jon can exercise the REAL silent-refresh→give-up→red pill path without a token expiry.
+    // The counter decrements per forced response, so a replay (after a successful refresh) is NOT forced.
+    if(typeof window!=="undefined"&&window._arcForceBc401>0){
+      window._arcForceBc401--;
+      r=new Response('{"error":{"message":"forced 401 (debug hook)"}}',{status:401,headers:{"Content-Type":"application/json"}});
+    }
     if(r.status===429){
       if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
       depth++;
@@ -478,6 +504,10 @@ async function bcGatedFetch(url,options){
       continue; // re-acquire a fresh slot (already released in finally)
     }
     if(r.status===401){
+      // B013-2 — a 401 was seen; silent refresh is about to run (or already spent). Signal amber
+      // "Reconnecting…" so the pill reflects the in-flight recovery. This is a pure observation emit —
+      // it does NOT alter B013-1's shipped retry/replay decision below.
+      _setBcHealth('amber');
       // B013-1 — silent token auto-refresh + single 401 replay. Mirrors the 429 branch: no manual
       // _bcRelease() (B021's `finally` already returned the slot); `continue` re-acquires a fresh slot.
       // A 401 is pre-processing (BC never handled the body) → replaying ONE POST is idempotent-safe.
@@ -497,8 +527,12 @@ async function bcGatedFetch(url,options){
       }
       // Unrecovered: budget spent, silent refresh failed, or token unchanged → stamp + return the 401 as-is.
       _bcLast401At=Date.now();
+      _setBcHealth('red'); // B013-2 — silent refresh has ALREADY failed → flip the pill red immediately
       return r;
     }
+    // B013-2 — a 2xx proves the current token is VALID → clear any amber/red degradation signal.
+    // Guarded on r.ok so a non-auth error (400/403/404/5xx) doesn't falsely report "connected".
+    if(r.ok)_setBcHealth('green');
     return r;
   }
 }
@@ -3954,7 +3988,9 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       // DECISION(v1.19.615): Suppress per-line console.log/warn — caller logs a summary at end.
       if(pr.ok||pr.status===204){updated++;}
       else{const txt=await pr.text();
-        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
+        // B013-3 — stamp the HTTP status so the sync-failure modal branches on status===401 deterministically
+        // (session-expired), rather than regexing the body. Additive field; harmless to all existing readers.
+        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:pr.status,error:txt});}
     }else{
       // New line — POST
       await sleep(300); // was 150 — slower to avoid BC rate limiting
@@ -3964,8 +4000,8 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
         const txt=await r.text();
         await sleep(400);
         const r2=await postLine(_fallback);
-        if(r2.ok){created++;}else{const txt2=await r2.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt2});}
-      }else{const txt=await r.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
+        if(r2.ok){created++;}else{const txt2=await r2.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:r2.status,error:txt2});}
+      }else{const txt=await r.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:r.status,error:txt});}
     }
   }
 
@@ -4114,12 +4150,13 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
       const pr=await patchLine(line.Line_No,patch);
       if(pr.ok||pr.status===204){updated++;}
       else{const txt=await pr.text();
-        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
+        // B013-3 — stamp HTTP status (ECO path feeds the same sync-failure modal as the BASE path)
+        if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:pr.status,error:txt});}
     }else{
       await sleep(300);
       const r=await postLine(payload);
       if(r.ok){created++;}
-      else{const txt=await r.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,error:txt});}
+      else{const txt=await r.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:r.status,error:txt});}
     }
   }
 
@@ -4172,7 +4209,7 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
         console.log(`bcSyncEcoPlanningLines task ${taskNo}: labor line ${ln} → ${desiredQty}h`);
       }else{
         const txt=await pr.text();
-        failedRows.push({partNumber:"",description:`ECO ${ecoNumber} labor line ${ln}`,rowId:null,lineNo:ln,error:txt});
+        failedRows.push({partNumber:"",description:`ECO ${ecoNumber} labor line ${ln}`,rowId:null,lineNo:ln,status:pr.status,error:txt});
       }
     }
   }catch(eLabor){
@@ -28221,7 +28258,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             </div>
           ,document.body)}
           {syncFailedAlert&&(()=>{
-            function parseBcError(err){
+            // B013-3 — deterministic 401 detection off the stamped HTTP status (bcSyncPanelPlanningLines /
+            // bcSyncEcoPanelPlanningLines now attach row.status). Falls back to a body regex for any legacy
+            // row that predates the stamp (e.g. an ECO catch that carries only a message string).
+            const _is401Row=r=>r&&(r.status===401||/\b401\b|Unauthorized|BC session expired/i.test(r.error||""));
+            function parseBcError(r){
+              // 401 FIRST — a session-expired failure must win over the "select an existing item" /
+              // posting-group branches, because the item is actually valid; only the token died.
+              if(_is401Row(r))return"BC session expired — reconnect and retry (items are valid)";
+              const err=(r&&r.error)||"";
               if(!err)return"Unknown error";
               if(/must select an existing item/i.test(err))return"Not found in BC catalog — use Item Browser to find the correct item";
               if(/Gen\.?\s*Prod\.?\s*Posting Group must have a value/i.test(err))return"BC item setup incomplete (Gen. Prod. Posting Group missing)";
@@ -28232,13 +28277,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const m=err.match(/"message":"([^"]{0,120})/);
               return m?m[1]:"BC error — see console for details";
             }
-            const allRateLimit=syncFailedAlert.every(r=>/429|Too Many/i.test(r.error||""));
+            const _isRateRow=r=>/429|Too Many/i.test((r&&r.error)||"");
+            const allRateLimit=syncFailedAlert.every(_isRateRow);
+            const anyAuth=syncFailedAlert.some(_is401Row); // B013-3 — offer reconnect if ANY failure is a 401
+            // "auth-dominated": every failure is either a dead-token 401 or a transient 429 → the items are
+            // genuinely valid/unchanged, so lead with the reassuring session-expired framing.
+            const authDominated=anyAuth&&syncFailedAlert.every(r=>_is401Row(r)||_isRateRow(r));
             return ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div style={{background:C.card,border:`2px solid ${C.red}`,borderRadius:10,padding:24,maxWidth:560,width:"100%"}}>
-                <div style={{fontSize:16,fontWeight:700,color:C.red,marginBottom:4}}>⚠ BC Sync Incomplete</div>
+                <div style={{fontSize:16,fontWeight:700,color:authDominated?C.yellow:C.red,marginBottom:4}}>{authDominated?"⚠ BC Session Expired":"⚠ BC Sync Incomplete"}</div>
                 <div style={{fontSize:13,color:C.text,marginBottom:12}}>
-                  {syncFailedAlert.length} item{syncFailedAlert.length>1?"s":""} could not be pushed to BC. Use the Item Browser to find each item and apply it, then retry sync.
+                  {authDominated
+                    ?<>Your Business Central session expired mid-sync — reconnect and retry; your items are valid and unchanged.</>
+                    :<>{syncFailedAlert.length} item{syncFailedAlert.length>1?"s":""} could not be pushed to BC. Use the Item Browser to find each item and apply it, then retry sync.</>}
                 </div>
                 <div style={{background:C.bg,borderRadius:6,padding:"8px 12px",maxHeight:280,overflowY:"auto",marginBottom:12}}>
                   {syncFailedAlert.map((r,i)=>(
@@ -28247,8 +28299,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         <span style={{color:C.yellow,fontWeight:700,fontFamily:"monospace",fontSize:12}}>{r.partNumber||"(no part #)"}</span>
                         {r.description?<span style={{color:C.muted,fontSize:11}}>{r.description.slice(0,60)}{r.description.length>60?"…":""}</span>:null}
                       </div>
-                      <div style={{fontSize:11,color:C.accent,marginBottom:2}}>{parseBcError(r.error)}</div>
-                      {!/429|Too Many/i.test(r.error||"")&&r.rowId&&(
+                      <div style={{fontSize:11,color:C.accent,marginBottom:2}}>{parseBcError(r)}</div>
+                      {!_isRateRow(r)&&!_is401Row(r)&&r.rowId&&(
                         <button onClick={()=>{
                           // Close the sync failed modal so Item Browser is accessible
                           setSyncFailedAlert(null);
@@ -28262,7 +28314,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   ))}
                 </div>
                 <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                  {allRateLimit&&(
+                  {anyAuth&&(
+                    // B013-3 — auth failure(s): reconnect interactively, then re-run the sync. The items are
+                    // valid, so a fresh token + retry pushes them without any Item-Browser round-trip.
+                    <button onClick={async()=>{await acquireBcToken(true);setSyncFailedAlert(null);syncPlanningLinesToBC();}}
+                      style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
+                      Reconnect & Retry Sync
+                    </button>
+                  )}
+                  {allRateLimit&&!anyAuth&&(
                     <button onClick={()=>{setSyncFailedAlert(null);syncPlanningLinesToBC();}}
                       style={{flex:1,background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>
                       Retry Sync
@@ -46846,6 +46906,7 @@ function App({user}){
   const [userFirstName,setUserFirstName]=useState("");
   const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
+  const [bcHealth,setBcHealth]=useState(_bcHealthState); // B013-2 — 'green'|'amber'|'red' degradation signal for the pill
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
   const [bcQueueCount,setBcQueueCount]=useState(()=>_bcQGet().length);
@@ -47274,6 +47335,7 @@ INSTRUCTIONS:
           if(t){
             bcFailCountRef.current=0;
             setBcOnline(true);bcOnlinePrev.current=true;
+            _setBcHealth('green'); // B013-2 — probe re-refresh recovered; clear the red bcGatedFetch just stamped
             setBcLostAlert(false); // dismiss modal if it was open
             return;
           }
@@ -47296,6 +47358,7 @@ INSTRUCTIONS:
           // Don't increment fail count for transient — these recover on their own.
           // Do flip bcOnline=false so the toolbar pill reflects current state.
           if(bcOnlinePrev.current){setBcOnline(false);bcOnlinePrev.current=false;}
+          _setBcHealth('amber'); // B013-2 — transient 429/5xx → "Reconnecting…", NOT red (self-heals)
           return;
         }
         const ok=r.ok;
@@ -47323,6 +47386,7 @@ INSTRUCTIONS:
         }else{
           // Other non-OK status — count toward threshold.
           bcFailCountRef.current++;
+          _setBcHealth('amber'); // B013-2 — non-auth non-OK (4xx that isn't 401) → degraded, not dead-token red
           if(bcFailCountRef.current>=FAIL_THRESHOLD&&bcOnlinePrev.current){
             console.warn(`[BC PING] persistent ${r.status} (${bcFailCountRef.current} consecutive failures) — showing reconnect modal`);
             setBcOnline(false);setBcLostAlert(true);
@@ -47338,8 +47402,10 @@ INSTRUCTIONS:
           bcFailCountRef.current=0;
           setBcLostAlert(false);
           setBcOnline(true);bcOnlinePrev.current=true;
+          _setBcHealth('green'); // B013-2 — network blip cleared after silent refresh
         }else{
           bcFailCountRef.current++;
+          _setBcHealth('amber'); // B013-2 — network error is transient, not a dead token → amber not red
           if(bcFailCountRef.current>=FAIL_THRESHOLD&&bcOnlinePrev.current){
             console.warn(`[BC PING] persistent network error (${bcFailCountRef.current} consecutive failures): ${e.message} — showing reconnect modal`);
             setBcOnline(false);setBcLostAlert(true);
@@ -47534,7 +47600,7 @@ INSTRUCTIONS:
       bootAttemptRef.current=0; // #143: clean boot → reset auto-retry counter
       setLoading(false);
       // Auto-connect BC silently in background
-      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
+      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;_setBcHealth('green');bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
         // DECISION(v1.19.499): Load User list (page 774) for PM+Designer on app init
         fetch(BC_ODATA_BASE+"/User?$select=User_Name,Full_Name&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d){window._arcDesignerCache=(d.value||[]).filter(function(u){return u.User_Name&&!/^USER_/i.test(u.User_Name)&&!/^BC\./i.test(u.User_Name);}).map(function(u){return{Code:u.User_Name,Name:u.Full_Name&&!u.Full_Name.startsWith("user_")?u.Full_Name:u.User_Name};});console.log("User list cached:",window._arcDesignerCache.length,"users");}}).catch(function(){});}}).catch(()=>{});}
       // DECISION(v1.19.770): Cache company members on app boot so PanelListView dropdowns
@@ -47605,6 +47671,21 @@ INSTRUCTIONS:
   useEffect(()=>{
     _bcQueueCountSetter=setBcQueueCount;
     return()=>{_bcQueueCountSetter=null;};
+  },[]);
+
+  // B013-2 — subscribe to the honest BC-health signal. A real, unrecovered 401 (or a live BC-call
+  // success) reaches the pill IMMEDIATELY here instead of waiting up to 5 min for the next checkBc
+  // probe. Green/red also drive bcOnline so the other bcOnline consumers (auto-connect / queue flush)
+  // stay honest; amber leaves bcOnline as the probe last set it (transient, self-healing).
+  useEffect(()=>{
+    const fn=(state)=>{
+      setBcHealth(state);
+      if(state==='red'){setBcOnline(false);bcOnlinePrev.current=false;}
+      else if(state==='green'){setBcOnline(true);bcOnlinePrev.current=true;}
+    };
+    _bcHealthSubs.add(fn);
+    setBcHealth(_bcHealthState); // sync in case a transition fired before this effect mounted
+    return()=>{_bcHealthSubs.delete(fn);};
   },[]);
 
   // Poll BC every 5 minutes and import any projects not yet in ARC
@@ -47913,12 +47994,26 @@ INSTRUCTIONS:
               <span style={{fontSize:12,fontWeight:600,whiteSpace:"nowrap",color:connStatus==="offline"?"#fca5a5":"#fcd34d"}}>{connStatus==="offline"?"Offline":"Slow"}</span>
             </div>
           )}
-          <div title={bcOnline?"Business Central is connected":"Click to connect to Business Central"}
-            onClick={bcOnline?undefined:async()=>{const t=await acquireBcToken(true);if(t){setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();}}}
-            style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:bcOnline?"#1e4a8a55":"#3a1a1a44",border:`1px solid ${bcOnline?"#3b82f699":"#7f1d1d88"}`,cursor:bcOnline?"default":"pointer"}}>
-            <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:bcOnline?"#3b82f6":"#ef4444",boxShadow:bcOnline?"0 0 5px #3b82f6":"0 0 5px #ef4444"}}/>
-            <span style={{fontSize:12,fontWeight:600,color:bcOnline?"#93c5fd":"#fca5a5",whiteSpace:"nowrap"}}>{bcOnline?"BC Connected":"BC Offline — Click to connect"}</span>
-          </div>
+          {(()=>{
+            // B013-2 — three-state BC-health pill driven off token VALIDITY, not mere existence.
+            // 'green' means "no degradation signal" → defer to bcOnline (the 5-min checkBc probe /
+            // live-token positive signal) for connected-vs-not. amber/red override immediately via the
+            // _bcHealthSubs pub-sub, so a real unrecovered 401 flips the pill RED without the up-to-5-min
+            // blind window (see the bcGatedFetch give-up path + the subscriber effect).
+            const st=bcHealth!=='green'?bcHealth:(bcOnline?'green':'red');
+            const C_={
+              green:{bg:"#1e4a8a55",bd:"#3b82f699",dot:"#3b82f6",tx:"#93c5fd",label:"BC Connected",tip:"Business Central is connected"},
+              amber:{bg:"#3a1f0044",bd:"#f59e0b66",dot:"#f59e0b",tx:"#fcd34d",label:"BC Reconnecting…",tip:"Refreshing the Business Central session — this usually clears on its own"},
+              red:{bg:"#3a1a1a44",bd:"#7f1d1d88",dot:"#ef4444",tx:"#fca5a5",label:"BC Offline — Click to connect",tip:"Business Central session expired — click to reconnect"}
+            }[st];
+            return(
+            <div title={C_.tip}
+              onClick={st!=='red'?undefined:async()=>{const t=await acquireBcToken(true);if(t){setBcOnline(true);bcOnlinePrev.current=true;_setBcHealth('green');bcProcessQueue();}}}
+              style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:C_.bg,border:`1px solid ${C_.bd}`,cursor:st==='red'?"pointer":"default"}}>
+              <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:C_.dot,boxShadow:`0 0 5px ${C_.dot}`,animation:st==='amber'?"pulse 2s ease-in-out infinite":undefined}}/>
+              <span style={{fontSize:12,fontWeight:600,color:C_.tx,whiteSpace:"nowrap"}}>{C_.label}</span>
+            </div>);
+          })()}
           {bcQueueCount>0&&(
             <div title={`${bcQueueCount} BC operation${bcQueueCount>1?'s':''} pending — will retry when connected`}
               style={{background:"#78350f",color:"#fde68a",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,cursor:"default",flexShrink:0}}>
@@ -48097,7 +48192,7 @@ INSTRUCTIONS:
               <button onClick={async()=>{
                 setBcLostAlert(false);
                 const t=await acquireBcToken(true);
-                if(t){setBcOnline(true);bcOnlinePrev.current=true;bcProcessQueue();}
+                if(t){setBcOnline(true);bcOnlinePrev.current=true;_setBcHealth('green');bcProcessQueue();}
               }} style={btn(C.accent,"#fff",{fontSize:13})}>Reconnect to BC</button>
             </div>
           </div>
