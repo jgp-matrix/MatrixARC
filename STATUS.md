@@ -7,6 +7,16 @@
 
 ## Current — 🟢 SESSION 2026-07-11 (AWAY MODE · Freddy solo-orchestrating a subagent fleet) · prod v1.23.5 · master `be625821`
 
+> ### ⏳ NEEDS JON (respond by number; recommendations noted)
+> 1. **B021 timeout + const→let** — confirm 45s ceiling + make `_BC_FETCH_TIMEOUT_MS` a `let`. *Rec: 45s ✓, let ✓.*
+> 2. **B016-2 conflict policy** — last-writer-by-timestamp vs lease-aware. *Rec: timestamp (B012 lock makes it edge-case).*
+> 3. **401 POST auto-replay** — OK to replay a single failed planning-line POST after re-auth? *Rec: yes.*
+> 4. **Owner-vs-member auth diagnostic** — fold `diagnoseMemberApiKey` into B013 or separate probe? *Rec: separate probe.*
+> 5. **F014 ruling** — live-read-on-demand vs cached ARC-editable per-customer default. *Rec: cached default.*
+> 6. **gap #5b save-gate** — build now or hold? *Rec: hold for a standing session / Jon's eyes (high-stakes concurrency).*
+> 7. **First build after unblock** — B021 first, or bundle B013-3+B016-1? *Rec: B021 first.*
+> *(📱 Pushover fired 2026-07-11. Full context: `docs/BC-RELIABILITY-PLAN.md`.)*
+
 **🟢 2026-07-11 — subagent fleet running (Jon away; Freddy is sole notifier via Pushover).** Standing Marc/Coach/Dez sessions closed clean (no commits). Freddy runs read-only analysis subagents in-session and persists their output to the mapped files; escalates to Jon only on a critical question.
 - **Coach lane** — delta review of the never-yet-reviewed gap #5b core (branch `gap5b-f015`, tip `40153e82`) vs the approved plan + analyst review → findings to `COACH.md`. STATUS: 🔄 running.
 - **Marc lane** — F014 part-B research → ✅ DONE (`docs/F014-BC-PAYMENT-TERMS-RESEARCH.md`). Finding: **ARC already reads per-customer terms from BC** (standard v2.0 `customers.paymentTermsId` → `paymentTerms` code, live in `ensureQuoteFieldsPopulated`). F014(B) ≈ surface/broaden, not greenfield. ⭐ Open decision for F014 kickoff (non-blocking): live-read-on-demand (exists) vs ARC-editable per-customer default seeded from BC (new; precedent = `customerDefaults`/`_loadCustomerValidity`).
