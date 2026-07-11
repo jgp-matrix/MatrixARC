@@ -700,3 +700,19 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **Minor / informational (non-blocking):** (a) harness doesn't cover the 429 depth≥3 give-up or already-aborted-caller cases — adequate for the fix, add if extended for B013-1; (b) **option-(b) mirror can silently desync** on future `bcGatedFetch` edits → **checklist item when B013-1 layers its 401 branch on this base**; (c) theoretical slot-leak if a web API throws synchronously between `inflight++` and the `try` (doesn't happen for valid inputs; not worth restructuring); (d) caller-abort during 429 backoff honored next iteration, not instantly (no caller passes a signal today).
 
 **Bottom line:** release accounting — the one thing governing the whole ~150-site BC surface — is provably balanced on every path, and the target deadlock is demonstrably cured. **Clear to deploy** per the test-channel/sign-off protocol. Clean base for B013-1's 401 branch (relies on B021's single `finally` release, per the plan's Composition section).
+
+---
+
+### C143 — B013-1 (retry-on-401 + silent token refresh) review — APPROVE WITH NITS
+
+**Date:** 2026-07-11 · **Mode:** read-only git review (away-mode subagent lane; persisted by Freddy after Jon's "proceed") · branch `b013-1-bc401-retry` @ `d6f75153` (401 branch `src/app.jsx:481-503`; +27 lines app.jsx; test re-synced 35/35).
+
+**Verdict: APPROVE WITH NITS — deploy-safe, no blocker. Safe to STACK on the deployed B021 (C142, v1.23.6).**
+
+**Spec conformance:** ✅ 401 POST auto-replay, SINGLE retry (`_bc401RetryDepth<1` gate, distinct from 429 `depth`; test 7 = exactly 2 fetches / 1 re-auth then give-up) · ✅ silent refresh `acquireBcToken(false)` · ✅ layered on B021 without disturbing it.
+
+**Adversarial checks:** (1) **Release balanced, no leak** — 401 branch adds NO manual `_bcRelease()`; relies on B021's single `finally`; recovered path `continue`s (fresh slot like 429), give-up `return`s on already-released slot; refresh happens AFTER release so a slow MSAL refresh never pins a slot; `inflight===0` on all 4 sub-paths. (2) **Single-retry cap airtight** — no infinite 401 loop. (3) **Header rewrite reaches the retried fetch** (`options.headers.Authorization=Bearer ${t}`; spread on retry; test 5 confirms attempt-2 carries NEWTOKEN; undefined options/headers guarded). (4) **Idempotency SAFE** — 401 = pre-processing (line never created); replay only fires when the token actually CHANGED → no double-submit path. (5) `acquireBcToken(false)` correct (silent only, null on fail; same-token short-circuit skips pointless replay, test 8). (6) **B021 + G005 byte-for-byte intact** — diff is additive-only (3 insertions); tests 1-4 still green. (7) `_bcLast401At` stamped only on unrecovered exits; bare hook for B013-2 (not built). (8) Harness a faithful verbatim mirror; 35/35 pass.
+
+**Nits (non-blocking):** N1 — `usedAuth` reads `Authorization||authorization` but rewrite sets only capital `Authorization`; a lowercase-header caller would carry both keys — **zero BC callers use lowercase today** (grep-confirmed), so cannot occur; optional future-proofing. N2 — no test drives the options/headers-undefined defensive branch (correct by inspection); optional 5th case.
+
+**Bottom line:** ship it — `firebase deploy` (hosting; `src/app.jsx` only, no functions change). N1/N2 can ride a later cleanup or be waived.
