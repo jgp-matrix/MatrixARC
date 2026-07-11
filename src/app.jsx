@@ -411,6 +411,10 @@ let _msalReady=false;
 // Caps simultaneous BC OData/REST requests to prevent 429 rate-limit storms.
 // All fetch() calls to BC_ODATA_BASE and BC_API_BASE route through bcGatedFetch.
 // 429 responses are retried automatically with Retry-After honoring (max 3 retries).
+// B021 — hard ceiling on any single BC round-trip. A hung connection (opens, never
+// responds) would otherwise await forever, pinning a semaphore slot and eventually
+// deadlocking the whole BC surface + freezing background pricing at 95%.
+let _BC_FETCH_TIMEOUT_MS=45000; // 45s
 const _bcSemaphore={inflight:0,max:6,queue:[]};
 function _bcRelease(){
   _bcSemaphore.inflight--;
@@ -429,28 +433,47 @@ async function bcGatedFetch(url,options){
       return new Response('{"_testEnvBlocked":true}',{status:200,headers:{"Content-Type":"application/json"}});
     }
   }
-  while(_bcSemaphore.inflight>=_bcSemaphore.max){
-    await new Promise(r=>_bcSemaphore.queue.push(r));
+  const callerSignal=options&&options.signal;
+  let depth=(options&&options._bcRetryDepth)||0;
+  while(true){
+    while(_bcSemaphore.inflight>=_bcSemaphore.max){
+      await new Promise(r=>_bcSemaphore.queue.push(r));
+    }
+    _bcSemaphore.inflight++;
+    const timeoutCtrl=new AbortController();
+    let timedOut=false;
+    const timer=setTimeout(()=>{timedOut=true;timeoutCtrl.abort();},_BC_FETCH_TIMEOUT_MS);
+    let onCallerAbort=null;
+    if(callerSignal){
+      if(callerSignal.aborted){timeoutCtrl.abort();}
+      else{onCallerAbort=()=>timeoutCtrl.abort();callerSignal.addEventListener("abort",onCallerAbort);}
+    }
+    let r=null,fetchErr=null;
+    try{
+      r=await fetch(url,{...options,signal:timeoutCtrl.signal});
+    }catch(e){
+      fetchErr=e;
+    }finally{
+      clearTimeout(timer);
+      if(onCallerAbort)callerSignal.removeEventListener("abort",onCallerAbort);
+      _bcRelease(); // single guaranteed release: timeout-abort, network error, 429, or success all pass here exactly once
+    }
+    if(fetchErr){
+      if(timedOut){
+        const te=new Error(`bcGatedFetch: BC request timed out after ${_BC_FETCH_TIMEOUT_MS}ms: ${url}`);
+        te.name="BcTimeoutError";te.isBcTimeout=true;throw te;
+      }
+      throw fetchErr; // caller abort or genuine network/DNS error — propagate as-is
+    }
+    if(r.status===429){
+      if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
+      depth++;
+      const retryAfter=parseInt(r.headers.get("Retry-After")||"2",10);
+      await new Promise(resolve=>setTimeout(resolve,Math.min(retryAfter,30)*1000));
+      continue; // re-acquire a fresh slot (already released in finally)
+    }
+    return r;
   }
-  _bcSemaphore.inflight++;
-  let r;
-  try{
-    r=await fetch(url,options);
-  }catch(e){
-    _bcRelease();
-    throw e;
-  }
-  if(r.status===429){
-    // Release slot BEFORE sleeping — prevents deadlock when all slots hit 429 simultaneously.
-    _bcRelease();
-    const depth=(options&&options._bcRetryDepth)||0;
-    if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
-    const retryAfter=parseInt(r.headers.get("Retry-After")||"2",10);
-    await new Promise(resolve=>setTimeout(resolve,Math.min(retryAfter,30)*1000));
-    return bcGatedFetch(url,{...options,_bcRetryDepth:depth+1});
-  }
-  _bcRelease();
-  return r;
 }
 
 // ── BACKGROUND TASK REGISTRY ──
