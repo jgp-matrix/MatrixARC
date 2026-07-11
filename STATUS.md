@@ -9,7 +9,9 @@
 
 > ### ✅ DECISIONS LOCKED (Jon 2026-07-11) — was ⏳ NEEDS JON
 > 1. B021 = **45s + `let`** ✓ · 2. B016-2 = **last-writer-by-timestamp** · 3. 401 POST auto-replay = **yes** (single retry) · 4. owner/member auth = **separate probe** · 5. F014 = **cached ARC-editable default seeded from BC** · 6. gap#5b save-gate = **HOLD** · 7. build order = **B021 → B013-1**.
-> **Next:** B021 build (confirming build-now-via-subagent vs hold-for-standing-session). Full context: `docs/BC-RELIABILITY-PLAN.md`.
+> **Next:** B021 BUILD IN PROGRESS (Jon chose build-now-via-subagent, gated). Full context: `docs/BC-RELIABILITY-PLAN.md`.
+
+**🔨 2026-07-11 (cont.) — B021 BUILD (gated subagent).** Marc lane building the `bcGatedFetch` timeout fix in an isolated worktree branch (apply pre-specified diff → `validate_jsx` → headless tests). Then Coach lane reviews the diff → held on branch for **Jon's deploy sign-off** (money-path → nothing hits prod without Jon). Locked spec: 45s + `let` + single finally-release + caller-signal compose + `BcTimeoutError`. STATUS: 🔄 building.
 
 **🟢 2026-07-11 — subagent fleet running (Jon away; Freddy is sole notifier via Pushover).** Standing Marc/Coach/Dez sessions closed clean (no commits). Freddy runs read-only analysis subagents in-session and persists their output to the mapped files; escalates to Jon only on a critical question.
 - **Coach lane** — delta review of the never-yet-reviewed gap #5b core (branch `gap5b-f015`, tip `40153e82`) vs the approved plan + analyst review → findings to `COACH.md`. STATUS: 🔄 running.
