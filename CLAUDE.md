@@ -62,6 +62,7 @@ Startup in brief:
 | `startup solo` or `startup marc` | Marc only | Marc only. Skip paste generation + comms check, display state summary, begin work. |
 | `startup code` | Marc + Coach | Code team. Freddy (if invoked) or Marc generates the Coach paste only, skips analyst. |
 | `startup custom` | varies | Orchestrator asks which roles, generates appropriate pastes. |
+| `/team-sub-start` | Freddy only (Marc/Coach/Dez = in-session subagent lanes) | Subagent variant of `/team-startup`: one Freddy session, no peer sessions / no bus / no Allow-Once prompts. Away-mode-native; Freddy = sole git-writer + sole notifier. Live browser + high-stakes builds still escalate. |
 
 ### SESSION-STATE.md generation procedure
 
