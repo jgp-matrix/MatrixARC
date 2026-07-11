@@ -684,3 +684,19 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **Concurrency spot-checks (correct):** dup tie-break (only newer tab regenerates) ✓ · ghost-adopt-vs-live-block (WHO_HOLDS reply→block, silence→adopt; tab never answers own probe) ✓ · R3 simultaneous-adopt (2nd tx re-checks at commit; loser→block/other-user) ✓ · cross-device adopt→relinquish + no ping-pong (`suppressAdopt`; "Edit here"/`forceAdopt` only re-take) ✓.
 
 **For Jon:** NO blocking design question — the MAJOR is a build correction, not a decision. Recommendation: #5b core is data-safe/mergeable on its own; **wire the `_leaseInitResolvedRef` save-gate + re-run G12 before F015 §2d is built/shipped** (the explicit R1 precondition). Coach re-reviews the save-gate delta once Marc wires it.
+
+---
+
+### C142 — B021 `bcGatedFetch` timeout/abort fix review — APPROVE for deploy
+
+**Date:** 2026-07-11 · **Mode:** read-only git review (away-mode subagent lane; persisted by Freddy) · branch `b021-bcgatedfetch-timeout` @ `b8610a1b` (impl `src/app.jsx:423-478` + `tests/bc-gated-fetch.test.js`).
+
+**Verdict: APPROVE for deploy — no blockers, no changes required.** Faithful implementation of the locked B021 spec; release accounting sound on every exit path; harness 14/14 and faithfully mirrors the committed code.
+
+**Spec conformance (all ✓):** 45s (`let _BC_FETCH_TIMEOUT_MS=45000`) · `let` per Jon's lock (impl correctly follows the locked decision, not the spec's stale `const` code-block) · single `_bcRelease()` in one `finally` (was 3) · caller-signal composition · `BcTimeoutError`/`isBcTimeout:true` · 429 preserved (3 retries, Retry-After cap 30s, release-before-sleep) · G005 write-belt byte-for-byte (`_BC_SANDBOX_ENVS=["MATR_SndBx_01152026"]` `:350`) · diff confined (`src/app.jsx` +44/−21 = const + fn only, + new test).
+
+**Focus checks:** (1) **Release accounting CLEAN** — exactly one `inflight++` + one `_bcRelease()` per turn; `finally` wraps only the fetch so it runs before any `continue`/`return`/`throw`; 1:1 balance verified on all 5 paths (success/429-retry/429-giveup/timeout/abort-or-network); deadlock-recovery test (8 hung → drains to `inflight===0,queue===0`) directly demonstrates the fix. (2) **Timeout classification CORRECT** — `timedOut` set only in the timer cb; caller-abort → plain `AbortError` (isBcTimeout falsy); only our timer → `BcTimeoutError`. (3) **Caller-signal composition CORRECT** — `signal` placed after the spread (caller signal never reaches/mutates fetch); already-aborted → immediate; listener added+removed same iteration (no leak). (4) **429 EXACT** equivalence to the old recursion; loop can't spin infinitely. (5) G005 intact. (6) Semaphore gate unchanged; timed-out attempt releases → wakes a waiter → `continue` re-acquires. (7) Harness faithful mirror (whitespace-only diffs), 4 cases exercise real risks.
+
+**Minor / informational (non-blocking):** (a) harness doesn't cover the 429 depth≥3 give-up or already-aborted-caller cases — adequate for the fix, add if extended for B013-1; (b) **option-(b) mirror can silently desync** on future `bcGatedFetch` edits → **checklist item when B013-1 layers its 401 branch on this base**; (c) theoretical slot-leak if a web API throws synchronously between `inflight++` and the `try` (doesn't happen for valid inputs; not worth restructuring); (d) caller-abort during 429 backoff honored next iteration, not instantly (no caller passes a signal today).
+
+**Bottom line:** release accounting — the one thing governing the whole ~150-site BC surface — is provably balanced on every path, and the target deadlock is demonstrably cured. **Clear to deploy** per the test-channel/sign-off protocol. Clean base for B013-1's 401 branch (relies on B021's single `finally` release, per the plan's Composition section).
