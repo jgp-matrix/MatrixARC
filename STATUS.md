@@ -5,7 +5,15 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🌙 SESSION END (2026-07-10) · ★★ B012 P1 SHIPPED v1.23.5 (containment RELAXED) · gap #5b + F015 → verify+deploy NEXT SESSION · prod v1.23.5 · master `ee6659e9`
+## Current — 🟢 SESSION 2026-07-11 (AWAY MODE · Freddy solo-orchestrating a subagent fleet) · prod v1.23.5 · master `be625821`
+
+**🟢 2026-07-11 — subagent fleet running (Jon away; Freddy is sole notifier via Pushover).** Standing Marc/Coach/Dez sessions closed clean (no commits). Freddy runs read-only analysis subagents in-session and persists their output to the mapped files; escalates to Jon only on a critical question.
+- **Coach lane** — delta review of the never-yet-reviewed gap #5b core (branch `gap5b-f015`, tip `40153e82`) vs the approved plan + analyst review → findings to `COACH.md`. STATUS: 🔄 running.
+- **Marc lane** — F014 part-B research: identify a per-customer payment-terms field in BC that ARC can READ (not hand-entered) → findings doc. STATUS: 🔄 running.
+- **Freddy** — orchestrating, aggregating results, board-keeping.
+- prod **v1.23.5** · master `be625821` · gap #5b/F015 build HELD on branch `gap5b-f015`; verify + prod deploy still need Jon + Andrew + a 2nd device.
+
+## Prior snapshot — 🌙 SESSION END (2026-07-10) · ★★ B012 P1 SHIPPED v1.23.5 (containment RELAXED) · gap #5b + F015 → verify+deploy NEXT SESSION · prod v1.23.5 · master `ee6659e9`
 
 > # ✅ CONTAINMENT RELAXED (2026-07-10, v1.23.5)
 > ## The B012 hard one-editor lock is LIVE on prod — the one-editor-per-project restriction is LIFTED.
