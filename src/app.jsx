@@ -27352,11 +27352,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const forceFresh=!!(opts&&opts.forceFresh);
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
+    // F019 (Option A): the standalone "↻ Get New Pricing" / "Refresh All" buttons invoke this with NO
+    // onEpProgress callback. Extraction / re-extract / validatePanel pass onEpProgress AND already own a
+    // bg-task tile on the SAME _bgKey (they call runPricingOnPanel while their own extraction task is
+    // still "running") — so ONLY the standalone case registers its own bg task here. Discriminate on
+    // !onEpProgress, NOT !bomOverride, because "Refresh All" passes bomOverride yet no onEpProgress.
+    // Registering makes _hasRunningBgTaskForProject() true → on nav-away ProjectView suppresses the B012
+    // lease release and starts _startLeaseKeepAlive, so the completion writeback still lands (fixes the
+    // silent loss) and the dashboard tile shows a live bar (fixes the missing tile). Plain _bgKey per
+    // Jon's locked decision (2), guarded by A2 below.
+    const _isStandalonePricing=!onEpProgress;
+    const _bgId=_bgKey(projectId,panel.id);
+    // A2 — a live task already on this key (a 2nd Get-New-Pricing click, or an in-flight extraction)
+    // must not be clobbered. Standalone-only: extraction's post-pricing reuses this key while its own
+    // extraction task is still "running", so a blanket entry guard would abort legit post-extract pricing.
+    if(_isStandalonePricing&&_bgTasks[_bgId]&&_bgTasks[_bgId].status==="running")return;
+    // A1 — register the standalone run as a background task for its whole lifetime.
+    if(_isStandalonePricing)bgStart(_bgId,panel.name||("Panel "+(idx+1)),projectId,"Getting prices…");
+    // A5 — guaranteed terminal state: a standalone run ALWAYS reaches bgDone/bgError (every early return,
+    // every throw — via the catch/finally at the end) so a leaked "running" task can never pin the
+    // editing lease forever (which would lock out all teammates via _startLeaseKeepAlive).
+    let _f019Terminated=false;
+    try{
     _logQvHistory(project.id,{type:"refresh_pricing",panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),field:forceFresh?"force":"normal"});
     // Save snapshot before bulk pricing so user can revert
     if(!bomOverride)saveSnapshot(uid,projectId,panel,"Before Get New Pricing").catch(()=>{});
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
-    const _pp=(o)=>{setPricingProgress(o);if(onEpProgress)onEpProgress(o.pct);};
+    // A3 — thread pricing progress to the dashboard tile for the standalone run (one line drives all
+    // ~40 _pp call sites). Non-standalone keeps threading only via onEpProgress (extraction owns the tile).
+    const _pp=(o)=>{setPricingProgress(o);if(onEpProgress)onEpProgress(o.pct);if(_isStandalonePricing)bgSetPct(_bgId,o.pct,o.msg);};
     setAiPricing(true);
     let _fetched=0,_totalEligible=0;
     const _ppCount=(o)=>{_pp({...o,msg:o.msg+(_fetched>0?` (${_fetched} priced so far)`:"")});};
@@ -27818,7 +27842,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             return r;
           });
-        }catch(ex){setAiPricing(false);_pp({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0,isError:true});return;}
+        }catch(ex){setAiPricing(false);_pp({msg:`Pricing error: ${(ex.message||"failed").slice(0,60)}`,pct:0,isError:true});if(_isStandalonePricing){bgError(_bgId,("Pricing error: "+(ex.message||"failed")).slice(0,60));_f019Terminated=true;}return;}
       }
     }
 
@@ -27900,7 +27924,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const mergedFuzzy={...(panelBase.bcFuzzySuggestions||{}),...bcFuzzySuggestions};
     const updated={...panelBase,bom:updatedBom,status:"costed",bcFuzzySuggestions:Object.keys(mergedFuzzy).length?mergedFuzzy:undefined};
     onUpdate(updated);
-    try{await onSaveImmediate(updated);}catch(e){}
+    if(_isStandalonePricing){
+      // A4 — lifecycle-independent completion save via CAPTURED ids (Async Project Ownership Rule / #86):
+      // writes to the ORIGINATING project, never the currently-open one. Mirrors saveImmediatePanel's
+      // !hasOverrides 5th arg (@saveImmediatePanel) so pre-review projects keep the same notify behavior.
+      // This is the write that was silently rejected on nav-away before F019 (lease released → permission
+      // -denied → swallowed) — the keep-alive now holds the lease so it lands.
+      const _hasOverrides=!!_pendingPreReviewOverrides[projectId];
+      try{await saveProjectPanel(uid,projectId,panel.id,updated,!_hasOverrides);}
+      catch(e){console.error("[F019] save failed:",e);bgError(_bgId,"Save failed");_f019Terminated=true;}
+    }else{
+      try{await onSaveImmediate(updated);}catch(e){}
+    }
     const aiCount=updatedBom.filter(r=>r.priceSource==="ai").length;
     const totalPriced=updatedBom.filter(r=>r.unitPrice!=null).length;
     // AI fallback report
@@ -27912,6 +27947,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     _pp({msg:`✓ ${totalPriced} of ${bom.length} priced${bcCount>0?` (${bcCount} BC, ${aiCount} AI est.)`:""}.`,pct:100});
     setAiPricing(false);
+    // A5 — normal-success terminal for the standalone run (lights the tile ✓ and stops the lease keep-alive).
+    if(_isStandalonePricing&&!_f019Terminated){bgDone(_bgId,`✓ ${totalPriced} priced`);_f019Terminated=true;}
     // Show pricing report if there were any issues
     if(_report.length>0)setPricingReport({sections:_report,totalPriced,totalItems:bom.length,bcCount,aiCount});
     // DECISION(v1.20.108, F2): When BC was unavailable during pricing, show an actionable
@@ -27928,6 +27965,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // raced the useEffect auto-sync (Path B) and produced spurious "BC Sync Incomplete"
     // popups for valid in-BC items. Path B (useEffect → syncPlanningLinesToBC) is now
     // the sole foreground auto-sync; task descriptions sync there too. See docs/168-DETAILED-PLAN.md.
+    }catch(_f019Err){
+      // A5 — any unexpected throw. Standalone: terminate the tile + swallow (the button onClick is
+      // fire-and-forget, so swallowing avoids an unhandled rejection). Non-standalone: RETHROW so the
+      // caller's .catch (extraction / re-extract / validatePanel) runs its own bgDone/bgError as before —
+      // preserves pre-F019 behavior exactly for those paths.
+      console.error("[F019] pricing failed:",_f019Err);
+      try{setAiPricing(false);}catch(_){}
+      if(_isStandalonePricing){
+        if(!_f019Terminated){bgError(_bgId,("Pricing failed: "+((_f019Err&&_f019Err.message)||"")).slice(0,60));_f019Terminated=true;}
+      }else{
+        throw _f019Err;
+      }
+    }finally{
+      // A5 — exhaustive safety net: never leave a leaked "running" task (it would pin the editing lease
+      // via _startLeaseKeepAlive and lock out teammates). If any path exited without a terminal, force one.
+      if(_isStandalonePricing){const _t=_bgTasks[_bgId];if(_t&&_t.status==="running")bgError(_bgId,"Pricing ended unexpectedly");}
+    }
   }
   async function validatePanel(){
     if(!_apiKey)return;
@@ -47625,6 +47679,21 @@ INSTRUCTIONS:
     }
     action();
   }
+  // F019 nav-away guard: nudge before leaving a project to the dashboard while a background pricing task
+  // is still running. Pricing NOW survives in-app nav-away (registered bg task + lease keep-alive), so
+  // the message is informational — "still running, leave?" — NOT "you'll lose it". Returns true=proceed.
+  async function _confirmNavAwayWithBgPricing(){
+    const p=openProject;
+    if(!p||!_hasRunningBgTaskForProject(p.id))return true;
+    return await arcConfirm("Pricing is still running for this project. It will keep going in the background and the prices will save when it finishes.\n\nLeave this project?",{okLabel:"Leave anyway"});
+  }
+  // F019: a HARD browser reload/close DOES kill the tab (module-scoped _bgTasks state is lost), so warn
+  // on beforeunload while a pricing bg task runs for the open project. Native prompt text is browser-set.
+  useEffect(()=>{
+    function guard(e){if(openProject&&_hasRunningBgTaskForProject(openProject.id)){e.preventDefault();e.returnValue="";}}
+    window.addEventListener("beforeunload",guard);
+    return()=>window.removeEventListener("beforeunload",guard);
+  },[openProject?.id]);
   function handleOpen(p){
     // DECISION(v1.19.776): Preserve the user's current top-nav tab when they open a
     // project from Engineering / Purchasing / Production. Previously the open handler
@@ -47766,7 +47835,7 @@ INSTRUCTIONS:
         {/* Main toolbar row */}
         <div style={{background:C.card,borderBottom:`1px solid ${C.border}`,padding:"0 24px",display:"flex",alignItems:"center",height:78,gap:6,position:"relative",pointerEvents:"auto"}}>
           {/* CoreVega logo — left side */}
-          <img src="/corevega_logo.png" alt="CoreVega Software" style={{width:220,maxHeight:60,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
+          <img src="/corevega_logo.png" alt="CoreVega Software" style={{width:220,maxHeight:60,objectFit:"contain",cursor:"pointer",flexShrink:0}} onClick={()=>checkQuoteRevWarn(async()=>{if(!await _confirmNavAwayWithBgPricing())return;setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);})}/>
           {/* ARC branding — centered */}
           <div style={{position:"absolute",left:"50%",transform:"translateX(-50%)",display:"flex",flexDirection:"column",alignItems:"center",lineHeight:1,pointerEvents:"none"}}>
             <span style={{fontFamily:"'Orbitron',sans-serif",fontSize:28,fontWeight:900,letterSpacing:5,color:C.accent,lineHeight:1}}>ARC</span>
@@ -47986,7 +48055,7 @@ INSTRUCTIONS:
           const isReturnBtn=isOriginTab&&hasOpenProject&&!active;
           return(
           <button key={t.id} onClick={()=>{
-            if(isBackBtn){checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);});return;}
+            if(isBackBtn){checkQuoteRevWarn(async()=>{if(!await _confirmNavAwayWithBgPricing())return;setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);});return;}
             // Switching tabs (also handles return-to-project when clicking the origin tab)
             setNavTab(t.id);
           }}
