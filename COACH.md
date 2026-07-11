@@ -716,3 +716,21 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **Nits (non-blocking):** N1 — `usedAuth` reads `Authorization||authorization` but rewrite sets only capital `Authorization`; a lowercase-header caller would carry both keys — **zero BC callers use lowercase today** (grep-confirmed), so cannot occur; optional future-proofing. N2 — no test drives the options/headers-undefined defensive branch (correct by inspection); optional 5th case.
 
 **Bottom line:** ship it — `firebase deploy` (hosting; `src/app.jsx` only, no functions change). N1/N2 can ride a later cleanup or be waived.
+
+---
+
+### C144 — F019 (standalone pricing survives nav-away, Option A) review — APPROVE WITH NITS
+
+**Date:** 2026-07-11 · **Mode:** read-only branch review (away-mode subagent lane; persisted by Freddy) · branch `f019-bg-pricing` @ `b7f2b94f` (+74 app.jsx). Money/data path.
+
+**Verdict: APPROVE WITH NITS — clear for Jon's test-channel verify + deploy sign-off. Items 1 & 2 (highest risk) both PASS.**
+
+**Item 1 — discriminator `_isStandalonePricing=!onEpProgress` CONFIRMED CORRECT.** Grepped ALL 6 `runPricingOnPanel` call sites: ↻ Get-New-Pricing (`:28883`, no onEpProgress) + Refresh-All (`:28889`, `null`) = standalone (get the fix); reconciliation (`:24988` `()=>{}`), post-extraction (`:25185`), re-extract (`:26039`), validatePanel (`:28004`) all pass a real onEpProgress = correctly excluded. Crucially the plan's literal `!bomOverride` would have MISCLASSIFIED Refresh-All (passes `bomOverride=panel.bom` but null onEpProgress) → `!onEpProgress` is the right choice. Post-extraction pricing (`:25185`) runs on the same key while extraction's task is still "running" → non-standalone → A2 guard doesn't fire + no bgStart → never clobbers the extraction tile. Sound.
+
+**Item 2 — exhaustive terminal state CONFIRMED AIRTIGHT (no leaked-lease-pin).** Every exit fires `bgDone`/`bgError` for standalone: pre-bgStart returns (nothing registered), AI-error inner catch (bgError+flag), save-fail (bgError, success bgDone skipped via `!_f019Terminated`), success (bgDone), any throw (outer catch bgError; non-standalone RETHROWS), + the `finally` net force-terminates any leftover "running". Resurrection vector closed: `bgSetPct`/`bgUpdate` preserve `status` + no-op if deleted, so a late `_pp` can't flip a terminated task back to "running". `_f019Terminated` can't double-fire. A leaked "running" task pinning the lease is **not reachable.**
+
+**Items 3-7:** (3) direct `saveProjectPanel(uid,projectId,panel.id,updated,!_hasOverrides)` — captured ids (Async Ownership Rule/#86), 5th-arg exact mirror of `saveImmediatePanel` (`:34452`), no data-retention risk. (4) non-standalone path byte-for-byte preserved (onUpdate retained, else-branch onSaveImmediate unchanged, outer catch RETHROWS, finally no-op). (5) lease keep-alive: bgStart makes `_hasRunningBgTaskForProject` true → unmount suppresses release + starts keep-alive → self-stops after bgDone (4s delete-timer reads "done", no forever-renew) — mirrors extraction. (6) nav-guard accurate ("keeps going in the background", not "you'll lose it"), correct `arcConfirm` signature, wired on logo + back + beforeunload, no-ops when idle. (7) diff confined; report modal + fuzzy suggestions untouched.
+
+**Nits (non-blocking):** N1 — reconciliation auto-price (`:24988`) is non-standalone → still uncovered on nav-away, but IDENTICAL to pre-F019 + outside F019's locked scope (flag only). N2 — plan A6 (button disable while `aiPricing`) not implemented; correctness fully covered by the A2 running-guard (2nd click early-returns), purely a missing visual disable — optional. N3 — `projectId` vs `project.id` style (same value; `projectId` is the more-correct choice). 
+
+**Pre-deploy gate:** Coach couldn't run `validate_jsx` (read-only); braces balance on inspection + the build lane replicated babel = PASS, but **deploy.sh's `validate_jsx` is the real gate at deploy** (confirmed green there). **Jon-driven test-channel verify required** (browser tool can't reach the test host): tile bar · persist-across-reload · lease releases after bgDone (no teammate lockout) · headless BC sync · error-terminal · double-click no-op · regressions (in-place pricing, Refresh-All, report modal, extraction post-pricing).
