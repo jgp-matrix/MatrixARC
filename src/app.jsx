@@ -27074,6 +27074,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         ...(bcSurrogate?{bcNo:bcSurrogate}:{}),
         ...(bcFullPN&&_vinResolved?{partNumber:bcFullPN}:{}),
         priceSource:"bc",
+        priceUpdatedAt:now,
         bcVerify:{status:"in-bc",at:Date.now()},
         ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
         ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{}),
