@@ -24399,6 +24399,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const POLL_MS=5*60*1000;
     async function pollBcPricing(){
       if(bcPollRunning.current||!_bcToken)return;
+      // B016-1(b): only poll BC when the tab is visible, and skip entirely when the
+      // project is bound to a different BC env (previously unguarded here).
+      if(typeof document!=="undefined"&&document.visibilityState!=="visible")return;
+      if(_bcEnvMismatched(project))return;
       bcPollRunning.current=true;
       try{
         const p=latestPanelRef.current;
@@ -24423,7 +24427,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(!priceChanged&&!dateChanged)return r;
           changed=true;
           changedIds.push(String(r.id));
-          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice}:{})};
+          // B016-1(b-companion, Decision 1): stamp priceDate when unitPrice changes so the
+          // later last-writer-by-timestamp row-merge (B016-2) can't let a stale snapshot
+          // out-rank this fresh poll price.
+          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice,priceDate:Date.now()}:{})};
         });
         if(changed){
           const updated={...fresh,bom:newBom};
@@ -25563,12 +25570,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const bcCount=bom.filter(r=>r.priceSource==='bc').length;
     const ecoChanged=_ecoSig!==bcPrevEcoSig.current;
     if(bcPrevSyncCount.current===-1){
-      bcPrevSyncCount.current=bcCount;
+      // B016-1(d): seed from the persisted last-synced BC count so a reopen's post-mount
+      // priceSource:'bc' re-flip (runPricingOnPanel) doesn't read as a real N→M increase
+      // and false-trip a full sync. Legacy panels (no persisted field) fall back to the
+      // live count (prior behavior).
+      bcPrevSyncCount.current=(typeof panel.bcLastSyncedBcCount==="number")?panel.bcLastSyncedBcCount:bcCount;
       bcPrevEcoSig.current=_ecoSig;
       return;
     }
     bcPrevEcoSig.current=_ecoSig;
     const bcCountIncreased=bcCount>bcPrevSyncCount.current;
+    // B016-1(d) breadcrumb — lets Jon confirm the N→M transition live on the test channel.
+    console.log("[B016-1] BC auto-sync count check:",{bcCount,prev:bcPrevSyncCount.current,increased:bcCountIncreased,ecoChanged});
     if(!bcCountIncreased&&!ecoChanged){bcPrevSyncCount.current=bcCount;return;}
     bcPrevSyncCount.current=bcCount;
     // LOAD-BEARING GUARD (#168): BASE trigger requires all non-labor rows
@@ -25581,7 +25594,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(unpriced.length>0)return;
     }
     if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);
-    bcAutoSyncTimer.current=setTimeout(()=>syncPlanningLinesToBC(),3000);
+    // B016-1(c): null the ref when the timer fires so its truthiness reliably means
+    // "a planning-line sync is pending" (used by the sell-price patch to coalesce).
+    bcAutoSyncTimer.current=setTimeout(()=>{bcAutoSyncTimer.current=null;syncPlanningLinesToBC();},3000);
     return()=>{if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);};
   },[JSON.stringify((panel.bom||[]).map(r=>r.id+'|'+r.priceSource)),_ecoSig]);
 
@@ -25599,6 +25614,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const taskNo=String(20000+(idx+1)*100+10);
     // Debounce 2s to avoid rapid-fire patches during bulk price updates
     const t=setTimeout(()=>{
+      // B016-1(c): coalesce — if the planning-line auto-sync is armed it already writes
+      // the fresh sell price to BC line 10000 (via bcSyncPanelPlanningLines), so skip
+      // this redundant standalone patch to reduce on-open BC churn.
+      if(bcAutoSyncTimer.current){console.log("SELL PRICE AUTO-SYNC: skipped (planning-line sync armed, will carry sell price)");return;}
       bcPatchProgressBillingLine(bcProjectNumber,taskNo,_sellPrice)
         .then(()=>console.log("SELL PRICE AUTO-SYNC: line 10000 →",_sellPrice))
         .catch(e=>console.warn("SELL PRICE AUTO-SYNC failed:",e.message));
@@ -25683,7 +25702,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // DECISION(v1.19.487): Set bomSyncHash after successful sync
         // F-2d.3: Clear pending marker atomically with hash write
         const syncHash=computePanelBomHash(panel);
-        const updated={...panel,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
+        // B016-1(d): persist the BC-priced row count at successful sync so the next open
+        // seeds bcPrevSyncCount from it (prevents the re-flip false-trip). Additive field,
+        // preserved on save; never removed.
+        const syncedBcCount=(panel.bom||[]).filter(r=>r.priceSource==="bc").length;
+        const updated={...panel,bomSyncHash:syncHash,bcLastSyncedBcCount:syncedBcCount,bomSyncPending:false,bomSyncStartedAt:null};
         onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
         setTimeout(()=>setBcSyncStatus(null),4000);
       }
@@ -37319,8 +37342,18 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // dismissal as acknowledgment (stamp row with bcPoDate so the diff doesn't re-fire).
   const priceCheckRan=useRef(false);
   const priceCheckDiffsRef=useRef([]); // full diff list so dismiss can stamp all
+  const prevQuoteLockedRef=useRef(!!project.quoteLocked);
   useEffect(()=>{
-    if(priceCheckRan.current)return;
+    // B016-1(a): dep-driven re-run replaces the old blind 30s BC-poll interval.
+    // The one-shot on-open run is preserved via priceCheckRan; a quoteLocked
+    // true→false (unlock) edge re-enables the check so a post-send revision
+    // re-checks BC prices. false→true / no-op changes never hit BC.
+    const nowLocked=!!project.quoteLocked;
+    const wasLocked=prevQuoteLockedRef.current;
+    prevQuoteLockedRef.current=nowLocked;
+    const isUnlockEdge=wasLocked&&!nowLocked;
+    if(isUnlockEdge)priceCheckRan.current=false;
+    else if(priceCheckRan.current)return;
     function tryCheck(){
       if(priceCheckRan.current||!_bcToken)return;
       // FROZEN-QUOTE GUARD (#186 / Coach C126): skip the auto BC price-check while the quote is
@@ -37380,9 +37413,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       })().catch(e=>console.warn("Purchase price check error:",e));
     }
     tryCheck();
-    const iv=setInterval(tryCheck,30000); // PERF: reduced from 3s to 30s — price diffs don't need rapid polling
-    return()=>clearInterval(iv);
-  },[]);
+  },[project.quoteLocked]);
   // #187 §2.3 — pre-warm the customer-tier validity default when a project (with a BC customer) is
   // open, so pre-send previews (defaultValidUntil / PDF) reflect the customer's days. Correctness at
   // SEND is guaranteed independently by the §2.4 race guard; this effect is UX pre-warming only.
