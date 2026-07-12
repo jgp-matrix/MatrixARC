@@ -5,7 +5,19 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 SESSION 2026-07-11 (AWAY MODE · Freddy solo-orchestrating a subagent fleet) · prod v1.23.5 · master `be625821`
+## Current — 🟢 SESSION 2026-07-11 (AWAY MODE · Freddy solo-orchestrating a subagent fleet) · prod v1.23.10 · master `fce8b519`
+
+> ## 🌅 MORNING SUMMARY (for Jon — 2026-07-12 catch-up)
+> **Prod = v1.23.10.** Shipped + verified yesterday: **B021** (BC hang/deadlock timeout), **B013-1** (401 auto-recovery), **B013-2/3** (honest BC health pill + 401 sync-modal), **F019** (standalone pricing survives nav-away + tile bar — you verified), **nav-modal cleanup**. **Notifications fixed** (Priority-2 persistent/ack). **B028** scraper concurrent-login: verified not-an-active-problem (prod logs clean + Royal tolerates concurrent sessions) → tabled.
+>
+> **⏳ WAITING ON YOU — B016 (chain's last item) is BUILT + Coach-reviewed + STAGED on 2 branches, NOT deployed:**
+> - **`b016-1-churn` (`3f1ac068`)** — B016-1 on-open churn reduction. **Deploy-ready patch** (Coach found+fixed the F1 sell-price-coalesce bug). Deploy anytime; low-risk. *Nits:* F1b (accept/harden/drop the sell-price coalesce) · N1 (strip the `[B016-1]` breadcrumb before prod).
+> - **`b016-23-merge` (`2ae18bb3`)** — B016-2 row-merge (data-safety core) + B016-3 resilient mutations, on the B016-1 base. **Coach APPROVE-for-deploy** (2 review rounds caught+fixed a HIGH money-path silent-revert; Layer A now keys the price group on a new `priceUpdatedAt` clock stamped at 22 price-writers; 39 tests pass). **Before deploy you need: (a) a nod on the `priceDate`→`priceUpdatedAt` refinement [it SUPERSEDES Decision-1 — Coach found priceDate is the wrong key]; (b) the 2-session ADD+DELETE matrix — now MUST include clear-price / budgetary / AI-estimate / commitBcItem rows.**
+> - **Recommended order:** deploy `b016-1-churn` (patch) → run the matrix on `b016-23-merge` → deploy it (minor). `b016-23-merge` already contains B016-1 (it's a superset).
+>
+> **Open flags/decisions:** priceDate→priceUpdatedAt (approve) · F1b + N1 (B016-1 nits) · :24501 cosmetic priceDate-backfill unstamped (reasoned non-risk — your call on consistency) · **B029** (per-row ⚠ pill 401, LOW) · **B030** (:27119 silent catch, LOW). Docs: `docs/B016-PLAN.md` · `docs/BC-RELIABILITY-PLAN.md` · `docs/F014-BC-PAYMENT-TERMS-RESEARCH.md`. Review trail: COACH.md **C141–C147**.
+>
+> *(Detailed session log continues below.)*
 
 > ### ✅ DECISIONS LOCKED (Jon 2026-07-11) — was ⏳ NEEDS JON
 > 1. B021 = **45s + `let`** ✓ · 2. B016-2 = **last-writer-by-timestamp** · 3. 401 POST auto-replay = **yes** (single retry) · 4. owner/member auth = **separate probe** · 5. F014 = **cached ARC-editable default seeded from BC** · 6. gap#5b save-gate = **HOLD** · 7. build order = **B021 → B013-1**.
