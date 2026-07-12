@@ -752,3 +752,23 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **Item 6 — untouched per-BOM-row `⚠` pill (`:29674`, `parsePillErr`): ship now, file separate LOW item.** It ignores the now-available `.status` and always routes 401s to Item Browser (useless for session-expired), but it's NOT a regression (identical to pre-B013-3), not the primary surface (the modal is, and it's correct), and only shows if the user dismisses the modal without reconnecting. `bcSyncErrors[row.id]` already carries `status` → later fix is small. → filed as **B029**.
 
 **Nits (none blocking):** (1) theoretical burst race (a 2xx completing just after give-up could briefly flip green; next 401 re-reds + 5-min probe backstops — strictly better than the old always-blind window); (2) `\b401\b` body-regex fallback negligible (status===401 is authoritative); (3) ECO catch-thrown row carries no status (falls to generic parse, acceptable); (4) debug hooks `_arcBcHealth`/`_arcForceBc401` ship but are prod-guarded + self-only; (5) `pulse` keyframe verified present. **Clear for deploy.**
+
+---
+
+### C146 — B016-2/3 (row-merge + resilient mutations) review — CHANGES REQUIRED (money-path silent-revert blocker)
+
+**Date:** 2026-07-11 · **Mode:** read-only adversarial data-safety review (away-mode lane; persisted by Freddy) · branch `b016-23-merge` @ `6067fd09` (B016-1 + F1 + B016-2/3).
+
+**Verdict: CHANGES REQUIRED.** Core algorithm, delete-site coverage, ordering invariants, B012/cross-user composition, and the B016-3 funnel all SOUND — but one HIGH blocker + two whitelist gaps.
+
+**F1 — HIGH/BLOCKER — Layer A silently reverts `priceDate:null` user actions** (`:1090-1091`, root `_b016Ts` `:1070`). `priceDate` is NOT a last-writer clock — it's the BC `Starting_Date` domain value (DECISION v1.19.641), legitimately `null` for clear-price (`:27247`), budgetary (`:27299`), AI-est (`:28052`). `_b016Ts(null)=-Infinity` → these fresh user edits ALWAYS lose to a server twin with a real `priceDate` → **merge silently reverts the user's clear/budgetary action**, then `onSnapshot` repaints it. NOT a race — normal single-client flow; a **money-path regression** (pre-B016 wholesale-replace persisted these). Proved 3 failing scenarios vs the sliced shipped helper. **Fix:** dedicated `priceUpdatedAt:Date.now()` clock on every price-writer (grep-sweep floor) + key Layer A on it (mirror `leadTimeUpdatedAt`); revert the pollBcPricing `priceDate:Date.now()` band-aid → `priceUpdatedAt`. → fix lane running; **supersedes Jon's Decision-1** (priceDate→priceUpdatedAt — correct field, same intent; flag for Jon).
+
+**F2 — MED — whitelist gaps:** add `rfqSentDate` (`:38739`) + `restoreSkipped` (`:10412`); consider `bcNo` if persisted. (Layer B is the only net for a dropped stale field.)
+
+**F3 — LOW:** pollBcPricing `priceDate:Date.now()` pollutes `priceDate` staleness semantics — removed by the F1 fix.
+
+**F4 — LOW/info:** B016-3 funnel CORRECT (user mutations route `onSaveImmediate→saveImmediatePanel→safeSavePanel`; direct callers still get the merge). `:27119` silent `.catch` → filed **B030** (LOW).
+
+**F5 — NIT:** id-less/dup-id keying low risk (dedup runs after).
+
+**CONFIRMED:** delete-site coverage COMPLETE (5 stamped payload sites; `deleteEcoDoc` uses own tx → no unstamped resurrection; markers payload-only + stripped); F019 lands; B012 lease + cross-user guards + `nBom===0` belt + merge-before-dedup ordering intact; only `dataUrl` stripped; `schemaVersion` untouched. Test harness slices the REAL helper (31/31, no drift) but lacked a clear/budgetary-over-BC case (added in fix). **Blocker F1 + F2 must land, and the 2-session matrix must add clear/budgetary rows, before deploy.**
