@@ -772,3 +772,17 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **F5 — NIT:** id-less/dup-id keying low risk (dedup runs after).
 
 **CONFIRMED:** delete-site coverage COMPLETE (5 stamped payload sites; `deleteEcoDoc` uses own tx → no unstamped resurrection; markers payload-only + stripped); F019 lands; B012 lease + cross-user guards + `nBom===0` belt + merge-before-dedup ordering intact; only `dataUrl` stripped; `schemaVersion` untouched. Test harness slices the REAL helper (31/31, no drift) but lacked a clear/budgetary-over-BC case (added in fix). **Blocker F1 + F2 must land, and the 2-session matrix must add clear/budgetary rows, before deploy.**
+
+---
+
+### C147 — B016-2/3 F1-fix RE-REVIEW (commit `5262c091`) — CHANGES REQUIRED (one last missed price-writer), then conditional APPROVE
+
+**Date:** 2026-07-11 · **Mode:** read-only focused re-review of the C146 fix delta (`6067fd09..5262c091`).
+
+**Verdict: CHANGES REQUIRED — one missed persisted price-writer; else the fix is correct + complete.**
+
+**Missed writer (crux):** `commitBcItem` (`:27076`) — the swap-row→BC-item action (primary way a user assigns a BC price) builds an in-place `updates={...r,priceSource:"bc",unitPrice…,priceDate…}` (preserves `r.id`) → persists via `saveProjectPanel` → `_mergeBomOnSave`, but **never stamps `priceUpdatedAt`**. Under concurrency (a fresher `pollBcPricing`/peer write with a real `priceUpdatedAt`), Layer A transfers the server's price group over the just-committed BC price → the row shows the new BC part with the reverted price (split-state, silent). Same F1 class, that one path. **Fix:** add `priceUpdatedAt:now,` at `:27076` (`now` const exists `:27059`; unconditional — `priceSource:"bc"` always set). Coach independently swept all 48 `priceSource:` sites + assignment/`patch`/`updates` forms — **this is the ONLY remaining miss.**
+
+**All else PASS:** 21 stamped writers verified (excluded new-row/labor builders validated = fresh-id, no server twin → incoming wins); Layer A correctly re-keyed on `priceUpdatedAt` (whole group transferred); pollBcPricing revert correct (`priceDate` un-polluted); backward-compat correct (legacy no-clock → incoming wins); `priceUpdatedAt` preserved + correctly excluded from gap-fill whitelist; F2 adds (`bcNo`/`rfqSentDate`/`restoreSkipped`) all persisted/correct; no collateral (LT group, bcPoDate, delete-vs-add, `_deletedRowIds`, B012 guards, F019, B016-3 untouched); tests slice the REAL helper (no drift), **39/39 pass**, the 3 F1 scenarios genuinely covered + passing.
+
+**Conditional APPROVE:** after the one-line `commitBcItem` stamp lands, this is **APPROVE-for-deploy** quality, ready for the 2-session matrix — which should exercise clear-price / budgetary / AI **and the commitBcItem path** (assign a BC item on one session while a fresher poll write is pending on the other) to confirm in-app.
