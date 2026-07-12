@@ -1048,9 +1048,9 @@ function _dedupBomRowIds(bom){
 // since null !== undefined). FLOOR = B016-PLAN §B016-2 + CLAUDE.md Data-Retention list,
 // finalized via an independent grep sweep of BOM-row field writers (2026-07-11). EXCLUDES
 // content fields (qty/partNumber/description/manufacturer/notes — governed by the {...incoming}
-// base) and the Layer-A numeric fields (unitPrice/priceDate/leadTimeDays/leadTimeUpdatedAt/
-// bcPoDate — governed by the timestamp groups below). Over-inclusion is safe (gap-fill is
-// undefined-only); omission is the only real risk, so the sweep leans inclusive.
+// base) and the Layer-A numeric fields (unitPrice/priceDate/priceUpdatedAt/leadTimeDays/
+// leadTimeUpdatedAt/bcPoDate — governed by the timestamp groups below). Over-inclusion is safe
+// (gap-fill is undefined-only); omission is the only real risk, so the sweep leans inclusive.
 const B016_METADATA_WHITELIST=[
   "isCrossed","crossedFrom","autoReplaced","isDescriptionCross","descriptionCrossFrom",
   "isCorrection","correctionType",
@@ -1058,15 +1058,16 @@ const B016_METADATA_WHITELIST=[
   "cannotSupply",
   "techReviewFlag","techReviewFlagSource","techReviewResolved","techReviewResolvedBy","techReviewResolvedAt",
   "leadTimeSource","leadTimeEstimated",
-  "bcVendorNo","bcVendorName","bcItemNumber","bcMatchType","confidence","_confDowngradeReason",
+  "bcVendorNo","bcVendorName","bcItemNumber","bcMatchType","bcNo","confidence","_confDowngradeReason",
   "supplierPartNumber","learnedPartNumber","suggestedPartNumber",
   "aiBasis","aiSources",
   "customerSupplied","isContingency","autoLoaded",
+  "rfqSentDate","restoreSkipped",
   "ecoTag","ecoNumber","ecoOp","ecoModifiesBaseRowId","ecoOriginal","ecoCreatedAt",
 ];
 // Coerce a timestamp-ish value to a comparable number. priceDate / bcPoDate are either
 // Date.now() ms OR a BC Starting_Date coerced to ms via getTime() (see bcFetchPurchasePrices);
-// leadTimeUpdatedAt is always Date.now() ms — all numeric ms. Missing → -Infinity (oldest).
+// priceUpdatedAt / leadTimeUpdatedAt are always Date.now() ms — all numeric ms. Missing → -Infinity (oldest).
 function _b016Ts(v){
   if(typeof v==="number"&&isFinite(v))return v;
   if(v==null)return -Infinity;
@@ -1086,9 +1087,15 @@ function _mergeBomOnSave(incomingBom,serverBom,deletedRowIds){
     const srv=srvById.get(String(inc&&inc.id));
     if(!srv)return inc;                                         // new row (user add) → keep incoming
     const out={...inc};                                        // content edits win
-    // Layer A — price group (unitPrice+priceSource+priceDate): newer priceDate wins the group.
-    if(_b016Ts(srv.priceDate)>_b016Ts(inc.priceDate)){
-      out.unitPrice=srv.unitPrice;out.priceSource=srv.priceSource;out.priceDate=srv.priceDate;
+    // Layer A — price group (unitPrice+priceSource+priceDate+priceUpdatedAt): newer priceUpdatedAt
+    // wins the group. B016-2 FIX (Coach Finding 1): priceUpdatedAt is the DEDICATED last-writer
+    // clock (mirrors leadTimeUpdatedAt), stamped Date.now() at every price-group writer. priceDate
+    // is NOT a clock — it's the BC Starting_Date domain value (DECISION v1.19.641) and is
+    // legitimately null for deliberate user actions (clear-price, budgetary, AI-estimate). Keying
+    // Layer A on priceDate made those fresh null-priceDate edits (-Infinity) always lose to a server
+    // twin holding a real priceDate → silent revert. Transfer the whole group together on server win.
+    if(_b016Ts(srv.priceUpdatedAt)>_b016Ts(inc.priceUpdatedAt)){
+      out.unitPrice=srv.unitPrice;out.priceSource=srv.priceSource;out.priceDate=srv.priceDate;out.priceUpdatedAt=srv.priceUpdatedAt;
     }
     // Layer A — lead-time group: newer leadTimeUpdatedAt wins the group.
     if(_b016Ts(srv.leadTimeUpdatedAt)>_b016Ts(inc.leadTimeUpdatedAt)){
@@ -5213,7 +5220,7 @@ async function _bcReVerifyNotInBc(bom){
     if(item){
       updates[String(row.id)]={
         bcVerify:{status:"in-bc",at:Date.now(),reVerified:true},
-        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{}),
+        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,priceUpdatedAt:Date.now(),bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{}),
         ...(row.restoreSkipped?{restoreSkipped:null}:{})
       };
     }
@@ -5228,7 +5235,7 @@ async function _bcReVerifyNotInBc(bom){
         const pn=r?(r.partNumber||"").trim():null;
         const pp=pn?ppMap.get(pn):null;
         if(pp&&pp.startingDate&&pp.directUnitCost>0){
-          updates[k]={...updates[k],unitPrice:pp.directUnitCost,priceDate:pp.startingDate,bcPoDate:pp.startingDate};
+          updates[k]={...updates[k],unitPrice:pp.directUnitCost,priceDate:pp.startingDate,priceUpdatedAt:Date.now(),bcPoDate:pp.startingDate};
         }
       }
     }catch(e){console.warn("[BC RE-VERIFY] PurchasePrices fetch failed:",e.message);}
@@ -11189,7 +11196,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
           heldBackAlternates.push({rowId:r.id,from:pn,to:alt.replacement.partNumber,toDesc:alt.replacement.description||""});
         }else{
           appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
-          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,priceUpdatedAt:Date.now(),isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
         }
       }
       // v1.19.977: log when an alternate exists for this PN but isn't set to
@@ -11222,7 +11229,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
       const match=userDescCrosses.find(c=>_descCrossNorm(c.description)===normDesc);
       if(match&&match.replacement?.partNumber){
         appliedLog.push({rowId:r.id,kind:"descriptionCross",from:`(no PN) "${r.description}"`,to:match.replacement.partNumber,reason:"auto-fill from description cross DB"});
-        return{...r,partNumber:match.replacement.partNumber,manufacturer:match.replacement.manufacturer||r.manufacturer,unitPrice:match.replacement.unitCost??r.unitPrice,priceSource:"bc",isDescriptionCross:true,descriptionCrossFrom:r.description,confidence:"high"};
+        return{...r,partNumber:match.replacement.partNumber,manufacturer:match.replacement.manufacturer||r.manufacturer,unitPrice:match.replacement.unitCost??r.unitPrice,priceSource:"bc",priceUpdatedAt:Date.now(),isDescriptionCross:true,descriptionCrossFrom:r.description,confidence:"high"};
       }
     }
     return r;
@@ -15502,6 +15509,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
               ...(matchedBcNo?{bcNo:matchedBcNo}:{}),
               ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
               priceSource:"bc",
+              priceUpdatedAt:Date.now(),
               ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
               bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
               bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||"",
@@ -15552,7 +15560,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
       const aiPrices=await estimatePrices(unpricedBom);
       updatedBom=updatedBom.map(r=>{
         const ap=aiPrices[String(r.id)];
-        if(ap&&ap.unitPrice>0)return{...r,unitPrice:ap.unitPrice,priceSource:"ai",priceDate:Date.now(),aiBasis:ap.basis||"",aiSources:ap.sources||[]};
+        if(ap&&ap.unitPrice>0)return{...r,unitPrice:ap.unitPrice,priceSource:"ai",priceDate:Date.now(),priceUpdatedAt:Date.now(),aiBasis:ap.basis||"",aiSources:ap.sources||[]};
         return r;
       });
       console.log(`[BG PRICING] AI: ${Object.values(aiPrices).filter(p=>p&&p.unitPrice>0).length}/${unpricedBom.length} priced`);
@@ -24417,7 +24425,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // DECISION(v1.20.110, C5 guard): Hold back auto-cross on panel mount when manualVerifyRequired
           if(_mvr){heldAlt++;return r;}
           changed=true;appliedAlt++;
-          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,priceUpdatedAt:Date.now(),isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
         }
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn)||c.badPN===pn.slice(0,20)||normPN(c.badPN)===normPN(pn.slice(0,20)));
         if(corr){
@@ -24568,10 +24576,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(!priceChanged&&!dateChanged)return r;
           changed=true;
           changedIds.push(String(r.id));
-          // B016-1(b-companion, Decision 1): stamp priceDate when unitPrice changes so the
-          // later last-writer-by-timestamp row-merge (B016-2) can't let a stale snapshot
-          // out-rank this fresh poll price.
-          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice,priceDate:Date.now()}:{})};
+          // B016-2 FIX (Coach Finding 1, revert of B016-1(b) Decision 1): stamp the dedicated
+          // priceUpdatedAt clock when unitPrice changes so the last-writer row-merge (B016-2)
+          // can't let a stale snapshot out-rank this fresh poll price. priceDate is LEFT as the
+          // BC Starting_Date domain value (bcPoDate reflects the poll's date) — the earlier
+          // band-aid set priceDate=Date.now() which polluted priceDate's staleness-highlight
+          // semantics; that is now undone.
+          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice,priceUpdatedAt:Date.now()}:{})};
         });
         if(changed){
           const updated={...fresh,bom:newBom};
@@ -27244,7 +27255,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // Clearing price — no popup needed
       const updatedBom=(panel.bom||[]).map(r=>{
         if(r.id!==id)return r;
-        const next={...r,unitPrice:null,priceSource:null,priceDate:null};
+        const next={...r,unitPrice:null,priceSource:null,priceDate:null,priceUpdatedAt:Date.now()};
         const _ecoTag=_ecoTagForEdit(r);
         if(_ecoTag)Object.assign(next,_ecoTag);
         return next;
@@ -27267,7 +27278,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(CONTINGENCY_PNS.has(pn.toUpperCase())||/^job.?buyoff$/i.test(pn)||/^crat(e|ing)$/i.test((row?.description||"").trim())){
       const updatedBom=(panel.bom||[]).map(r=>{
         if(r.id!==id)return r;
-        const next={...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now()};
+        const next={...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now(),priceUpdatedAt:Date.now()};
         const _ecoTag=_ecoTagForEdit(r);
         if(_ecoTag)Object.assign(next,_ecoTag);
         return next;
@@ -27296,7 +27307,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Budgetary: update BOM only, no BC push, no priceDate (show as dashed/unpriced)
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"manual",priceDate:null};
+      const next={...r,unitPrice:price,priceSource:"manual",priceDate:null,priceUpdatedAt:Date.now()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -27318,7 +27329,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // price that's been pushed to BC.
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now}};
+      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,priceUpdatedAt:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now}};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -27352,7 +27363,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // overwrite the user's typed value with BC's stale price.
       if(!bcPushOk){
         const lp=latestPanelRef.current;
-        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,bcPoDate:null,bcVerify:{status:"manual",at:now}}:r);
+        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,priceUpdatedAt:now,bcPoDate:null,bcVerify:{status:"manual",at:now}}:r);
         const reverted={...lp,bom:revertBom};
         latestPanelRef.current=reverted;onUpdate(reverted);
         try{onSaveImmediate(reverted);}catch(e){console.warn("BC push revert save failed:",e);}
@@ -27729,6 +27740,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 ...(matchedBcNo?{bcNo:matchedBcNo}:{}),
                 ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
                 priceSource:"bc",
+                priceUpdatedAt:Date.now(),
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
                 bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
                 bcVendorNo:bcMap[key].bcVendorNo||r.bcVendorNo||"",
@@ -27851,7 +27863,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pn=(r.partNumber||"").trim().toUpperCase();
           if(codaleMap[pn]){
             codaleCount++;codalePns.add((r.partNumber||"").trim());
-            const updates={unitPrice:codaleMap[pn].price,priceSource:"bc"};
+            const updates={unitPrice:codaleMap[pn].price,priceSource:"bc",priceUpdatedAt:Date.now()};
             // DECISION(v1.19.690): Parse Codale leadTime ("14 days" / "2 weeks" / "14d" / "21").
             if(codaleMap[pn].leadTime&&r.leadTimeSource!=="supplier"){
               const ltStr=String(codaleMap[pn].leadTime).trim();
@@ -27962,7 +27974,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               if(!isNaN(numPrice)&&numPrice>0){
                 scraperCount++;
                 scrapedPns.add((r.partNumber||"").trim());
-                updates={unitPrice:numPrice,priceSource:"bc"};
+                updates={unitPrice:numPrice,priceSource:"bc",priceUpdatedAt:Date.now()};
               }
             }
             // DECISION(v1.19.690): Scraper returns leadTime field via extract-step.
@@ -28052,7 +28064,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               // DECISION(v1.19.641): AI estimates don't get priceDate — the BC Purchase Card
               // is the sole source of priceDate per the user's rule. AI-priced rows show the
               // ARC AI pill but no Priced Date. They'll retry on the next pricing run.
-              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,aiSources:ai.sources||[],aiBasis:ai.basis||""};
+              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,priceUpdatedAt:Date.now(),aiSources:ai.sources||[],aiBasis:ai.basis||""};
             }
             return r;
           });
@@ -37588,7 +37600,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(!d)return r;
         // clear any prior dismissal since we're now accepting the update
         const{bcPriceCheckDismissed,...rest}=r;
-        return{...rest,unitPrice:d.bcPrice,priceDate:d.bcDate,bcPoDate:d.bcDate,priceSource:'bc'};
+        return{...rest,unitPrice:d.bcPrice,priceDate:d.bcDate,priceUpdatedAt:Date.now(),bcPoDate:d.bcDate,priceSource:'bc'};
       })};
     });
     const updatedProj={...projectRef.current,panels:updatedPanels};
@@ -39048,7 +39060,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               ?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}
               :row;
           }
-          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName,...ltPatch};
+          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,priceUpdatedAt:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName,...ltPatch};
         }
         return Object.keys(ltPatch).length?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}:row;
       })
@@ -39599,7 +39611,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     return{...r,bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
                   }
                   applied++;
-                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
+                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceUpdatedAt:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
                 }
                 return r;
               });
@@ -39991,6 +40003,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 patch.unitPrice=u.price;
                 patch.priceSource="bc";
                 patch.priceDate=now;
+                patch.priceUpdatedAt=now;
                 patch.bcPoDate=now;
                 if(vendorName)patch.bcVendorName=vendorName;
               }

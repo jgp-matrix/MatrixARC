@@ -62,34 +62,78 @@ assert('_b016Ts numeric string', _b016Ts('1500') === 1500);
   assert('content edit wins partNumber', rowById(merged, 'a').partNumber === 'NEW-PN');
 }
 
-// ── Layer A price group: newer priceDate wins ──
+// ── Layer A price group: newer priceUpdatedAt wins (B016-2 FIX — keyed on the dedicated clock,
+//    NOT priceDate, which is the BC Starting_Date domain value and legitimately null) ──
 {
-  // server priceDate NEWER → server price group wins
+  // server priceUpdatedAt NEWER → server price group wins (whole group transferred together)
   const m1 = _mergeBomOnSave(
-    [{ id: 'a', unitPrice: 10, priceSource: 'manual', priceDate: 1000 }],
-    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000 }],
+    [{ id: 'a', unitPrice: 10, priceSource: 'manual', priceDate: 1000, priceUpdatedAt: 1000 }],
+    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
     []
   );
   const r1 = rowById(m1, 'a');
   assert('price group: newer server wins unitPrice', r1.unitPrice === 22);
   assert('price group: newer server wins priceSource', r1.priceSource === 'bc');
   assert('price group: newer server wins priceDate', r1.priceDate === 2000);
+  assert('price group: newer server wins priceUpdatedAt', r1.priceUpdatedAt === 2000);
 
-  // incoming priceDate NEWER → incoming wins (F019 completion / user re-price)
+  // incoming priceUpdatedAt NEWER → incoming wins (F019 completion / user re-price)
   const m2 = _mergeBomOnSave(
-    [{ id: 'a', unitPrice: 33, priceSource: 'bc', priceDate: 5000 }],
-    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000 }],
+    [{ id: 'a', unitPrice: 33, priceSource: 'bc', priceDate: 5000, priceUpdatedAt: 5000 }],
+    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
     []
   );
-  assert('price group: newer incoming wins', rowById(m2, 'a').unitPrice === 33 && rowById(m2, 'a').priceDate === 5000);
+  assert('price group: newer incoming wins', rowById(m2, 'a').unitPrice === 33 && rowById(m2, 'a').priceUpdatedAt === 5000);
 
-  // equal priceDate → incoming stays (base {...inc}); F019 tie still lands its price
+  // equal priceUpdatedAt → incoming stays (base {...inc}); F019 tie still lands its price
   const m3 = _mergeBomOnSave(
-    [{ id: 'a', unitPrice: 44, priceSource: 'bc', priceDate: 2000 }],
-    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000 }],
+    [{ id: 'a', unitPrice: 44, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
+    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
     []
   );
-  assert('price group: equal priceDate → incoming kept (F019 tie lands)', rowById(m3, 'a').unitPrice === 44);
+  assert('price group: equal priceUpdatedAt → incoming kept (F019 tie lands)', rowById(m3, 'a').unitPrice === 44);
+
+  // priceDate must NOT act as the clock: a fresh incoming edit with priceDate:null but a NEWER
+  // priceUpdatedAt beats a server twin holding a real priceDate. (Regression guard for Finding 1.)
+  const m4 = _mergeBomOnSave(
+    [{ id: 'a', unitPrice: 15, priceSource: 'manual', priceDate: null, priceUpdatedAt: 9000 }],
+    [{ id: 'a', unitPrice: 22, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
+    []
+  );
+  const r4 = rowById(m4, 'a');
+  assert('price group: null-priceDate incoming with newer clock wins (not reverted)', r4.unitPrice === 15 && r4.priceSource === 'manual' && r4.priceDate === null);
+}
+
+// ── Finding 1 BLOCKER regression: clear-price over a BC-priced server row → STAYS CLEARED ──
+{
+  // User clears the price (unitPrice/priceSource/priceDate all null) with a fresh priceUpdatedAt.
+  // A concurrent server twin holds a real BC price + priceDate. Under the OLD priceDate-keyed
+  // Layer A this cleared edit (priceDate:null = -Infinity) always lost to the server → silent
+  // revert. Now the fresh priceUpdatedAt wins and the clear sticks.
+  const mClear = _mergeBomOnSave(
+    [{ id: 'a', qty: 1, unitPrice: null, priceSource: null, priceDate: null, priceUpdatedAt: 9000 }],
+    [{ id: 'a', qty: 1, unitPrice: 22, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
+    []
+  );
+  const rc = rowById(mClear, 'a');
+  assert('clear-price: unitPrice stays null (not reverted to BC)', rc.unitPrice === null);
+  assert('clear-price: priceSource stays null', rc.priceSource === null);
+  assert('clear-price: priceDate stays null', rc.priceDate === null);
+}
+
+// ── Finding 1 BLOCKER regression: budgetary price over a BC-priced server row → STAYS BUDGETARY ──
+{
+  // Budgetary edit = manual price with NO priceDate (priceDate:null by design). Fresh
+  // priceUpdatedAt must beat the server's BC price+date so the budgetary value holds.
+  const mBudget = _mergeBomOnSave(
+    [{ id: 'a', qty: 1, unitPrice: 15, priceSource: 'manual', priceDate: null, priceUpdatedAt: 9000 }],
+    [{ id: 'a', qty: 1, unitPrice: 22, priceSource: 'bc', priceDate: 2000, priceUpdatedAt: 2000 }],
+    []
+  );
+  const rb = rowById(mBudget, 'a');
+  assert('budgetary: unitPrice stays 15 (not reverted to BC 22)', rb.unitPrice === 15);
+  assert('budgetary: priceSource stays manual', rb.priceSource === 'manual');
+  assert('budgetary: priceDate stays null', rb.priceDate === null);
 }
 
 // ── Layer A lead-time group: newer leadTimeUpdatedAt wins ──
@@ -161,12 +205,12 @@ assert('_b016Ts numeric string', _b016Ts('1500') === 1500);
   // F019 save carries fresh prices (priceDate 8000); a stale peer save on the server holds
   // the pre-reprice snapshot (priceDate 3000) + a manual qty edit the user made meanwhile.
   const f019Incoming = [
-    { id: 'r1', qty: 1, unitPrice: 12.5, priceSource: 'bc', priceDate: 8000 },
-    { id: 'r2', qty: 1, unitPrice: 7.0, priceSource: 'bc', priceDate: 8000 },
+    { id: 'r1', qty: 1, unitPrice: 12.5, priceSource: 'bc', priceDate: 8000, priceUpdatedAt: 8000 },
+    { id: 'r2', qty: 1, unitPrice: 7.0, priceSource: 'bc', priceDate: 8000, priceUpdatedAt: 8000 },
   ];
   const staleServer = [
-    { id: 'r1', qty: 4, unitPrice: 0, priceSource: null, priceDate: 3000, cannotSupply: false },
-    { id: 'r2', qty: 1, unitPrice: 0, priceSource: null, priceDate: 3000 },
+    { id: 'r1', qty: 4, unitPrice: 0, priceSource: null, priceDate: 3000, priceUpdatedAt: 3000, cannotSupply: false },
+    { id: 'r2', qty: 1, unitPrice: 0, priceSource: null, priceDate: 3000, priceUpdatedAt: 3000 },
   ];
   const m = _mergeBomOnSave(f019Incoming, staleServer, []);
   assert('F019: fresh price lands (r1)', rowById(m, 'r1').unitPrice === 12.5 && rowById(m, 'r1').priceSource === 'bc');
