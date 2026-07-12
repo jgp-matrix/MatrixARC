@@ -25742,7 +25742,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // B016-1(c): null the ref when the timer fires so its truthiness reliably means
     // "a planning-line sync is pending" (used by the sell-price patch to coalesce).
     bcAutoSyncTimer.current=setTimeout(()=>{bcAutoSyncTimer.current=null;syncPlanningLinesToBC();},3000);
-    return()=>{if(bcAutoSyncTimer.current)clearTimeout(bcAutoSyncTimer.current);};
+    return()=>{if(bcAutoSyncTimer.current){clearTimeout(bcAutoSyncTimer.current);bcAutoSyncTimer.current=null;}};
   },[JSON.stringify((panel.bom||[]).map(r=>r.id+'|'+r.priceSource)),_ecoSig]);
 
   // DECISION(v1.19.452): Auto-sync sell price to BC line 10000 whenever material/labor costs change.
