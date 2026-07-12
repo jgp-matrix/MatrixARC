@@ -1033,6 +1033,85 @@ function _dedupBomRowIds(bom){
   if(fixed>0)console.warn("BOM ID DEDUP:",fixed,"duplicate ID(s) resolved");
   return result;
 }
+// ─── B016-2: Row-level merge-on-save (silent-mutation-revert class #86/B012) ───
+// A whole-panel background save (BC poll, F019 standalone pricing, auto-sync) can carry a
+// STALE snapshot of a row the user just edited; the pre-B016 "replace target panel" write
+// then silently reverted the edit. The merge below reconciles the incoming (client) BOM
+// against the FRESH server BOM per Jon's LOCKED policy: content edits win as the base,
+// protected groups resolve by last-writer-by-timestamp (Layer A), server-only metadata is
+// gap-filled (Layer B), and a server row missing from the incoming save is PRESERVED unless
+// explicitly deleted (via the transient `_deletedRowIds` marker, stamped at every delete
+// site and NEVER persisted). Pure fn (no I/O) → unit-testable in isolation.
+//
+// B016_METADATA_WHITELIST — fields restored ONLY when the incoming row omits them
+// (undefined = stale/never-set → preserve; explicit null = intentional clear → honored,
+// since null !== undefined). FLOOR = B016-PLAN §B016-2 + CLAUDE.md Data-Retention list,
+// finalized via an independent grep sweep of BOM-row field writers (2026-07-11). EXCLUDES
+// content fields (qty/partNumber/description/manufacturer/notes — governed by the {...incoming}
+// base) and the Layer-A numeric fields (unitPrice/priceDate/leadTimeDays/leadTimeUpdatedAt/
+// bcPoDate — governed by the timestamp groups below). Over-inclusion is safe (gap-fill is
+// undefined-only); omission is the only real risk, so the sweep leans inclusive.
+const B016_METADATA_WHITELIST=[
+  "isCrossed","crossedFrom","autoReplaced","isDescriptionCross","descriptionCrossFrom",
+  "isCorrection","correctionType",
+  "priceSource","bcVerify","bcFuzzySuggestions","bomVerification","extractionFeedbackLog",
+  "cannotSupply",
+  "techReviewFlag","techReviewFlagSource","techReviewResolved","techReviewResolvedBy","techReviewResolvedAt",
+  "leadTimeSource","leadTimeEstimated",
+  "bcVendorNo","bcVendorName","bcItemNumber","bcMatchType","confidence","_confDowngradeReason",
+  "supplierPartNumber","learnedPartNumber","suggestedPartNumber",
+  "aiBasis","aiSources",
+  "customerSupplied","isContingency","autoLoaded",
+  "ecoTag","ecoNumber","ecoOp","ecoModifiesBaseRowId","ecoOriginal","ecoCreatedAt",
+];
+// Coerce a timestamp-ish value to a comparable number. priceDate / bcPoDate are either
+// Date.now() ms OR a BC Starting_Date coerced to ms via getTime() (see bcFetchPurchasePrices);
+// leadTimeUpdatedAt is always Date.now() ms — all numeric ms. Missing → -Infinity (oldest).
+function _b016Ts(v){
+  if(typeof v==="number"&&isFinite(v))return v;
+  if(v==null)return -Infinity;
+  const n=+v;return isFinite(n)?n:-Infinity;
+}
+// Merge incoming BOM rows against the fresh server BOM. `deletedRowIds` = ids the caller
+// explicitly deleted this save (drop them iff the server still has them). Returns a new array.
+function _mergeBomOnSave(incomingBom,serverBom,deletedRowIds){
+  if(!Array.isArray(incomingBom))return incomingBom;            // nothing to merge
+  const srvArr=Array.isArray(serverBom)?serverBom:[];
+  if(!srvArr.length)return incomingBom;                         // brand-new panel → keep incoming verbatim
+  const srvById=new Map(srvArr.map(r=>[String(r&&r.id),r]));
+  const incomingIds=new Set(incomingBom.map(r=>String(r&&r.id)));
+  const deleted=new Set((Array.isArray(deletedRowIds)?deletedRowIds:[]).map(x=>String(x)));
+  // 1) Reconcile each incoming row against its server twin.
+  const merged=incomingBom.map(inc=>{
+    const srv=srvById.get(String(inc&&inc.id));
+    if(!srv)return inc;                                         // new row (user add) → keep incoming
+    const out={...inc};                                        // content edits win
+    // Layer A — price group (unitPrice+priceSource+priceDate): newer priceDate wins the group.
+    if(_b016Ts(srv.priceDate)>_b016Ts(inc.priceDate)){
+      out.unitPrice=srv.unitPrice;out.priceSource=srv.priceSource;out.priceDate=srv.priceDate;
+    }
+    // Layer A — lead-time group: newer leadTimeUpdatedAt wins the group.
+    if(_b016Ts(srv.leadTimeUpdatedAt)>_b016Ts(inc.leadTimeUpdatedAt)){
+      out.leadTimeDays=srv.leadTimeDays;out.leadTimeSource=srv.leadTimeSource;
+      out.leadTimeUpdatedAt=srv.leadTimeUpdatedAt;out.leadTimeEstimated=srv.leadTimeEstimated;
+    }
+    // Layer A — bcPoDate: monotonic max (only ever moves forward).
+    if(_b016Ts(srv.bcPoDate)>_b016Ts(inc.bcPoDate))out.bcPoDate=srv.bcPoDate;
+    // Layer B — metadata gap-fill: restore server metadata the incoming save dropped.
+    for(const f of B016_METADATA_WHITELIST){
+      if(inc[f]===undefined&&srv[f]!==undefined)out[f]=srv[f];
+    }
+    return out;
+  });
+  // 2) Delete-vs-add: a server row missing from the incoming save is PRESERVED (staleness)
+  //    unless the caller explicitly deleted it this save.
+  for(const srv of srvArr){
+    const sid=String(srv&&srv.id);
+    if(incomingIds.has(sid)||deleted.has(sid))continue;
+    merged.push(srv);
+  }
+  return merged;
+}
 // ─── Milestone E: ECO Flatten Utilities ───
 // Used by "Copy to New Quote" to collapse all ECO layers into a single flat BOM.
 // Process ECOs in number order (oldest first) for cumulative application.
@@ -9164,11 +9243,28 @@ async function saveProject(uid,project){
             newPanels[i]={...np,pages:merged};
           }
         }
-        // (2) bomVersion bump
+        // (2) bomVersion bump + B016-2 row-level merge-on-save (reuses the SAME fresh server
+        // read — curPanels — no extra Firestore read). Merge runs per-panel against its server
+        // twin (cp); the `_deletedRowIds` transient marker is consumed here and never persisted.
+        // saveProject has no per-panel _dedupBomRowIds call (that lives only in saveProjectPanel),
+        // so there is no dedup-ordering constraint here; the nBom===0 total-wipe belt (above)
+        // stays and composes — it runs before this loop.
         for(let i=0;i<newPanels.length;i++){
           const np=newPanels[i];
           const cp=curPanels.find(p=>p.id===np.id);
-          newPanels[i]=_bumpBomVersionIfChanged(np,cp);
+          let _np2=_bumpBomVersionIfChanged(np,cp);
+          if(_np2.bom&&cp){
+            const _del=Array.isArray(_np2._deletedRowIds)?_np2._deletedRowIds:[];
+            const _mergedBom=_mergeBomOnSave(_np2.bom,cp.bom,_del);
+            const {_deletedRowIds:_dropB016,...restB016}=_np2;
+            _np2={...restB016,bom:_mergedBom};
+            if(_b016Ts(cp.productionEndDateUpdatedAt)>_b016Ts(_np2.productionEndDateUpdatedAt)){
+              _np2={..._np2,productionEndDate:cp.productionEndDate,productionEndDateUpdatedAt:cp.productionEndDateUpdatedAt};
+            }
+          }else if(_np2._deletedRowIds!==undefined){
+            const {_deletedRowIds:_dropB016,...restB016}=_np2;_np2=restB016; // never persist the marker
+          }
+          newPanels[i]=_np2;
         }
         // DECISION(v1.19.960): Project-level admin-set field preservation guard.
         // Same pattern as the panel-level reviewNotes guard above (v1.19.776) but for
@@ -9325,6 +9421,29 @@ async function safeSave(uid,project,retries=2){
   }
   console.error("Save failed after all retries for project:",project?.id||project?.name);
   if(_saveFailBanner)_saveFailBanner("Save failed — changes may not be persisted. Check your connection.");
+  return false;
+}
+// B016-3: Resilient panel save. Mirror of safeSave for the per-panel path (saveProjectPanel).
+// Every user mutation (BOM row edit/add/delete, qty, panel name, LT writeback, ECO row collapse)
+// funnels through onSaveImmediate → saveImmediatePanel → saveProjectPanel; routing that funnel
+// through safeSavePanel makes ALL those mutations retry on transient failure and surface a visible
+// banner + debug-log entry instead of the old silent `try{onSaveImmediate}catch(e){}` swallow.
+// Never throws (returns false on final failure) so fire-and-forget call sites stay safe.
+async function safeSavePanel(uid,projectId,panelId,updatedPanel,skipNotify=false,retries=2){
+  for(let attempt=0;attempt<=retries;attempt++){
+    try{await saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify);return true;}
+    catch(e){
+      console.warn(`Panel save failed (attempt ${attempt+1}/${retries+1}):`,e.message);
+      if(attempt<retries)await new Promise(r=>setTimeout(r,2000));
+      else{
+        console.error("Panel save failed after all retries:",projectId,panelId,e&&e.message);
+        if(_saveFailBanner)_saveFailBanner("Save failed — changes may not be persisted. Check your connection.");
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"error",source:"safeSavePanel",message:`Panel save failed after ${retries+1} attempts: ${e&&e.message||e}`,extra:{projectId,panelId}});
+        }
+      }
+    }
+  }
   return false;
 }
 
@@ -9508,6 +9627,24 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // saveProject's all-panel loop handles it. Re-saves with no BOM change leave the field
     // untouched.
     safeUpdated=_bumpBomVersionIfChanged(safeUpdated,existingTarget);
+    // B016-2: Row-level merge-on-save. Reconcile the incoming BOM against the FRESH server
+    // BOM (existingTarget — the same server read this fn already did at ref.get()) so a stale
+    // whole-panel save can't silently revert a row the user just edited. Runs AFTER the pages/
+    // notes/shapes merge + bomVersion bump and BEFORE _dedupBomRowIds (dedup reassigns duplicate
+    // ids → would break id-matching if run first). `_deletedRowIds` is a transient marker
+    // stamped at delete sites — consumed here, never persisted.
+    if(safeUpdated.bom&&existingTarget){
+      const _del=Array.isArray(safeUpdated._deletedRowIds)?safeUpdated._deletedRowIds:[];
+      const _mergedBom=_mergeBomOnSave(safeUpdated.bom,existingTarget.bom,_del);
+      const {_deletedRowIds:_dropB016,...restB016}=safeUpdated;
+      safeUpdated={...restB016,bom:_mergedBom};
+      // productionEndDate panel-level last-writer resolution (Decision 2): newer stamp wins.
+      if(_b016Ts(existingTarget.productionEndDateUpdatedAt)>_b016Ts(safeUpdated.productionEndDateUpdatedAt)){
+        safeUpdated={...safeUpdated,productionEndDate:existingTarget.productionEndDate,productionEndDateUpdatedAt:existingTarget.productionEndDateUpdatedAt};
+      }
+    }else if(safeUpdated._deletedRowIds!==undefined){
+      const {_deletedRowIds:_dropB016,...restB016}=safeUpdated;safeUpdated=restB016; // never persist the marker
+    }
     // PRJ402109: Defensive dedup — resolve any duplicate BOM row IDs before writing
     if(safeUpdated.bom)safeUpdated={...safeUpdated,bom:_dedupBomRowIds(safeUpdated.bom)};
     let panels=(proj.panels||[]).map(p=>p.id===panelId?safeUpdated:p);
@@ -17167,7 +17304,11 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
     const newPanels=panels.map(p=>p.id===pickedPanel.id?{...p,bom:newBom}:p);
     const updated={...project,panels:newPanels,updatedAt:Date.now()};
     onUpdateProject&&onUpdateProject(updated);
-    onSaveImmediate&&onSaveImmediate(updated);
+    // B016-2: stamp the explicit delete on the SAVE payload only (never into React state via
+    // onUpdateProject) so the save-merge (saveProject) drops this server row rather than
+    // preserving it as a stale absence. Marker is stripped before the Firestore write.
+    const _savePanels=newPanels.map(p=>p.id===pickedPanel.id?{...p,_deletedRowIds:[String(rowId)]}:p);
+    onSaveImmediate&&onSaveImmediate({...updated,panels:_savePanels});
   }
 
   // DECISION(v1.19.819, ECO Phase 2.J Stage 1 fix): handleEcoFiles renders dropped
@@ -25309,7 +25450,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.951): customerApprovalDays no longer saved from the panel
     // header — moved to the Engineering Drawings ServicesCard. Existing field
     // value on the panel remains untouched for backward compatibility.
-    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode};
+    // B016-2 (Decision 2): stamp productionEndDateUpdatedAt only when the ship-date value
+    // actually changes, so the save-merge's panel-level last-writer resolution has a precise
+    // per-field timestamp (a drawingNo-only edit won't bump it and out-rank a concurrent date edit).
+    const _prodEndChanged=(prodEnd||null)!==(panel.productionEndDate||null);
+    const updated={...panel,drawingNo:newNo,drawingDesc:newDesc,drawingRev:newRev,requestedShipDate:draftShipDate,productionEndDate:prodEnd,productionEndMode:prodMode,productionEndDateUpdatedAt:_prodEndChanged?Date.now():(panel.productionEndDateUpdatedAt??null)};
     onUpdate(updated);
     try{onSaveImmediate(updated);}catch(e){}
     // DECISION(v1.19.632) Phase 2: If user's value differs from the last AI extraction, save the
@@ -25803,6 +25948,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     const remaining=pages.filter(p=>p.id!==id);
     let updated={...panel,pages:remaining};
+    let _b016BulkDeleted=null; // B016-2: ids of BOM rows cleared by the last-page-removed cascade
     if(remaining.length===0){
       // DECISION(v1.19.658): When all drawings are removed, clear EVERYTHING derived from
       // them — including laborData, bomAudit, bomVerification, engineeringQuestions,
@@ -25820,9 +25966,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         extractionFeedbackLog:[],
       };
       setDraftNo("");setDraftDesc("");setDraftRev("");ep.stop();setErr("");
+      // B016-2: this is an INTENTIONAL full-BOM clear (all drawings removed → bom:[]). Mark every
+      // current row deleted so the save-merge honors the wipe instead of restoring the rows as a
+      // stale absence. (Concurrent server-only adds not in this list are still preserved.)
+      _b016BulkDeleted=(panel.bom||[]).map(r=>String(r.id));
     }
     onUpdate(updated);
-    try{onSaveImmediate(updated);}catch(e){}
+    try{onSaveImmediate(_b016BulkDeleted?{...updated,_deletedRowIds:_b016BulkDeleted}:updated);}catch(e){}
   }
 
   async function autoDetect(){
@@ -26478,6 +26628,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Set whenever this redirect creates a new row OR mutates an existing one
     // (so the user sees the change land below the CHANGE ORDER separator).
     let _flashRowId=null;
+    let _b016CollapsedId=null; // B016-2: id of an ECO modify-row collapsed (removed) this edit
     if(field==="qty"){
       const newQty=Number(val);
       if(!isFinite(newQty)){
@@ -26497,7 +26648,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             existing.manufacturer!==(base.manufacturer||"")||
             (existing.unitPrice??null)!==(base.unitPrice??null);
           if(!hasOtherChanges){
-            bom=bom.filter(r=>r.id!==existing.id);
+            bom=bom.filter(r=>r.id!==existing.id);_b016CollapsedId=existing.id; // B016-2: collapsed ECO row → explicit delete
           }else{
             bom=bom.map(r=>r.id===existing.id?{...r,qty:delta}:r);
             _flashRowId=existing.id;
@@ -26551,7 +26702,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const hasMfrChange=String(updates.manufacturer||"")!==String(base.manufacturer||"");
           const hasPriceChange=(updates.unitPrice??null)!==(base.unitPrice??null);
           if(!hasQtyDelta&&!hasPnChange&&!hasDescChange&&!hasMfrChange&&!hasPriceChange){
-            bom=bom.filter(r=>r.id!==existing.id);
+            bom=bom.filter(r=>r.id!==existing.id);_b016CollapsedId=existing.id; // B016-2: collapsed ECO row → explicit delete
           }else{
             bom=bom.map(r=>r.id===existing.id?updates:r);
             _flashRowId=existing.id;
@@ -26592,7 +26743,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...src,bom};
     latestPanelRef.current=updated;
     onUpdate(updated);
-    try{onSaveImmediate(updated);}catch(e){}
+    // B016-2: if this edit collapsed (removed) an ECO modify-row, mark it deleted on the SAVE
+    // payload only (not React state / latestPanelRef) so the save-merge drops it rather than
+    // preserving it as a stale absence.
+    try{onSaveImmediate(_b016CollapsedId!=null?{...updated,_deletedRowIds:[String(_b016CollapsedId)]}:updated);}catch(e){}
     // DECISION(v1.19.928): Trigger scroll + highlight on the ECO row that was
     // just created/modified. The useEffect on `ecoFlashRowId` handles the DOM
     // query + smooth scroll + animation cleanup. Only fires when this redirect
@@ -26787,7 +26941,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(row.ecoTag===_activeEcoId){
           // Revert: physical delete. Base row (if any) is unaffected.
           const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
-          onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+          onUpdate(updated);try{onSaveImmediate({...updated,_deletedRowIds:[String(id)]});}catch(e){} // B016-2: mark explicit delete on save payload only (not React state)
           return;
         }
         if(!row.ecoTag){
@@ -26801,7 +26955,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // BASE scope — physical delete (existing behavior).
     const delRow=(panel.bom||[]).find(r=>r.id===id);
     const updated={...panel,bom:(panel.bom||[]).filter(r=>r.id!==id)};
-    onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+    onUpdate(updated);try{onSaveImmediate({...updated,_deletedRowIds:[String(id)]});}catch(e){} // B016-2: mark explicit delete on save payload only (not React state)
     if(delRow){
       _trackBomChange({type:"delete",rowId:id,partNumber:delRow.partNumber||"",description:delRow.description||""});
       _logBomEdit("delete",id,delRow.partNumber,delRow.description,null,null,null);
@@ -34588,7 +34742,10 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
   }
   async function saveImmediatePanel(panelId,updatedPanel){
     const hasOverrides=!!_pendingPreReviewOverrides[project.id];
-    await saveProjectPanel(uid,project.id,panelId,updatedPanel,!hasOverrides);
+    // B016-3: route the single panel-save funnel through safeSavePanel (2 retries + visible
+    // banner + debug-log) so every user mutation that reaches onSaveImmediate is resilient —
+    // replacing the silent `try{onSaveImmediate}catch{}` swallow at the mutation call sites.
+    await safeSavePanel(uid,project.id,panelId,updatedPanel,!hasOverrides);
   }
   function saveSelectedPricing(patch){
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
