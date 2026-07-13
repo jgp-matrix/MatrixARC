@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-13 · prod v1.23.14 · B034+F005 + F021-1/2/3 SHIPPED
+## Current — ✅ SESSION 2026-07-13 · prod v1.23.15 · B034+F005 + FULL F021 (incl. quote heading) SHIPPED
+
+> ## ✅✅ SHIPPED 2026-07-13 — v1.23.15 (release `991b2915`): F021-4 quote heading (absorbs G010)
+> Quote line-items heading now shows **`<Customer Project #> / <Project Name>`** (e.g. "923455698 / Messabi") in place of "Line Items" — both PDF + on-screen, falls back to Project Name alone. Coach APPROVE. **Completes the full F021 feature + G010.** ⏳ Jon eyeball on a real quote.
 
 > ## ✅✅ SHIPPED 2026-07-13 — v1.23.14 (release `d6ddbd3e`): B034+F005 + F021-1/2/3 (one release)
 > **B034** (ASAP) — editing a SENT quote now bumps Qv.## on the first change after send (cap re-anchored on `max(quoteRevAtPrint,quoteSentRev)`), the quote flips to **In Process** + unlocks, and the divergence-warning modal shows Jon's exact text; never-sent cadence unchanged. **F005** — "🖨 Print Only" button in the locked overlay prints a PDF with NO rev bump / NO unlock. **F021-1/2/3** — new **CUSTOMER PROJECT #** field (New Project + inline-editable header on every project screen), bound to BC **External Document No.**; PO-received composes `Project#: X / PO#: Y`. Coach money-path-approved (F1 print-only-persist hole + F2 pill-on-never-sent both fixed pre-merge). **⏳ JON LIVE-TEST (on prod):** (a) send→edit bumps once→In Process→re-send; Print-Only=no bump/no unlock; never-sent unchanged; (b) F021 on a **DISPOSABLE BC project** — create→"Project#: X", PO→"Project#: X / PO#: Y", + confirm no BC-side report chokes on the composite. **Follow-ups filed:** B035 ($0 service-card send-block), B036 (`quoteSent*` preserve-guards), B037 (F021 header offline-queue). **F021-4** quote heading ("<cust#> / <name>", absorbs G010): **✅ Marc BUILT** `f021-4-quote-heading` (`dba3587f`, +13/−2) — `_quoteHeadingLabel` helper + both sites (PDF + on-screen), fallback to name. **✅ Coach APPROVE — deploy-ready** (`dba3587f`); HELD for Jon deploy (small standalone release).
