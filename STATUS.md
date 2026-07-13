@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 SESSION 2026-07-12 · prod v1.23.11 · master `0c55f6e9`
+## Current — 🚨 SESSION 2026-07-12 · prod v1.23.11 · EMERGENCY: active prod data-loss (C137 M1) — fix building
+
+> ## 🚨 EMERGENCY (2026-07-12) — ACTIVE PROD DATA-LOSS, fix in progress
+> Coach diagnosis (C148): the BOM-wipe is **NOT a B016 regression** — it's the **C137 M1 save-on-open** path, **live on prod v1.23.11**. Opening a **flat/panels-less** project can persist `migrateProject(stale init)` = `{panel-1, bom:[], status:'draft'}` wholesale → wipes the BOM + flips to draft (merge bypassed [no matching server panel], nBom belt skipped [first-save]). The fix (**C137 Phase A** — delete the save-on-open effect) was Jon-approved but landed on shelved `claude/phase-b-bom-merge`, **never on master**. **Marc lane building Phase A off master now → emergency prod deploy on Jon's go** (independent of the B016 matrix). Tracked: **B032 (CRITICAL)**. Scope: flat/panels-less projects (paneled projects have `didMigrate=false` → not hit).
 
 > ## 🌅 MORNING SUMMARY (for Jon — 2026-07-12 catch-up)
 > **Prod = v1.23.11.** Shipped + verified yesterday: **B021** (BC hang/deadlock timeout), **B013-1** (401 auto-recovery), **B013-2/3** (honest BC health pill + 401 sync-modal), **F019** (standalone pricing survives nav-away + tile bar — you verified), **nav-modal cleanup**. **Notifications fixed** (Priority-2 persistent/ack). **B028** scraper concurrent-login: verified not-an-active-problem (prod logs clean + Royal tolerates concurrent sessions) → tabled.

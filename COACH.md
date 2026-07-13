@@ -786,3 +786,21 @@ Row-id uniqueness verified SAFE for union-by-id: bom row ids are `"row-"+Date.no
 **All else PASS:** 21 stamped writers verified (excluded new-row/labor builders validated = fresh-id, no server twin → incoming wins); Layer A correctly re-keyed on `priceUpdatedAt` (whole group transferred); pollBcPricing revert correct (`priceDate` un-polluted); backward-compat correct (legacy no-clock → incoming wins); `priceUpdatedAt` preserved + correctly excluded from gap-fill whitelist; F2 adds (`bcNo`/`rfqSentDate`/`restoreSkipped`) all persisted/correct; no collateral (LT group, bcPoDate, delete-vs-add, `_deletedRowIds`, B012 guards, F019, B016-3 untouched); tests slice the REAL helper (no drift), **39/39 pass**, the 3 F1 scenarios genuinely covered + passing.
 
 **Conditional APPROVE:** after the one-line `commitBcItem` stamp lands, this is **APPROVE-for-deploy** quality, ready for the 2-session matrix — which should exercise clear-price / budgetary / AI **and the commitBcItem path** (assign a BC item on one session while a fresher poll write is pending on the other) to confirm in-app.
+
+---
+
+### C148 — 🚨 EMERGENCY: BOM-wipe root cause = C137 M1 save-on-open, LIVE ON PROD (NOT a B016 regression)
+
+**Date:** 2026-07-12 · **Mode:** diagnosis lane (Coach). Verified via `git show` (master vs b016-23-merge).
+
+**VERDICT: PROD v1.23.11 IS EXPOSED to this data-loss.** The nav-away BOM-wipe + status→draft is the **C137 M1 "save-on-open"** path, byte-identical on master/prod. B016-2's `_mergeBomOnSave` does NOT close it (merge is *bypassed* on this path); B016-3 is unrelated.
+
+**Mechanism:** the save-on-open effect (master ~`:37814/37863`, branch `:38030-38035`) fires `if(didMigrate.current){didMigrate.current=false; safeSave(uid,migrateProject(init));}` where `didMigrate=useRef(!init.panels)` → TRUE for flat/panels-less projects (or a dashboard-cached `init` lacking panels). `migrateProject(stale/empty init)` reshapes to `{panel-1, bom:q.bom||[], status:q.status||'draft'}` → empty `init.bom` yields **`bom:[], status:'draft'`** = the wipe payload (empty-bom + draft-status is the unique fingerprint). **Merge BYPASSED:** in `saveProject`, `cp=curPanels.find(p=>p.id===np.id)` is undefined for a flat server doc (no panels) → merge gated behind `if(_np2.bom&&cp)` never runs → the empty `panel-1` is written wholesale and the server's real panel is dropped. **nBom belt SKIPPED:** it's only in `saveProject`, gated on `_saveHighWater[project.id]` which is unset on the first save (the save-on-open IS the first save), then it poisons high-water from the empty write.
+
+**Timing:** the write lands on/near **OPEN** (effect at mount + `safeSave` 2s/4s retry on the not-yet-held lease). React state still shows the real BOM (first-snapshot migrate), so the user sees rows, adds one, then on **reopen** Firestore returns the already-wiped doc — hence the "on nav-away" observation.
+
+**Why the 39 tests missed it:** they exercised the merge in isolation with a non-empty, matching-id serverBom. On this path the merge is SKIPPED (`cp` undefined) → a unit test of a skipped function = zero coverage. They never modeled a flat/panels-less server doc, a panel-id mismatch, or the save-on-open feeding `migrateProject(stale init)`.
+
+**Prod-exposure ruling:** NOT branch-specific — master/prod v1.23.11 has the identical path (arguably worse: no merge at all). C137 **Phase A** (delete the save-on-open effect) was authored + Jon-approved but landed on `claude/phase-b-bom-merge` and was **never folded into master or b016-23-merge**.
+
+**FIX (priority):** (1) **DELETE the save-on-open effect + dead `didMigrate` ref (C137 Phase A) → emergency prod deploy, independent of the B016 matrix** (`migrateProject` re-runs on every onSnapshot, so migration still persists on the next real edit — deleting only removes the wipe vector). (2) Harden for `cp`-undefined: panel-level union so a server panel absent from incoming is preserved; add the nBom belt to `saveProjectPanel`. (3) Seed `_saveHighWater` from the server read on the first save; never seed high-water from a shrunk-to-empty bom. (4) If save-on-open must stay, save `projectRef.current` AFTER the first sync, never the stale `init`.
