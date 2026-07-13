@@ -5,15 +5,14 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 SESSION 2026-07-11 (AWAY MODE · Freddy solo-orchestrating a subagent fleet) · prod v1.23.10 · master `fce8b519`
+## Current — 🟢 SESSION 2026-07-12 · prod v1.23.11 · master `0c55f6e9`
 
 > ## 🌅 MORNING SUMMARY (for Jon — 2026-07-12 catch-up)
-> **Prod = v1.23.10.** Shipped + verified yesterday: **B021** (BC hang/deadlock timeout), **B013-1** (401 auto-recovery), **B013-2/3** (honest BC health pill + 401 sync-modal), **F019** (standalone pricing survives nav-away + tile bar — you verified), **nav-modal cleanup**. **Notifications fixed** (Priority-2 persistent/ack). **B028** scraper concurrent-login: verified not-an-active-problem (prod logs clean + Royal tolerates concurrent sessions) → tabled.
+> **Prod = v1.23.11.** Shipped + verified yesterday: **B021** (BC hang/deadlock timeout), **B013-1** (401 auto-recovery), **B013-2/3** (honest BC health pill + 401 sync-modal), **F019** (standalone pricing survives nav-away + tile bar — you verified), **nav-modal cleanup**. **Notifications fixed** (Priority-2 persistent/ack). **B028** scraper concurrent-login: verified not-an-active-problem (prod logs clean + Royal tolerates concurrent sessions) → tabled.
 >
-> **⏳ WAITING ON YOU — B016 (chain's last item) is BUILT + Coach-reviewed + STAGED on 2 branches, NOT deployed:**
-> - **`b016-1-churn` (`3f1ac068`)** — B016-1 on-open churn reduction. **Deploy-ready patch** (Coach found+fixed the F1 sell-price-coalesce bug). Deploy anytime; low-risk. *Nits:* F1b (accept/harden/drop the sell-price coalesce) · N1 (strip the `[B016-1]` breadcrumb before prod).
-> - **`b016-23-merge` (`2ae18bb3`)** — B016-2 row-merge (data-safety core) + B016-3 resilient mutations, on the B016-1 base. **Coach APPROVE-for-deploy** (2 review rounds caught+fixed a HIGH money-path silent-revert; Layer A now keys the price group on a new `priceUpdatedAt` clock stamped at 22 price-writers; 39 tests pass). **Before deploy you need: (a) a nod on the `priceDate`→`priceUpdatedAt` refinement [it SUPERSEDES Decision-1 — Coach found priceDate is the wrong key]; (b) the 2-session ADD+DELETE matrix — now MUST include clear-price / budgetary / AI-estimate / commitBcItem rows.**
-> - **Recommended order:** deploy `b016-1-churn` (patch) → run the matrix on `b016-23-merge` → deploy it (minor). `b016-23-merge` already contains B016-1 (it's a superset).
+> **B016 status (chain's last item):**
+> - ✅ **B016-1 (churn reduction) DEPLOYED to prod v1.23.11** (2026-07-12, release `0c55f6e9`). N1 breadcrumb stripped pre-prod; Jon approved `priceDate`→`priceUpdatedAt`. ⏳ **F1b still open** (the sell-price coalesce's minor self-healing transient — accept / harden via latestPanelRef / drop the coalesce; shipped as a documented known-transient per Coach's deploy-ready-with-F1b).
+> - ⏳ **`b016-23-merge` — B016-2 row-merge (data-safety core) + B016-3, Coach APPROVE-for-deploy, HELD for Jon's 2-session matrix.** (2 review rounds caught+fixed a HIGH money-path silent-revert; Layer A keys the price group on the new `priceUpdatedAt` clock @ 22 price-writers; 39 tests pass.) **Before deploy: run the 2-session ADD+DELETE matrix — MUST include clear-price / budgetary / AI-estimate / commitBcItem rows — then deploy (minor).** Being kept rebased on the deployed B016-1 so the matrix runs the exact code that'll ship.
 >
 > **Open flags/decisions:** priceDate→priceUpdatedAt (approve) · F1b + N1 (B016-1 nits) · :24501 cosmetic priceDate-backfill unstamped (reasoned non-risk — your call on consistency) · **B029** (per-row ⚠ pill 401, LOW) · **B030** (:27119 silent catch, LOW). Docs: `docs/B016-PLAN.md` · `docs/BC-RELIABILITY-PLAN.md` · `docs/F014-BC-PAYMENT-TERMS-RESEARCH.md`. Review trail: COACH.md **C141–C147**.
 >
