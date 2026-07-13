@@ -35766,49 +35766,23 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
         <div style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",overflow:"hidden"}}>
           {(()=>{
             const sp=(project.panels||[]).find(p=>p.id===selectedPanelId)||(project.panels||[])[0]||null;
-            // DECISION(v1.19.919, Step E): If the project has no panels but does
-            // have service cards (e.g. an Engineering-only quote), render a
-            // simplified right pane showing the service cards + project total
-            // instead of the bare "No panels" placeholder.
-            if(!sp){
-              const _serviceCards=project.serviceCards||[];
-              if(_serviceCards.length>0){
-                const pfmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
-                const total=computeAllServiceCardsTotal(project);
-                return(
-                  <div style={{padding:16,display:"flex",flexDirection:"column",gap:12,height:"100%",overflowY:"auto"}}>
-                    <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5,display:"flex",alignItems:"center",gap:8}}>QUOTE SUMMARY{project.quoteRev>0?` — Qv.${String(project.quoteRev).padStart(2,'0')}`:""}{(project.reviewRev||0)>0&&<span style={{fontSize:11,fontWeight:700,color:"#fbbf24",background:"rgba(251,191,36,0.12)",border:"1px solid #fbbf2455",borderRadius:6,padding:"2px 8px",letterSpacing:0.3}}>Rv.{String(project.reviewRev).padStart(2,'0')}</span>}</div>
-                    <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                      {_serviceCards.slice().sort((a,b)=>(+a.createdAt||0)-(+b.createdAt||0)).map(sc=>{
-                        const isSel=sc.id===selectedPanelId;
-                        const t=computeServiceCardTotal(sc);
-                        const accentColor=sc.lineType==="commissioning"?"#fb923c":sc.lineType==="programming"?"#38bdf8":"#a78bfa";
-                        const accentBg=sc.lineType==="commissioning"?"#2a1a0a":sc.lineType==="programming"?"#0a1a28":"#1a0a28";
-                        const iconChar=sc.lineType==="commissioning"?"🔧":sc.lineType==="programming"?"💻":null;
-                        const labelTxt=sc.description||SERVICE_CARD_LABELS[sc.lineType]||"Service";
-                        const qtyTxt=sc.priceMode==="hourly"?`${+sc.qty||0}h`:`${+sc.qty||1}`;
-                        return(
-                          <div key={sc.id} onClick={()=>setSelectedPanelId(sc.id)}
-                            style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",borderRadius:6,background:isSel?"#1a1a2e":"transparent",border:`1px solid ${isSel?C.accent:C.border}`,cursor:"pointer"}}>
-                            <span style={{fontSize:12,fontWeight:700,color:"#fff",minWidth:24,textAlign:"center"}}>{qtyTxt}</span>
-                            {iconChar&&<span style={{fontSize:13}}>{iconChar}</span>}
-                            <span style={{fontSize:9,fontWeight:800,color:accentColor,background:accentBg,borderRadius:3,padding:"1px 5px",letterSpacing:0.4,whiteSpace:"nowrap"}}>{(SERVICE_CARD_LABELS[sc.lineType]||"").toUpperCase()}</span>
-                            <span style={{fontSize:12,color:isSel?C.accent:C.sub,fontWeight:isSel?700:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1,minWidth:0}}>{labelTxt}</span>
-                            <Badge status={sc.status||"draft"}/>
-                            <span style={{fontSize:13,fontWeight:700,color:t>0?C.text:C.muted,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{t>0?pfmt(t):"—"}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 10px",marginTop:4,borderTop:"1px solid #fff"}}>
-                      <span style={{fontSize:12,fontWeight:700,color:C.muted,letterSpacing:0.5}}>PROJECT TOTAL</span>
-                      <span style={{fontSize:16,fontWeight:800,color:"#fff",fontVariantNumeric:"tabular-nums"}}>{pfmt(total)}</span>
-                    </div>
-                  </div>
-                );
-              }
-              return <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:40}}>No quote lines</div>;
-            }
+            // B033: A commissioning/programming-only quote (no control panels —
+            // services live in project.serviceCards) must still render the QUOTE
+            // SUMMARY + action buttons. Previously !sp took a simplified branch
+            // with no action buttons at all. We now hoist the sp-independent
+            // scope, render the panel-detail pane only when a panel exists, and
+            // always render the shared quote-summary/action pane whenever the
+            // project has any quote line (panel OR service card).
+            const _hasServices=(project.serviceCards||[]).length>0;
+            if(!sp&&!_hasServices)return <div style={{color:C.muted,fontSize:13,textAlign:"center",marginTop:40}}>No quote lines</div>;
+            const inEcoSummaryScope=activeScope?.type==="eco"&&activeScope?.ecoId;
+            const activeEcoIdForSummary=inEcoSummaryScope?activeScope.ecoId:null;
+            const activeEcoNumberForSummary=inEcoSummaryScope?activeScope.ecoNumber||0:0;
+            const pendingBcCount=(sp?.bom||[]).filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
+            // Panel-detail pane (PANEL SUMMARY / pricing / labor / confidence).
+            // Rendered only when a control panel is selected; services-only
+            // quotes skip it entirely (no panel = no labor table / ship-date).
+            const panelDetailPane=sp?(()=>{
             const pr=sp.pricing||{};
             const markup=pr.markup??30;
             const laborRate=pr.laborRate??45;
@@ -35821,9 +35795,9 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             // and per-ECO deltas so the Panel Summary breakdown shows BASE as a
             // reference + ECO contribution + NEW TOTAL when in ECO scope.
             const baseMatCost=bom.filter(r=>!r.isLaborRow&&!r.ecoTag).reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-            const inEcoSummaryScope=activeScope?.type==="eco"&&activeScope?.ecoId;
-            const activeEcoIdForSummary=inEcoSummaryScope?activeScope.ecoId:null;
-            const activeEcoNumberForSummary=inEcoSummaryScope?activeScope.ecoNumber||0:0;
+            // B033: inEcoSummaryScope / activeEcoIdForSummary / activeEcoNumberForSummary
+            // are hoisted above (sp-independent) so the shared quote pane can use
+            // them for services-only quotes too.
             // DECISION(v1.19.908, cumulative): When user views ECO N's tab, the
             // CHANGES block sums every draft ECO's delta from 1..N (not just
             // ECO N) so totals reflect the full state of the panel after each
@@ -35870,7 +35844,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             const displayTotal=_baseScopeWithDraftEco?baseGrandTotal:(inEcoSummaryScope?ecoScopeGrandTotal:grandTotal);
             const displaySell=_baseScopeWithDraftEco?baseSellPrice:(inEcoSummaryScope?ecoScopeSellPrice:sellPrice);
             const fmt=n=>"$"+n.toLocaleString("en-US",{minimumFractionDigits:0,maximumFractionDigits:0});
-            const pendingBcCount=bom.filter(r=>(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual").length;
+            // B033: pendingBcCount hoisted above (sp-safe) for the shared quote pane.
             const laborAccepted=sp.laborData?.accepted||{};
             const acceptedCount=laborEst.lines.filter(l=>laborAccepted[l.category]).length;
             const GDEF=[
@@ -35878,7 +35852,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
               {label:"LAYOUT",color:"#a78bfa",cats:["Device Mounting","Duct & DIN Rail","Labels"]},
               {label:"WIRE",color:"#38bdf8",cats:["Wire Time","Door Wiring"]},
             ];
-            return(<>
+            return(
               <div style={{flex:1,overflowY:"auto",minHeight:0,padding:16,display:"flex",flexDirection:"column",gap:12}}>
               <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5,marginBottom:2}}>PANEL SUMMARY</div>
               {/* Selected panel name header */}
@@ -36079,8 +36053,13 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
               {/* Level of Confidence */}
               <ConfidenceBar panel={sp} readOnly={readOnly} onUpdate={selectedOnUpdate} onSaveImmediate={selectedOnSaveImmediate} compact/>
               </div>
-
-              {/* Quote Summary — third pane, locked to bottom */}
+            );
+            })():null;
+            // B033: Shared QUOTE SUMMARY + action-button pane (formerly the
+            // "third pane, locked to bottom"). Renders for BOTH panel quotes and
+            // services-only quotes. sp-specific actions inside are guarded on
+            // sp / (project.panels||[]).length so they no-op for services-only.
+            const quoteSummaryPane=(
               <div style={{flexShrink:0,borderTop:`2px solid ${C.accent}`,background:"#06060f",padding:"12px 16px 16px",display:"flex",flexDirection:"column",gap:8}}>
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
                   <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Qv.${String(project.quoteRev).padStart(2,'0')}`:""}</span>
@@ -36373,7 +36352,9 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 const _greyed=_onBase&&!!_latestDraft&&!baseUnlocked;
                 return{display:"flex",flexDirection:"column",gap:6,marginTop:4,paddingTop:8,borderTop:`1px solid ${C.border}33`,opacity:_greyed?0.25:1,pointerEvents:_greyed?"none":"auto",filter:_greyed?"grayscale(0.5)":"none"};
               })()}>
-                {(()=>{
+                {/* B033: RFQ / Upload-Quote row is BOM-part sourcing — hidden for
+                    services-only quotes (no sp / no BOM). */}
+                {sp&&(()=>{
                   const now=Date.now();
                   const RFQ_EXPIRED_MS=5*24*60*60*1000; // 5 days
                   const RFQ_COOLDOWN_MS=30*24*60*60*1000;
@@ -36494,6 +36475,9 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 {/* #133 Change 2: standalone Send Quoted BOM (BOM-only, cross column)
                     for customer review/approval before PO. Disabled when a panel still
                     needs manual verification (D2) or owner-priority is active. */}
+                {/* B033: hidden for services-only quotes — generateTravelerBomPdf
+                    returns null when there are no panels, so there is no BOM to send. */}
+                {(project.panels||[]).length>0&&(
                 <button onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{
                   const q=project.quote||{};
                   const contactName=project.bcContactName||q.contact||"";
@@ -36515,6 +36499,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   style={btn("#1a0c33","#c084fc",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #c084fc44",fontWeight:700,opacity:(_hasVerify||ownerPriorityActive)?0.45:1,cursor:(_hasVerify||ownerPriorityActive)?"not-allowed":"pointer"})}>
                   📋 {_hasVerify?"Send Quoted BOM (blocked — verify BOM)":"Send Quoted BOM for Approval"}
                 </button>
+                )}
                   </>);
                 })()}
                 {/* DECISION(v1.19.849, ECO Stage A): Suppress all "Customer has
@@ -36574,7 +36559,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       style={{background:"none",border:"1px solid #fca5a566",borderRadius:6,color:"#fca5a5",cursor:"pointer",fontSize:11,padding:"3px 10px",fontWeight:600}}>Un-mark Lost</button>
                   </div>
                 )}
-                {!readOnly&&sp.bcItemNumber&&(
+                {!readOnly&&sp&&sp.bcItemNumber&&(
                   <button
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{}}
                     disabled={pendingBcCount>0||ownerPriorityActive}
@@ -36603,7 +36588,13 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
               })()}
               </div>
               </div>
-            </>);
+            );
+            // B033: render the panel-detail pane only when a control panel is
+            // selected; the shared quote-summary pane renders for both cases.
+            // Services-only wraps it in a scroll container (no panel pane above).
+            return sp
+              ?(<>{panelDetailPane}{quoteSummaryPane}</>)
+              :(<div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",flexDirection:"column"}}>{quoteSummaryPane}</div>);
           })()}
         </div>
     </div>
