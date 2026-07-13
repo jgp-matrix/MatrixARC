@@ -25736,8 +25736,6 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     bcPrevEcoSig.current=_ecoSig;
     const bcCountIncreased=bcCount>bcPrevSyncCount.current;
-    // B016-1(d) breadcrumb — lets Jon confirm the N→M transition live on the test channel.
-    console.log("[B016-1] BC auto-sync count check:",{bcCount,prev:bcPrevSyncCount.current,increased:bcCountIncreased,ecoChanged});
     if(!bcCountIncreased&&!ecoChanged){bcPrevSyncCount.current=bcCount;return;}
     bcPrevSyncCount.current=bcCount;
     // LOAD-BEARING GUARD (#168): BASE trigger requires all non-labor rows
