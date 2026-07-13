@@ -9295,12 +9295,27 @@ async function saveProject(uid,project){
         const newQuoteHash=_computeQuoteHash(data);
         const _curRev=data.quoteRev||0;
         const _curRevAtPrint=data.quoteRevAtPrint||0;
-        const _alreadyAheadOfPrint=_curRev>_curRevAtPrint;
+        // B034 Change A: re-anchor the "already ahead" cap on max(last-PRINT, last-SEND).
+        // The print-only anchor (quoteRev>quoteRevAtPrint) never accounted for SEND, which
+        // does NOT stamp quoteRevAtPrint — so after a send the quote was permanently "ahead
+        // of print" and the first post-send edit hit the SUPPRESS branch, never bumping (the
+        // internal copy silently diverged from the customer copy at the same rev). Anchoring
+        // on max(revAtPrint, quoteSentRev) makes exactly one bump fire on the first
+        // post-send edit (quoteRev==quoteSentRev → not ahead → bumps to +1), then suppress
+        // until re-send. REGRESSION GUARD: for a NEVER-SENT quote quoteSentRev is 0/absent,
+        // so Math.max(revAtPrint,0)===revAtPrint → cadence is byte-for-byte unchanged.
+        const _sentRevSP=data.quoteSentRev||0;
+        const _alreadyAheadOfPrint=_curRev>Math.max(_curRevAtPrint,_sentRevSP);
         if(oldQuoteHash){
           if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP&&!_alreadyAheadOfPrint){
             data.quoteRev=_curRev+1;
             data.lastQuoteHash=newQuoteHash;
-            console.log(`[QUOTE REV] bumped to ${data.quoteRev} (first change since print)`);
+            // B034 Change C: the first divergent edit on a SENT quote re-arms the active
+            // state — clear the sent-lock so the on-open price-staleness check re-runs and
+            // "returns to active" ties to the actual divergence event. Only on the real bump,
+            // only when the quote has send history (quoteSentAt).
+            if(data.quoteSentAt)data.quoteLocked=false;
+            console.log(`[QUOTE REV] bumped to ${data.quoteRev} (first change since print/send)`);
           }else if(newQuoteHash!==oldQuoteHash){
             // Hash differs but we either (a) are in an active ECO, or (b) have
             // already bumped once since the last print. Refresh persisted hash
@@ -9572,11 +9587,16 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     const newQuoteHash=_computeQuoteHash(liveProject);
     const _curRevSPP=liveProject.quoteRev||0;
     const _curRevAtPrintSPP=liveProject.quoteRevAtPrint||0;
-    const _alreadyAheadSPP=_curRevSPP>_curRevAtPrintSPP;
+    // B034 Change A: re-anchor cap on max(last-PRINT, last-SEND) — see saveProject for full
+    // rationale. Never-sent → quoteSentRev 0/absent → cadence byte-for-byte unchanged.
+    const _sentRevSPP=liveProject.quoteSentRev||0;
+    const _alreadyAheadSPP=_curRevSPP>Math.max(_curRevAtPrintSPP,_sentRevSPP);
     if(oldQuoteHash){
       if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSPP&&!_alreadyAheadSPP){
-        liveProject={...liveProject,quoteRev:_curRevSPP+1,lastQuoteHash:newQuoteHash};
-        console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save, first change since print)`);
+        // B034 Change C: first divergent edit on a SENT quote clears the sent-lock (re-arms
+        // active state / on-open staleness check). Only on the real bump, only when sent.
+        liveProject={...liveProject,quoteRev:_curRevSPP+1,lastQuoteHash:newQuoteHash,...(liveProject.quoteSentAt?{quoteLocked:false}:{})};
+        console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save, first change since print/send)`);
       }else if(newQuoteHash!==oldQuoteHash){
         liveProject={...liveProject,lastQuoteHash:newQuoteHash};
         if(_hasActiveEcoSPP)console.log("[QUOTE REV] suppressed (panel save) — active ECO in flight");
@@ -16300,7 +16320,15 @@ function computeProjectEffectiveStatus(project){
   if(statuses.some(s=>!readySet.has(s)))pipelineStatus="in_progress";
   else{const rank={extracted:1,validated:2,costed:3,quoted:4,pushed_to_bc:5};const maxR=Math.max(...statuses.map(s=>rank[s]||1));pipelineStatus=["extracted","validated","costed","quoted","pushed_to_bc"][maxR-1]||"extracted";}
   // Effective status: quote sent > reviews > unpriced/active RFQs > ready
-  if(quoteSent)return isBudgetary?"budgetary_sent":"firm_sent";
+  // B034 Change B: a SENT quote keeps its locked "sent" status only while it has NOT
+  // diverged from the customer copy (quoteRev <= quoteSentRev). Once a post-send edit bumps
+  // the rev past what was sent, the internal copy differs from the customer's → route to
+  // In Process ("in_progress") until it is re-sent. quoteSentAt is preserved (send history);
+  // divergence is expressed purely by quoteRev > quoteSentRev.
+  if(quoteSent){
+    if((project.quoteRev||0)<=(project.quoteSentRev||0))return isBudgetary?"budgetary_sent":"firm_sent";
+    return"in_progress";
+  }
   if(project.postReviewStatus==="pending")return"post_review";
   if(project.preReviewStatus==="pending")return"pre_review";
   if((hasUnpriced||hasActiveRfqs)&&hasBom)return"rfqs";
@@ -20131,8 +20159,7 @@ function SentQuoteEditConfirm({ownerName,ownerEmail,sentDate,sentRev,sentTo,onCa
         <div style={{fontSize:13,color:"#cbd5e1",lineHeight:1.7,marginBottom:14}}>
           <strong style={{color:"#f1f5f9"}}>Quote Rev {sentRev}</strong> was sent to <strong style={{color:"#f1f5f9"}}>{sentTo}</strong> on <strong style={{color:"#f1f5f9"}}>{sentDate}</strong>.
           <br/><br/>
-          Edits to this quote may produce a new Quote Revision that the customer hasn't seen.
-          <strong style={{color:"#fbbf24"}}> Check with the Project Owner before proceeding.</strong>
+          This Quote has been sent to the customer. Making changes will cause the Customer copy and internal copy to be different. Do you wish to continue making changes to this Quote?
         </div>
         <div style={{background:"#1a1a2e",border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",marginBottom:14}}>
           <div style={{fontSize:10,color:"#64748b",fontWeight:700,letterSpacing:0.6,textTransform:"uppercase",marginBottom:3}}>Project Owner</div>
@@ -20718,7 +20745,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               {/* v1.19.998: "Rev NN" → "Qv.NN" on the Quote Form header to
                   match the QUOTE SUMMARY pill and pair visually with the
                   Drawing-version "Dv.NN" pill on each panel. */}
-              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:(project.quoteRev||0)>(project.quoteRevAtPrint||0)?"#f59e0b":"#64748b",letterSpacing:0.3}}>Qv.{String(project.quoteRev||0).padStart(2,'0')}{(project.quoteRev||0)>(project.quoteRevAtPrint||0)?" — unsent":""}</div>
+              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteRev||0)>(project.quoteSentRev||0))?"#f59e0b":"#64748b",letterSpacing:0.3}}>Qv.{String(project.quoteRev||0).padStart(2,'0')}{((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteRev||0)>(project.quoteSentRev||0))?" — unsent":""}</div>
               {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
             </div>
           </div>
@@ -34140,7 +34167,6 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [validating,setValidating]=useState(false);
   const [validateMsg,setValidateMsg]=useState("");
   const [showDeleteAdminWarn,setShowDeleteAdminWarn]=useState(false);
-  const [showUnlockConfirm,setShowUnlockConfirm]=useState(false);
   // DECISION(v1.19.752): In-app confirm modals for the LOST flow — replaces the native
   // browser confirm() popups that didn't match ARC's dark-themed UI.
   const [showMarkLostConfirm,setShowMarkLostConfirm]=useState(false);
@@ -36156,7 +36182,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
                   <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Qv.${String(project.quoteRev).padStart(2,'0')}`:""}</span>
                   {(project.reviewRev||0)>0&&<span style={{fontSize:11,fontWeight:700,color:"#fbbf24",background:"rgba(251,191,36,0.12)",border:"1px solid #fbbf2455",borderRadius:6,padding:"2px 8px",letterSpacing:0.3,marginLeft:6}}>Rv.{String(project.reviewRev).padStart(2,'0')}</span>}
-                  {(project.quoteRev||0)>(project.quoteRevAtPrint||0)&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
+                  {((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteRev||0)>(project.quoteSentRev||0))&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
                   {/* DECISION(v1.19.907): scope indicator — matches Panel Summary's
                       BASE / ECO N pill so the user can see at a glance which tab's
                       values are being totalled below. */}
@@ -36611,18 +36637,29 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   <div style={{marginTop:6,padding:"8px 12px",background:"#3a2800",border:"1px solid #f59e0b66",borderRadius:8,display:"flex",flexDirection:"column",gap:6}}>
                     <div style={{fontSize:12,color:"#fbbf24",fontWeight:700}}>⚠ Customer has received this Quote</div>
                     <div style={{fontSize:11,color:"#fcd34d",lineHeight:1.5}}>Edits to this Panel may create a new Quote Revision. Check with the Project Owner before proceeding.</div>
+                    <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
                     <button
                       onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowSentEditConfirm(true)}
                       disabled={ownerPriorityActive}
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
-                      style={{background:"none",border:"1px solid #f59e0b88",borderRadius:6,color:"#fbbf24",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"4px 10px",fontWeight:700,opacity:ownerPriorityActive?0.45:1,alignSelf:"flex-start"}}>
+                      style={{background:"none",border:"1px solid #f59e0b88",borderRadius:6,color:"#fbbf24",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"4px 10px",fontWeight:700,opacity:ownerPriorityActive?0.45:1}}>
                       Verify with Project Owner & Enable Edits
                     </button>
+                    {/* F005: Print the sent quote to PDF WITHOUT unlocking edits and WITHOUT
+                        bumping/stamping the rev — for getting a reference copy of the locked
+                        customer quote. Reuses the existing quote number (idempotent). */}
+                    <button
+                      onClick={()=>{window.dispatchEvent(new CustomEvent("arc-print-only"));}}
+                      title="Print this quote to PDF without unlocking edits or creating a new revision"
+                      style={{background:"none",border:"1px solid #38bdf888",borderRadius:6,color:"#7dd3fc",cursor:"pointer",fontSize:11,padding:"4px 10px",fontWeight:700}}>
+                      🖨 Print Only
+                    </button>
+                    </div>
                   </div>
                 )}
                 {project.quoteSentAt&&sentQuoteAckGiven&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
                   <div style={{marginTop:6,padding:"6px 10px",background:"#0d2010",border:"1px solid #4ade8044",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
-                    <span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✎ Edits enabled — next save will bump Quote Rev</span>
+                    <span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✎ Editing enabled — your next change creates a new revision</span>
                     <button onClick={()=>setSentQuoteAckGiven(false)} style={{background:"none",border:"1px solid #4ade8044",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock</button>
                   </div>
                 )}
@@ -36864,28 +36901,10 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
         />;
       })(),
     document.body)}
-    {showUnlockConfirm&&ReactDOM.createPortal(
-      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
-        <div style={{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:440,boxShadow:"0 0 40px 10px rgba(245,158,11,0.3)"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12}}>
-            <span style={{fontSize:22}}>&#x1F513;</span>
-            <div style={{fontSize:15,fontWeight:800,color:"#f59e0b"}}>Unlock Quote?</div>
-          </div>
-          <div style={{fontSize:13,color:"#94a3b8",lineHeight:1.7,marginBottom:16}}>
-            This quote has been sent to the customer. Unlocking will allow BOM and pricing changes, and BC planning lines will resume syncing.<br/><br/>
-            If the customer has requested changes, unlock to make edits and then re-send the updated quote.
-          </div>
-          <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
-            <button onClick={()=>setShowUnlockConfirm(false)} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Cancel</button>
-            <button onClick={()=>{
-              const upd={...project,quoteLocked:false,quoteRev:(project.quoteRev||0)+1};
-              persistProject(upd);
-              setShowUnlockConfirm(false);
-            }} style={{background:"#7c2d12",border:"1px solid #f59e0b",color:"#fbbf24",padding:"7px 18px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>Unlock &amp; Edit</button>
-          </div>
-        </div>
-      </div>
-    ,document.body)}
+    {/* B034 Change F: removed the DEAD "Unlock Quote?" modal — it had zero openers
+        (showUnlockConfirm was never set true anywhere) and its confirm did quoteRev+1 on
+        unlock, which would violate the lock-centric spec's Rule 2 (unlock with no change =
+        rev unchanged) if it were ever wired. State declaration also removed. */}
     {/* Customer Responses Modal */}
     {showCustomerResponses&&customerReviewData&&ReactDOM.createPortal(
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)setShowCustomerResponses(false);}}>
@@ -37369,6 +37388,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   const [view,setView]=useState("panels"); // "panels"|"quote"
   const [autoPrint,setAutoPrint]=useState(false);
+  // F005: carries the "print-only" (no-bump / no-stamp) intent from the locked-quote
+  // overlay button through handlePrintQuote → the autoPrint effect. A ref (not state) so
+  // it's readable inside the effect's setTimeout without re-render churn. Every entry point
+  // to a print (handlePrintQuote / verifyBcLineCount) sets it, and the effect resets it,
+  // so a stale value can't leak into a subsequent normal print.
+  const printOnlyRef=useRef(false);
   const [rfqLoading,setRfqLoading]=useState(false);
   const [rfqGroups,setRfqGroups]=useState(null);
   const [autoPrintRfq,setAutoPrintRfq]=useState(false);
@@ -38240,7 +38265,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Auto-print: wait for quote DOM to render, trigger print, then go back
   useEffect(()=>{
     if(autoPrint&&view==="quote"){
-      const t=setTimeout(async()=>{await generateQuotePdf(projectRef.current);const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);try{await saveProject(uid,upd);}catch(e){console.error("[QUOTE] autoPrint save failed:",e);arcAlert("Failed to save quote after printing. Your edits may not persist.");}setAutoPrint(false);setView("panels");},400);
+      const t=setTimeout(async()=>{await generateQuotePdf(projectRef.current);
+        // F005: print-only prints the PDF WITHOUT stamping the print marks (quoteRevAtPrint /
+        // lastPrintedBomHash / lastQuotePrintedAt) and without unlocking — so a locked sent
+        // quote can be re-printed for reference without bumping the rev or disturbing the
+        // divergence indicators. Normal prints stamp as before.
+        if(printOnlyRef.current){
+          printOnlyRef.current=false;setAutoPrint(false);setView("panels");
+        }else{
+          const hash=computeBomHash(projectRef.current.panels);const upd={...projectRef.current,lastPrintedBomHash:hash,lastQuotePrintedAt:Date.now(),quoteRevAtPrint:projectRef.current.quoteRev||0};setProject(upd);projectRef.current=upd;onChange(upd);try{await saveProject(uid,upd);}catch(e){console.error("[QUOTE] autoPrint save failed:",e);arcAlert("Failed to save quote after printing. Your edits may not persist.");}setAutoPrint(false);setView("panels");
+        }},400);
       return()=>clearTimeout(t);
     }
   },[autoPrint,view]);
@@ -38277,6 +38311,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     function onJustPrint(){handlePrintQuote();}
     window.addEventListener("arc-just-print",onJustPrint);
     return()=>window.removeEventListener("arc-just-print",onJustPrint);
+  },[]);
+  // F005: Print-Only — mirrors the arc-just-print pattern but flags the print as no-bump /
+  // no-stamp / no-unlock (see handlePrintQuote + the autoPrint effect). Dispatched by the
+  // "🖨 Print Only" button in the locked sent-quote overlay.
+  useEffect(()=>{
+    function onPrintOnly(){handlePrintQuote({printOnly:true});}
+    window.addEventListener("arc-print-only",onPrintOnly);
+    return()=>window.removeEventListener("arc-print-only",onPrintOnly);
   },[]);
   // DECISION(v1.19.405): Debounce guard — prevents double-click triggering parallel quote generation.
   // DECISION(v1.19.965, concurrency H-2): Cross-user print lock. The local quotePrinting
@@ -38391,7 +38433,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       });
     }catch(e){/* harmless — 90s staleness reclaims it */}
   }
-  async function handlePrintQuote(){
+  async function handlePrintQuote(opts){
+    // F005: set the print-only intent on EVERY entry (true only for the locked-overlay
+    // Print-Only button, false for normal Just-Print / View-Quote). Setting it at the top of
+    // every call guarantees a prior aborted print-only can't leak into a later normal print.
+    // Guard against the click-event object passed by onViewQuote — only a literal
+    // {printOnly:true} counts.
+    printOnlyRef.current=!!(opts&&opts.printOnly===true);
     if(quotePrinting)return;
     let proj=projectRef.current;
     // DECISION(v1.20.108, F3): Non-blocking warning on Just Print when incomplete items
@@ -38581,6 +38629,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   }
 
   async function verifyBcLineCount(){
+    printOnlyRef.current=false; // F005: this is a normal (bump-eligible) print path.
     const proj=projectRef.current;
     const bcNum=proj.bcProjectNumber;
     if(!_bcToken)try{await acquireBcToken(false);}catch(e){}
