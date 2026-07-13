@@ -7637,7 +7637,11 @@ async function buildQuotePdfDoc(doc,project){
   const bx=ARC_DOC.W-ARC_DOC.margin.right-60;const bw=60;
   const isNonTaxable=/nontax|non.?tax/i.test(q.taxAreaCode||"");
   const totalsRows=[
-    {l:_servicesSubtotalPdf>0?"Subtotal (Panels)":"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false},
+    // B033 nit: only render the panels subtotal row when panels exist. On a
+    // services-only quote (no panels) this row would read "Subtotal (Panels): $0"
+    // above "Professional Services" — a pointless line for the customer. Panel-case
+    // is unchanged: any quote with panels always has panels.length>0.
+    ...(panels.length>0?[{l:_servicesSubtotalPdf>0?"Subtotal (Panels)":"Subtotal",v:arcFmtMoney(_baseSubtotalPdf),bold:false,eco:false}]:[]),
     ...(_hasEcoTotalsPdf?_ecoSubtotalsPdf.map(e=>({l:e.label,v:_signedFmtPdf(e.subtotal),bold:false,eco:true})):[]),
     ...(_servicesSubtotalPdf>0?[{l:"Professional Services",v:arcFmtMoney(_servicesSubtotalPdf),bold:false,eco:false}]:[]),
     {l:"Tax",v:isNonTaxable?"Non-Taxable":"$0",bold:false,eco:false},
@@ -36594,7 +36598,11 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             // Services-only wraps it in a scroll container (no panel pane above).
             return sp
               ?(<>{panelDetailPane}{quoteSummaryPane}</>)
-              :(<div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",flexDirection:"column"}}>{quoteSummaryPane}</div>);
+              // B033 nit: drop the pane's accent top-border in the services-only
+              // case (it's a divider under the panel pane, but a stray top line
+              // when the pane sits alone). Clone-with-override keeps the panel
+              // case (above) byte-identical — the shared const is untouched.
+              :(<div style={{flex:1,minHeight:0,overflowY:"auto",display:"flex",flexDirection:"column"}}>{React.cloneElement(quoteSummaryPane,{style:{...quoteSummaryPane.props.style,borderTop:"none"}})}</div>);
           })()}
         </div>
     </div>
