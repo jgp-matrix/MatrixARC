@@ -4243,7 +4243,21 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
   return{taskNo,created,updated,skipped,deleted,laborUpdated,laborSkipped,total:lines.length,failed:failedRows};
 }
 
-async function bcCreateProject(displayName, customerNumber){
+// F021: Compose the BC "External Document No." string from ARC's two separate
+// fields — customerProjectNumber (the CUSTOMER's project #) and bcPoNumber (the
+// received PO#). External_Document_No is WRITE-ONLY from ARC (no readers/parsers),
+// so composing at write/display time is safe. Keep the two source fields separate;
+// only ever build this string here.
+function _composeExternalDocNo(project){
+  const cust=((project&&project.customerProjectNumber)||"").trim();
+  const po=((project&&project.bcPoNumber)||"").trim();
+  if(cust&&po) return `Project#: ${cust} / PO#: ${po}`;
+  if(cust)     return `Project#: ${cust}`;   // PREFIXED pre-PO (Jon's choice 2026-07-13)
+  if(po)       return `PO#: ${po}`;          // legacy projects, no cust#
+  return "";
+}
+
+async function bcCreateProject(displayName, customerNumber, customerProjectNumber){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   if(!customerNumber)throw new Error("A customer must be selected");
   const compId=await bcGetCompanyId();
@@ -4275,6 +4289,10 @@ async function bcCreateProject(displayName, customerNumber){
       WIP_Posting_Method:"Per Project",
       Starting_Date:today
     };
+    // F021: bind CUSTOMER project # to BC External Document No. (prefixed pre-PO).
+    // Only write when non-blank so we never clobber the field with an empty string.
+    const _extDocNo=_composeExternalDocNo({customerProjectNumber});
+    if(_extDocNo)_patchFields.External_Document_No=_extDocNo;
     await bcPatchJobOData(d.number,_patchFields).then(()=>{
       console.log("bcCreateProject: Project Code dimension (Global_Dimension_1_Code) set to",d.number);
     }).catch(e=>{
@@ -10523,7 +10541,7 @@ async function executeRestore(archive,remaps,options,onProgress){
       report(5,"bc-project","Creating BC project…",20);
       const customerNumber=projectData.bcCustomerNumber;
       if(!customerNumber)throw new Error("No customer number — cannot create BC project");
-      const bcResult=await bcCreateProject(projectData.name,customerNumber);
+      const bcResult=await bcCreateProject(projectData.name,customerNumber,projectData.customerProjectNumber);
       bcProjectNumber=bcResult.number;
 
       // Step 5a: CHECKPOINT — persist bcProjectNumber immediately
@@ -20033,7 +20051,10 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
     setSaving(true);setErrors([]);
     const errs=[];
     try{
-      const _poFields={External_Document_No:poNumber.trim(),Status:"Open"};
+      // F021-3: compose External Document No. so it becomes "Project#: <cust> / PO#: <po>"
+      // when a customer project # exists, else "PO#: <po>". ARC's bcPoNumber still stores
+      // the BARE PO# (set by the onDone handler) — only this string is composited.
+      const _poFields={External_Document_No:_composeExternalDocNo({...project,bcPoNumber:poNumber.trim()}),Status:"Open"};
       await bcPatchJobOData(bcProjectNumber,_poFields).catch(e=>{
         if(!_bcToken)bcEnqueue('patchJob',{projectNumber:bcProjectNumber,fields:_poFields},`Update BC project ${bcProjectNumber}`);
         else throw e;
@@ -35306,6 +35327,36 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                         </button>
                       )}
                     </div>
+                    {/* F021-2: Customer Project # — inline-editable; on blur persists locally
+                        and re-composes BC External Document No. (keeps any existing PO#). */}
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:12,color:C.muted,fontWeight:600}}>Customer Project #:</span>
+                      {!readOnly?(
+                        <span style={{fontSize:13,fontWeight:700,color:project.customerProjectNumber?C.text:C.muted,fontStyle:project.customerProjectNumber?"normal":"italic",cursor:"text",borderBottom:"1px dashed transparent",minWidth:70,display:"inline-block"}}
+                          contentEditable suppressContentEditableWarning
+                          onFocus={e=>{
+                            e.target.style.borderBottomColor=C.accent;e.target.style.outline="none";
+                            if(!(project.customerProjectNumber||"").trim()){e.target.textContent="";e.target.style.fontStyle="normal";e.target.style.color=C.text;}
+                          }}
+                          onBlur={e=>{
+                            e.target.style.borderBottomColor="transparent";
+                            const val=(e.target.textContent||"").trim();
+                            const cur=(project.customerProjectNumber||"").trim();
+                            if(val!==cur){
+                              const upd={...project,customerProjectNumber:val};
+                              persistProject(upd);
+                              // Re-compose External Document No. with any existing bcPoNumber.
+                              if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{External_Document_No:_composeExternalDocNo(upd)}).catch(()=>{});
+                            }
+                            if(!val){e.target.textContent="+ add";e.target.style.fontStyle="italic";e.target.style.color=C.muted;}
+                          }}
+                          onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();e.target.blur();}if(e.key==="Escape"){e.target.textContent=project.customerProjectNumber||"";e.target.blur();}}}
+                          title="Click to edit customer project #"
+                        >{project.customerProjectNumber||"+ add"}</span>
+                      ):(
+                        project.customerProjectNumber?<span style={{fontSize:13,fontWeight:700,color:C.text}}>{project.customerProjectNumber}</span>:<span style={{fontSize:12,color:C.muted,fontStyle:"italic"}}>—</span>
+                      )}
+                    </div>
                     <span style={{fontSize:13,color:C.muted}}>Created: {project.createdAt?new Date(project.createdAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):project.updatedAt?new Date(project.updatedAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—"}</span>
                   </div>
                 </div>
@@ -38215,7 +38266,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!(await arcConfirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?",{kind:"warning",okLabel:"Re-link"})))return;
     setRelinking(true);setRelinkMsg("Creating BC project…");
     try{
-      const bc=await bcCreateProject(project.name,project.bcCustomerNumber||null);
+      const bc=await bcCreateProject(project.name,project.bcCustomerNumber||null,project.customerProjectNumber);
       setRelinkMsg("Creating task structure…");
       const panels=project.panels||[];
       await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
@@ -42756,6 +42807,7 @@ function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,project,onConfi
 // ── NEW PROJECT MODAL ──
 function NewProjectModal({uid,onCreated,onClose}){
   const [name,setName]=useState("");
+  const [custProjNum,setCustProjNum]=useState(""); // F021: CUSTOMER's project # → BC External Document No.
   const [panelCount,setPanelCount]=useState(1);
   const [loading,setLoading]=useState(false);
   const [bcStatus,setBcStatus]=useState(null);
@@ -42913,7 +42965,7 @@ function NewProjectModal({uid,onCreated,onClose}){
     if(!_bcToken){setCreateErr("Could not connect to Business Central. Please try again.");setLoading(false);return;}
     try{
       setBcStatus("creating");
-      const bc=await bcCreateProject(trimmed,selectedCustomer.number);
+      const bc=await bcCreateProject(trimmed,selectedCustomer.number,custProjNum.trim());
       const panelList=Array.from({length:Math.max(1,panelCount)},(_,i)=>({id:`panel-${i+1}`,name:`Panel ${i+1}`}));
       setBcStatus("tasks");
       let taskWarn=null;
@@ -42953,6 +43005,7 @@ function NewProjectModal({uid,onCreated,onClose}){
       const _resolveSales=typeof window._arcUidForBcSalesperson==="function"?window._arcUidForBcSalesperson:()=>null;
       const p=await saveProject(uid,{
         name:trimmed,
+        customerProjectNumber:custProjNum.trim(), // F021
         bcProjectId:bc.id,
         bcProjectNumber:bc.number,
         bcEnv:_bcConfig.env,
@@ -42999,6 +43052,9 @@ function NewProjectModal({uid,onCreated,onClose}){
         <form onSubmit={create}>
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Project Name</div>
           <input data-tour="np-name" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Conveyor Control Panel" style={{...inp(),marginBottom:16}} autoFocus/>
+          {/* F021: CUSTOMER's project # → written to BC External Document No. (prefixed) */}
+          <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Customer Project # <span style={{color:C.border,fontWeight:400,textTransform:"none",letterSpacing:0}}>(optional)</span></div>
+          <input value={custProjNum} onChange={e=>setCustProjNum(e.target.value)} placeholder="e.g. 923455698" style={{...inp(),marginBottom:16}}/>
           <div style={{fontSize:11,fontWeight:600,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Number of Panels</div>
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
             <button type="button" onClick={()=>setPanelCount(c=>Math.max(1,c-1))} style={{width:32,height:32,borderRadius:6,border:`1px solid ${C.border}`,background:C.border,color:C.text,fontSize:18,cursor:"pointer",lineHeight:1}}>−</button>
