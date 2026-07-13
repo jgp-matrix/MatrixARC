@@ -2204,7 +2204,14 @@ function setTooltipsEnabled(v){
 // $65/hr — change-order rush rate, distinct from BASE shop labor at $45). The
 // rate cascades: panel.pricing.ecoLaborRate (per-panel override) → this
 // global config → ECO_LABOR_RATE_DEFAULT constant.
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30};
+// F020 (Option A): company-wide default quote terms for NEW / non-BC customers.
+// Neutral, low-commitment defaults ("Customer Handles Shipping" imposes no shipping
+// obligation on us). Admin-overridable via PricingConfigModal → persisted in
+// _pricingConfig. Applied ONLY into the VISIBLE, EDITABLE quote field (never silently
+// to output) so the user always sees + can change them before sending.
+const DEFAULT_PAYMENT_TERMS="Net 30 Days";
+const DEFAULT_SHIPPING_METHOD="Customer Handles Shipping";
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD};
 // DECISION(v1.20.28, Milestone C): Cost drift threshold for restore preview.
 // buildRestorePreview flags items where |liveCost - archivedCost| / archivedCost > this value.
 const COST_DRIFT_THRESHOLD=0.05;
@@ -2212,13 +2219,29 @@ async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
   _pricingConfig=cfg;
   const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
   await fbDb.doc(path).set(cfg);
+}
+
+// F020 (Option A): pre-fill BLANK Payment Terms / Shipping Method from the company
+// default so NEW / non-BC customers aren't left with empty required fields (which would
+// bounce the user at Send / print "---"). Returns a patch of ONLY the blank fields, or
+// null. Gated on !project.bcProjectNumber: a BC-linked project pulls its terms from the
+// BC project card via ensureQuoteFieldsPopulated, so we must NOT seed there (a seed would
+// look like a "manual" value and, with the override guard, block the real BC value).
+// Callers apply this into the VISIBLE, EDITABLE quote field — never silently to output.
+function _seedQuoteTermDefaults(project){
+  if(!project||project.bcProjectNumber)return null; // BC customer → terms come from BC
+  const q=project.quote||{};
+  const patch={};
+  if(!q.paymentTerms&&_pricingConfig.defaultPaymentTerms)patch.paymentTerms=_pricingConfig.defaultPaymentTerms;
+  if(!q.shippingMethod&&_pricingConfig.defaultShippingMethod)patch.shippingMethod=_pricingConfig.defaultShippingMethod;
+  return Object.keys(patch).length?patch:null;
 }
 
 // #187 §1.4 — Quote-validity cascade resolver. Tier 1 quote-edit override
@@ -8043,8 +8066,12 @@ async function ensureQuoteFieldsPopulated(project,uid){
                 }
               }catch(e){console.warn("Customer card payment/shipping lookup failed:",e);}
             }
-            if(pmtTerms)autoFields.paymentTerms=pmtTerms;
-            if(shipMethod)autoFields.shippingMethod=shipMethod;
+            // F020 (Option A) override guard: manual entry wins. The BC re-fetch fires
+            // whenever ANY tracked field is blank (needsBcFetch), so without this guard a
+            // fetch triggered by (say) a blank shippingMethod would clobber a paymentTerms
+            // the user typed manually. Only fill from BC when the quote field is blank.
+            if(pmtTerms&&!q.paymentTerms)autoFields.paymentTerms=pmtTerms;
+            if(shipMethod&&!q.shippingMethod)autoFields.shippingMethod=shipMethod;
             // DECISION(v1.19.346): Use salesperson code from BC project card OR from the project's
             // bcSalespersonCode (set via the Sales dropdown in PanelListView). BC card may not always
             // have Person_Responsible populated even when the dropdown was set.
@@ -18075,6 +18102,9 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
   const [ecoDefaultLaborRate,setEcoDefaultLaborRate]=useState(_pricingConfig.ecoDefaultLaborRate??65);
   const [quoteValidityDays,setQuoteValidityDays]=useState(_pricingConfig.quoteValidityDays??30);
+  // F020 (Option A): company-wide default quote terms (pre-fill blanks for new/non-BC customers)
+  const [defaultPaymentTerms,setDefaultPaymentTerms]=useState(_pricingConfig.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS);
+  const [defaultShippingMethod,setDefaultShippingMethod]=useState(_pricingConfig.defaultShippingMethod??DEFAULT_SHIPPING_METHOD);
   // #187 §2.6 — customer-tier quote validity defaults (admin CRUD on companies/{cid}/customerDefaults)
   const [custDefs,setCustDefs]=useState([]);
   const [custNum,setCustNum]=useState("");
@@ -18272,7 +18302,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim()}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -18333,6 +18363,24 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             <span style={{color:C.muted,fontSize:14}}>days</span>
           </div>
           <div style={{fontSize:11,color:C.muted,marginTop:4}}>Default number of days a sent quote's prices stay valid ("PRICES VALID UNTIL"). Overridable per project and per quote (default 30).</div>
+        </div>
+
+        {/* F020 (Option A) — company-wide default quote terms. Pre-fill blank Payment Terms /
+            Shipping Method for NEW / non-BC customers into the VISIBLE, EDITABLE quote field
+            (BC-linked projects pull terms from the BC project card instead). */}
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Default Quote Terms</label>
+          <div style={{fontSize:11,color:C.muted,marginBottom:10}}>Pre-filled into the quote's Payment Terms / Shipping Method for customers not in BC (new / non-BC). Shown in the editable quote form and the Send modal — always changeable before sending. BC-linked projects use the BC project card instead.</div>
+          <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+            <div style={{flex:1,minWidth:180}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:3}}>Payment Terms</div>
+              <input value={defaultPaymentTerms} onChange={e=>setDefaultPaymentTerms(e.target.value)} placeholder="Net 30 Days" style={{...inp(),width:"100%",boxSizing:"border-box"}}/>
+            </div>
+            <div style={{flex:1,minWidth:180}}>
+              <div style={{fontSize:11,color:C.accent,fontWeight:700,marginBottom:3}}>Shipping Method</div>
+              <input value={defaultShippingMethod} onChange={e=>setDefaultShippingMethod(e.target.value)} placeholder="Customer Handles Shipping" style={{...inp(),width:"100%",boxSizing:"border-box"}}/>
+            </div>
+          </div>
         </div>
 
         {/* #187 §2.6 — Customer quote validity defaults (admin only; tier 3 of the cascade) */}
@@ -20553,6 +20601,13 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
 
   const q=project.quote||{};
   function setQ(updates){onUpdate({...project,quote:{...q,...updates}});}
+
+  // F020 (Option A): for NEW / non-BC customers, pre-fill blank Payment Terms /
+  // Shipping Method from the company default into the VISIBLE, EDITABLE quote form
+  // so the fields aren't empty (which would print "---" / bounce the send). Only
+  // fills blanks and only for non-BC projects (see _seedQuoteTermDefaults). One-time
+  // on mount; the user can freely edit or clear the seeded value.
+  useEffect(()=>{const patch=_seedQuoteTermDefaults(project);if(patch)setQ(patch);/*eslint-disable-next-line*/},[]);
 
   const today=new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
   const defaultValidUntil=new Date(project.quoteExpiresAt||Date.now()+resolveQuoteValidityDays(project||{},_customerValidityDays)*86400000).toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
@@ -33355,6 +33410,15 @@ function createBomApprovalTokenDoc(project,barId,sentTo){
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
 function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
   function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
+  // F020 (Option A): live edit of the inline Payment Terms / Shipping Method fields.
+  // Mirrors QuoteTab.setQ (onUpdate only, no per-keystroke Firestore write) — the parent
+  // re-renders the modal with the updated `project` prop so handleSend's closure sees the
+  // typed value, and the send flow persists it durably via persistProject.
+  function setQuoteTermLive(patch){onUpdate({...project,quote:{...(project.quote||{}),...patch}});}
+  // F020 (Option A): seed blank terms from the company default for NEW / non-BC customers
+  // so the inline fields open pre-filled and the user sees + can change them BEFORE Send
+  // (never a silent send). persistProject here (one-time) makes the default stick.
+  useEffect(()=>{const patch=_seedQuoteTermDefaults(project);if(patch)persistProject({...project,quote:{...(project.quote||{}),...patch}});/*eslint-disable-next-line*/},[]);
   const [sendMode,setSendMode]=useState("sales"); // #193: default to Send-To-Sales tab
   const [threadSearch,setThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
   const [threadResults,setThreadResults]=useState([]);
@@ -33723,6 +33787,30 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <textarea value={modalData.message} onChange={e=>setModalData(prev=>({...prev,message:e.target.value}))} rows={4} style={{...inp({fontSize:13,resize:"vertical",lineHeight:1.6})}}/>
         </div>
         <div style={{background:"#0a0a18",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",fontSize:11,color:C.muted,lineHeight:1.5,whiteSpace:"pre-line",marginTop:6}}>{modalData.signature}</div>
+        {/* F020 (Option A): inline Payment Terms + Shipping Method so a customer NOT in BC
+            (both fields blank) can be resolved right here instead of being bounced out by
+            the OK-only "Missing required fields" alert. These write to project.quote via the
+            SAME path as the QuoteTab quote-form fields. The hard-block below (#117) still
+            stands — a blank/"---" send stays blocked; this just lets the user FILL + send. */}
+        {(()=>{
+          const _q=project.quote||{};
+          const _need=!_q.paymentTerms||!_q.shippingMethod;
+          return(
+            <div style={{marginTop:8,padding:"10px 12px",background:"#0a0a18",border:`1px solid ${_need?C.yellow:C.border}`,borderRadius:6}}>
+              <div style={{fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:0.8,color:_need?C.yellow:C.muted,marginBottom:6}}>Quote Terms{_need?" — required before sending":""}</div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                <div style={{flex:1,minWidth:200}}>
+                  <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Payment Terms</label>
+                  <input value={_q.paymentTerms||""} onChange={e=>setQuoteTermLive({paymentTerms:e.target.value})} placeholder="Net 30 Days" style={{...inp({fontSize:13})}}/>
+                </div>
+                <div style={{flex:1,minWidth:200}}>
+                  <label style={{fontSize:10,fontWeight:600,textTransform:"uppercase",letterSpacing:0.8,color:C.muted,marginBottom:3,display:"block"}}>Shipping Method</label>
+                  <input value={_q.shippingMethod||""} onChange={e=>setQuoteTermLive({shippingMethod:e.target.value})} placeholder="Customer Handles Shipping" style={{...inp({fontSize:13})}}/>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {/* #133 Change 4a (D1): Include Quoted BOM toggle — default OFF. Rides as an
             extra attachment on either Send or Send w/BOM. */}
         <div style={{marginTop:8,display:"flex",alignItems:"center",gap:8}}>
