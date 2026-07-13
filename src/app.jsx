@@ -4257,6 +4257,17 @@ function _composeExternalDocNo(project){
   return "";
 }
 
+// F021-4 (absorbs G010): quote line-items heading label. Shows
+// "<Customer Project #> / <Project Name>" (e.g. "923455698 / Messabi") in place
+// of the literal "Line Items". Falls back to Project Name alone, then cust#
+// alone, then the original "Line Items" label. Used by both the PDF quote
+// builder and the on-screen quote doc so the two stay in sync.
+function _quoteHeadingLabel(project){
+  const cust=((project&&project.customerProjectNumber)||"").trim(), name=((project&&project.name)||"").trim();
+  if(cust&&name) return `${cust} / ${name}`;
+  return name || cust || "Line Items";
+}
+
 async function bcCreateProject(displayName, customerNumber, customerProjectNumber){
   if(!_bcToken)throw new Error("Not connected to Business Central");
   if(!customerNumber)throw new Error("A customer must be selected");
@@ -7188,7 +7199,7 @@ async function buildQuotePdfDoc(doc,project){
   }
 
   // ── LINE ITEMS ──
-  arcDocText(ctx,"Line Items",{fontSize:ARC_DOC.fonts.subheading,bold:true,gap:3});
+  arcDocText(ctx,_quoteHeadingLabel(project),{fontSize:ARC_DOC.fonts.subheading,bold:true,gap:3});
 
   // DECISION(v1.19.921, Step F PDF): Interleave panels + service cards in
   // createdAt order so the PDF line items mirror the on-screen / printed
@@ -20819,7 +20830,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
 
           {/* Line Items */}
           <div className="qd-items">
-            <div className="qd-items-heading">Line Items</div>
+            <div className="qd-items-heading">{_quoteHeadingLabel(project)}</div>
             {(()=>{
               // DECISION(v1.19.921, Step F): Interleave panels + service cards
               // in createdAt order on the printed Quote so the line items match
