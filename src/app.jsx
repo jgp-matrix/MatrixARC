@@ -4257,15 +4257,24 @@ function _composeExternalDocNo(project){
   return "";
 }
 
-// F021-4 (absorbs G010): quote line-items heading label. Shows
-// "<Customer Project #> / <Project Name>" (e.g. "923455698 / Messabi") in place
-// of the literal "Line Items". Falls back to Project Name alone, then cust#
-// alone, then the original "Line Items" label. Used by both the PDF quote
-// builder and the on-screen quote doc so the two stay in sync.
+// F021-4 (absorbs G010; format revised per Jon 2026-07-13): quote line-items
+// heading label. Renders
+// "Project Name: <name> - <customer> / PROJECT #: <cust#>"
+// (e.g. "Project Name: Messabi - Ovivo / PROJECT #: 923455698") in place of the
+// literal "Line Items". Customer name uses project.bcCustomerName — the canonical
+// customer field the rest of the quote shows (inline-edited in PanelListView, mirrored
+// to quote.company + BC Bill_to_Name). Composed from available parts with graceful
+// fallbacks so a missing piece never leaves a dangling label/separator; ultimate
+// fallback is the original "Line Items". No PO# (quotes never carry one). Used by both
+// the PDF quote builder and the on-screen quote doc so the two stay in sync.
 function _quoteHeadingLabel(project){
-  const cust=((project&&project.customerProjectNumber)||"").trim(), name=((project&&project.name)||"").trim();
-  if(cust&&name) return `${cust} / ${name}`;
-  return name || cust || "Line Items";
+  const name=((project&&project.name)||"").trim();
+  const custName=((project&&project.bcCustomerName)||"").trim();
+  const cust=((project&&project.customerProjectNumber)||"").trim();
+  let s=name?`Project Name: ${name}`:"";
+  if(custName) s+=(s?" - ":"")+custName;
+  if(cust)     s+=(s?" / ":"")+`PROJECT #: ${cust}`;
+  return s||"Line Items";
 }
 
 async function bcCreateProject(displayName, customerNumber, customerProjectNumber){
