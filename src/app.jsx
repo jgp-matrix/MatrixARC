@@ -37811,7 +37811,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     update(upd);safeSave(uid,upd);
   }
   const isBcDisconnected=!!(project.bcEnv&&project.bcEnv!==_bcConfig.env);
-  const didMigrate=useRef(!init.panels);
 
   // Keep ref in sync with state for use in callbacks
   useEffect(()=>{projectRef.current=project;},[project]);
@@ -37856,13 +37855,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setShowTakeoverModal(false);
   }
 
-  // Save migrated project immediately on first open
-  useEffect(()=>{
-    if(didMigrate.current){
-      didMigrate.current=false;
-      safeSave(uid,migrateProject(init));
-    }
-  },[]);
+  // C137 Phase A: The "save-on-open" effect was DELETED here. It ran
+  // safeSave(uid, migrateProject(init)) on first open whenever init lacked
+  // panels — persisting a migrateProject() of the (possibly stale, dashboard-
+  // cached) init wholesale, bypassing the onSnapshot merge + save belt. For
+  // flat/panels-less projects this could wipe live data with a stale
+  // {panel-1, bom:[], status:'draft'} shape. Migration itself is unaffected:
+  // migrateProject() still runs in-memory on every onSnapshot (see the
+  // listener above) and on initial useState, and persists on the next real
+  // edit — deleting the eager save only removes the stale-init WIPE vector.
+  // The `didMigrate` ref became dead and was removed with this effect.
 
   // DECISION(v1.19.954, runaway Quote Rev): The Stage 0 legacy-ECO save effect
   // was DELETED here. Original intent (v1.19.834) was: when migrateProjectShape
