@@ -20745,7 +20745,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
               {/* v1.19.998: "Rev NN" → "Qv.NN" on the Quote Form header to
                   match the QUOTE SUMMARY pill and pair visually with the
                   Drawing-version "Dv.NN" pill on each panel. */}
-              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteRev||0)>(project.quoteSentRev||0))?"#f59e0b":"#64748b",letterSpacing:0.3}}>Qv.{String(project.quoteRev||0).padStart(2,'0')}{((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteRev||0)>(project.quoteSentRev||0))?" — unsent":""}</div>
+              <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0)))?"#f59e0b":"#64748b",letterSpacing:0.3}}>Qv.{String(project.quoteRev||0).padStart(2,'0')}{((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0)))?" — unsent":""}</div>
               {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
             </div>
           </div>
@@ -36182,7 +36182,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:2}}>
                   <span style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5}}>QUOTE SUMMARY{project.quoteRev>0?` — Qv.${String(project.quoteRev).padStart(2,'0')}`:""}</span>
                   {(project.reviewRev||0)>0&&<span style={{fontSize:11,fontWeight:700,color:"#fbbf24",background:"rgba(251,191,36,0.12)",border:"1px solid #fbbf2455",borderRadius:6,padding:"2px 8px",letterSpacing:0.3,marginLeft:6}}>Rv.{String(project.reviewRev).padStart(2,'0')}</span>}
-                  {((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteRev||0)>(project.quoteSentRev||0))&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
+                  {((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0)))&&<span style={{fontSize:10,fontWeight:700,color:"#f59e0b",letterSpacing:0.3}}>unsent revision</span>}
                   {/* DECISION(v1.19.907): scope indicator — matches Panel Summary's
                       BASE / ECO N pill so the user can see at a glance which tab's
                       values are being totalled below. */}
@@ -38488,7 +38488,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const{project:_withNum,assigned:_numAssigned}=await ensureQuoteNumber(proj,uid);
       if(_numAssigned){
         proj=_withNum;
-        setProject(proj);projectRef.current=proj;onChange(proj);saveProject(uid,proj);
+        // F005 (F1): print-only must persist NO hash-changing save. quote.number is part of
+        // the quote hash, so persisting a freshly-assigned number would bump quoteRev. In
+        // practice a SENT quote (the only entry to print-only) already has a number, so this
+        // branch won't fire on print-only — gated anyway to honor the "print-only persists
+        // nothing" contract. In-memory proj still carries the number for this PDF.
+        setProject(proj);projectRef.current=proj;onChange(proj);
+        if(!printOnlyRef.current)saveProject(uid,proj);
       }
     }catch(e){
       console.error("[QUOTE] Quote number assignment failed:",e);
@@ -38504,7 +38510,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       proj=_pop.project;
       _populateWarnings=_pop.warnings;
       setProject(proj);projectRef.current=proj;onChange(proj);
-      await saveProject(uid,proj);
+      // F005 (F1): print-only populates the quote fields IN-MEMORY (so the PDF renders
+      // terms/company) but must NOT persist — persisting the populated quote object would
+      // bump quoteRev (quote is in the hash) and, on a sent quote, Change C would clear
+      // quoteLocked. Skip the save on the print-only reference reprint.
+      if(!printOnlyRef.current)await saveProject(uid,proj);
     }catch(e){
       console.error("[QUOTE] Populate/save before print failed:",e);
       arcAlert("Failed to save quote before printing. Your edits may not persist. Retry or check your connection.");
@@ -38532,7 +38542,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const{updatedProject,changed}=_markProjectBudgetaryForRedRows(projectRef.current);
         if(changed){
           setProject(updatedProject);projectRef.current=updatedProject;onChange(updatedProject);
-          safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] save failed:",e));
+          // F005 (F1): the budgetary flip still applies IN-MEMORY so the PDF renders the
+          // BUDGETARY banner, but print-only must NOT persist it — isBudgetary is part of the
+          // quote hash, so a persisted flip would bump quoteRev / clear quoteLocked on a sent
+          // quote's reference reprint. Skip the save on print-only.
+          if(!printOnlyRef.current)safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] save failed:",e));
         }
       }
     }
