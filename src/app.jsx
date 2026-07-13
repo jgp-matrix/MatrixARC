@@ -9140,7 +9140,14 @@ async function saveProject(uid,project){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
+  // B034 send-anchor: the quote-SEND lock write ESTABLISHES the anchor (quoteSentRev===
+  // quoteRev). It must never trigger a quoteRev bump or the Change-C unlock — otherwise
+  // the quote lands quoteRev>quoteSentRev the instant it's sent (falsely diverged /
+  // In-Process / unlocked). Transient, in-memory only: stripped before persist, never
+  // returned. Only the send paths set it; all other saves behave exactly as before.
+  const _sendAnchor=!!project._sendAnchorWrite;
   const data={...project,id:ref.id,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION,...(!project.id&&{createdBy:uid})};
+  if('_sendAnchorWrite' in data)delete data._sendAnchorWrite;
   // SAFETY: Use in-memory high-water marks to prevent data loss from stale saves
   let _curDoc=null;
   if(project.id){
@@ -9336,7 +9343,7 @@ async function saveProject(uid,project){
         const _sentRevSP=data.quoteSentRev||0;
         const _alreadyAheadOfPrint=_curRev>Math.max(_curRevAtPrint,_sentRevSP);
         if(oldQuoteHash){
-          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP&&!_alreadyAheadOfPrint){
+          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP&&!_alreadyAheadOfPrint&&!_sendAnchor){
             data.quoteRev=_curRev+1;
             data.lastQuoteHash=newQuoteHash;
             // B034 Change C: the first divergent edit on a SENT quote re-arms the active
@@ -9346,11 +9353,13 @@ async function saveProject(uid,project){
             if(data.quoteSentAt)data.quoteLocked=false;
             console.log(`[QUOTE REV] bumped to ${data.quoteRev} (first change since print/send)`);
           }else if(newQuoteHash!==oldQuoteHash){
-            // Hash differs but we either (a) are in an active ECO, or (b) have
-            // already bumped once since the last print. Refresh persisted hash
-            // so the next post-print save compares cleanly without bumping.
+            // Hash differs but we either (a) are in an active ECO, (b) have already bumped
+            // once since the last print, or (c) this is the send-anchor write. Refresh the
+            // persisted hash so the next post-send/print save compares cleanly WITHOUT
+            // bumping — and, for the send-anchor write, without clearing quoteLocked.
             data.lastQuoteHash=newQuoteHash;
             if(_hasActiveEcoSP)console.log("[QUOTE REV] suppressed — active ECO in flight");
+            else if(_sendAnchor)console.log("[QUOTE REV] send-anchor write — hash refreshed, no bump/unlock");
             else console.log("[QUOTE REV] suppressed — already 1 rev ahead of last print");
           }
         }else{
@@ -33616,6 +33625,18 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       arcAlert("Could not assign a quote number. Check your connection and retry.");
       return;
     }
+    // B034 send-anchor: the field-population + quote-number persists above each run through
+    // saveProject, which may BUMP quoteRev (project.quote is in _computeQuoteHash). The bump
+    // lands in Firestore but NOT in our in-memory `populated` (safeSave discards saveProject's
+    // return). Read the FINAL persisted quoteRev back so the PDF, filenames, and the send-stamp
+    // all use the SAME rev — and so quoteSentRev/quoteRevAtPrint anchor to it (quoteSentRev===
+    // quoteRev at rest → NOT diverged → stays firm_sent/budgetary_sent, locked, not In Process).
+    let _finalRev=populated.quoteRev||0;
+    try{
+      const _rbSnap=await fbDb.collection(_appCtx.projectsPath||`users/${uid}/projects`).doc(populated.id).get();
+      if(_rbSnap.exists&&typeof _rbSnap.data().quoteRev==="number")_finalRev=_rbSnap.data().quoteRev;
+    }catch(e){console.warn("[QUOTE SEND] final-rev read-back failed; using in-memory rev:",e.message);}
+    populated={...populated,quoteRev:_finalRev};
     const _sq=populated.quote||{};
     if(_pop.warnings.length>0||!_sq.paymentTerms||!_sq.shippingMethod){
       const missing=[];
@@ -33672,7 +33693,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         const bomBase64=bomDoc.output("datauristring").split(",")[1];
         console.log("[SEND QUOTE] BOM Report PDF generated, base64 length:",bomBase64?.length||0);
         const _q2=populated.quote||{};
-        const _rev2=project.quoteRev||0;
+        const _rev2=_finalRev; // B034 send-anchor: final post-populate rev (was stale project.quoteRev)
         const _company2=(_q2.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
         const _proj2=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
         const bomFilename=`BOM_REPORT-[${_q2.number||"Quote"} Rev ${String(_rev2).padStart(2,"0")}] - ${_company2} - ${_proj2}.pdf`;
@@ -33698,7 +33719,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         if(!cont){setSending(false);return;}
       }
       const q=populated.quote||{};
-      const rev=project.quoteRev||0;
+      const rev=_finalRev; // B034 send-anchor: stamp/filename use the FINAL post-populate rev (was stale project.quoteRev)
       const company=(q.company||project.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
       const projName=(project.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
       const pdfName=`QTE_C-[${q.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${company} - ${projName}.pdf`;
@@ -33731,7 +33752,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       const _sentNow=Date.now();
       if(_customerValidityLoadedFor!==populated.bcCustomerNumber)await _loadCustomerValidity(populated.bcCustomerNumber);
       const _validDays=resolveQuoteValidityDays(populated,_customerValidityDays);
-      const upd={...populated,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:sentTo,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
+      // B034 send-anchor: stamp quoteSentRev AND quoteRevAtPrint AND quoteRev to the SAME
+      // final rev so they can't diverge — quoteRev<=quoteSentRev → firm_sent/budgetary_sent,
+      // quoteLocked stays true. The first genuine post-unlock edit then bumps to +1 (In Process).
+      const upd={...populated,quoteRev:rev,quoteSentAt:_sentNow,quoteSentRev:rev,quoteRevAtPrint:rev,quoteSentTo:sentTo,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
       // #133 Change 4a (D3): first-class approval-request record when the quoted BOM
       // rode along. id "bar_"-prefixed (future portal write-back key); panels = stable
       // panel IDs; status write-once "sent" — never mutated by #133 code.
@@ -33748,7 +33772,11 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // Fire-and-forget (arrayUnion into project.qvHistory[]).
       _logQvHistory(project.id,{type:"quote_send",sendMode,to:sentTo,quoteNumber:(populated.quote||{}).number||null,quoteRev:rev,withBom:!!withBom});
       try{
-        persistProject(upd);
+        // B034 send-anchor: persist with the transient _sendAnchorWrite flag so saveProject
+        // treats this as the anchor (no bump, no unlock). onUpdate gets the CLEAN upd (flag
+        // never enters React state); the flag rides only the throwaway copy handed to safeSave.
+        onUpdate(upd);
+        safeSave(uid,{...upd,_sendAnchorWrite:true});
       }catch(saveErr){
         console.error("[QUOTE SEND] Firestore save failed after email succeeded:",saveErr);
         arcAlert(`⚠ Email was sent successfully to ${sentTo}, but the quote-lock record failed to save (${saveErr.message}). The quote may still appear unsent in the dashboard. Refresh and if the lock is missing, click Send again (the customer will get a duplicate — let them know).`);
@@ -36695,7 +36723,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     with a button that opens the verification modal. After ack, banner flips
                     to a green "Edits Enabled" state to make the elevated-permission status
                     obvious. */}
-                {project.quoteSentAt&&!sentQuoteAckGiven&&!isReadOnly()&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
+                {_sentSoftBlockActive(project,sentQuoteAckGiven)&&!isReadOnly()&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
                   <div style={{marginTop:6,padding:"8px 12px",background:"#3a2800",border:"1px solid #f59e0b66",borderRadius:8,display:"flex",flexDirection:"column",gap:6}}>
                     <div style={{fontSize:12,color:"#fbbf24",fontWeight:700}}>⚠ Customer has received this Quote</div>
                     <div style={{fontSize:11,color:"#fcd34d",lineHeight:1.5}}>Edits to this Panel may create a new Quote Revision. Check with the Project Owner before proceeding.</div>
@@ -37211,6 +37239,20 @@ class ErrorBoundary extends React.Component{
     }
     return this.props.children;
   }
+}
+
+// B034 SSOT: the "sent-quote soft block" rule. A quote that has been sent (quoteSentAt)
+// is soft read-only until the user acks via the "Verify with Project Owner" modal —
+// EXCEPT when the project is hard-locked (Won/Lost), which has its own dedicated lock UI.
+// BOTH the sentReadOnly gate (ProjectView) AND the amber "Verify with Project Owner"
+// banner (PanelListView) derive from this ONE predicate so they can't drift. Previously
+// the banner omitted the isProjectLocked term, so on a Won/Lost + previously-sent +
+// session-unlocked quote the banner showed while the BOM was already editable. Per
+// CLAUDE.md "Single Source of Truth for Dual-Consumer Predicates."
+function _sentSoftBlockActive(project,sentQuoteAckGiven){
+  if(!project)return false;
+  const _hardLocked=!!(project.wonAt||project.lostAt);
+  return !!project.quoteSentAt&&!sentQuoteAckGiven&&!_hardLocked;
 }
 
 // ── OWNER TAKEOVER MODAL (v1.19.682) ──
@@ -37774,7 +37816,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // the project switches. New won/lost flip = fresh lock = clean state.
   useEffect(()=>{setLockOverrideSession(false);setUnlockRequestSent(false);},[project.id,project.wonAt,project.lostAt,project.editUnlocked]);
   const lockReadOnly=isProjectLocked&&!editUnlockedForAll&&!(iAmOwnerOrAdmin&&lockOverrideSession);
-  const sentReadOnly=!!project.quoteSentAt&&!sentQuoteAckGiven&&!isProjectLocked;
+  const sentReadOnly=_sentSoftBlockActive(project,sentQuoteAckGiven); // B034 SSOT (== quoteSentAt && !ack && !isProjectLocked)
   // DECISION(v1.19.1084): During pre/post-review, ONLY the assigned reviewer can edit.
   // Everyone else (including admins) is locked out. Admins get an override button.
   const _outerIsPreReviewAssignee=project.preReviewStatus==="pending"&&(
@@ -39577,12 +39619,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       let _assignedQuoteNumber=null;
                       try{
                         const{project:_withNum,assigned:_numAssigned,number:_qn}=await ensureQuoteNumber(_proj,uid);
-                        if(_numAssigned){_proj=_withNum;_assignedQuoteNumber=_qn;onUpdate(_proj);await safeSave(uid,_proj);}
+                        if(_numAssigned){_proj=_withNum;_assignedQuoteNumber=_qn;update(_proj);await safeSave(uid,_proj);}
                       }catch(e){
                         console.error("[INLINE SEND] Quote number assignment failed:",e);
                         arcAlert("Could not assign a quote number. Check your connection and retry.");
                         return;
                       }
+                      // B034 send-anchor (parity with QuoteSendModal): read back the FINAL persisted
+                      // quoteRev after the number persist so PDF/filename/stamp all agree and the send
+                      // anchors quoteSentRev===quoteRev (not diverged). See QuoteSendModal.handleSend.
+                      let _finalRev=_proj.quoteRev||0;
+                      try{
+                        const _rbSnap=await fbDb.collection(_appCtx.projectsPath||`users/${uid}/projects`).doc(_proj.id).get();
+                        if(_rbSnap.exists&&typeof _rbSnap.data().quoteRev==="number")_finalRev=_rbSnap.data().quoteRev;
+                      }catch(e){console.warn("[INLINE SEND] final-rev read-back failed; using in-memory rev:",e.message);}
+                      _proj={..._proj,quoteRev:_finalRev};
                       const sig=m.signature.split("\n").filter(Boolean).join("<br/>");
                       const html=`<div style="font-family:-apple-system,sans-serif;font-size:14px;color:#1e293b;line-height:1.7">${m.message.split("\n").map(l=>l.trim()?`<p>${l}</p>`:"<br/>").join("")}<p style="margin-top:16px">Best regards,<br/>${sig}</p></div>`;
                       try{
@@ -39591,7 +39642,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         await buildQuotePdfDoc(pdfDoc,_proj);
                         const pdfBase64=pdfDoc.output("datauristring").split(",")[1];
                         const qq=_proj.quote||{};
-                        const rev=_proj.quoteRev||0;
+                        const rev=_finalRev; // B034 send-anchor: final post-populate rev (was stale _proj.quoteRev)
                         const co=(qq.company||_proj.bcCustomerName||"Customer").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
                         const pn=(_proj.name||"Project").replace(/[^a-zA-Z0-9&\s-]/g,"").trim();
                         const pdfName=`QTE_C-[${qq.number||"Quote"} Rev ${String(rev).padStart(2,"0")}] - ${co} - ${pn}.pdf`;
@@ -39618,8 +39669,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         const _sentNow=Date.now();
                         if(_customerValidityLoadedFor!==_proj.bcCustomerNumber)await _loadCustomerValidity(_proj.bcCustomerNumber);
                         const _validDays=resolveQuoteValidityDays(_proj,_customerValidityDays);
-                        const upd={..._proj,quoteSentAt:_sentNow,quoteSentRev:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
-                        onUpdate(upd);
+                        // B034 send-anchor: stamp all three anchors to the same final rev (see QuoteSendModal).
+                        const upd={..._proj,quoteRev:rev,quoteSentAt:_sentNow,quoteSentRev:rev,quoteRevAtPrint:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
+                        update(upd);safeSave(uid,{...upd,_sendAnchorWrite:true});
                         if(project.bcProjectNumber&&_bcToken){
                           bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
                         }
