@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-13 · prod v1.23.16 · B034 REGRESSION FIXED (send-anchor)
+## Current — ✅ SESSION 2026-07-13 · prod v1.23.16 · B034 fixed · F021 confirmed · heading-revise + F022 in-flight
+
+> ## 🔨 Quote-heading revise + F022 (2026-07-13)
+> **F021 confirmed working by Jon** (create→"Project#: X", PO→composite, header, quote heading all good). **Quote heading FORMAT CHANGE (Jon confirmed):** `_quoteHeadingLabel` → **"Project Name: {name} - {customer} / PROJECT #: {cust#}"** (e.g. "Project Name: Messabi - Ovivo / PROJECT #: 923455698", no PO# on quotes). 🔨 Marc building `quote-heading-labeled`. **F022 (NEW):** PO Received modal needs a drag-n-drop upload for the customer's PO PDF → 🔎 Coach scoping (storage path, reuse existing upload pattern, BC-attach?, MIME/rules). **STILL PENDING Jon live re-test on v1.23.16:** B034 rev cycle (send→Locked/not-In-Process → Verify→modal→edit→bump+In-Process) + F005 Print-Only.
 
 > ## ✅✅ SHIPPED 2026-07-13 — v1.23.16 (release `9bd2db4d`): B034 send-anchor fix — regression CLOSED
 > The v1.23.15 regression (SEND prematurely bumped `quoteRev` → every sent quote falsely showed In-Process/unsent/unlocked + the first real post-send edit didn't bump) is FIXED: send now stamps `quoteRev===quoteSentRev===quoteRevAtPrint` from the FINAL post-populate rev via the `_sendAnchorWrite` guard + Firestore read-back; shared `_sentSoftBlockActive` SSOT predicate. Coach money-path APPROVE (all 4 invariants confirmed). **⏳ JON RE-TEST on prod (v1.23.16):** (1) send a quote → lands **Locked Rev NN, NOT In Process**, no unsent-pill; (2) Verify & Enable Edits → **warning modal shows** → Continue; (3) one edit → **Qv bumps once + In Process**; (4) never-sent unchanged; (5) Print-Only (F005) → no bump/no unlock. **Follow-up:** separate ticket to delete dead `_doInlineQuoteSend` (unreachable).
