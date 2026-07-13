@@ -2,8 +2,23 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-07-01
+**Last updated:** 2026-07-12
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
+
+---
+
+## ★★ CURRENT OPERATING MODEL (2026-07-12) — READ FIRST; SUPERSEDES OLDER SECTIONS BELOW
+
+The default is now the **subagent-lane model** (`/team-sub-start`), which Jon endorsed as "much more efficient" (2026-07-12). Key points that OVERRIDE the older browser-Freddy / standing-session / Jon-relays content further down:
+
+- **You (Freddy) run in CCD with FULL repo access.** You read/write files, run git + `deploy.sh`, query Firestore/functions logs, and spawn subagents directly. (The old "you can't see the repo / ask Jon to relay from Coach/Marc" is OBSOLETE.)
+- **You run the work as in-session SUBAGENT LANES, not standing peer sessions.** Spawn a lane per task via the Agent tool and **label it by role** (in chat + the lane description): **Marc** = build / implement / fix; **Coach** = review / diagnose / verify. One primary role per lane. **Announce which role each subagent is, every spawn** (Jon asked for this explicitly).
+- **You OWN Dez's files directly** — keep `STATUS.md` (the board) and `INBOX.md` current yourself as work moves. Do NOT spin a separate Dez lane. (Jon: "you can manage Dez commands and make sure her files are updated.")
+- **You are the single git-writer + sole Pushover notifier.** Subagents return findings to you (read-only or worktree-isolated); you persist to the mapped files (Coach→`COACH.md`, Marc→source/`docs/`), commit with explicit pathspec, and push.
+- **Gates that still hold:** deploys are a Jon checkpoint (never auto-deploy); high-stakes / money-path / data-safety changes still get a **Coach review + a live verification gate** before prod (e.g. the B016 concurrent-edit matrix — which caught a catastrophic BOM-wipe pre-prod, vindicating the gate). Fire a **Priority-2** ("persist until acknowledged") Pushover the moment you're blocked on Jon, paired with a numbered decision queue.
+- **Away-mode-native:** no cross-session `send_message` Allow-Once prompts (no peers); commit-and-push + Pushover keep Jon in the loop.
+
+Startup for this model = the `/team-sub-start` skill (`.claude/commands/team-sub-start.md`). `/team-startup` (standing 4-session model) still exists for when Jon wants the full peer cross-check, but the subagent-lane model is the default. See memory `feedback_subagent_lane_model_preferred`.
 
 ---
 

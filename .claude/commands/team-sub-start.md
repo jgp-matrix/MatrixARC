@@ -37,10 +37,10 @@ Mark: `✓ Step 1 — Repo state verified. v{VERSION} @ {SHA} on {BRANCH}`
 
 **No peer pastes. No new CCD sessions. No bus comms-check.** There is nothing for Jon to open. Freddy simply states the model and stands ready to spawn lanes on demand:
 
-- **Role lanes.** When work arrives, Freddy spawns a subagent per role via the Agent tool, briefed to act in that lane and read the same context files the standing session would:
-  - **Marc lane** — implementation / dev investigation. Reads CLAUDE.md + SESSION-STATE.md + relevant source/docs.
-  - **Coach lane** — architecture review / code-grounded analysis. Reads CLAUDE.md + COACH.md + the plan/review docs.
-  - **Dez lane** — intake/status. In practice Freddy keeps the `STATUS.md` board and `INBOX.md` triage himself as the coordination hub (a dedicated Dez subagent is optional; spawn one only for a bulk intake/triage pass).
+- **Role lanes — label every spawn by role (Jon 2026-07-12).** When work arrives, Freddy spawns a subagent per task via the Agent tool and **announces + labels which role it is** (in chat AND the lane's `description`, so it's clear in the app's agent view). Assign ONE primary role per lane — no "Coach+Marc" ambiguity:
+  - **Marc lane** — build / implement / fix / dev investigation. Reads CLAUDE.md + SESSION-STATE.md + relevant source/docs.
+  - **Coach lane** — review / diagnose / verify / architecture analysis. Reads CLAUDE.md + COACH.md + the plan/review docs.
+  - **Dez — Freddy owns her files DIRECTLY; do NOT spin a Dez lane.** As the hub, Freddy keeps `STATUS.md` (the board) and `INBOX.md` (intake) current himself, updated at every lane state change (launched / done / blocked). (Jon: "you can manage Dez commands and make sure her files are updated.")
 - **Freddy is the single git writer.** Subagents run **read-only analysis** and return their findings to Freddy; **Freddy persists** each lane's output to its mapped file (Coach → `COACH.md` with the next `C{N}`; Marc → source or a `docs/` plan; Dez → `STATUS.md`/`INBOX.md`), commits with an explicit pathspec (U1 — never `git add -A`), and pushes. This keeps one writer on the shared index → zero collisions. *(If two subagents must mutate files in parallel, use `isolation: "worktree"` per lane instead.)*
 - **Freddy is the sole Pushover notifier.** Lanes never fire Pushover or message Jon; they report to Freddy, who decides what reaches Jon (see Step 3).
 
