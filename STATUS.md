@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-13 · prod v1.23.15 · B034+F005 + FULL F021 (incl. quote heading) SHIPPED
+## Current — ✅ SESSION 2026-07-13 · prod v1.23.16 · B034 REGRESSION FIXED (send-anchor)
+
+> ## ✅✅ SHIPPED 2026-07-13 — v1.23.16 (release `9bd2db4d`): B034 send-anchor fix — regression CLOSED
+> The v1.23.15 regression (SEND prematurely bumped `quoteRev` → every sent quote falsely showed In-Process/unsent/unlocked + the first real post-send edit didn't bump) is FIXED: send now stamps `quoteRev===quoteSentRev===quoteRevAtPrint` from the FINAL post-populate rev via the `_sendAnchorWrite` guard + Firestore read-back; shared `_sentSoftBlockActive` SSOT predicate. Coach money-path APPROVE (all 4 invariants confirmed). **⏳ JON RE-TEST on prod (v1.23.16):** (1) send a quote → lands **Locked Rev NN, NOT In Process**, no unsent-pill; (2) Verify & Enable Edits → **warning modal shows** → Continue; (3) one edit → **Qv bumps once + In Process**; (4) never-sent unchanged; (5) Print-Only (F005) → no bump/no unlock. **Follow-up:** separate ticket to delete dead `_doInlineQuoteSend` (unreachable).
 
 > ## ✅✅ SHIPPED 2026-07-13 — v1.23.15 (release `991b2915`): F021-4 quote heading (absorbs G010)
 > Quote line-items heading now shows **`<Customer Project #> / <Project Name>`** (e.g. "923455698 / Messabi") in place of "Line Items" — both PDF + on-screen, falls back to Project Name alone. Coach APPROVE. **Completes the full F021 feature + G010.** ⏳ Jon eyeball on a real quote.
