@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-14 · prod v1.23.21 · F023 + loose-ends + B042-fix SHIPPED; F024 building
+## Current — ✅ SESSION 2026-07-14 · prod v1.23.22 · F024 ACTIVE ECO column SHIPPED; B042 fully resolved
+
+> ## ✅✅ SHIPPED v1.23.22 (release `06f93e00`): F024 ACTIVE ECO column — ✅ verified live
+> New ACTIVE ECO column (red, any-active-ECO via computeActiveEco) between In-Pre-Review + Quotes-Sent; (BOM) IN PROCESS now pre-PO-only + renders yellow (color-key fix). Confirmed live: ACTIVE ECO + (BOM) IN PROCESS + QUOTES SENT all present on the board. Coach APPROVE WITH NITS. Nit (deferred, Jon-aware): purchasing_kanban still narrow → non-draft active-ECO Won projects show in both Sales ACTIVE-ECO + Purchasing boards.
 
 > ## ✅✅ SHIPPED v1.23.21 (release `e62171bf`) — ✅ JON VERIFIED (quick checks all pass): F023 + B035 + B036 + B037 + B039 + B042-fix
 > **F023** board click-header filter (all kanban views) · **B035** $0 service-card blocks Send · **B036** preserve quoteSent* in saveProject guards · **B037** F022 header offline-queue · **B039** tighten B038 retry (true empty-No.) · **B042-fix** dedup guard stops new duplicate project docs. All Coach-approved. **Live-verify-later:** B039 (confirm the genuine BC transient still carries `No.: ''` — Debug Logs `_b038LastRaw`); F022 disposable-BC PO test.
