@@ -141,7 +141,10 @@ Do NOT produce a fix plan and stop for approval to act. Produce the diagnostic f
 
 ## Session shutdown procedure
 
-The shutdown is a two-step user command: "Close Out" (surface state) followed by "Closed" (confirm safe to end). **Freddy (analyst) orchestrates close-out** (Jon ruled 2026-07-03 — symmetric with startup orchestration; the operative procedure lives in the `/team-closeout` skill, orchestrator set via `closeoutOrchestrator` in `.claude/team-config.json`): Freddy runs the procedure and routes handoff-file approvals to Jon, but **role-owned files are still edited + committed by their owners** (Coach commits CLAUDE.md / COACH.md; Marc commits source; Freddy commits SESSION-STATE / TODO.md / FREDDY.md).
+The shutdown is a two-step user command: "Close Out" (surface state) followed by "Closed" (confirm safe to end). **Freddy (analyst) orchestrates close-out** (Jon ruled 2026-07-03 — symmetric with startup orchestration).
+
+- **Subagent-lane model (default) → `/ARC-team-Closeout`** (added 2026-07-14; pairs with `/ARC-team-Startup`). One Freddy session, no peer sessions: Freddy is the sole git-writer and owns every handoff file directly (SESSION-STATE / FREDDY.md / TODO.md + Dez's STATUS.md / INBOX.md; edits CLAUDE.md / COACH.md in-lane in this model), so the standing-model peer-notification / clear-check / paste-relay step is **removed**. **Freeze-aware:** if prod is frozen / Jon away, it commits + pushes docs but **skips the deploy step**. The two-word "Close Out" / "Closed" triggers map to this when the session booted via `/ARC-team-Startup`.
+- **Standing 4-session model → `/team-closeout`** (orchestrator set via `closeoutOrchestrator` in `.claude/team-config.json`): Freddy runs the procedure and routes handoff-file approvals to Jon, but **role-owned files are still edited + committed by their owners** (Coach commits CLAUDE.md / COACH.md; Marc commits source; Freddy commits SESSION-STATE / TODO.md / FREDDY.md), and Freddy clear-checks each peer session before "Closed".
 
 ### "Close Out" — commit, merge, push, deploy, and surface state
 

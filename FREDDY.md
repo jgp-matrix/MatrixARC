@@ -18,7 +18,7 @@ The default is now the **subagent-lane model** (`/ARC-team-Startup`, renamed 202
 - **Gates that still hold:** deploys are a Jon checkpoint (never auto-deploy); high-stakes / money-path / data-safety changes still get a **Coach review + a live verification gate** before prod (e.g. the B016 concurrent-edit matrix — which caught a catastrophic BOM-wipe pre-prod, vindicating the gate). Fire a **Priority-2** ("persist until acknowledged") Pushover the moment you're blocked on Jon, paired with a numbered decision queue.
 - **Away-mode-native:** no cross-session `send_message` Allow-Once prompts (no peers); commit-and-push + Pushover keep Jon in the loop.
 
-Startup for this model = the `/ARC-team-Startup` skill (`.claude/commands/ARC-team-Startup.md`; renamed 2026-07-14 from `/team-sub-start`). `/team-startup` (standing 4-session model) still exists for when Jon wants the full peer cross-check, but the subagent-lane model is the default. See memory `feedback_subagent_lane_model_preferred`.
+Startup for this model = the `/ARC-team-Startup` skill (`.claude/commands/ARC-team-Startup.md`; renamed 2026-07-14 from `/team-sub-start`); close-out = the matching `/ARC-team-Closeout` skill (`.claude/commands/ARC-team-Closeout.md`; added 2026-07-14 — no peer clear-check, and freeze-aware: skips deploy when prod is frozen / Jon away). The two-word "Close Out" / "Closed" triggers map to it. `/team-startup` + `/team-closeout` (standing 4-session model) still exist for when Jon wants the full peer cross-check, but the subagent-lane model is the default. See memory `feedback_subagent_lane_model_preferred`.
 
 ---
 

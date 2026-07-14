@@ -15,8 +15,10 @@
 > - Live-verify-later (non-blocking): B039 (BC transient carries `No.: ''`), F022 disposable-BC PO test, B041 unlock re-test, `deploy-test.sh` run.
 > - Deferred: B016-2/3 (concurrent row-merge — one-editor lock holds), F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018).
 
-> ## 🔤 STARTUP COMMAND RENAMED (2026-07-14, Jon) — `/team-sub-start` → **`/ARC-team-Startup`**
-> The subagent-lane startup skill is now invoked as **`/ARC-team-Startup`** (same behavior; the old `/team-sub-start` name is retired). Docs updated to match: command file `.claude/commands/ARC-team-Startup.md`, CLAUDE.md (startup-variants row + default-model callout), FREDDY.md (operating-model block), SESSION-STATE.md (next-session boot line), memory `feedback_subagent_lane_model_preferred`, and this board. **Next session boots via `/ARC-team-Startup`.** Docs-only change — no app code, no deploy (prod stays frozen at v1.23.22).
+> ## 🔤 STARTUP + CLOSEOUT COMMANDS SET (2026-07-14, Jon) — subagent-lane pair
+> **Startup:** `/team-sub-start` renamed → **`/ARC-team-Startup`** (same behavior; old name retired).
+> **Close-out:** new matching **`/ARC-team-Closeout`** written (`.claude/commands/ARC-team-Closeout.md`) — subagent-native: one Freddy session, **no peer clear-check / no paste-relay**, Freddy owns all handoff files directly, and **freeze-aware** (commits+pushes docs but **skips deploy** when prod is frozen / Jon away). The two-word "Close Out" / "Closed" triggers map to it.
+> Docs updated to match: both command files, CLAUDE.md (startup-variants row + shutdown section + default-model callout), FREDDY.md (operating-model block), SESSION-STATE.md (boot + close-out lines), memory `feedback_subagent_lane_model_preferred`, and this board. **Next session boots via `/ARC-team-Startup`, closes via `/ARC-team-Closeout`.** Docs-only change — no app code, no deploy (prod stays frozen at v1.23.22).
 
 ## (prior) ✅ SESSION 2026-07-14 · prod v1.23.22 · F024 ACTIVE ECO column SHIPPED; B042 fully resolved
 
