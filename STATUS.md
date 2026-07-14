@@ -13,8 +13,8 @@
 > ## 🧪 B034 re-test (Jon, prod v1.23.17): REGRESSION FIXED ✓ + 2 refinements
 > Steps 1–3, 5–7 PASSED. **Step 2 (send → stays Quotes Sent, NOT In Process) = the regression fix CONFIRMED ✓.** Bump-once + re-send cycle works. **2 items surfaced:** (a) **B041** — the bump fired on the "Verify & Enable Edits" unlock click (step 3), BEFORE the edit (Rule-2 deviation) → 🔎 Coach tracing (suspect F020 term-seed on edit-enter); (b) **G012** — status wording "Rev 02" → "Quote sent Qv02 to <recipient>" → 🔨 Marc building. B034 core = good; these are refinements. **✅ F005 Print-Only VERIFIED on prod (Jon 2026-07-14): PDF, no bump, no unlock.**
 
-## ✅✅ B038 + F022 BOTH DEPLOY-READY (bundled, awaiting Jon's "deploy")
-> B038 (Create-In-BC auto-retry, `9321a38a`, Coach APPROVE-nits) + F022 (PO upload + BC attach + View PO, `d6189a49`, Coach APPROVE after Replace-safety fix). One deploy on Jon's go. B039 (retry-regex-tighten) + B037 (F022 offline-queue) = filed follow-ups.
+## ✅✅ DEPLOY-READY (bundled, awaiting Jon's "deploy"): B038 + F022 + G012
+> B038 (Create-In-BC auto-retry, `9321a38a`, Coach APPROVE-nits) + F022 (PO upload + BC attach + View PO, `d6189a49`, Coach APPROVE after Replace-safety fix) + G012 (sent-quote status wording, `19864769`, Jon-confirmed, display-string). One deploy on Jon's go. **B041** (bump-on-unlock, Coach tracing) can fold in once fixed. B039/B037 = filed follow-ups.
 
 > ## ✅✅ SHIPPED v1.23.17 (release `e6a1ac26`) — quote heading relabeled
 > `_quoteHeadingLabel` → **"Project Name: {name} - {customer} / PROJECT #: {cust#}"** (uses `project.bcCustomerName`; graceful fallbacks; no PO# on quotes). Coach APPROVE WITH NITS (narrow Sell-to vs Bill-to cosmetic edge, non-blocking).
