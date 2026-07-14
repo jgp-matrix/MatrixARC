@@ -2,7 +2,7 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-07-12
+**Last updated:** 2026-07-14
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
 
 ---
@@ -102,7 +102,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** v1.23.5 (defined in `public/index.html`; release `7b2ba1ba`, 2026-07-10 — B012 P1 hard one-editor lock). Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible)
+- **Current version:** **v1.23.22** (`public/index.html`; release `06f93e00`, 2026-07-14 — F024 ACTIVE ECO board column). Prod FROZEN at v1.23.22 while Jon is away ~4 days (2026-07-14→~07-18) — no deploys/changes until his return. Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible). *(Prior baseline noted below said v1.23.5 — that was the 2026-07-10 state; the 2026-07-14 session shipped v1.23.6→v1.23.22, see "★ LATEST" below.)*
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -337,7 +337,33 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-10)
+## Recently Active Work (as of 2026-07-14)
+
+### ★ LATEST — 2026-07-14 session (subagent-lane model; prod v1.23.5 → v1.23.22) — SHIPPED, then Jon left town (prod FROZEN)
+**Operating model this session = the subagent-lane model (this file's "★★ CURRENT OPERATING MODEL" block). It worked well end-to-end** — Freddy spawned Marc (build) + Coach (review/diagnose/scope) lanes per task, gated build→Coach-review→Jon-deploy, sole git-writer + notifier, drove the Claude-controlled prod tab for read-only diagnosis + a data heal. Continue this way.
+
+**Shipped to prod (v1.23.6 → v1.23.22), all Coach-reviewed + Jon-gated:**
+- **BC-reliability chain:** B021 (bcGatedFetch timeout/deadlock), B013-1 (401 auto-recover), B013-2/3 (honest BC health pill + 401 sync-modal), F019 (background standalone pricing).
+- **Quote features:** B033 (services-only quote pane), F020 (payment-terms/shipping inline entry), F005 (Print-Only in locked overlay), F021 (Customer Project # field → BC External Document No. + PO-append + header/quote-heading), quote-heading = "Project Name: <name> - <customer> / PROJECT #: <cust#>", G012 (sent-quote status wording).
+- **B034 (sent-quote revision bump)** — ASAP: editing a sent quote now bumps Qv once + → In Process; first build had a send-time-premature-bump REGRESSION (caught in Jon's live test) → **B034 send-anchor fix (v1.23.16)** re-anchors quoteSentRev/quoteRevAtPrint from the final post-populate rev. **B041** (`_noBumpWrite` guard — background/programmatic saves no longer bump a sent quote; only user edits do).
+- **Board:** F023 (click-header column filter — search bar already existed), F024 (ACTIVE ECO column, any-active-ECO → red, (BOM) IN PROCESS now pre-PO-only + yellow), "(BOM) IN PROCESS" header rename.
+- **BC item create:** B038 (auto-retry the transient empty-No. `Internal_DataNotFoundFilter`), B039 (tighten that retry).
+- **F022** (PO Received drag-n-drop upload + BC attach + "View PO").
+- **G009** (Test V.### env-build versioning + `deploy-test.sh` + `docs/TESTING-PROCEDURES.md` — test channel shares PROD data, isolates only the build).
+- **Loose-ends:** B035 ($0 service card blocks Send), B036 (preserve quoteSent* in saveProject guards), B037 (F022 header offline-queue).
+
+**Data operations (via the Claude-controlled prod tab, Jon-gated):**
+- **B040** — 7 sent quotes mis-columned in In Process (background-save rev drift) re-anchored (quoteSentRev=quoteRev) back to Quotes Sent. Targeted, verified.
+- **B042** — SYSTEMIC duplicate project docs (36/92: an `arc-<hash>` BC-import stub twinning a manual doc). Root = defective import dedup guard (in-memory `ps` + bcProjectId-only) → **guard fix shipped v1.23.21** (fresh-read + bcProjectId+bcProjectNumber + load-gate) + **36 empty stubs archived to `companies/{cid}/projects_archive` (reason "B042 duplicate empty BC-import stub", `_b042KeepId`, restorable) + deleted** → projects 128→92, 0 dups remain. (46 remaining `arc-<hash>` = legit BC-import-only sole copies.)
+
+**DEFERRED / PARKED for Jon's return (all filed in TODO.md + STATUS.md, prod NOT exposed):**
+- Quick-wins batch (unstarted, Jon paused it before leaving): Triangle-not-rendering markup bug (eng feedback #4), purchasing-board ECO nit (F024 follow-up — narrow predicate), B023 (quote-summary pill overflow), G007 (leftover TEST upload bar), B030 (silent-catch log), B029, B022.
+- Engineer Review-markup feedback cluster → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md`.
+- Live-verify-later (non-blocking): B039 (BC transient carries `No.: ''`), F022 disposable-BC PO test, B041 unlock re-test, `deploy-test.sh` run.
+- **B016-2/3 (concurrent-edit row-merge) — DEFERRED** (Jon 2026-07-14): confirmed unshipped + 108-commit-stale + no open data-loss (B012 one-editor lock contains it); branch `b016-23-merge` preserved on origin for a future rebuild. Revisit only if simultaneous single-project co-editing becomes a need.
+- Other backlog: F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018), the ~90 legacy `#N` items.
+
+**⚠ Startup note for the next session:** prod is FROZEN at v1.23.22 until Jon is back (~2026-07-18). Do NOT deploy/change prod while he's away. When he returns, the quick-wins batch (Triangle bug first) is teed up.
 
 ### 2026-07-10 — B012 P1 hard one-editor lock SHIPPED to prod; gap #5b+F015 building
 - **★★ B012 P1 hard one-editor lock SHIPPED (v1.23.5, `7b2ba1ba`).** The pivot from Phase B row-merge → a **server-enforced editing lease** shipped to prod (client + `firestore.rules`). Two different users on one project → server-locked to one editor; the 2nd user is read-only until the holder leaves. **Lock matrix CLOSED** (L1/L2/L3/L5/L6/L7/L8; L5 via the EXTRACTION path — extraction is the backgrounded task). 4 gaps + a pre-tick guard found/fixed in live testing; a non-dismissible-modal self-trap caught **before** prod → shipped DISMISSIBLE (hard-block deferred to F015). **CONTAINMENT RELAXED** — team can resume concurrent work. Phase B (PR #5) SHELVED (superseded), retained.

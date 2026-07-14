@@ -1,48 +1,38 @@
-# Session State — 2026-07-10 MDT (★ B012 P1 SHIPPED to prod v1.23.5 · lock-matrix CLOSED · containment RELAXED · gap #5b+F015 building on branch · new intake B027/F017/F018/F019)
+# Session State — 2026-07-14 MDT · 🧳 Jon AWAY ~4 days (back ~07-18) · prod FROZEN at v1.23.22 · NO deploys/changes until return
+
+## Operating model (READ FIRST)
+**Subagent-lane model is the default** (Jon's preference, endorsed 2026-07-12; used all of the 2026-07-14 session, works well). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly, and drives the Claude-controlled prod tab for read-only diagnosis + Jon-gated data ops. Flow: **build → Coach review → Jon deploy gate**; high-stakes/data-safety = Coach review + live verify. Startup skill: `/team-sub-start`. Full spec: FREDDY.md "★★ CURRENT OPERATING MODEL" + CLAUDE.md startup-variants table + memory `feedback_subagent_lane_model_preferred`.
 
 ## Version
-**v1.23.5** (PRODUCTION) — **B012 P1 hard one-editor lock SHIPPED** (release `7b2ba1ba`, 2026-07-10). The server-enforced editing lease is LIVE project-wide (client + `firestore.rules`). Prior baseline v1.23.4 (F011 CSV columns).
+**v1.23.22** (PRODUCTION) — F024 ACTIVE ECO board column (release `06f93e00`, 2026-07-14). Prior session baseline was v1.23.5 (B012 P1 lock, 2026-07-10); the 2026-07-14 session shipped v1.23.6 → v1.23.22.
 
 ## Deploy State
-- **Master tip:** `17d49cf1` (docs/tracker, atop Release v1.23.5 `b715e9a0` / merge `4027aba4`). `master == origin/master`.
-- **Production:** **https://matrix-arc.web.app** serving **v1.23.5** — B012 P1 hard lock LIVE (client + Firestore rules project-wide).
-- **Active build branch:** **`gap5b-f015`** (off master `76b82e92`, **tip `40153e82`** = `b21021a4` core + `40153e82` §2e/§2g) — gap #5b + F015 build at a **CLEAN STOP**. **BUILT (gap #5b DATA-SAFE core):** §1 BroadcastChannel liveness (WHO_HOLDS/ID_PING, ~300ms probe, §7 no-BC fallback), §2a tab-id dedup/regenerate (Duplicate-Tab → newer regenerates; tie-break since→nonce; `_leaseInitResolved` save-gate), §2b same-uid ADOPT (+R3 in-tx recheck; ghost/frozen/cross-device reopen → adopt, live peer → block), §2c pagehide close-release, §2e relinquish-on-takeover (LOAD-BEARING; `suppressAdopt` kills ping-pong; BC-independent), §2g "Edit here" manual re-take. **NOT BUILT (deferred → next session):** §2f cross-user countdown/auto-grant (UX polish, non-data-safety), §2d F015 non-dismissible hard-block (Phase 2 — the 2nd-tab modal stays the P1 DISMISSIBLE restore, coherent). **Coach review: NONE yet** (Marc stopped before routing since Phase 1 isn't fully complete). **ON TEST:** gap #5b core LIVE at matrix-arc-test (verify markers: `arc-lease`/`_bcWhoHolds`/`_regenerateTabId`/"Edit here"/"Editing moved"). ⚠ test reports APP_VERSION **v1.23.5** (same as prod — branch unbumped; distinguish by the arc-lease MARKERS, not the version = exactly the G009 gap). **NOT merged; PROD UNTOUCHED/HELD** (prod v1.23.5, 0 gap#5b markers).
-- **Retained branch (intentional):** `claude/phase-b-bom-merge` (PR #5) — Phase B row-merge **SHELVED** (superseded by the lock). **Do NOT merge/deploy.**
-- **`worktree-b012-hard-lock-p1`** — MERGED to master (B012 P1 full stack). Worktree cleanable at next prune.
-- **Working tree:** clean.
+- **Master tip:** current HEAD (this SESSION-STATE + FREDDY.md handoff refresh) atop `1e861a3c` (F024 shipped). `master == origin/master`.
+- **Production:** https://matrix-arc.web.app serving **v1.23.22**. Working tree clean, everything pushed, no lanes running.
+- **🧳 PROD FROZEN:** Jon is away ~4 days (2026-07-14 → ~07-18) and does NOT want ARC changed before/while he's gone. **No deploys or prod changes until he returns.** (Handoff-doc edits like this file are fine — they don't touch the app.)
 
-## ⭐ NEXT UP — Freddy leads (ranked)
+## Shipped this session (v1.23.6 → v1.23.22), all Coach-reviewed + Jon-gated
+- **BC-reliability chain:** B021, B013-1, B013-2/3, F019.
+- **Quote:** B033, F020, F005, F021 (+ quote heading "Project Name: <name> - <customer> / PROJECT #: <cust#>"), G012.
+- **B034** sent-quote revision bump (+ the send-anchor **regression fix** v1.23.16 after Jon's live test) · **B041** `_noBumpWrite` guard (background saves don't bump a sent quote).
+- **Board:** F023 (click-header column filter), F024 (ACTIVE ECO column; (BOM) IN PROCESS now pre-PO-only + yellow), "(BOM) IN PROCESS" rename.
+- **BC item create:** B038 (auto-retry transient empty-No.) + B039 (tighten).
+- **F022** PO Received drag-n-drop upload + BC attach + View PO.
+- **G009** Test V.### env-build versioning + `deploy-test.sh` + `docs/TESTING-PROCEDURES.md`.
+- **Loose-ends:** B035, B036, B037.
 
-**1. ★ gap #5b + F015 — 2nd-tab hardening: RESUME BUILD → VERIFY → DEPLOY.** The top fast-follow after the B012 P1 ship. **Design APPROVED end-to-end:** plan `docs/GAP5B-F015-PLAN.md` (Coach, `76b82e92` — incl. §2g), Freddy Analyst Review `docs/GAP5B-F015-ANALYST-REVIEW.md` (SOUND, `2e0b7a8b`). **Unifying primitive:** a `BroadcastChannel("arc-lease")` tab-liveness signal answers WHO_HOLDS (ghost-vs-live → same-uid ADOPT) + ID_PING (duplicate-tab detection → makes F015's hard-block safe). **Jon rulings:** Q1 accept ≤90s cross-user close delay + a live "available in ## seconds" COUNTDOWN with auto-grant at 0 (aging-lease only; live-renewing → indefinite "currently editing", no countdown); Q2 non-dismissible confirmed; Q3 ADOPT across devices + §2e RELINQUISH-ON-TAKEOVER (losing session goes read-only + "✋ Editing moved to your other session", no auto-reclaim) — unified with the frozen-tab (R2) case; §2g "✋ Edit here" manual re-take completes the round-trip. **Freddy R1–R4 build notes folded** (dup-tab editable-window save-gate, throttled-tab demotion=relinquish, simultaneous-adopt commit-recheck, tie-break nonce). **NO firestore.rules change; cross-user lock + gap#4 identity-guard untouched; every new mechanism same-uid + client-side + advisory.** **STATE:** gap #5b DATA-SAFE CORE built + at a CLEAN STOP on `gap5b-f015` (tip `40153e82`), test-deployed (prod held); §1/§2a/§2b/§2c/§2e/§2g done; **NO Coach review yet.** **RESUME (next session, in order):** (1) build §2f countdown/auto-grant + §2d F015 non-dismissible hard-block → (2) validate_jsx → (3) **Coach delta review of the FULL pair** (nothing reviewed yet) → (4) re-deploy test → (5) **verify G1–G16 (needs Jon + Andrew + a 2ND DEVICE — G14 cross-device adopt/relinquish, G16 "Edit here" round-trip)** → (6) Jon prod sign-off → (7) prod deploy v1.23.6 (client + rules together). Per-phase gated; build/review/verify autonomous, deploy is the Jon gate.
+## Data operations (Claude-controlled prod tab, Jon-gated, verified)
+- **B040** — 7 sent quotes healed out of In Process (re-anchored quoteSentRev=quoteRev).
+- **B042** — 36 duplicate `arc-<hash>` empty import stubs archived to `companies/{cid}/projects_archive` (restorable, tagged `_b042KeepId`) + deleted; projects 128→92, 0 dups remain; import dedup guard fixed (v1.23.21) so no new dups.
 
-**2. F014 — per-customer PAYMENT TERMS on all quotes + BC storage field [★ CRITICAL, Jon].** (A) surface a per-customer payment-terms note on ALL quote outputs (printed + sent) — e.g. WTR = 30% ARO / 40% AT Procurement / 30% Shipment; (B) identify a BC field to store per-customer terms so ARC reads it (not hand-entry). Distinct from #117 (resolved blank-render). Top of the post-gap#5b queue; part (B) BC-field ID is read-only research that can start in parallel.
+## Parked for Jon's return (all filed; prod NOT exposed)
+- **Quick-wins batch (unstarted — Jon paused it before leaving):** Triangle-not-rendering markup bug (eng #4, quickest win), purchasing-board ECO nit (F024 follow-up), B023 (quote-summary pill overflow), G007 (leftover TEST upload bar), B030 (silent-catch log), B029, B022.
+- **Engineer Review-markup feedback** → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md`.
+- **Live-verify-later (non-blocking):** B039 (BC transient carries `No.: ''`), F022 disposable-BC PO test, B041 unlock re-test, `deploy-test.sh` run.
+- **B016-2/3 (concurrent row-merge) — DEFERRED:** unshipped + 108-commit-stale + no open data-loss (B012 lock contains it); branch `b016-23-merge` preserved for a future rebuild.
+- **Backlog:** F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018), ~90 legacy `#N` items.
 
-**3. Fast-follow queue (Jon-gated order):** **B027** (revision history doesn't persist reviewer notes — transient light-red only) · **B024** (reviewer-assignment notif fails silently — write bell by ASSIGNED UID, not the brittle BC-email chain) · **B025** (marked-for-review rows go red on submit, should stay yellow) · **B026** (can't re-arm a 2nd tech-review without cancelling) · **F016** (REJECTED REVIEW dashboard column, red header) · **F019** (background standalone Get-New-Pricing — CONFIRMED truly-killed + silent on nav-away; model on runExtractionTask bgStart/_bgKey/rbgStart; consider interim warn/guard) · **F017/F018** (per-row reviewer + owner review notes) · **G008** (test-channel Storage CORS) · **G009** (test-env build versioning — Marc design ready, deploy-test.sh + TEST_BUILD + docs/TEST-BUILDS.md).
-
-**4. B013 — chronic multi-user BC connection reliability.** Andrew/Ryan pills often RED; Jon's green-but-dead (per-session token degradation). Fix: honest health indicator (probe validity) + auto-reconnect/retry-on-401 + token refresh.
-
-**5. B021 — BC fetch has no timeout/abort → stalled request freezes pricing at 95% + can deadlock the bcGatedFetch semaphore.** Add AbortController timeout (~30–60s) + release the slot in finally. Prod-relevant.
-
-**6. B016 — mutation write-race/delay under heavy on-open BC churn** (adds render late, edits/deletes revert). Reduce churn + await/confirm each mutation.
-
-**7. Others:** B017 (special-char PN 400s), B018 (send-block overlay clarity + red-row predicate; PRJ402100 3044102 +1¢-clears-red repro), B019 (progress-bar bounce), B020 (BC price-check re-prompts), B008/B011/B005 bugs cluster, F004/F005/F007/F008 features cluster, #192 BUDGETARY, #200 quota-tile aging, G005 Phase 2 (separate Firebase project + test user).
-
-## What happened this session (2026-07-10)
-- **★★ B012 P1 hard one-editor lock SHIPPED to prod (v1.23.5, `7b2ba1ba`).** Full stack `b654c5d6`+`d1b1b07e`(keep-alive)+`a7c4bbf2`(Fix B eligibility-gated claim)+`6871b280`(gap#3 reviewer-exempt)+`93607beb`(gap#4 reject/approve lease hand-back)+`98576f8e`(gap#5a reload-ghost sessionStorage id)+`37b15953`(pre-tick guard, Root A)+`89e289f7`(dismissible modal restore). Client + `firestore.rules` deployed. **Containment RELAXED** — two different users on one project are now server-locked to one editor.
-- **Lock matrix CLOSED:** L1/L2/L3/L5/L6/L7/L8 ✅ (no L4). **L5 = PASS via the EXTRACTION path** (backgrounded writeback survives nav-away; keep-alive validated). Live-testing found + fixed 4 gaps (#3/#4/#5a + the pre-tick guard) and caught a self-trap (the non-dismissible modal + ghost) BEFORE prod → shipped DISMISSIBLE, hard-block deferred to F015.
-- **Pricing finding → F019:** standalone "Get New Pricing" is FOREGROUND (dies on nav-away — Jon confirmed TRULY killed + silent); NOT a P1 regression. Extraction is the backgrounded task. → F019 to background pricing.
-- **gap #5b + F015 designed + analyst-reviewed + Jon-ruled + Phase-1-core built** (see NEXT UP #1).
-- **New intake stamped:** B027, F017, F018, F019. Pre-existing (not P1 regressions) confirmed: B024/B025/B026.
-
-## Key state carried forward
-- **CONTAINMENT RELAXED.** The B012 concurrent-edit data-loss bug is FIXED on prod (server-enforced one-editor lease). The team can resume normal concurrent work — the lock enforces one editor per project automatically; a 2nd user is read-only until the holder leaves.
-- **gap #5b + F015** is the in-flight follow-up on branch `gap5b-f015`, prod HELD, verify+deploy next session (needs Jon + Andrew + a 2nd device).
-- **Numbering:** B/F/G/M categories (M = Metrics, added 2026-07-10). Freddy sole allocator. Latest: B027, F019, M001.
-
-## Team workflow state (unchanged; see CLAUDE.md)
-- Per-phase gating; hub-and-spoke through Freddy; deploy is a Jon checkpoint. Build/review/verify runs autonomously; Jon comes in at deploy + for genuine decisions/questions (freeze the thread).
-
-## Session lessons (carry-forward)
-- **Verify root by ARTIFACT before calling a regression.** The 2nd-tab "both editable" episode was mis-attributed to the button-removal edit; Marc's diff proof (button change is isolated to the modal, touches zero detection) + Jon's two-tab console read pinned it to a PRE-TICK window (a fresh tab is editable until its first async lease check resolves), not the button. Reinforces [[feedback_runtime_artifact_over_code_read]].
-- **The pre-tick window is a real class:** seed lock/read-only state from the INITIAL loaded doc so a freshly-mounted view isn't briefly editable before its first async check resolves (the pre-tick guard, `37b15953`).
-- **Sequence a hard-block behind its safety precondition:** the non-dismissible 2nd-tab modal (F015) can't ship before the ghost-lease fix (gap #5b) or it traps a user on their own project — Coach caught it, Jon ruled ship-dismissible-now.
+## Next-session startup
+1. Boot via `/team-sub-start` (subagent-lane model).
+2. Prod is **v1.23.22, FROZEN until Jon confirms he's back** — do not deploy/change until then.
+3. When Jon returns: resume the **quick-wins batch** (Triangle bug first).
