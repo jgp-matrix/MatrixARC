@@ -48354,6 +48354,15 @@ INSTRUCTIONS:
   // Poll BC every 5 minutes and import any projects not yet in ARC
   useEffect(()=>{
     if(!user?.uid)return;
+    // B042: gate the INITIAL sync on load-complete. Before boot resolves, `loading` is
+    // true, `_appCtx.projectsPath` may be unset, and the projects state is empty — a
+    // sync fired then would fresh-read the wrong/empty collection and mis-dedup, writing
+    // arc-<hash> stub duplicates. `loading` reliably reaches false on EVERY terminal boot
+    // path (success at runBoot success + error/permission-denied branches), so this only
+    // DEFERS arming the timers until boot resolves; it can't permanently suppress the
+    // sync. The 5-min recurring interval is armed at the same time and also uses the
+    // fresh-read guard.
+    if(loading)return;
     async function syncBcProjects(){
       if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
       if(!_bcToken)return;
@@ -48369,10 +48378,35 @@ INSTRUCTIONS:
           const custName=odata.Sell_to_Customer_Name||odata.Bill_to_Name||bp.billToName||bp.billToCustomerName||(custNo?custByNumber[custNo]||"":"");
           return{bcCustomerNumber:custNo,bcCustomerName:custName};
         }
+        // B042 fix-first: dedup the BC-import guard against the PERSISTED projects
+        // collection (fresh read), not in-memory `ps`, and on BOTH bcProjectId AND
+        // bcProjectNumber. The old guard read `ps` (React state) and matched only
+        // bcProjectId, so during the initial-load race, the seconds-long window right
+        // after a manual "New Project" (bcCreateProject→save), or multi-tab lag, it
+        // missed a job that already had a manual doc and wrote an arc-<hash> stub
+        // duplicate. Do ONE fresh read per sync cycle (collection is small); if the
+        // read fails, skip the import this cycle rather than import blind (which would
+        // risk the very duplicates we're preventing).
+        let persistedById=new Set(),persistedByNumber=new Set();
+        try{
+          const projectsPath=_appCtx.projectsPath||`users/${user.uid}/projects`;
+          const persistedSnap=await fbDb.collection(projectsPath).get();
+          persistedSnap.forEach(d=>{
+            const pd=d.data()||{};
+            if(pd.bcProjectId)persistedById.add(pd.bcProjectId);
+            if(pd.bcProjectNumber)persistedByNumber.add(String(pd.bcProjectNumber));
+          });
+        }catch(e){console.warn("BC sync: persisted-projects read failed — skipping import this cycle:",e&&e.message);return;}
         setProjects(ps=>{
-          const existingBcIds=new Set(ps.map(p=>p.bcProjectId).filter(Boolean));
-          // Import new projects
-          const toImport=bcProjects.filter(bp=>bp.id&&!existingBcIds.has(bp.id));
+          // Dedup source = persisted collection (fresh read) UNION in-memory `ps`, on
+          // BOTH keys. The fresh read is authoritative (fixes the core bug); the `ps`
+          // union additionally covers a manual doc that is in state but not yet
+          // persisted at read time. Import a BC job ONLY when neither its id nor its
+          // number matches any existing doc — so a manual doc that already holds the
+          // PRJ number blocks its stub even if its bcProjectId is blank/mismatched.
+          const existById=new Set(persistedById),existByNumber=new Set(persistedByNumber);
+          ps.forEach(p=>{if(p.bcProjectId)existById.add(p.bcProjectId);if(p.bcProjectNumber)existByNumber.add(String(p.bcProjectNumber));});
+          const toImport=bcProjects.filter(bp=>bp.id&&!existById.has(bp.id)&&!(bp.number&&existByNumber.has(String(bp.number))));
           const newProjects=toImport.map(bp=>({
             id:"arc-"+bp.id.replace(/-/g,""),
             name:bp.displayName||bp.number||"Imported Project",
@@ -48411,7 +48445,7 @@ INSTRUCTIONS:
     const initialTimer=setTimeout(syncBcProjects,3000);
     const interval=setInterval(syncBcProjects,5*60*1000);
     return()=>{clearTimeout(initialTimer);clearInterval(interval);};
-  },[user?.uid]);
+  },[user?.uid,loading]);
 
   function checkQuoteRevWarn(action){
     if(!openProject){action();return;}
