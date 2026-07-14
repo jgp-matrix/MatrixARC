@@ -9190,8 +9190,16 @@ async function saveProject(uid,project){
   // In-Process / unlocked). Transient, in-memory only: stripped before persist, never
   // returned. Only the send paths set it; all other saves behave exactly as before.
   const _sendAnchor=!!project._sendAnchorWrite;
+  // B041 no-bump write: mirrors _sendAnchorWrite. A PROGRAMMATIC/BACKGROUND save (BC price
+  // poll, price/date backfills, labor-sync, lead-time drivers, BC re-verify, term-seed,
+  // quote# assign, etc.) that changes the quote hash must NOT bump quoteRev and must NOT
+  // clear quoteLocked — only a genuine USER content edit may bump a sent quote's rev.
+  // Transient, in-memory only: stripped before persist, never hashed, never returned.
+  // Independent of _sendAnchor — either flag suppresses the bump/unlock.
+  const _noBump=!!project._noBumpWrite;
   const data={...project,id:ref.id,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION,...(!project.id&&{createdBy:uid})};
   if('_sendAnchorWrite' in data)delete data._sendAnchorWrite;
+  if('_noBumpWrite' in data)delete data._noBumpWrite;
   // SAFETY: Use in-memory high-water marks to prevent data loss from stale saves
   let _curDoc=null;
   if(project.id){
@@ -9387,7 +9395,7 @@ async function saveProject(uid,project){
         const _sentRevSP=data.quoteSentRev||0;
         const _alreadyAheadOfPrint=_curRev>Math.max(_curRevAtPrint,_sentRevSP);
         if(oldQuoteHash){
-          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP&&!_alreadyAheadOfPrint&&!_sendAnchor){
+          if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSP&&!_alreadyAheadOfPrint&&!_sendAnchor&&!_noBump){
             data.quoteRev=_curRev+1;
             data.lastQuoteHash=newQuoteHash;
             // B034 Change C: the first divergent edit on a SENT quote re-arms the active
@@ -9398,12 +9406,15 @@ async function saveProject(uid,project){
             console.log(`[QUOTE REV] bumped to ${data.quoteRev} (first change since print/send)`);
           }else if(newQuoteHash!==oldQuoteHash){
             // Hash differs but we either (a) are in an active ECO, (b) have already bumped
-            // once since the last print, or (c) this is the send-anchor write. Refresh the
-            // persisted hash so the next post-send/print save compares cleanly WITHOUT
-            // bumping — and, for the send-anchor write, without clearing quoteLocked.
+            // once since the last print, (c) this is the send-anchor write, or (d) B041 this
+            // is a programmatic/background no-bump write. Refresh the persisted hash so the
+            // next GENUINE user edit compares cleanly WITHOUT bumping now — and, for the
+            // send-anchor + no-bump writes, without clearing quoteLocked. This keeps Rule 3
+            // intact: the hash advances so a subsequent real user edit still diffs + bumps.
             data.lastQuoteHash=newQuoteHash;
             if(_hasActiveEcoSP)console.log("[QUOTE REV] suppressed — active ECO in flight");
             else if(_sendAnchor)console.log("[QUOTE REV] send-anchor write — hash refreshed, no bump/unlock");
+            else if(_noBump)console.log("[QUOTE REV] no-bump write (programmatic/background) — hash refreshed, no bump/unlock");
             else console.log("[QUOTE REV] suppressed — already 1 rev ahead of last print");
           }
         }else{
@@ -9557,6 +9568,13 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     const snap=await ref.get();
     if(!snap.exists){resolve();delete _panelSaveLocks[lockKey];return;}
     const proj={id:ref.id,...snap.data()};
+    // B041 no-bump write: a PROGRAMMATIC/BACKGROUND panel save (BC re-verify, vendor/priceDate/
+    // PO-date backfill, labor-sync, lead-driver refresh, autosave timers, bcSyncPending flag
+    // writes, etc.) that changes the quote hash must NOT bump quoteRev and must NOT clear
+    // quoteLocked — only a genuine USER content edit may bump a sent quote's rev. Transient:
+    // captured here, stripped from the panel before persist, never hashed. Mirrors saveProject.
+    const _noBump=!!updatedPanel._noBumpWrite;
+    if(updatedPanel&&'_noBumpWrite' in updatedPanel){const{_noBumpWrite,...restPanel}=updatedPanel;updatedPanel=restPanel;}
     // DECISION(v1.19.738): Symmetric target-panel pages guard. Previously only OTHER
     // panels were protected from zero-pages overwrite; the target panel was "trusted"
     // unconditionally, leaving a hole where a caller handing a broken panel (transient
@@ -9674,14 +9692,17 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     const _sentRevSPP=liveProject.quoteSentRev||0;
     const _alreadyAheadSPP=_curRevSPP>Math.max(_curRevAtPrintSPP,_sentRevSPP);
     if(oldQuoteHash){
-      if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSPP&&!_alreadyAheadSPP){
+      if(newQuoteHash!==oldQuoteHash&&!_hasActiveEcoSPP&&!_alreadyAheadSPP&&!_noBump){
         // B034 Change C: first divergent edit on a SENT quote clears the sent-lock (re-arms
         // active state / on-open staleness check). Only on the real bump, only when sent.
         liveProject={...liveProject,quoteRev:_curRevSPP+1,lastQuoteHash:newQuoteHash,...(liveProject.quoteSentAt?{quoteLocked:false}:{})};
         console.log(`[QUOTE REV] bumped to ${liveProject.quoteRev} (panel save, first change since print/send)`);
       }else if(newQuoteHash!==oldQuoteHash){
+        // B041: a no-bump programmatic/background save still REFRESHES the hash (no bump, no
+        // unlock) so a subsequent genuine user edit diffs cleanly + bumps once (Rule 3 intact).
         liveProject={...liveProject,lastQuoteHash:newQuoteHash};
         if(_hasActiveEcoSPP)console.log("[QUOTE REV] suppressed (panel save) — active ECO in flight");
+        else if(_noBump)console.log("[QUOTE REV] no-bump write (panel save, programmatic/background) — hash refreshed, no bump/unlock");
         else console.log("[QUOTE REV] suppressed (panel save) — already 1 rev ahead of last print");
       }
     }else{
@@ -24289,7 +24310,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const cleaned={...panel,drawingNo:"",drawingDesc:"",drawingRev:""};
     console.log('[TITLE BLOCK] Cleared stale drawingNo/Desc/Rev on panel with no drawings:',panel.name||panel.id);
     onUpdate(cleaned);
-    try{onSaveImmediate&&onSaveImmediate(cleaned);}catch(e){}
+    try{onSaveImmediate&&onSaveImmediate({...cleaned,_noBumpWrite:true});}catch(e){} // B041: background stale-title cleanup — don't bump/unlock a sent quote
   },[panel.pages?.length,panel.drawingNo,panel.drawingDesc,panel.drawingRev]);
   // DECISION(v1.19.589): Restore pendingPages + awaitingConfirm from the module-scope cache.
   // If the user dropped drawings, navigated away (unmounting PanelCard), and came back,
@@ -24315,7 +24336,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const newLabor=(synced.bom||[]).filter(r=>r.isLaborRow);
     // Only update if labor rows actually changed (avoid infinite loop)
     const changed=oldLabor.length!==newLabor.length||oldLabor.some((r,i)=>r.qty!==newLabor[i]?.qty||r.unitPrice!==newLabor[i]?.unitPrice);
-    if(changed){onUpdate(synced);try{onSaveImmediate(synced);}catch(e){}}
+    if(changed){onUpdate(synced);try{onSaveImmediate({...synced,_noBumpWrite:true});}catch(e){}} // B041: background labor auto-sync — no bump/unlock
   },[panel.id]);
   const _bcReVerifyRan=useRef(null);
   const REVERIFY_COOLDOWN_MS=5*60*1000; // 5-minute cooldown per panel (#65c)
@@ -24337,7 +24358,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const updated={...latestPanelRef.current,bom:updatedBom,_lastReVerifyAt:Date.now()};
       latestPanelRef.current=updated;
       onUpdate(updated);
-      try{onSaveImmediate(updated);}catch(e){}
+      try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC re-verify — no bump/unlock
     })();
     return()=>{cancelled=true;};
   },[panel.id]);
@@ -24607,7 +24628,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       });
       if(changed){
         console.log(`[PanelView mount] auto-applied ${appliedAlt} alternates and ${appliedCorr} corrections to existing BOM${heldAlt>0?` (${heldAlt} alternates held back — manualVerifyRequired)`:""}`);
-        const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+        const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: mount auto-apply alternates/corrections — no bump/unlock
       }
       if(heldAlt>0)console.log(`[PanelView mount] ${heldAlt} auto-cross alternate(s) held back — BOM needs manual verification`);
 
@@ -24648,7 +24669,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(changed){
             const updated={...panel,bom:newBom};
             onUpdate(updated);
-            try{onSaveImmediate(updated);}catch(e){}
+            try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background vendor-name backfill — no bump/unlock
             _dbg("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
           }
         }catch(e){console.warn("Vendor backfill error:",e);}
@@ -24674,7 +24695,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     });
     const updated={...panel,bom:newBom};
     onUpdate(updated);
-    try{onSaveImmediate(updated);}catch(e){}
+    try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background priceDate backfill — no bump/unlock
     console.log("PRICEDATE BACKFILL:",needDate.length,"rows for panel",panel.name);
   },[]);
 
@@ -24697,7 +24718,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         });
         const updated={...panel,bom:newBom};
         onUpdate(updated);
-        try{onSaveImmediate(updated);}catch(e){}
+        try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC PO-date backfill — no bump/unlock
       })().catch(()=>{});
     }
     tryBackfill();
@@ -24755,7 +24776,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(changed){
           const updated={...fresh,bom:newBom};
           onUpdate(updated);
-          try{onSaveImmediate(updated);}catch(e){}
+          try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC price poll — no bump/unlock
           setBcUpdatedRows(new Set(changedIds));
           setBcUpdateNotif(true);
           setTimeout(()=>setBcUpdatedRows(new Set()),4000);
@@ -24817,7 +24838,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(!item){
           const updated={...panel,bcItemNumber:null,status:panel.status==="pushed_to_bc"?"costed":panel.status,updatedAt:Date.now()};
           onUpdate(updated);
-          try{await onSaveImmediate(updated);}catch(e){}
+          try{await onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC item-pulse check — no bump/unlock
         }
       }catch(e){console.warn("BC item pulse check failed:",e);}
     })();
@@ -24834,7 +24855,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow);
     const updated={...panel,bom:[...laborRows,...nonLabor]};
     onUpdate(updated);
-    const t=setTimeout(()=>onSaveImmediate(updated).catch(()=>{}),800);
+    const t=setTimeout(()=>onSaveImmediate({...updated,_noBumpWrite:true}).catch(()=>{}),800); // B041: background labor-row sync — no bump/unlock
     return()=>clearTimeout(t);
   },[_laborSyncKey]);
 
@@ -25964,7 +25985,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(unpriced.length){setUnpricedAlert(unpriced);return;}
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
     // F-2d.3: Write pending marker before BC sync starts
-    try{onSaveImmediate({...panel,bomSyncPending:true,bomSyncStartedAt:Date.now()});}catch(e){}
+    try{onSaveImmediate({...panel,bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true});}catch(e){} // B041: BC-sync marker (non-content) — no bump/unlock
     // DECISION(v1.19.599): Mirror BC sync status to team-wide bus so teammates see "X is syncing to BC".
     const syncTaskId=_bgKey(projectId,panel.id)+'_bcsync';
     bgStart(syncTaskId,panel.name||("Panel "+(idx+1)),projectId,"Syncing to Business Central…");
@@ -26025,14 +26046,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // preserved on save; never removed.
         const syncedBcCount=(panel.bom||[]).filter(r=>r.priceSource==="bc").length;
         const updated={...panel,bomSyncHash:syncHash,bcLastSyncedBcCount:syncedBcCount,bomSyncPending:false,bomSyncStartedAt:null};
-        onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
+        onUpdate(updated);try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: BC-sync marker (non-content) — no bump/unlock
         setTimeout(()=>setBcSyncStatus(null),4000);
       }
     }catch(e){
       console.error("bcSyncPlanningLines failed:",e);
       setBcSyncStatus("error");
       // F-2d.3: Clear pending marker on failure — don't leave it stuck
-      try{onSaveImmediate({...panel,bomSyncPending:false,bomSyncStartedAt:null});}catch(e2){}
+      try{onSaveImmediate({...panel,bomSyncPending:false,bomSyncStartedAt:null,_noBumpWrite:true});}catch(e2){} // B041: BC-sync marker (non-content) — no bump/unlock
       setTimeout(()=>setBcSyncStatus(null),6000);
       bgError(syncTaskId,"BC sync failed: "+(e.message||"").slice(0,60));
       setBcSyncing(false);return;
@@ -27047,7 +27068,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const u2={...lp,bom:bom2};
       latestPanelRef.current=u2;
       onUpdate(u2);
-      try{onSaveImmediate(u2);}catch(e){}
+      try{onSaveImmediate({...u2,_noBumpWrite:true});}catch(e){} // B041: background lead-time BC-queue vendor writeback — no bump/unlock
     }
     q.flushing=false;
     // If new edits arrived during the flush, re-arm the timer
@@ -27245,7 +27266,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // name (e.g. "PHOENIX" → "Phoenix Contact").
       if(bcItem._mfrCode)updates.manufacturer=bcItem._mfrCode;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
-      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});}}})().catch(()=>{});}
+      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,{...u2,_noBumpWrite:true},true).catch(()=>{});}}})().catch(()=>{});} // B041: deferred BC vendor lookup — no bump/unlock
       if(skipLearning){
         // "Just Apply" — no cross or correction flags, no learning
         delete updates.isCrossed;delete updates.crossedFrom;
@@ -27280,7 +27301,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             if(Object.keys(patches).length>0){
               const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,...patches}:r2);
-              const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,u2,true).catch(()=>{});
+              const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,{...u2,_noBumpWrite:true},true).catch(()=>{}); // B041: deferred BC ItemCard mfr/lead-time lookup — no bump/unlock
             }
           }}}
       }catch(e){}})();}
@@ -33674,7 +33695,7 @@ function createBomApprovalTokenDoc(project,barId,sentTo){
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
 function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
-  function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
+  function persistProject(upd){const{_noBumpWrite,...clean}=upd;onUpdate(clean);return safeSave(uid,_noBumpWrite?{...clean,_noBumpWrite:true}:clean);} // B041: _noBumpWrite (if set) reaches saveProject via safeSave but is stripped from onUpdate so it never pollutes React state (Rule 3 safe)
   // F020 (Option A): live edit of the inline Payment Terms / Shipping Method fields.
   // Mirrors QuoteTab.setQ (onUpdate only, no per-keystroke Firestore write) — the parent
   // re-renders the modal with the updated `project` prop so handleSend's closure sees the
@@ -33683,7 +33704,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   // F020 (Option A): seed blank terms from the company default for NEW / non-BC customers
   // so the inline fields open pre-filled and the user sees + can change them BEFORE Send
   // (never a silent send). persistProject here (one-time) makes the default stick.
-  useEffect(()=>{const patch=_seedQuoteTermDefaults(project);if(patch)persistProject({...project,quote:{...(project.quote||{}),...patch}});/*eslint-disable-next-line*/},[]);
+  useEffect(()=>{const patch=_seedQuoteTermDefaults(project);if(patch)persistProject({...project,quote:{...(project.quote||{}),...patch},_noBumpWrite:true});/*eslint-disable-next-line*/},[]); // B041: F020 term-seed on mount (writes quote.*) — no bump/unlock
   const [sendMode,setSendMode]=useState("sales"); // #193: default to Send-To-Sales tab
   const [threadSearch,setThreadSearch]=useState(project.quote?.company||project.bcCustomerName||project.name||"");
   const [threadResults,setThreadResults]=useState([]);
@@ -34543,7 +34564,7 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [newContactPhone,setNewContactPhone]=useState("");
   const [creatingContact,setCreatingContact]=useState(false);
   const [newContactErr,setNewContactErr]=useState("");
-  function persistProject(upd){onUpdate(upd);return safeSave(uid,upd);}
+  function persistProject(upd){const{_noBumpWrite,...clean}=upd;onUpdate(clean);return safeSave(uid,_noBumpWrite?{...clean,_noBumpWrite:true}:clean);} // B041: _noBumpWrite (if set) reaches saveProject via safeSave but is stripped from onUpdate so it never pollutes React state (Rule 3 safe)
   // ── RFQ Email Details state ──
   const [rfqDragging,setRfqDragging]=useState(false);
   const [rfqUploading,setRfqUploading]=useState(false);
@@ -34830,7 +34851,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
           bcCustomerName:_bcName,
           ..._shouldUpdateQuoteCompany?{quote:{...(project.quote||{}),company:_bcName}}:{}
         };
-        persistProject(upd);
+        persistProject({...upd,_noBumpWrite:true}); // B041: background BC customer-name sync (writes quote.company) — no bump/unlock
       }catch(e){}
     })();
   },[project.id]);
@@ -34860,7 +34881,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
     if(dirty){
       console.log("SCRUB: clearing dupe crosses from",project.name);
       const updated={...project,panels:cleaned};
-      persistProject(updated);
+      persistProject({...updated,_noBumpWrite:true}); // B041: one-time open-scrub of false crosses — no bump/unlock
     }
   },[project.id]);
 
@@ -36859,7 +36880,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                         if(match.displayName)contactName=match.displayName;
                         // Update project if email was missing
                         if(match.email&&!project.bcContactEmail){
-                          persistProject({...project,bcContactEmail:match.email,quote:{...(project.quote||{}),email:match.email}});
+                          persistProject({...project,bcContactEmail:match.email,quote:{...(project.quote||{}),email:match.email},_noBumpWrite:true}); // B041: modal-open BC contact-email auto-backfill (writes quote.email) — no bump/unlock
                         }
                       }
                     }catch(e){}
@@ -38341,7 +38362,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     setProject(updated);
     projectRef.current=updated;
     onChange&&onChange(updated);
-    safeSave(uid,updated).catch(e=>console.warn("[ECO BACKFILL] save failed:",e));
+    safeSave(uid,{...updated,_noBumpWrite:true}).catch(e=>console.warn("[ECO BACKFILL] save failed:",e)); // B041: background ECO-unlock backfill migration — no bump/unlock
   },[project.id]);
 
   // Listen for live updates from background extraction tasks (survives navigation)
@@ -38431,7 +38452,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const{updatedProject,changed}=_clearAutoBudgetary(latest);
       if(changed){
         update(updatedProject);
-        safeSave(uid,updatedProject).catch(e=>console.warn("[BUDGETARY AUTO] clear save failed:",e));
+        safeSave(uid,{...updatedProject,_noBumpWrite:true}).catch(e=>console.warn("[BUDGETARY AUTO] clear save failed:",e)); // B041: auto-effect ARC-auto-budgetary clear (flips isBudgetary) — no bump/unlock
       }
     },600);
     return()=>clearTimeout(t);
@@ -38487,7 +38508,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             console.log(`[OPEN BC SYNC] panel ${i+1}: stale marker but hash matches — clearing marker only`);
             try{
               const cleared={...p,bomSyncPending:false,bomSyncStartedAt:null};
-              await saveProjectPanel(uid,projectId,p.id,cleared,true);
+              await saveProjectPanel(uid,projectId,p.id,{...cleared,_noBumpWrite:true},true); // B041: open BC-sync marker clear — no bump/unlock
               const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?cleared:cp);
               const upd={...projectRef.current,panels:updPanels};
               setProject(upd);projectRef.current=upd;onChange(upd);
@@ -38500,7 +38521,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           // Either hash mismatch or stale pending with hash mismatch — sync to BC
           try{
             // Write pending marker before sync
-            await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:true,bomSyncStartedAt:Date.now()},true);
+            await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true},true); // B041: open BC-sync marker — no bump/unlock
             await bcSyncPanelPlanningLines(bcNum,i+1,p,projectName);
             synced++;
             // FIX(F-2d.3): Re-enable hash save-back (disabled in v1.20.65 #65b).
@@ -38508,7 +38529,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             // Write hash + clear marker atomically in one Firestore write.
             const syncHash=computePanelBomHash(p);
             const hashed={...p,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
-            await saveProjectPanel(uid,projectId,p.id,hashed,true);
+            await saveProjectPanel(uid,projectId,p.id,{...hashed,_noBumpWrite:true},true); // B041: open BC-sync hash marker — no bump/unlock
             // Update React state so manual sync sees the new hash
             const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?hashed:cp);
             const upd={...projectRef.current,panels:updPanels};
@@ -38516,7 +38537,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           }catch(e){
             console.warn("Open BC sync panel",i+1,"failed:",e);
             // Clear marker on failure — don't leave it stuck
-            try{await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:false,bomSyncStartedAt:null},true);}catch(e2){}
+            try{await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:false,bomSyncStartedAt:null,_noBumpWrite:true},true);}catch(e2){} // B041: open BC-sync marker clear — no bump/unlock
           }
         }
         if(synced>0)console.log("OPEN BC SYNC:",synced,"panels synced for",bcNum);
@@ -48230,7 +48251,7 @@ INSTRUCTIONS:
             createdAt:Date.now(),
             updatedAt:Date.now()
           }));
-          if(newProjects.length){console.log(`BC sync: importing ${newProjects.length} new project(s)`);newProjects.forEach(p=>saveProject(user.uid,p).catch(e=>console.warn("BC import save failed:",e)));}
+          if(newProjects.length){console.log(`BC sync: importing ${newProjects.length} new project(s)`);newProjects.forEach(p=>saveProject(user.uid,{...p,_noBumpWrite:true}).catch(e=>console.warn("BC import save failed:",e)));} // B041: background BC project import — no bump/unlock
           // Re-sync customer name on BC-linked projects missing it
           const toUpdate=ps.filter(p=>p.bcProjectId&&!p.bcCustomerName&&bcById[p.bcProjectId]);
           const updatedPs=ps.map(p=>{
@@ -48243,7 +48264,7 @@ INSTRUCTIONS:
             const cust=bp?extractCustomer(bp):{bcCustomerNumber:custNo,bcCustomerName:nameFromCustomers};
             if(!cust.bcCustomerName)return p;
             const updated={...p,...cust,updatedAt:Date.now()};
-            saveProject(user.uid,updated).catch(e=>console.warn("BC customer resync failed:",e));
+            saveProject(user.uid,{...updated,_noBumpWrite:true}).catch(e=>console.warn("BC customer resync failed:",e)); // B041: background BC customer resync — no bump/unlock
             return updated;
           });
           if(toUpdate.length)console.log(`BC sync: re-synced customer on ${toUpdate.length} project(s)`);
