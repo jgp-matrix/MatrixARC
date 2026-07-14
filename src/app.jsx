@@ -44430,7 +44430,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // original Won state. Without this carve-out, ECO-rework projects fall
       // through into a no-man's-land (excluded from both Sales AND Production).
       const order=["draft","in_progress","process_rfq","evc","pre_review","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
+      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
       const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
