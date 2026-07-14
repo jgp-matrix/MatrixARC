@@ -12,7 +12,7 @@
 
 3. **Edit note text after typing.** Make it so you can **edit the text** of a note after you've typed it. *(enhancement — note: addressing this also resolves item 7)*
 
-4. **🐛 Triangle shape doesn't render.** The **Triangle** shape doesn't show up on the markings. *(BUG)*
+4. **🐛 Triangle shape doesn't render ON THE DRAWING.** The **Triangle** doesn't show up as a shape on the drawing markup. *(BUG)* — **Clarification from the item-8 screenshot (2026-07-14):** the Triangle DOES appear in the notes list ("△ Triangle — Page 2 INT"), so the entry/type is created fine — the bug is specifically the **on-drawing shape overlay** not rendering the triangle (not the list). Look at the shape-render/draw layer, not the note-list mapping.
 
 5. **Highlighter tool.** Add a **highlighter** tool — easier to mark up specific lines that need to be addressed on the drawings. *(new tool)*
 
@@ -20,7 +20,9 @@
 
 7. **Note text should wrap, not scroll.** When typing a note, the text should **wrap to the next line** rather than scrolling horizontally — the scroll makes it hard to proofread the comment before submitting. *(enhancement — becomes moot if item 3 (editable text) is implemented; engineer said to ignore this one if 3 is done)*
 
-8. **Spacing between per-page markup groups (personal preference — optional).** Notes are already separated by page number; add a little **visual space between each page's markup group** in the notes list. Engineer flagged this as a personal preference — implement only if desired. **Screenshot referenced but NOT attached — request it from Jon before building.** *(cosmetic / optional)*
+8. **Spacing between per-page markup groups (personal preference — optional).** Notes are already separated by page number; add a little **visual space between each page's markup group** in the notes list. Engineer flagged this as a personal preference — implement only if desired. *(cosmetic / optional)*
+   - **Screenshot RECEIVED (2026-07-14).** It shows the "MARKUP — ALL PAGES (10)" panel: a **"Page 1"** group (its markup entries `○ Circle — Page 1 · INT`, `□ Rect — Page 1 · INT`, each with a note line below) then a **"Page 2"** group. The ask: increase the vertical gap **between the end of one page's group and the next "Page N" header** so the groups read as clearly separated blocks. (There's a small gap today; engineer wants it a bit bigger.)
+   - **NOTE (Freddy):** I can't write the pasted image binary into the repo from a chat paste. If we want the PNG in-repo, Jon drops it at `docs/engineer-feedback-reviews-item8.png`; otherwise this text description is sufficient to implement the spacing.
 
 ## Separate area — BOM editing (not markup, but included in the same feedback)
 
