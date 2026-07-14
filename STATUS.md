@@ -7,7 +7,7 @@
 
 ## Current — ✅ SESSION 2026-07-14 · prod v1.23.21 · F023 + loose-ends + B042-fix SHIPPED; F024 building
 
-> ## ✅✅ SHIPPED v1.23.21 (release `e62171bf`): F023 + B035 + B036 + B037 + B039 + B042-fix
+> ## ✅✅ SHIPPED v1.23.21 (release `e62171bf`) — ✅ JON VERIFIED (quick checks all pass): F023 + B035 + B036 + B037 + B039 + B042-fix
 > **F023** board click-header filter (all kanban views) · **B035** $0 service-card blocks Send · **B036** preserve quoteSent* in saveProject guards · **B037** F022 header offline-queue · **B039** tighten B038 retry (true empty-No.) · **B042-fix** dedup guard stops new duplicate project docs. All Coach-approved. **Live-verify-later:** B039 (confirm the genuine BC transient still carries `No.: ''` — Debug Logs `_b038LastRaw`); F022 disposable-BC PO test.
 > **🔨 F024 building** `f024-active-eco-column` (on post-F023 master): ACTIVE ECO column (any-active-ECO routing, RED, + (BOM) In Process color-key fold) → Coach → deploy.
 > **📋 Queued:** B042 cleanup (36 stub archive pass, Jon-gated) now that the guard fix is live; engineer-feedback triage.
