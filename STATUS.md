@@ -8,7 +8,8 @@
 ## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · loose-ends cleanup in progress (3 lanes)
 
 > ## 🔧 Loose-ends cleanup (Jon 2026-07-14)
-> - **🔨 Loose-ends batch** `loose-ends-b035-b036-b037-b039` (Marc building): B035 ($0 service-card blocks Send) + B036 (preserve quoteSent* in saveProject guards) + B037 (F022 header offline-queue) + B039 (tighten B038 retry to true empty-No.). → Coach → deploy. **B041 nit RATIFIED (Jon): budgetary→firm auto-flip stays no-bump** (no code change).
+> - **🔎 Loose-ends batch** `loose-ends-b035-b036-b037-b039` (`1160f508`, Marc BUILT, Coach reviewing): B035 ($0 service-card blocks Send) + B036 (preserve quoteSent* in saveProject guards) + B037 (F022 header offline-queue) + B039 (tighten B038 retry to true empty-No.). B041 nit RATIFIED (no-bump).
+> - **🔎 F024** (NEW, Coach scoping): ACTIVE ECO board column between In-Pre-Review + Quotes-Sent; route active-ECO projects there → (BOM) IN PROCESS = pre-PO only. Build on F023 branch (shared board render).
 > - **✅ F023** `f023-board-column-filter` (`b0744509`): click column header → focus to that status (all 6 kanban views), full-width grid + "← All columns" reset + toggle + empty-state; search already existed (broad, kept). View-only. **Coach APPROVE WITH NITS — DEPLOY-READY** (no board regression, drag-drop intact).
 > - **📄 ENGINEER FEEDBACK ON REVIEWS** captured → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md` (9 markup/BOM-edit items; not yet scoped; item-8 screenshot missing).
 > - **🔎 B042** (Coach scoping): SYSTEMIC dup — 36/92 projects have an auto-id + `arc-<hash>` pair. Data-safety (deleting project docs) → why/canonical/ongoing?/safe-archive plan before any cleanup.
