@@ -10,7 +10,10 @@
 > ## 🔎 Two prod issues (Jon, 2026-07-13/14) — Coach diagnosed
 > **#1 IN PROCESS should be QUOTES SENT → B040** (regression casualties): projects sent in the B034 window (12:36–13:42 MDT) persisted `quoteRev=quoteSentRev+1` → mis-columned. Jon chose **self-heal migration** → **✅ Marc BUILT** `b040-inprocess-selfheal` (`8a8fabf8`, +106/−1): guarded re-anchor in loadProjects (raw-doc guards: window[start−5min/END tight] + rev===sentRev+1 + no post-send qvHistory + no active ECO), targeted `.doc.update({quoteSentRev,quoteRevAtPrint})` bypassing hash/bump, idempotent (guard2 false after heal), 400ms-spaced, session healed-ids set. Board flips on load. **⏳ Coach data-migration review** (gate: can it EVER re-anchor a legit revision? + persist safety + idempotency) → Jon deploy. **#2 owner VIEW-ONLY on PRJ402131/402126 → NOT a bug (G011):** the sent-quote soft-block (`_sentSoftBlockActive`) makes any sent quote read-only for everyone incl. owner → click **"Verify with Project Owner & Enable Edits"** to edit (predates B034). Awaiting Jon's banner-text confirm; owner-exemption logged as **G011** design consideration.
 >
-> ## ✅✅ B038 + F022 BOTH DEPLOY-READY (bundled, awaiting Jon's "deploy")
+> ## 🧪 B034 re-test (Jon, prod v1.23.17): REGRESSION FIXED ✓ + 2 refinements
+> Steps 1–3, 5–7 PASSED. **Step 2 (send → stays Quotes Sent, NOT In Process) = the regression fix CONFIRMED ✓.** Bump-once + re-send cycle works. **2 items surfaced:** (a) **B041** — the bump fired on the "Verify & Enable Edits" unlock click (step 3), BEFORE the edit (Rule-2 deviation) → 🔎 Coach tracing (suspect F020 term-seed on edit-enter); (b) **G012** — status wording "Rev 02" → "Quote sent Qv02 to <recipient>" → 🔨 Marc building. B034 core = good; these are refinements.
+
+## ✅✅ B038 + F022 BOTH DEPLOY-READY (bundled, awaiting Jon's "deploy")
 > B038 (Create-In-BC auto-retry, `9321a38a`, Coach APPROVE-nits) + F022 (PO upload + BC attach + View PO, `d6189a49`, Coach APPROVE after Replace-safety fix). One deploy on Jon's go. B039 (retry-regex-tighten) + B037 (F022 offline-queue) = filed follow-ups.
 
 > ## ✅✅ SHIPPED v1.23.17 (release `e6a1ac26`) — quote heading relabeled
