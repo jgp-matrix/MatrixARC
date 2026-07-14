@@ -9662,10 +9662,115 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
   }finally{resolve();delete _panelSaveLocks[lockKey];}
 }
+// ── B040: one-time self-heal for B034-window sent-quote casualties ──────────
+// During a ~66-min window on 2026-07-13 a regression (B034 send-time premature
+// bump, shipped v1.23.14 @ 12:36:46 MDT, fixed v1.23.16 @ 13:42:30 MDT) made
+// SENDING a quote persist quoteRev = quoteSentRev + 1. computeProjectEffectiveStatus
+// routes quoteRev>quoteSentRev to "in_progress", so those sent quotes are stuck in
+// the IN PROCESS board column instead of QUOTES SENT. The v1.23.16 fix stops NEW
+// cases but leaves the window casualties. This re-anchors ONLY confirmed casualties
+// exactly as the fix would have stamped them (quoteSentRev=quoteRevAtPrint=quoteRev),
+// which flips them to firm_sent/budgetary_sent → QUOTES SENT. No re-email, no data
+// loss: quoteSentAt / quoteRev / qvHistory are all preserved; only the two anchor
+// fields are written. TIGHTLY guarded (window + exactly-one-bump + no post-send edit
+// + no active ECO) so it can NEVER touch a legitimately-revised quote.
+//
+// Window (MDT = UTC−6): START 12:36:46 MDT = 18:36:46Z (−5 min safety buffer applied);
+// END 13:42:30 MDT = 19:42:30Z (kept TIGHT — widening the end risks catching a legit
+// post-fix +1 edit). A rare stale-code straggler that sent after the fix is handled
+// individually, NOT by widening the end.
+const _B040_WIN_START_MS=Date.UTC(2026,6,13,18,36,46)-5*60*1000; // 18:31:46Z
+const _B040_WIN_END_MS=Date.UTC(2026,6,13,19,42,30);            // 19:42:30Z (tight)
+// qvHistory edit-type writers (grepped 2026-07-14): re_extract(:25982),
+// review_edit(:26746)/_logBomEdit(:26752-53), refresh_pricing(:27571),
+// bc_push_lead_times(:27412), supplier_apply(:38942), review_* / unlock_* / eco.
+// We treat ANY non-"quote_send" qvHistory entry dated after quoteSentAt as a genuine
+// post-send edit → SKIP (bias toward not-touching). Only the quote_send record itself
+// (written by _logQvHistory with at≈quoteSentAt, a few ms later) is excluded.
+function _b040ToMs(v){
+  if(v==null)return null;
+  if(typeof v==="number")return v;
+  if(typeof v==="object"){
+    if(typeof v.toMillis==="function"){try{return v.toMillis();}catch(_){}}
+    if(typeof v.seconds==="number")return v.seconds*1000+(typeof v.nanoseconds==="number"?Math.floor(v.nanoseconds/1e6):0);
+    if(typeof v._seconds==="number")return v._seconds*1000+(typeof v._nanoseconds==="number"?Math.floor(v._nanoseconds/1e6):0);
+  }
+  const n=Date.parse(v);
+  return isNaN(n)?null:n;
+}
+// Evaluate the guard on the RAW persisted doc (before migrateProjectShape's
+// quoteRev-normalize could alter quoteRev). Returns the corrected anchors or null.
+function _b040InProcessSelfHeal(raw){
+  if(!raw)return null;
+  // Guard 1 — sent in the regression window (tight END, buffered START).
+  const _sentMs=_b040ToMs(raw.quoteSentAt);
+  if(_sentMs==null)return null;                                   // never-sent → skip
+  if(_sentMs<_B040_WIN_START_MS||_sentMs>_B040_WIN_END_MS)return null;
+  // Guard 2 — exactly one phantom bump. >+1 = genuine extra edits → leave alone.
+  const _rev=raw.quoteRev||0;
+  const _sentRev=raw.quoteSentRev||0;
+  if(_rev!==_sentRev+1)return null;
+  // Guard 3a — no genuine post-send edit recorded in qvHistory (any non-send entry
+  // dated after the send is treated as a real edit → skip; bias toward not-touching).
+  const _hist=Array.isArray(raw.qvHistory)?raw.qvHistory:[];
+  const _postSendEdit=_hist.some(e=>{
+    if(!e)return false;
+    if(e.type==="quote_send")return false;                       // the send record itself
+    const _at=_b040ToMs(e.at);
+    return _at!=null&&_at>_sentMs;
+  });
+  if(_postSendEdit)return null;
+  // Guard 3b — no active ECO (legitimate in-flight post-send work). Mirrors the
+  // ECO short-circuit in computeProjectEffectiveStatus.
+  const _hasActiveEco=!!raw.ecoEditUnlocked||(Array.isArray(raw.ecoSummary)&&raw.ecoSummary.some(e=>e&&e.status==="draft"));
+  if(_hasActiveEco)return null;
+  // Confirmed casualty → re-anchor to what the v1.23.16 fix would have stamped.
+  return{quoteSentRev:_rev,quoteRevAtPrint:_rev};
+}
+// Session-scoped guard: ids whose heal write has been issued this session, so a
+// second loadProjects before the write commits can't double-fire. The data guard
+// (Guard 2 becomes false once persisted) makes it idempotent across reloads anyway.
+const _b040HealedIds=new Set();
+async function _b040PersistHeals(path,heals){
+  for(let i=0;i<heals.length;i++){
+    const h=heals[i];
+    try{
+      // Targeted field update ONLY — no full saveProject, no hash/schema change,
+      // nothing added to the content hash, no bump, no dataUrl strip. Preserves
+      // quoteSentAt / quoteRev / qvHistory and every other field untouched.
+      await fbDb.collection(path).doc(h.id).update({quoteSentRev:h.quoteSentRev,quoteRevAtPrint:h.quoteRevAtPrint});
+      console.log(`[B040 SELF-HEAL] re-anchored ${h.id}: quoteSentRev/quoteRevAtPrint → ${h.quoteSentRev} (was sentRev ${h.quoteSentRev-1}) → Quotes Sent`);
+    }catch(e){
+      _b040HealedIds.delete(h.id); // allow a retry on a later load if the write failed
+      console.error("[B040 SELF-HEAL] persist failed for",h.id,e&&e.message);
+    }
+    if(i<heals.length-1)await new Promise(r=>setTimeout(r,400)); // space writes (B012 amplifier guard)
+  }
+}
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
-  return snap.docs.map(d=>migrateProjectShape(d.data()));
+  const _b040Heals=[];
+  const out=snap.docs.map(d=>{
+    const raw=d.data();
+    const proj=migrateProjectShape(raw);
+    // B040 one-time self-heal — guard evaluated on RAW persisted values.
+    if(!_b040HealedIds.has(d.id)){
+      const _heal=_b040InProcessSelfHeal(raw);
+      if(_heal){
+        // In-memory correction so the board flips to QUOTES SENT immediately on this
+        // load (all three anchors equal → computeProjectEffectiveStatus = *_sent).
+        proj.quoteRev=_heal.quoteSentRev;
+        proj.quoteSentRev=_heal.quoteSentRev;
+        proj.quoteRevAtPrint=_heal.quoteRevAtPrint;
+        _b040HealedIds.add(d.id);
+        _b040Heals.push({id:d.id,quoteSentRev:_heal.quoteSentRev,quoteRevAtPrint:_heal.quoteRevAtPrint});
+      }
+    }
+    return proj;
+  });
+  if(_b040Heals.length)_b040PersistHeals(path,_b040Heals); // fire-and-forget, spaced
+  return out;
 }
 
 // DECISION(v1.19.785): Lazy migration shim for projects loaded from Firestore. Anything
