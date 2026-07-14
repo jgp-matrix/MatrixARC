@@ -551,6 +551,8 @@ Located in `tools/`. Use these alongside development:
 
 **Known toolkit gap**: hook only covers `.js`, not `.jsx`. Most of `src/app.jsx` (~2 MB, the bulk of the codebase) is unreviewed by the automated hook. Tracked as deferred toolkit improvement T1/T2 in `TODO.md`.
 
+**Where do I test? (G009)** → see `docs/TESTING-PROCEDURES.md`. `matrix-arc-test.web.app` runs different CODE but shares prod **DATA** (not a sandbox — every write is a real prod record). Confirm env + build via the orange ribbon (`🧪 TEST ENVIRONMENT · Test V.###`); Test deploys go through `deploy-test.sh` (bumps `TEST_BUILD`, `hosting:test` only, never touches prod), logged in `docs/TEST-BUILDS.md`.
+
 ## Data Retention (CRITICAL)
 
 This app is used for real production projects. **No user data may ever be lost due to code changes.**

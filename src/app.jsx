@@ -50468,6 +50468,11 @@ function Root(){
 // shows across every route (login, portal, main app).
 function TestEnvBanner(){
   if(!IS_TEST_ENV)return null;
-  return <div style={{position:"fixed",top:0,left:0,right:0,zIndex:2147483647,background:"#b45309",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",padding:"4px 12px",letterSpacing:0.3,fontFamily:"inherit",boxShadow:"0 2px 10px rgba(0,0,0,0.45)"}}>⚠ TEST ENVIRONMENT — BC writes go to the sandbox; emails &amp; notifications suppressed. NOT production.</div>;
+  // G009: surface the monotonic test-build counter (Test V.###) + the prod base version so a
+  // tester can confirm exactly which build they're on (must match the latest row in
+  // docs/TEST-BUILDS.md). TEST_BUILD is a global const from public/index.html (like APP_VERSION);
+  // guard with a fallback in case an older cached index.html predates the constant.
+  var tb=(typeof TEST_BUILD!=="undefined"?TEST_BUILD:"???");
+  return <div style={{position:"fixed",top:0,left:0,right:0,zIndex:2147483647,background:"#b45309",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",padding:"4px 12px",letterSpacing:0.3,fontFamily:"inherit",boxShadow:"0 2px 10px rgba(0,0,0,0.45)"}}>🧪 TEST ENVIRONMENT · <span style={{fontSize:15,letterSpacing:0.6}}>Test V.{tb}</span> (base {APP_VERSION}) — shared prod data · email/push suppressed · NOT production</div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<><TestEnvBanner/><Root/></>);

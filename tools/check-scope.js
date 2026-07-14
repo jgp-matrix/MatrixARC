@@ -101,6 +101,7 @@ const GLOBAL_ALLOWLIST = new Set([
 
   // App version constants — public/index.html:238, 257
   'APP_VERSION',        // index.html:238 — const APP_VERSION="v1.20.XX"
+  'TEST_BUILD',         // index.html — const TEST_BUILD="NNN" (G009 test-build counter)
   'APP_SCHEMA_VERSION', // index.html:257 — const APP_SCHEMA_VERSION=3
 
   // Business Central window properties — src/app.jsx:332-336
