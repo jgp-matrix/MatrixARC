@@ -5261,7 +5261,14 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   // 401/permission/validation/already-exists still fail fast. Before each retry, GET-check by
   // Vendor_Item_No so a partially-persisted item is ADOPTED, never duplicated. Surrogate scheme
   // (body.number omitted, #163) is unchanged.
-  const _isTransientEmptyNo=(txt)=>/Internal_DataNotFoundFilter/i.test(txt||"")||/No\.:\s*''/.test(txt||"");
+  // B039: tighten B038's signature. `Internal_DataNotFoundFilter` ALONE is too broad — a create
+  // that fails for an unrelated reason (bad itemCategoryCode / baseUnitOfMeasureCode ref) also
+  // returns that code, and the old OR-match then burned 3 futile retries (~2.4s) + surfaced the
+  // misleading "numbering series busy" message. The GENUINE auto-numbering hiccup carries BOTH the
+  // code AND the empty `No.: ''` marker ({"code":"Internal_DataNotFoundFilter","message":"...No.: '' ..."}),
+  // so require BOTH — only the true empty-No. failure retries/gets the friendly message; every other
+  // Internal_DataNotFoundFilter fails fast with the raw BC error.
+  const _isTransientEmptyNo=(txt)=>/Internal_DataNotFoundFilter/i.test(txt||"")&&/No\.:\s*''/.test(txt||"");
   const B038_MAX_TRIES=3; // 1 initial attempt + 2 retries
   let _b038LastRaw="";
   try{
@@ -9362,6 +9369,25 @@ async function saveProject(uid,project){
         // write reaches Firestore — server doc is still stale, but local flag has the truth).
         const _prOvrSP=_pendingPreReviewOverrides[data.id];
         if(_prOvrSP&&data.preReviewStatus===undefined)Object.assign(data,_prOvrSP);
+        // B036 SAVE GUARD: preserve the quote-SEND anchor fields (quoteSentRev / quoteSentAt /
+        // quoteSentTo) when an incoming write OMITS them. These drive the rev-bump cap
+        // (Math.max(revAtPrint, quoteSentRev) at _sentRevSP below), the In-Process status flip
+        // (computeProjectEffectiveStatus: quoteRev>quoteSentRev ⇒ diverged), and the B034
+        // divergence unlock. A stale-client full-doc set() that loaded BEFORE a send/heal — or a
+        // background save — carries no quoteSent* and would WIPE the anchor, resetting the
+        // revision logic to "never sent". Same shape as the ownerTakeover/lease guards above:
+        // undefined = field absent (stale → preserve); null = intentional clear (the reset-quote
+        // paths write explicit null → passes through unchanged); the send/heal paths write real
+        // values → passes through unchanged (guard is a no-op there). MUST run before _sentRevSP
+        // reads data.quoteSentRev so the preserved value feeds the bump cap.
+        {
+          const _srvSent=_curDoc.data();
+          for(const _qf of ['quoteSentRev','quoteSentAt','quoteSentTo']){
+            if(_srvSent[_qf]!==undefined&&data[_qf]===undefined){
+              data[_qf]=_srvSent[_qf];
+            }
+          }
+        }
         // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
         // version changes are part of the quote-state hash. Compare to the last-
         // persisted hash; if different, bump quoteRev and record the new hash. First
@@ -16290,6 +16316,24 @@ function _playChime(type){
 // the user knows exactly which rows to fix. Used by QuoteSendModal.handleSend to
 // block the send action; printing/viewing are NOT gated — the user can still open
 // the quote editor and hit Just Print.
+// B035: A service card (project.serviceCards) is a QUOTE LINE too — an unpriced one must block
+// Send exactly like a $0 BOM row does. A service card's effective price is qty × (lumpSum in
+// lump_sum mode | rate in hourly mode) — mirroring computeServiceCardTotal; if qty ≤ 0 or the
+// applicable price field ≤ 0 the line has no real price. There is NO "intentional $0 / no-charge"
+// service-card type in the data model — all three types (engineering/programming/commissioning)
+// are billable and start un-priced (defaults rate/lumpSum 0) until the user enters a value — so
+// no exclusion is warranted (unlike panels' labor/customer-supplied carve-outs). Factored into one
+// predicate so the Send gate and any future indicator can't drift (see "Single Source of Truth
+// for Dual-Consumer Predicates"). Returns the reasons array (qty/price), empty when complete.
+function _serviceCardIncompleteReasons(sc){
+  if(!sc)return[];
+  const reasons=[];
+  const qty=Number(sc.qty)||0;
+  if(qty<=0)reasons.push("qty");
+  const priceField=sc.priceMode==="lump_sum"?(Number(sc.lumpSum)||0):(Number(sc.rate)||0);
+  if(priceField<=0)reasons.push("price");
+  return reasons;
+}
 function findIncompleteQuoteItems(project){
   if(!project)return[];
   const issues=[];
@@ -16352,6 +16396,24 @@ function findIncompleteQuoteItems(project){
         missing:["Technical Review sign-off"],
         isTechReviewBlock:true,
         approved:project.preReviewStatus==="approved", // B002: in the approved state the "Send for Technical Review" button isn't rendered
+      });
+    }
+  }
+  // B035: validate service-card pricing too — panels-only iteration previously let a services
+  // quote (or a services-plus-panels quote) go out with an unpriced service line. Each unpriced
+  // card pushes ONE pricing issue (no isVerificationBlock/isTechReviewBlock flag → it flows into
+  // the pricingIssues bucket in formatIncompleteQuoteAlert and is surfaced/counted alongside BOM
+  // rows). panelName carries the service label so the alert reads naturally.
+  for(const sc of (project.serviceCards||[])){
+    const reasons=_serviceCardIncompleteReasons(sc);
+    if(reasons.length){
+      const _label=SERVICE_CARD_LABELS[sc.lineType]||"Service";
+      issues.push({
+        panelName:_label,
+        partNumber:sc.description||_label,
+        description:(sc.detailDescription||"").slice(0,60),
+        missing:reasons,
+        isServiceCardBlock:true,
       });
     }
   }
@@ -35625,7 +35687,15 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                               const upd={...project,customerProjectNumber:val};
                               persistProject(upd);
                               // Re-compose External Document No. with any existing bcPoNumber.
-                              if(project.bcProjectNumber&&_bcToken)bcPatchJobOData(project.bcProjectNumber,{External_Document_No:_composeExternalDocNo(upd)}).catch(()=>{});
+                              // B037: offline-queue when BC is unreachable (mirrors PoReceivedModal) so
+                              // the write isn't silently dropped — an offline edit would otherwise leave
+                              // BC's External_Document_No stale with no retry. Online path stays the
+                              // direct best-effort patch.
+                              if(project.bcProjectNumber){
+                                const _extFields={External_Document_No:_composeExternalDocNo(upd)};
+                                if(_bcToken)bcPatchJobOData(project.bcProjectNumber,_extFields).catch(()=>{});
+                                else bcEnqueue('patchJob',{projectNumber:project.bcProjectNumber,fields:_extFields},`Update BC project ${project.bcProjectNumber}`);
+                              }
                             }
                             if(!val){e.target.textContent="+ add";e.target.style.fontStyle="italic";e.target.style.color=C.muted;}
                           }}
