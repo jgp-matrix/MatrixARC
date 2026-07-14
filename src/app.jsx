@@ -36916,7 +36916,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     that round and would only confuse the user. The unlock
                     cascade clears quoteSentAt for new ECOs; this gate is the
                     belt-and-suspenders for any project that still has it set. */}
-                {project.quoteSentAt&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>✓ Quote sent Rev {String(project.quoteSentRev||0).padStart(2,"0")} to {project.quoteSentTo||"client"} · {new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
+                {project.quoteSentAt&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>{"✓ Quote sent Qv."+String(project.quoteSentRev||0).padStart(2,"0")+(project.quoteSentTo?" to "+project.quoteSentTo:"")+" · "+new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
                 {/* DECISION(v1.19.745): Sent-quote soft-block. When the quote has been sent
                     and the user hasn't ack'd in this session, show an amber warning banner
                     with a button that opens the verification modal. After ack, banner flips
