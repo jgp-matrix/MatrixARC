@@ -15,6 +15,10 @@
 # It isolates the BUILD, never the DATA. firestore.rules are shared prod infra and
 # are NOT pushed by default — pass --with-rules to opt in explicitly.
 #
+# NOTE (shared-tree hygiene): commit or stash unrelated work BEFORE running — this
+# script `git add`s public/index.html, public/version.json, docs/TEST-BUILDS.md,
+# and src/app.jsx, so a dirty tree risks sweeping other sessions' staged changes.
+#
 # Usage:
 #   ./deploy-test.sh "one-line change description"
 #   ./deploy-test.sh --with-rules "one-line change description"

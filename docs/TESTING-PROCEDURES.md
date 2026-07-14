@@ -22,7 +22,7 @@ one-company-per-user model; tracked under G005.)
 ## What behaves differently on Test
 - Email + push are **SUPPRESSED** on Test by design — do NOT triage "email/push didn't fire" as a bug on Test.
 - BUT the in-app notification **bell** is a client write NOT test-gated → a missing bell CAN be a real bug; investigate + confirm on prod.
-- BC mutating writes are redirected/suppressed on Test; reads hit real BC.
+- BC **mutating** writes (any non-GET/HEAD method) to a **non-sandbox (production)** BC target are short-circuited on Test with a fake-200 (`{"_testEnvBlocked":true}`) — they never leave the browser (belt: `bcGatedFetch`, `src/app.jsx:454`). Writes to the BC **sandbox** env (`_BC_SANDBOX_ENVS`) pass through untouched, and all **reads** (GET/HEAD) hit real BC.
 
 ## Confirm env + build every session
 1. **URL** — `matrix-arc-test.web.app` = Test; `matrix-arc.web.app` = Prod.
