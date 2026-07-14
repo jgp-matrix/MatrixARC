@@ -10,7 +10,8 @@
 > ## ✅✅ SHIPPED v1.23.21 (release `e62171bf`) — ✅ JON VERIFIED (quick checks all pass): F023 + B035 + B036 + B037 + B039 + B042-fix
 > **F023** board click-header filter (all kanban views) · **B035** $0 service-card blocks Send · **B036** preserve quoteSent* in saveProject guards · **B037** F022 header offline-queue · **B039** tighten B038 retry (true empty-No.) · **B042-fix** dedup guard stops new duplicate project docs. All Coach-approved. **Live-verify-later:** B039 (confirm the genuine BC transient still carries `No.: ''` — Debug Logs `_b038LastRaw`); F022 disposable-BC PO test.
 > **🔨 F024 building** `f024-active-eco-column` (on post-F023 master): ACTIVE ECO column (any-active-ECO routing, RED, + (BOM) In Process color-key fold) → Coach → deploy.
-> **📋 Queued:** B042 cleanup (36 stub archive pass, Jon-gated) now that the guard fix is live; engineer-feedback triage.
+> **✅ B042 CLEANUP READY (Freddy enumerated, 2026-07-14):** all 36 dup `arc-<hash>` docs verified PURE EMPTY import stubs (panels[]/qvHistory[]/not-sent/no-eco-svc-po); each has a canonical keeper WITH the work; **0 need review**. Plan (reversible): copy each stub → `projectsArchive_b042/{id}` (tagged keeperId+reason) → remove from projects → re-scan for 0 dups. **⏳ Awaiting Jon execute-go.**
+> **🔎 F024** `f024-active-eco-column` (`07a54198`, BUILT, Coach reviewing): ACTIVE ECO column, any-active-ECO routing (computeActiveEco), RED, + (BOM) In Process color-key fold.
 
 > ## 🔧 Loose-ends cleanup (Jon 2026-07-14)
 > - **🔎 Loose-ends batch** `loose-ends-b035-b036-b037-b039` (`1160f508`, Marc BUILT, Coach reviewing): B035 ($0 service-card blocks Send) + B036 (preserve quoteSent* in saveProject guards) + B037 (F022 header offline-queue) + B039 (tighten B038 retry to true empty-No.). B041 nit RATIFIED (no-bump).
