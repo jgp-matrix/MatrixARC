@@ -5,7 +5,13 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-13 · prod v1.23.17 · quote heading revised · F022 building
+## Current — ✅ SESSION 2026-07-13/14 · prod v1.23.17 · 2 prod issues triaged (B040 self-heal + owner-view-only=expected)
+
+> ## 🔎 Two prod issues (Jon, 2026-07-13/14) — Coach diagnosed
+> **#1 IN PROCESS should be QUOTES SENT → B040** (regression casualties): projects sent in the B034 window (12:36–13:42 MDT) persisted `quoteRev=quoteSentRev+1` → mis-columned. Jon chose **self-heal migration** → 🔨 Marc building `b040-inprocess-selfheal` (guarded re-anchor in loadProjects, idempotent, no re-email; Coach review before deploy). **#2 owner VIEW-ONLY on PRJ402131/402126 → NOT a bug (G011):** the sent-quote soft-block (`_sentSoftBlockActive`) makes any sent quote read-only for everyone incl. owner → click **"Verify with Project Owner & Enable Edits"** to edit (predates B034). Awaiting Jon's banner-text confirm; owner-exemption logged as **G011** design consideration.
+>
+> ## ✅✅ B038 + F022 BOTH DEPLOY-READY (bundled, awaiting Jon's "deploy")
+> B038 (Create-In-BC auto-retry, `9321a38a`, Coach APPROVE-nits) + F022 (PO upload + BC attach + View PO, `d6189a49`, Coach APPROVE after Replace-safety fix). One deploy on Jon's go. B039 (retry-regex-tighten) + B037 (F022 offline-queue) = filed follow-ups.
 
 > ## ✅✅ SHIPPED v1.23.17 (release `e6a1ac26`) — quote heading relabeled
 > `_quoteHeadingLabel` → **"Project Name: {name} - {customer} / PROJECT #: {cust#}"** (uses `project.bcCustomerName`; graceful fallbacks; no PO# on quotes). Coach APPROVE WITH NITS (narrow Sell-to vs Bill-to cosmetic edge, non-blocking).
