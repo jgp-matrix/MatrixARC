@@ -20106,20 +20106,36 @@ function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc
   const _docUnsaved=!!(poDoc&&poDoc.storageUrl!==(project.customerPoDoc?.storageUrl||null));
 
   // F022: BC attachment filename — follows the ARC/BC house style
-  //   <PREFIX>-[<BRACKETED CLASSIFIER>] <identifier> - <bcProjectNumber>.pdf
-  // matching DWG-[AS-QUOTED] <dwg> - <proj>.pdf and the QTE_/REF- family. The PO number
-  // is the primary identifier; the bracket classifies it at a glance in the BC docs list.
-  // PO numbers are customer-supplied, so filename-unsafe chars are sanitized.
-  function _customerPoFileName(poNum){
+  //   <PREFIX>-[<BRACKETED CLASSIFIER>] <identifier> - <bcProjectNumber> - <version>.pdf
+  // matching DWG-[AS-QUOTED REV NN] <dwg> - <proj> - <line>.pdf (which versions with REV NN
+  // so a new upload's name never equals the prior). The PO number is the primary identifier;
+  // the bracket classifies it at a glance in the BC docs list. PO numbers are customer-
+  // supplied, so filename-unsafe chars are sanitized.
+  //
+  // CRITICAL (money-path data-loss fix): the <version> segment MUST make every upload/Replace
+  // produce a UNIQUE name. bcAttachPdfToJob attaches-then-deletes-by-name, and
+  // bcDeleteAttachmentByName deletes ALL records whose name matches. If the new name equaled
+  // the previousFileName (which the poNum-only name did on a same-PO# Replace), the delete
+  // wiped BOTH the old AND the just-uploaded attachment → zero attachments. We version on the
+  // doc's uploadedAt (a distinct Date.now() per drop) plus a short random suffix so
+  // newFileName !== previousFileName holds by construction on every path.
+  function _customerPoFileName(poNum,ts){
     const safePo=String(poNum||'NoPO').replace(/[\\/:*?"<>|]/g,'-').trim();
-    return `PO-[CUSTOMER PO] ${safePo} - ${bcProjectNumber||'NoProject'}.pdf`;
+    const stamp=ts||Date.now();
+    const rand=Math.random().toString(36).slice(2,6);
+    return `PO-[CUSTOMER PO] ${safePo} - ${bcProjectNumber||'NoProject'} - ${stamp}-${rand}.pdf`;
   }
   // Best-effort BC attach (never throws — offline-queue fallback is inside
   // bcAttachPdfQueued). Returns the doc metadata annotated with the BC filename so it is
   // persisted (enables a clean replace-with-delete next time). Gated on bcProjectNumber.
   async function _attachPoToBc(poNum,docMeta,docBuf){
     if(!bcProjectNumber||!docMeta||!docBuf)return docMeta||null;
-    const fileName=_customerPoFileName(poNum);
+    // Version with the doc's OWN uploadedAt so the stored bcFileName matches exactly what we
+    // attach here. previousFileName targets the PRIOR versioned name only — since the new
+    // name carries a fresh timestamp+suffix, new !== prev, so bcDeleteAttachmentByName(prev)
+    // removes only the genuinely-old attachment, never the one we just uploaded. First upload
+    // (no prior) → prev=null → plain attach, no delete.
+    const fileName=_customerPoFileName(poNum,docMeta.uploadedAt);
     const prev=project.customerPoDoc?.bcFileName||null;
     try{await bcAttachPdfQueued(bcProjectNumber,fileName,docBuf,prev);}
     catch(e){console.warn('[PO] BC attach failed:',e.message||e);}
