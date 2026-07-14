@@ -44272,6 +44272,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
   const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
+  // F023: click a board column header to focus the view to ONLY that status/column.
+  // null = show all columns (normal kanban); else = the focused column's KEY (not label).
+  // View-only local UI state — no Firestore read/write, no status mutation.
+  const [focusedCol,setFocusedCol]=useState(null);
+  // F023: reset the focus whenever the view (groupBy) changes, so a stale column key
+  // from another view (e.g. "status" → "production") never lingers.
+  useEffect(()=>{setFocusedCol(null);},[groupBy]);
   const bgTasks=useBgTasks();
 
   function groupProjects(list){
@@ -44292,7 +44299,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         if(!map[key])map[key]=[];
         map[key].push(p);
       });
-      return Object.keys(map).sort((a,b)=>a==="No Customer"?1:b==="No Customer"?-1:a.localeCompare(b)).map(k=>({label:k,items:map[k],customerNumber:map[k].find(p=>p.bcCustomerNumber)?.bcCustomerNumber||null}));
+      return Object.keys(map).sort((a,b)=>a==="No Customer"?1:b==="No Customer"?-1:a.localeCompare(b)).map(k=>({key:k,label:k,items:map[k],customerNumber:map[k].find(p=>p.bcCustomerNumber)?.bcCustomerNumber||null}));
     }
     if(groupBy==="date"){
       const map={};
@@ -44332,7 +44339,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         else if(p.bcPoStatus==="Open"){if(!map.tobepurchased)map.tobepurchased=[];map.tobepurchased.push(p);}
         else if(p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed"){if(!map.completed)map.completed=[];map.completed.push(p);}
       });
-      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+      return order.map(k=>({key:k,label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="production"){
       // DECISION(v1.19.788): Production-tab column ordering + IN PURCHASING column.
@@ -44382,7 +44389,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           if(!map.inproduction)map.inproduction=[];map.inproduction.push(p);return;
         }
       });
-      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+      return order.map(k=>({key:k,label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="engineering"){
       // DECISION(v1.19.923, Step H): Engineering tab now also surfaces projects
@@ -44407,7 +44414,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         if(p.preReviewStatus==="pending"){if(!map.pre_review)map.pre_review=[];map.pre_review.push(p);}
         if(p.postReviewStatus==="pending"){if(!map.post_review)map.post_review=[];map.post_review.push(p);}
       });
-      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+      return order.map(k=>({key:k,label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="purchasing_kanban"){
       const order=["send_po","po_sent","ready_prod"];
@@ -44420,7 +44427,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         else if(p.bcPoStatus==="purchasing"){if(!map.po_sent)map.po_sent=[];map.po_sent.push(p);}
         else if((p.bcPoStatus==="purchased"||p.bcPoStatus==="Completed")&&p.postReviewStatus!=="approved"){if(!map.ready_prod)map.ready_prod=[];map.ready_prod.push(p);}
       });
-      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+      return order.map(k=>({key:k,label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="status"){
       // DECISION(v1.19.510): Use computeProjectEffectiveStatus for column routing — single source of truth
@@ -44444,7 +44451,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         if(!map[col])map[col]=[];
         map[col].push(p);
       });
-      return order.map(k=>({label:labels[k],items:map[k]||[]}));
+      return order.map(k=>({key:k,label:labels[k],items:map[k]||[]}));
     }
     if(groupBy==="budgetary"){
       return [{label:"Budgetary Quotes",items:list.filter(p=>(p.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary))}];
@@ -44597,6 +44604,14 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         }
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
+        // F023: header color maps + helpers hoisted so BOTH the normal multi-column
+        // kanban and the focused single-column view share one definition (previously
+        // computed per-column inside the map). View-only styling data — no behavior change.
+        const _statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
+        const _statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
+        const _isStatusStyleView=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban");
+        const _colColorFor=(label)=>_isStatusStyleView?(_statusColColors[label]||C.muted):C.sub;
+        const _colBgFor=(label)=>_isStatusStyleView?(_statusColBg[label]||C.border):"#3d6090";
         return(<>
           {!loading&&!bootError&&myProjects.length===0&&transferred.length===0&&(
             <div style={{textAlign:"center",padding:80,color:C.muted}}>
@@ -44607,12 +44622,52 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
             </div>
           )}
           {(groupBy==="customer"||groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(
+            <>
+            {/* F023: "All columns" reset — shown above the board whenever a single
+                column is focused (in addition to the click-header toggle). */}
+            {focusedCol!=null&&(
+              <div style={{marginBottom:14}}>
+                <button onClick={()=>setFocusedCol(null)} style={{...btn(C.border,C.text),fontSize:12,padding:"6px 12px"}}>← All columns</button>
+              </div>
+            )}
+            {focusedCol!=null?(()=>{
+              // F023: FOCUSED single-column view — render ONLY the focused column,
+              // full board width, using the repeat(5,1fr) grid (same as the non-kanban
+              // list layout). Reuses the $ total + header block. View-only.
+              const g=groups.find(x=>x.key===focusedCol);
+              if(!g)return <div style={{textAlign:"center",padding:40,color:C.muted}}>No projects match</div>;
+              const colColor=_colColorFor(g.label);
+              const colBg=_colBgFor(g.label);
+              const colTotal=g.items.reduce((s,p)=>s+computeProjectTotal(p),0);
+              return(
+                <div style={{width:"100%"}}>
+                  {g.label&&(
+                    <div style={{textAlign:"center",fontSize:13,fontWeight:700,color:colColor,marginBottom:6,opacity:g.items.length>0?0.95:0.4,letterSpacing:0.3,fontFamily:"system-ui,sans-serif"}}>
+                      {arcFmtMoney(colTotal)}
+                    </div>
+                  )}
+                  {g.label&&<div onClick={()=>setFocusedCol(null)} title="Click to show all columns"
+                    style={{background:colBg,color:colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:16,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",cursor:"pointer"}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
+                  {g.items.length>0?(
+                    <div data-tour="project-list" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
+                      {g.items.map(p=>(
+                        <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
+                          onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
+                          userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
+                          remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
+                          activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}/>
+                      ))}
+                    </div>
+                  ):(
+                    <div style={{textAlign:"center",padding:40,color:C.muted}}>No projects match</div>
+                  )}
+                </div>
+              );
+            })():(
             <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
               {groups.map((g,gi)=>{
-                const statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
-                const statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
-                const colColor=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColColors[g.label]||C.muted):C.sub;
-                const colBg=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban")?(statusColBg[g.label]||C.border):"#3d6090";
+                const colColor=_colColorFor(g.label);
+                const colBg=_colBgFor(g.label);
                 const isNoCustomer=groupBy==="customer"&&g.label==="No Customer";
                 const isDropTarget=groupBy==="customer"&&!isNoCustomer&&!!g.customerNumber&&!!dragProjectId;
                 const isOver=dropTarget===gi;
@@ -44635,7 +44690,15 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                       {arcFmtMoney(colTotal)}
                     </div>
                   )}
-                  {g.label&&<div style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",transition:"background 0.15s,color 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
+                  {/* F023: click a column header to focus the board to ONLY that column
+                      (toggles back to all if the same header is clicked again). The
+                      customer-view drop-target lives on the PARENT column div, not this
+                      header, so adding onClick here does not disturb drag-and-drop. */}
+                  {g.label&&<div onClick={()=>setFocusedCol(prev=>prev===g.key?null:g.key)}
+                    onMouseEnter={e=>{if(!(isDropTarget&&dragProjectId))e.currentTarget.style.boxShadow="0 0 0 2px "+C.accent+"66";}}
+                    onMouseLeave={e=>{e.currentTarget.style.boxShadow="none";}}
+                    title="Click to focus this column"
+                    style={{background:isOver?C.accent:colBg,color:isOver?"#fff":colColor,borderRadius:8,fontSize:13,fontWeight:700,textTransform:"uppercase",letterSpacing:0.6,marginBottom:10,textAlign:"center",height:44,display:"flex",alignItems:"center",justifyContent:"center",gap:6,boxSizing:"border-box",width:"100%",cursor:"pointer",transition:"background 0.15s,color 0.15s,box-shadow 0.15s",outline:isDropTarget&&dragProjectId?(isOver?"2px solid "+C.accent:"2px dashed "+C.accent+"66"):"none",outlineOffset:2}}><span>{g.label}</span><span style={{opacity:0.6,fontWeight:400}}>({g.items.length})</span></div>}
                   <div style={{display:"flex",flexDirection:"column",gap:8,borderRadius:8,padding:isOver?"6px":"0",background:isOver?"#1e2e1e":"transparent",transition:"background 0.15s,padding 0.15s"}}>
                     {g.items.map(p=>(
                       <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
@@ -44652,6 +44715,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 );
               })}
             </div>
+            )}
+            </>
           ):(
             <div style={{display:"flex",flexDirection:"column",gap:32}}>
               {groups.map((g,gi)=>(
