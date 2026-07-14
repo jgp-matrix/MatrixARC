@@ -5228,17 +5228,22 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   // would silently spawn duplicate BC items. The full PN lives in Vendor_Item_No, which is NOT
   // unique-constrained, so we check it ourselves via ItemCard OData (the v2 /items endpoint has
   // no vendorItemNo property — that filter 400s). If a match exists, reuse it (no duplicate).
+  // B038: factored into _findByVendorItemNo so the transient-retry adopt path (below) reuses the
+  // EXACT same lookup — an item is never duplicated whether it's found pre-POST or after a
+  // transient empty-No. failure. Returns the success shape if found, else null.
+  const _findByVendorItemNo=async()=>{
+    if(!number)return null;
+    const dpn=String(number).trim().replace(/'/g,"''");
+    const dupR=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=Vendor_Item_No eq '${dpn}'&$select=No,Vendor_Item_No,Description&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(!dupR.ok)return null;
+    const existing=((await dupR.json()).value||[])[0];
+    if(existing&&existing.No)return{number:existing.No||"",fullPN:number,displayName:existing.Description||"",unitCost:null,unitPrice:null,inventory:0,lastModifiedDateTime:"",vendorNo:""};
+    return null;
+  };
   if(number){
     try{
-      const dpn=String(number).trim().replace(/'/g,"''");
-      const dupR=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=Vendor_Item_No eq '${dpn}'&$select=No,Vendor_Item_No,Description&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(dupR.ok){
-        const existing=((await dupR.json()).value||[])[0];
-        if(existing&&existing.No){
-          console.log(`bcCreateItem: item with Vendor_Item_No='${number}' already exists as ${existing.No}, reusing`);
-          return{number:existing.No||"",fullPN:number,displayName:existing.Description||"",unitCost:null,unitPrice:null,inventory:0,lastModifiedDateTime:"",vendorNo:""};
-        }
-      }
+      const dup=await _findByVendorItemNo();
+      if(dup){console.log(`bcCreateItem: item with Vendor_Item_No='${number}' already exists as ${dup.number}, reusing`);return dup;}
     }catch(e){console.warn("bcCreateItem: dedup check failed, proceeding with create:",e);}
   }
   const body={};
@@ -5249,20 +5254,44 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
   if(unitCost!=null&&unitCost!=="")body.unitCost=parseFloat(unitCost);
   if(itemCategoryCode)body.itemCategoryCode=itemCategoryCode;
   if(baseUnitOfMeasureCode)body.baseUnitOfMeasureCode=baseUnitOfMeasureCode;
+  // B038: transient empty-No. retry. BC's No.-Series occasionally fails to auto-assign a number,
+  // returning {"error":{"code":"Internal_DataNotFoundFilter","message":"...No.: '' ..."}} — a retry
+  // of the identical POST normally succeeds (Jon-confirmed: 2nd attempt worked, no BC change between
+  // tries → transient). Retry ONLY this signature (up to 2 extra attempts, ~800ms/1600ms backoff);
+  // 401/permission/validation/already-exists still fail fast. Before each retry, GET-check by
+  // Vendor_Item_No so a partially-persisted item is ADOPTED, never duplicated. Surrogate scheme
+  // (body.number omitted, #163) is unchanged.
+  const _isTransientEmptyNo=(txt)=>/Internal_DataNotFoundFilter/i.test(txt||"")||/No\.:\s*''/.test(txt||"");
+  const B038_MAX_TRIES=3; // 1 initial attempt + 2 retries
+  let _b038LastRaw="";
   try{
-    const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/items`,{
-      method:"POST",
-      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify(body)
-    });
-    if(r.status===401){_bcToken=null;throw new Error("BC session expired — please reconnect");}
-    if(r.status===409||r.status===400){
-      const txt=await r.text();
-      if(/already exists|duplicate/i.test(txt))throw new Error(`Item "${number}" already exists in Business Central`);
-      throw new Error(txt||`BC returned status ${r.status}`);
-    }
-    if(!r.ok){const txt=await r.text();throw new Error(txt||`BC returned status ${r.status}`);}
-    const item=await r.json();
+    for(let tryN=0;tryN<B038_MAX_TRIES;tryN++){
+      if(tryN>0)await new Promise(res=>setTimeout(res,800*tryN)); // ~800ms, then ~1600ms
+      const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/items`,{
+        method:"POST",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
+        body:JSON.stringify(body)
+      });
+      if(r.status===401){_bcToken=null;throw new Error("BC session expired — please reconnect");}
+      if(!r.ok){
+        const txt=await r.text();
+        // B038: transient empty-No.? adopt-if-exists (idempotency), else retry the identical POST.
+        if(_isTransientEmptyNo(txt)){
+          _b038LastRaw=txt;
+          console.warn(`bcCreateItem: transient empty-No. (Internal_DataNotFoundFilter) attempt ${tryN+1}/${B038_MAX_TRIES}:`,String(txt).slice(0,240));
+          if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){try{window.logDebugEntry({severity:"warn",source:"bcCreateItem",message:`BC empty-No. auto-numbering hiccup (attempt ${tryN+1}/${B038_MAX_TRIES})`,extra:{vendorItemNo:number||"",raw:String(txt).slice(0,500)}});}catch(_){}}
+          // Idempotency: did a prior attempt actually persist the item? If so, adopt it (no dup).
+          try{const adopt=await _findByVendorItemNo();if(adopt){console.log(`bcCreateItem: adopting existing item ${adopt.number} after transient empty-No. (no duplicate created)`);return adopt;}}catch(fe){console.warn("bcCreateItem: post-transient existence check failed, will retry:",fe);}
+          if(tryN<B038_MAX_TRIES-1)continue; // backoff + retry
+          throw new Error("__B038_EMPTY_NO__"); // retries exhausted → friendly fallback in catch
+        }
+        if(r.status===409||r.status===400){
+          if(/already exists|duplicate/i.test(txt))throw new Error(`Item "${number}" already exists in Business Central`);
+          throw new Error(txt||`BC returned status ${r.status}`);
+        }
+        throw new Error(txt||`BC returned status ${r.status}`);
+      }
+      const item=await r.json();
     // PATCH extra fields via OData ItemCard (v2.0 API doesn't expose these)
     // #163: gate now includes `||number` so the PATCH fires even with no vendor/posting groups —
     // otherwise a vendor-less create would never write Vendor_Item_No and the full PN would be
@@ -5287,8 +5316,14 @@ async function bcCreateItem({number,displayName,unitCost,itemCategoryCode,baseUn
       }
       if(!patchOk)console.error("bcCreateItem: OData PATCH failed after 3 attempts for",item.number);
     }
-    return{number:item.number||"",fullPN:number||item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:vendorNo||""};
+      return{number:item.number||"",fullPN:number||item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:vendorNo||""};
+    }
   }catch(e){
+    if(e.message==="__B038_EMPTY_NO__"){
+      console.warn("bcCreateItem: empty-No. persisted after retries; raw BC response:",_b038LastRaw);
+      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){try{window.logDebugEntry({severity:"error",source:"bcCreateItem",message:"BC empty-No. auto-numbering failed after retries",extra:{vendorItemNo:number||"",raw:String(_b038LastRaw).slice(0,500)}});}catch(_){}}
+      throw new Error("Business Central couldn't assign an item number — its numbering series may be busy or need setup (Inventory Setup → Item Nos.). Please try again.");
+    }
     if(e.message.includes("BC session expired")||e.message.includes("already exists"))throw e;
     console.warn("bcCreateItem error:",e);
     throw new Error("Failed to create item: "+e.message);
