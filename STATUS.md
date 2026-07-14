@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · board header "(BOM) IN PROCESS"; B041+G009 live; 7 casualties healed
+## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · board header live; B016-2/3 DEFERRED (lock holds)
+
+> ## 🅿️ B016-2/3 (concurrent-edit row-merge) — DEFERRED (Jon ruled 2026-07-14)
+> Status confirmed: NEVER shipped (`_mergeBomOnSave` absent from prod; `b016-23-merge` unmerged, **108 commits stale**, predates today's B034/B041 saveProject rewrites → would need a full rebuild + re-matrix). **NO open data-loss:** the B012 hard one-editor lock (22 refs, live since v1.23.5) contains concurrent-edit loss (one editor per project). B016-2/3 was the enhancement to safely RELAX that lock (row-merge for simultaneous co-editing) — a deferred robustness feature, not a bleed. **Jon: DEFER — keep the one-editor lock.** Branch `b016-23-merge` PRESERVED on origin (not deleted) for a future fresh rebuild if simultaneous single-project co-editing becomes a need. Revisit trigger: users needing to co-edit one project at once.
 
 > ## ✅ SHIPPED v1.23.20 (release `66183dcc`): board column header "In Process" → "(BOM) In Process" (Jon — clarify meaning). Header label only (`app.jsx:44433`); status value + Badge + tile pills + Purchasing-board column untouched. Verified live on prod.
 
