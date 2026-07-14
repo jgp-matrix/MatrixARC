@@ -10468,6 +10468,7 @@ function buildRestoreProjectData(archive,remaps,options,uid,now,bcEnv,bcCompanyN
   data.bcPoNumber=null;
   data.bcPoStatus=null;
   data.bcPoDate=null;
+  data.customerPoDoc=null;    // F022: a fresh copy has no customer PO — drop the uploaded doc
   data.bcStatusForcedToQuote=false;
   data.bcStatusForcedToQuoteAt=null;
   data.bcPdfAttached=false;
@@ -20104,15 +20105,104 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
 }
 
 // ── PO RECEIVED MODAL ──
-function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
+// F022: also handles drag-n-drop upload of the customer PO (PDF) → Firebase Storage
+// (pageImages/{uid}/{projectId}/customerPO) + project.customerPoDoc + a best-effort
+// push to BC attachments. Multi-project safe: the modal never saves against "the open
+// project" — it hands the uploaded metadata back OUT via onDone (initial PO submit) or
+// onSavePoDoc (attaching a doc to an already-recorded PO), and the render site folds it
+// into the single existing saveProject call keyed off projectRef.current.
+function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc}){
   const panels=project.panels||[];
-  const [poNumber,setPoNumber]=useState('');
+  // Snapshot at open: was a PO already recorded? Drives the "View PO" panel vs the
+  // fresh-entry form. bcPoNumber is only set alongside wonAt, so this is the won state.
+  const [alreadyEntered]=useState(!!project.bcPoNumber);
+  const [poNumber,setPoNumber]=useState(project.bcPoNumber||'');
   const [globalDate,setGlobalDate]=useState('');
   const [perPanel,setPerPanel]=useState(false);
   const [shipDates,setShipDates]=useState(()=>{const m={};panels.forEach((p,i)=>{m[i]=p.requestedShipDate||'';});return m;});
   const [saving,setSaving]=useState(false);
   const [done,setDone]=useState(false);
   const [errors,setErrors]=useState([]);
+  // F022 upload state. poDoc = {name,uploadedAt,size,storageUrl,contentType,bcFileName?}
+  // (mirrors project.rfqEmailFile shape + an additive bcFileName so a later replace can
+  // delete the prior BC attachment). poDocBuf holds the freshly-uploaded ArrayBuffer in
+  // memory for the BC attach on submit (avoids a CORS re-fetch from Storage).
+  const [poDoc,setPoDoc]=useState(project.customerPoDoc||null);
+  const [poDocBuf,setPoDocBuf]=useState(null);
+  const [uploading,setUploading]=useState(false);
+  const [uploadErr,setUploadErr]=useState('');
+  const [dragging,setDragging]=useState(false);
+  const poFileRef=useRef(null);
+  const _uidEff=uid||fbAuth.currentUser?.uid;
+  // Unsaved iff a doc is staged whose storageUrl differs from what's persisted on the
+  // project. In the fresh-entry form the doc rides the Submit; in View mode it needs an
+  // explicit "Save PO Document" (which routes through onSavePoDoc, NOT onDone — onDone
+  // re-stamps wonAt and re-opens the production-drawing prompt, wrong for a later attach).
+  const _docUnsaved=!!(poDoc&&poDoc.storageUrl!==(project.customerPoDoc?.storageUrl||null));
+
+  // F022: BC attachment filename — follows the ARC/BC house style
+  //   <PREFIX>-[<BRACKETED CLASSIFIER>] <identifier> - <bcProjectNumber> - <version>.pdf
+  // matching DWG-[AS-QUOTED REV NN] <dwg> - <proj> - <line>.pdf (which versions with REV NN
+  // so a new upload's name never equals the prior). The PO number is the primary identifier;
+  // the bracket classifies it at a glance in the BC docs list. PO numbers are customer-
+  // supplied, so filename-unsafe chars are sanitized.
+  //
+  // CRITICAL (money-path data-loss fix): the <version> segment MUST make every upload/Replace
+  // produce a UNIQUE name. bcAttachPdfToJob attaches-then-deletes-by-name, and
+  // bcDeleteAttachmentByName deletes ALL records whose name matches. If the new name equaled
+  // the previousFileName (which the poNum-only name did on a same-PO# Replace), the delete
+  // wiped BOTH the old AND the just-uploaded attachment → zero attachments. We version on the
+  // doc's uploadedAt (a distinct Date.now() per drop) plus a short random suffix so
+  // newFileName !== previousFileName holds by construction on every path.
+  function _customerPoFileName(poNum,ts){
+    const safePo=String(poNum||'NoPO').replace(/[\\/:*?"<>|]/g,'-').trim();
+    const stamp=ts||Date.now();
+    const rand=Math.random().toString(36).slice(2,6);
+    return `PO-[CUSTOMER PO] ${safePo} - ${bcProjectNumber||'NoProject'} - ${stamp}-${rand}.pdf`;
+  }
+  // Best-effort BC attach (never throws — offline-queue fallback is inside
+  // bcAttachPdfQueued). Returns the doc metadata annotated with the BC filename so it is
+  // persisted (enables a clean replace-with-delete next time). Gated on bcProjectNumber.
+  async function _attachPoToBc(poNum,docMeta,docBuf){
+    if(!bcProjectNumber||!docMeta||!docBuf)return docMeta||null;
+    // Version with the doc's OWN uploadedAt so the stored bcFileName matches exactly what we
+    // attach here. previousFileName targets the PRIOR versioned name only — since the new
+    // name carries a fresh timestamp+suffix, new !== prev, so bcDeleteAttachmentByName(prev)
+    // removes only the genuinely-old attachment, never the one we just uploaded. First upload
+    // (no prior) → prev=null → plain attach, no delete.
+    const fileName=_customerPoFileName(poNum,docMeta.uploadedAt);
+    const prev=project.customerPoDoc?.bcFileName||null;
+    try{await bcAttachPdfQueued(bcProjectNumber,fileName,docBuf,prev);}
+    catch(e){console.warn('[PO] BC attach failed:',e.message||e);}
+    return {...docMeta,bcFileName:fileName};
+  }
+  async function handlePoDrop(files){
+    if(!files||!files.length)return;
+    const file=files[0];
+    const isPdf=/\.pdf$/i.test(file.name)||/^application\/pdf/i.test(file.type||'');
+    if(!isPdf){setUploadErr('Please upload a PDF file.');return;}
+    if(file.size>25*1024*1024){setUploadErr('File too large — the PO PDF must be under 25 MB.');return;}
+    setUploading(true);setUploadErr('');
+    try{
+      const storagePath=`pageImages/${_uidEff}/${project.id}/customerPO/${Date.now()}_${file.name}`;
+      const ref=fbStorage.ref(storagePath);
+      await ref.put(file,{contentType:file.type||'application/pdf'});
+      const storageUrl=await ref.getDownloadURL();
+      let buf=null;try{buf=await file.arrayBuffer();}catch(e){buf=null;}
+      setPoDocBuf(buf);
+      setPoDoc({name:file.name,uploadedAt:Date.now(),size:file.size,storageUrl,contentType:file.type||'application/pdf'});
+    }catch(e){setUploadErr('Upload failed: '+(e.message||e));}
+    setUploading(false);
+  }
+  // View-mode: attach a doc to an already-recorded PO (no wonAt re-stamp).
+  async function handleSaveDoc(){
+    if(!poDoc)return;
+    setSaving(true);
+    const finalMeta=await _attachPoToBc(project.bcPoNumber||poNumber.trim(),poDoc,poDocBuf);
+    setSaving(false);
+    setPoDoc(finalMeta);setPoDocBuf(null);
+    if(onSavePoDoc)onSavePoDoc(finalMeta);
+  }
 
   // When global date changes, pre-fill any per-panel slot that hasn't been individually set
   function handleGlobalDate(val){
@@ -20160,29 +20250,88 @@ function PoReceivedModal({project,bcProjectNumber,onClose,onDone}){
         await bcPatchPanelEndDate(bcProjectNumber,i+1,d);
       }catch(e){errs.push(`Panel ${i+1} end date: `+(e.message||e));}
     }
-    setSaving(false);
-    if(errs.length>0){setErrors(errs);}
-    else{setDone(true);if(onDone)onDone(poNumber.trim());}
+    if(errs.length>0){setSaving(false);setErrors(errs);}
+    else{
+      // F022: best-effort push of the uploaded PO to BC attachments, then hand the
+      // (BC-annotated) doc metadata back OUT so the render site folds customerPoDoc into
+      // the single existing saveProject call. BC attach never blocks the ARC save.
+      const finalMeta=await _attachPoToBc(poNumber.trim(),poDoc,poDocBuf);
+      setSaving(false);
+      setDone(true);
+      if(onDone)onDone(poNumber.trim(),finalMeta);
+    }
   }
   const inp=(extra={})=>({width:"100%",boxSizing:"border-box",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"6px 8px",color:"#f1f5f9",fontSize:12,fontFamily:"inherit",outline:"none",...extra});
+  // F022: shared customer-PO document section — reused by the entry form, the View panel,
+  // and the success screen. Shows the stored doc with Open/Download links (RFQ display
+  // pattern) or a dashed dropzone (handles dropped files AND Outlook dataTransfer.items).
+  const _kb=(n)=>n>=1024*1024?`${(n/1024/1024).toFixed(1)} MB`:`${Math.max(1,Math.round(n/1024))} KB`;
+  const docSection=(
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:12,color:"#94a3b8",marginBottom:5,fontWeight:600}}>Customer PO Document (PDF)</div>
+      <input ref={poFileRef} type="file" accept=".pdf,application/pdf" onChange={e=>{handlePoDrop(e.target.files);e.target.value="";}} style={{display:"none"}}/>
+      {poDoc?(
+        <div style={{display:"flex",alignItems:"center",gap:8,fontSize:12,color:"#cbd5e1",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:6,padding:"8px 10px"}}>
+          <span style={{fontSize:14}}>📄</span>
+          <span style={{flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={poDoc.name}>{poDoc.name}</span>
+          {typeof poDoc.size==="number"&&<span style={{color:"#64748b",fontSize:11,flexShrink:0}}>({_kb(poDoc.size)})</span>}
+          {poDoc.storageUrl&&<a href={poDoc.storageUrl} target="_blank" rel="noopener" style={{color:"#38bdf8",fontSize:12,fontWeight:600,flexShrink:0}}>Open</a>}
+          {poDoc.storageUrl&&<a href={poDoc.storageUrl} download={poDoc.name} target="_blank" rel="noopener" style={{color:"#38bdf8",fontSize:12,fontWeight:600,flexShrink:0}}>Download</a>}
+          <button onClick={()=>poFileRef.current?.click()} disabled={uploading||saving} style={{background:"none",border:"1px solid #3d6090",borderRadius:5,color:"#94a3b8",cursor:uploading||saving?"not-allowed":"pointer",fontSize:11,padding:"2px 8px",fontWeight:600,flexShrink:0}}>Replace</button>
+        </div>
+      ):(
+        <div
+          onDragOver={e=>{e.preventDefault();setDragging(true);}}
+          onDragLeave={()=>setDragging(false)}
+          onDrop={e=>{e.preventDefault();setDragging(false);
+            const files=[];
+            if(e.dataTransfer.files)for(const f of Array.from(e.dataTransfer.files))files.push(f);
+            if(files.length===0&&e.dataTransfer.items){for(const item of Array.from(e.dataTransfer.items)){if(item.kind==='file'){const f=item.getAsFile();if(f)files.push(f);}}}
+            if(files.length>0)handlePoDrop(files);
+          }}
+          onClick={()=>poFileRef.current?.click()}
+          style={{border:`2px dashed ${dragging?"#38bdf8":"#3d6090"}`,borderRadius:8,padding:"16px 12px",textAlign:"center",cursor:uploading?"wait":"pointer",background:dragging?"rgba(56,189,248,0.08)":"transparent",transition:"all 0.15s"}}>
+          <div style={{fontSize:16}}>📎</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>{uploading?"Uploading…":"Drop the customer PO (PDF) here or click to browse"}</div>
+        </div>
+      )}
+      {uploadErr&&<div style={{fontSize:11,color:"#f87171",marginTop:6}}>{uploadErr}</div>}
+    </div>
+  );
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:480,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
-        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>📬 PO Received</div>
-        <div style={{fontSize:12,color:"#94a3b8",marginBottom:18}}>Writes PO# to BC External Document No, sets project status to Open, and updates panel ship dates.</div>
+        <div style={{fontSize:15,fontWeight:800,color:"#f1f5f9",marginBottom:4}}>{alreadyEntered&&!done?"📄 Customer PO":"📬 PO Received"}</div>
+        <div style={{fontSize:12,color:"#94a3b8",marginBottom:18}}>{alreadyEntered&&!done?"View the recorded PO and open its uploaded document, or attach one.":"Writes PO# to BC External Document No, sets project status to Open, and updates panel ship dates."}</div>
         {done?(
           <div style={{textAlign:"center",padding:"20px 0"}}>
             <div style={{fontSize:22,marginBottom:8}}>✅</div>
             <div style={{fontSize:14,color:"#4ade80",fontWeight:700,marginBottom:4}}>PO Recorded in BC</div>
-            <div style={{fontSize:12,color:"#94a3b8",marginBottom:20}}>PO# <strong style={{color:"#f1f5f9"}}>{poNumber}</strong> written to project {bcProjectNumber}.</div>
+            <div style={{fontSize:12,color:"#94a3b8",marginBottom:poDoc?14:20}}>PO# <strong style={{color:"#f1f5f9"}}>{poNumber}</strong> written to project {bcProjectNumber}.</div>
+            {poDoc&&poDoc.storageUrl&&(
+              <div style={{fontSize:12,color:"#94a3b8",marginBottom:20}}>📄 {poDoc.name} · <a href={poDoc.storageUrl} target="_blank" rel="noopener" style={{color:"#38bdf8",fontWeight:600}}>Open</a></div>
+            )}
             <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 20px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit"}}>Close</button>
           </div>
+        ):alreadyEntered?(
+          <>
+            <div style={{marginBottom:14}}>
+              <div style={{fontSize:12,color:"#94a3b8",marginBottom:5,fontWeight:600}}>Customer PO Number</div>
+              <div style={{fontSize:14,fontWeight:700,color:"#f1f5f9",background:"#0a0a18",border:"1px solid #3d6090",borderRadius:4,padding:"6px 8px"}}>{project.bcPoNumber}</div>
+            </div>
+            {docSection}
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
+              <button onClick={onClose} disabled={saving} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Close</button>
+              {_docUnsaved&&<button onClick={handleSaveDoc} disabled={saving||uploading} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"7px 20px",borderRadius:6,cursor:saving?"not-allowed":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:saving||uploading?0.6:1}}>{saving?"Saving…":"Save PO Document"}</button>}
+            </div>
+          </>
         ):(
           <>
             <div style={{marginBottom:14}}>
               <div style={{fontSize:12,color:"#94a3b8",marginBottom:5,fontWeight:600}}>Customer PO Number</div>
               <input value={poNumber} onChange={e=>setPoNumber(e.target.value)} placeholder="e.g. PO-12345" style={inp()} autoFocus/>
             </div>
+            {docSection}
             <div style={{marginBottom:16}}>
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
                 <div style={{fontSize:12,color:"#94a3b8",fontWeight:600}}>
@@ -35829,6 +35978,12 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   PROJECT LOCKED — {project.wonAt?"WON":"LOST"} {project.wonAt?new Date(project.wonAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"}):new Date(project.lostAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}
                 </strong>
                 <span style={{color:project.wonAt?"#bbf7d0":"#fecaca"}}>· all costs, BOMs, and project data are frozen.</span>
+                {/* F022: View PO — opens the (same) PO modal to view PO# + open/download the
+                    uploaded customer PO, or attach one if none was uploaded. Won only. */}
+                {project.wonAt&&(
+                  <button onClick={onPoReceived}
+                    style={{background:"none",border:"1px solid #38bdf888",borderRadius:5,color:"#7dd3fc",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>📄 View PO</button>
+                )}
                 {iAmOwnerOrAdmin&&!lockOverrideSession&&(
                   <button onClick={onShowLockUnlockConfirm}
                     style={{background:"none",border:"1px solid "+(project.wonAt?"#4ade8088":"#fca5a588"),borderRadius:5,color:project.wonAt?"#86efac":"#fca5a5",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:700,letterSpacing:0.4}}>🔓 Unlock for Editing</button>
@@ -36803,7 +36958,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onPoReceived}
                       disabled={ownerPriorityActive}
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:""}
-                      style={btn("#0d1a10","#4ade80",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #4ade8044",fontWeight:700,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>📬 PO Received</button>
+                      style={btn("#0d1a10","#4ade80",{fontSize:14,padding:"8px 18px",flex:1,border:"1px solid #4ade8044",fontWeight:700,opacity:ownerPriorityActive?0.45:1,cursor:ownerPriorityActive?"not-allowed":"pointer"})}>{project.bcPoNumber?"📄 View PO":"📬 PO Received"}</button>
                     {/* DECISION(v1.19.751): Smaller "LOST" sibling button — flips the project
                         into the Lost Projects bucket. Confirmation required. Owner-priority
                         gate matches PO Received for consistency. */}
@@ -39778,18 +39933,26 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             }catch(e){console.warn("[API] Failed to fetch vendors for alternate pricing:",e.message);}
           }}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} projectId={project.id} onClose={()=>setShowRfqHistory(false)}/>}
-          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} onClose={()=>setShowPoModal(false)} onDone={async(poNum)=>{
+          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} uid={uid} onClose={()=>setShowPoModal(false)} onDone={async(poNum,poDocMeta)=>{
             setShowPoModal(false);
             const firstPanel=(projectRef.current.panels||[])[0];
             const dueDate=firstPanel?.requestedShipDate||"";
             // DECISION(v1.19.754): Stamp `wonAt` when a PO is received. This is the "Won"
             // state that triggers the project-level lock — see isProjectLocked / readOnly.
             // Also records the PO number for audit. Owner/admin can unlock for editing.
-            const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,wonAt:Date.now(),wonBy:uid,postReviewStatus:"pending",postReviewSubmittedAt:Date.now(),updatedAt:Date.now()};
+            // F022: fold the uploaded PO doc (if any) into the SAME saveProject write —
+            // additive, only when present so it never wipes an existing customerPoDoc.
+            const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,wonAt:Date.now(),wonBy:uid,postReviewStatus:"pending",postReviewSubmittedAt:Date.now(),updatedAt:Date.now(),...(poDocMeta?{customerPoDoc:poDocMeta}:{})};
             setProject(updated);projectRef.current=updated;onChange&&onChange(updated);
             try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}
             // Prompt to upload production drawings
             setShowProductionUpload({poNumber:poNum,dueDate});
+          }} onSavePoDoc={async(poDocMeta)=>{
+            // F022: attach a PO doc to an ALREADY-recorded PO — persist customerPoDoc only,
+            // no wonAt re-stamp / no production-drawing prompt (that's the initial-PO path).
+            const updated={...projectRef.current,customerPoDoc:poDocMeta,updatedAt:Date.now()};
+            setProject(updated);projectRef.current=updated;onChange&&onChange(updated);
+            try{await saveProject(uid,updated);}catch(e){console.warn("PO doc save failed:",e);}
           }}/>}
           {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={dismissPriceCheckDiffs}/>}
           {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
