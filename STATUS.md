@@ -5,11 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · DEPLOY BUNDLE READY: F023 + loose-ends + B042-fix
+## Current — ✅ SESSION 2026-07-14 · prod v1.23.21 · F023 + loose-ends + B042-fix SHIPPED; F024 building
 
-> ## ✅✅ DEPLOY-READY BUNDLE (all Coach-approved, awaiting Jon "deploy"): F023 + loose-ends + B042-fix
-> **F023** (`b0744509`, board click-header filter) · **Loose-ends** (`1160f508`, B035/B036/B037/B039 — B039 nit=live-verify-later, not a blocker) · **B042-fix** (`b2aa0d96`, dedup guard stops new dup project docs). Different regions → merge clean. → one release (v1.23.21).
-> **F024 decisions locked (Jon 2026-07-14):** ACTIVE ECO column routing = **any active ECO** (computeActiveEco: draft/in_review/returned/sent/approved/in_production), **RED** header, + fold the "(BOM) In Process" color-key fix. **Builds AFTER this deploy** (on post-F023 master). **B042 cleanup** (36 stubs, archive) = after B042-fix ships.
+> ## ✅✅ SHIPPED v1.23.21 (release `e62171bf`): F023 + B035 + B036 + B037 + B039 + B042-fix
+> **F023** board click-header filter (all kanban views) · **B035** $0 service-card blocks Send · **B036** preserve quoteSent* in saveProject guards · **B037** F022 header offline-queue · **B039** tighten B038 retry (true empty-No.) · **B042-fix** dedup guard stops new duplicate project docs. All Coach-approved. **Live-verify-later:** B039 (confirm the genuine BC transient still carries `No.: ''` — Debug Logs `_b038LastRaw`); F022 disposable-BC PO test.
+> **🔨 F024 building** `f024-active-eco-column` (on post-F023 master): ACTIVE ECO column (any-active-ECO routing, RED, + (BOM) In Process color-key fold) → Coach → deploy.
+> **📋 Queued:** B042 cleanup (36 stub archive pass, Jon-gated) now that the guard fix is live; engineer-feedback triage.
 
 > ## 🔧 Loose-ends cleanup (Jon 2026-07-14)
 > - **🔎 Loose-ends batch** `loose-ends-b035-b036-b037-b039` (`1160f508`, Marc BUILT, Coach reviewing): B035 ($0 service-card blocks Send) + B036 (preserve quoteSent* in saveProject guards) + B037 (F022 header offline-queue) + B039 (tighten B038 retry to true empty-No.). B041 nit RATIFIED (no-bump).
