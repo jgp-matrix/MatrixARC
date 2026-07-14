@@ -5,7 +5,17 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-14 · prod v1.23.22 · F024 ACTIVE ECO column SHIPPED; B042 fully resolved
+## Current — 🧳 SESSION END 2026-07-14 · prod FROZEN at v1.23.22 · Jon away 4 days (back ~2026-07-18) — NO changes/deploys until return
+
+> ## 🧳 JON AWAY 4 DAYS (2026-07-14 → ~07-18) — PROD FROZEN, no deploys/changes until he's back
+> Prod stable at **v1.23.22**, working tree clean, master==origin (`1e861a3c`), no lanes running. Jon stopped the quick-fixes batch to avoid touching ARC before leaving. **Do NOT deploy or change prod while away.**
+> **Parked for his return (all filed, nothing urgent, prod not exposed):**
+> - Quick-wins batch (unstarted): Triangle-not-rendering bug (eng #4), purchasing-board ECO nit (F024 follow-up), B023 quote-summary pill overflow, G007 (TEST upload bar) + B030 (silent-catch log), B029, B022.
+> - Engineer Review-markup feedback cluster → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md` (Triangle bug + move/resize/edit markups + highlighter/text tools + spacing).
+> - Live-verify-later (non-blocking): B039 (BC transient carries `No.: ''`), F022 disposable-BC PO test, B041 unlock re-test, `deploy-test.sh` run.
+> - Deferred: B016-2/3 (concurrent row-merge — one-editor lock holds), F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018).
+
+## (prior) ✅ SESSION 2026-07-14 · prod v1.23.22 · F024 ACTIVE ECO column SHIPPED; B042 fully resolved
 
 > ## ✅✅ SHIPPED v1.23.22 (release `06f93e00`): F024 ACTIVE ECO column — ✅ verified live
 > New ACTIVE ECO column (red, any-active-ECO via computeActiveEco) between In-Pre-Review + Quotes-Sent; (BOM) IN PROCESS now pre-PO-only + renders yellow (color-key fix). Confirmed live: ACTIVE ECO + (BOM) IN PROCESS + QUOTES SENT all present on the board. Coach APPROVE WITH NITS. Nit (deferred, Jon-aware): purchasing_kanban still narrow → non-draft active-ECO Won projects show in both Sales ACTIVE-ECO + Purchasing boards.
