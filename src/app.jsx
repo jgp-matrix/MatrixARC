@@ -16460,8 +16460,11 @@ function computeProjectEffectiveStatus(project){
   // ECO carve-out in the Sales kanban routing) but their pill still shows
   // their underlying state (e.g. "evc"/READY) — confusing to the user.
   // Pulled to the top so it overrides every other state computation below.
-  const _hasActiveEco=!!project.ecoEditUnlocked||(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"));
-  if(_hasActiveEco)return"in_progress";
+  // F024: route ANY active ECO (BROAD predicate — ECO_ACTIVE_STATES, matching the red
+  // ECO tiles) to the dedicated "active_eco" column so (BOM) In Process holds only pre-PO
+  // pipeline work. Uses computeActiveEco (hoisted fn declaration → in scope here), NOT the
+  // narrow draft-only check. Superseded the prior `if(_hasActiveEco)return"in_progress"`.
+  if(computeActiveEco(project))return"active_eco";
   const isBudgetary=panels.some(pan=>(pan.pricing||{}).isBudgetary);
   const quoteSent=!!project.quoteSentAt;
   const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
@@ -16515,6 +16518,7 @@ function Badge({status,project}){
     rfqs:[C.redDim,C.red,"RFQs"],
     pre_review:["#1a1040","#a78bfa","In Pre-Review"],
     post_review:["#1a1040","#a78bfa","In Post-Review"],
+    active_eco:["#1f0a0a","#fca5a5","Active ECO"],
     evc:[C.greenDim,C.green,"Ready"],
     extracted:[C.greenDim,C.green,"Ready"],
     validated:[C.greenDim,C.green,"Ready"],
@@ -44506,17 +44510,19 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // order rework, even if bcPoStatus is still "Open"/"purchasing" from the
       // original Won state. Without this carve-out, ECO-rework projects fall
       // through into a no-man's-land (excluded from both Sales AND Production).
-      const order=["draft","in_progress","process_rfq","evc","pre_review","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",quotes_sent:"Quotes Sent"};
-      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
+      const order=["draft","in_progress","process_rfq","evc","pre_review","active_eco","quotes_sent"];
+      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",active_eco:"Active ECO",quotes_sent:"Quotes Sent"};
+      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",active_eco:"active_eco",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
-        const _hasActiveEco=p.ecoEditUnlocked||(Array.isArray(p.ecoSummary)&&p.ecoSummary.some(e=>e&&e.status==="draft"));
-        if((p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")&&!_hasActiveEco)return;
-        // Projects with active ECOs route to "in_progress" so Sales picks them
-        // up for the change-order pass. Once the ECO is approved, the project
-        // re-locks and routes back to Active/Production normally.
-        const st=_hasActiveEco?"in_progress":computeProjectEffectiveStatus(p);
+        // F024: BROAD active-ECO predicate (computeActiveEco = ECO_ACTIVE_STATES) — matches
+        // the red ECO tiles. Keep any-active-ECO project in the Sales board (not routed to
+        // purchasing via the guard below) and land it in the dedicated "active_eco" column.
+        // Once the ECO reaches a terminal state, computeActiveEco returns null and the project
+        // re-locks / routes back to Active/Production normally.
+        const _activeEco=computeActiveEco(p);
+        if((p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")&&!_activeEco)return;
+        const st=_activeEco?"active_eco":computeProjectEffectiveStatus(p);
         const col=statusToCol[st]||"draft";
         if(!map[col])map[col]=[];
         map[col].push(p);
@@ -44677,8 +44683,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
         // kanban and the focused single-column view share one definition (previously
         // computed per-column inside the map). View-only styling data — no behavior change.
-        const _statusColColors={Draft:C.muted,"In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
-        const _statusColBg={Draft:C.border,"In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
+        const _statusColColors={Draft:C.muted,"(BOM) In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Active ECO":"#ef4444","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
+        const _statusColBg={Draft:C.border,"(BOM) In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Active ECO":"#1f0a0a","Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
         const _isStatusStyleView=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban");
         const _colColorFor=(label)=>_isStatusStyleView?(_statusColColors[label]||C.muted):C.sub;
         const _colBgFor=(label)=>_isStatusStyleView?(_statusColBg[label]||C.border):"#3d6090";
@@ -44809,8 +44815,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=computeProjectEffectiveStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",pre_review:"PRE-REVIEW",post_review:"POST-REVIEW",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
+                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",active_eco:"#ef4444",evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",pre_review:"PRE-REVIEW",post_review:"POST-REVIEW",active_eco:"ACTIVE ECO",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
@@ -45937,8 +45943,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=computeProjectEffectiveStatus(p);
   const bcDisconnected=p.bcEnv&&p.bcEnv!==_bcConfig.env;
-  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
+  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,active_eco:"#ef4444",evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",active_eco:"ACTIVE ECO",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
   // DECISION(v1.19.858, ECO Stage A): Tiles for projects with an active draft
   // ECO get a red border + reddish-tinted background so they read at a glance
   // as "change order in flight". The ECO label (e.g. ECO 02) is rendered
