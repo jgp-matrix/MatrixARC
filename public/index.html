@@ -235,7 +235,7 @@ body.no-tips [data-tip]::after{opacity:0!important;}
 </script>
 <script>
 // ── APP VERSION ──
-const APP_VERSION="v1.23.21";
+const APP_VERSION="v1.23.22";
 // G009: monotonic test-build counter. Independent of prod semver — bumped ONLY by
 // deploy-test.sh, NEVER reset, NEVER touched by deploy.sh (prod). Format "NNN" (zero-padded).
 // Consumed by: (1) the freshness loop-guard below, and (2) TestEnvBanner (src/app.jsx),
@@ -483,6 +483,6 @@ async function unsubscribePushNotifications(uid){
 // Originally it was top-level here; that required messaging to load eagerly on every
 // page. Now this block is a no-op marker.
 </script>
-<script src="index.bundle.js?v=v1.23.21"></script>
+<script src="index.bundle.js?v=v1.23.22"></script>
 </body>
 </html>
