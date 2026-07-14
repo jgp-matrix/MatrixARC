@@ -15,6 +15,9 @@
 > - Live-verify-later (non-blocking): B039 (BC transient carries `No.: ''`), F022 disposable-BC PO test, B041 unlock re-test, `deploy-test.sh` run.
 > - Deferred: B016-2/3 (concurrent row-merge — one-editor lock holds), F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018).
 
+> ## 🔤 STARTUP COMMAND RENAMED (2026-07-14, Jon) — `/team-sub-start` → **`/ARC-team-Startup`**
+> The subagent-lane startup skill is now invoked as **`/ARC-team-Startup`** (same behavior; the old `/team-sub-start` name is retired). Docs updated to match: command file `.claude/commands/ARC-team-Startup.md`, CLAUDE.md (startup-variants row + default-model callout), FREDDY.md (operating-model block), SESSION-STATE.md (next-session boot line), memory `feedback_subagent_lane_model_preferred`, and this board. **Next session boots via `/ARC-team-Startup`.** Docs-only change — no app code, no deploy (prod stays frozen at v1.23.22).
+
 ## (prior) ✅ SESSION 2026-07-14 · prod v1.23.22 · F024 ACTIVE ECO column SHIPPED; B042 fully resolved
 
 > ## ✅✅ SHIPPED v1.23.22 (release `06f93e00`): F024 ACTIVE ECO column — ✅ verified live

@@ -9,7 +9,7 @@
 
 ## ★★ CURRENT OPERATING MODEL (2026-07-12) — READ FIRST; SUPERSEDES OLDER SECTIONS BELOW
 
-The default is now the **subagent-lane model** (`/team-sub-start`), which Jon endorsed as "much more efficient" (2026-07-12). Key points that OVERRIDE the older browser-Freddy / standing-session / Jon-relays content further down:
+The default is now the **subagent-lane model** (`/ARC-team-Startup`, renamed 2026-07-14 from `/team-sub-start`), which Jon endorsed as "much more efficient" (2026-07-12). Key points that OVERRIDE the older browser-Freddy / standing-session / Jon-relays content further down:
 
 - **You (Freddy) run in CCD with FULL repo access.** You read/write files, run git + `deploy.sh`, query Firestore/functions logs, and spawn subagents directly. (The old "you can't see the repo / ask Jon to relay from Coach/Marc" is OBSOLETE.)
 - **You run the work as in-session SUBAGENT LANES, not standing peer sessions.** Spawn a lane per task via the Agent tool and **label it by role** (in chat + the lane description): **Marc** = build / implement / fix; **Coach** = review / diagnose / verify. One primary role per lane. **Announce which role each subagent is, every spawn** (Jon asked for this explicitly).
@@ -18,7 +18,7 @@ The default is now the **subagent-lane model** (`/team-sub-start`), which Jon en
 - **Gates that still hold:** deploys are a Jon checkpoint (never auto-deploy); high-stakes / money-path / data-safety changes still get a **Coach review + a live verification gate** before prod (e.g. the B016 concurrent-edit matrix — which caught a catastrophic BOM-wipe pre-prod, vindicating the gate). Fire a **Priority-2** ("persist until acknowledged") Pushover the moment you're blocked on Jon, paired with a numbered decision queue.
 - **Away-mode-native:** no cross-session `send_message` Allow-Once prompts (no peers); commit-and-push + Pushover keep Jon in the loop.
 
-Startup for this model = the `/team-sub-start` skill (`.claude/commands/team-sub-start.md`). `/team-startup` (standing 4-session model) still exists for when Jon wants the full peer cross-check, but the subagent-lane model is the default. See memory `feedback_subagent_lane_model_preferred`.
+Startup for this model = the `/ARC-team-Startup` skill (`.claude/commands/ARC-team-Startup.md`; renamed 2026-07-14 from `/team-sub-start`). `/team-startup` (standing 4-session model) still exists for when Jon wants the full peer cross-check, but the subagent-lane model is the default. See memory `feedback_subagent_lane_model_preferred`.
 
 ---
 

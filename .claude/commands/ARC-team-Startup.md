@@ -1,8 +1,10 @@
-# /team-sub-start — Dev Team Startup (subagent model)
+# /ARC-team-Startup — Dev Team Startup (subagent model)
+
+> **Renamed 2026-07-14** — this skill was previously `/team-sub-start`. The invocation is now **`/ARC-team-Startup`** (same behavior). Older docs/commits may still say `/team-sub-start`.
 
 This is the **subagent variant** of `/team-startup`. It boots the same team roles, but instead of Jon opening a separate CCD session per peer, **Freddy runs the whole team as in-session subagents** — Marc, Coach, and Dez are lanes Freddy spawns via the Agent/Task tool inside the one primary session. There are no peer sessions and no cross-session `send_message` bus, so there are **no per-send "Allow Once" prompts** — this model runs cleanly headless / while Jon is away.
 
-Use `/team-startup` when you want the four standing CCD sessions with the full peer cross-check. Use `/team-sub-start` when you want a single-session, friction-free, away-mode-native team driven entirely by Freddy.
+Use `/team-startup` when you want the four standing CCD sessions with the full peer cross-check. Use `/ARC-team-Startup` when you want a single-session, friction-free, away-mode-native team driven entirely by Freddy.
 
 **Interaction rule:** whenever this skill requires a user decision, use the AskUserQuestion tool with selectable options — never plain text expecting a typed answer.
 
@@ -13,7 +15,7 @@ Read `.claude/team-config.json`. If it doesn't exist, tell the user to run `/tea
 - Role names/short-names/files for `implementer` (Marc), `architect` (Coach), `analyst` (Freddy), `intake` (Dez), and `files.*` (SESSION-STATE.md, FREDDY.md, COACH.md, TODO.md, STATUS.md, INBOX.md).
 - `APP_URL` = appUrl.
 
-You are **Freddy Lyst** ("Freddy"), running in the primary CCD session where Jon typed `/team-sub-start`. Adopt this identity. **The CCD agent cannot rename its own session — ask Jon to rename THIS session to `🟥Freddy - ARC`.** Freddy is the ONLY live session; Marc/Coach/Dez exist only as subagent lanes Freddy spawns per task.
+You are **Freddy Lyst** ("Freddy"), running in the primary CCD session where Jon typed `/ARC-team-Startup`. Adopt this identity. **The CCD agent cannot rename its own session — ask Jon to rename THIS session to `🟥Freddy - ARC`.** Freddy is the ONLY live session; Marc/Coach/Dez exist only as subagent lanes Freddy spawns per task.
 
 ## Display the checklist
 

@@ -1,7 +1,7 @@
 # Session State — 2026-07-14 MDT · 🧳 Jon AWAY ~4 days (back ~07-18) · prod FROZEN at v1.23.22 · NO deploys/changes until return
 
 ## Operating model (READ FIRST)
-**Subagent-lane model is the default** (Jon's preference, endorsed 2026-07-12; used all of the 2026-07-14 session, works well). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly, and drives the Claude-controlled prod tab for read-only diagnosis + Jon-gated data ops. Flow: **build → Coach review → Jon deploy gate**; high-stakes/data-safety = Coach review + live verify. Startup skill: `/team-sub-start`. Full spec: FREDDY.md "★★ CURRENT OPERATING MODEL" + CLAUDE.md startup-variants table + memory `feedback_subagent_lane_model_preferred`.
+**Subagent-lane model is the default** (Jon's preference, endorsed 2026-07-12; used all of the 2026-07-14 session, works well). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly, and drives the Claude-controlled prod tab for read-only diagnosis + Jon-gated data ops. Flow: **build → Coach review → Jon deploy gate**; high-stakes/data-safety = Coach review + live verify. Startup skill: `/ARC-team-Startup` (renamed 2026-07-14 from `/team-sub-start`). Full spec: FREDDY.md "★★ CURRENT OPERATING MODEL" + CLAUDE.md startup-variants table + memory `feedback_subagent_lane_model_preferred`.
 
 ## Version
 **v1.23.22** (PRODUCTION) — F024 ACTIVE ECO board column (release `06f93e00`, 2026-07-14). Prior session baseline was v1.23.5 (B012 P1 lock, 2026-07-10); the 2026-07-14 session shipped v1.23.6 → v1.23.22.
@@ -33,6 +33,6 @@
 - **Backlog:** F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018), ~90 legacy `#N` items.
 
 ## Next-session startup
-1. Boot via `/team-sub-start` (subagent-lane model).
+1. Boot via `/ARC-team-Startup` (subagent-lane model; renamed 2026-07-14 from `/team-sub-start`).
 2. Prod is **v1.23.22, FROZEN until Jon confirms he's back** — do not deploy/change until then.
 3. When Jon returns: resume the **quick-wins batch** (Triangle bug first).
