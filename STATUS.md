@@ -5,7 +5,9 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-14 · prod v1.23.19 · B041 + G009 SHIPPED; 7 In-Process casualties healed
+## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · board header "(BOM) IN PROCESS"; B041+G009 live; 7 casualties healed
+
+> ## ✅ SHIPPED v1.23.20 (release `66183dcc`): board column header "In Process" → "(BOM) In Process" (Jon — clarify meaning). Header label only (`app.jsx:44433`); status value + Badge + tile pills + Purchasing-board column untouched. Verified live on prod.
 
 > ## ✅✅ SHIPPED v1.23.19 (release `1508c0a4`): B041 + G009
 > **B041** — `_noBumpWrite` guard: background/programmatic saves no longer bump a sent quote's rev (only genuine user edits do) → the In-Process drift that hit 7 sent quotes CAN'T recur. **G009** — Test V.### env-build versioning: ribbon "🧪 TEST · Test V.### (base vX)" on the test channel, prod-safe `deploy-test.sh` (bumps counter, cache-bust, hosting:test only), version.json loop-guard, `docs/TESTING-PROCEDURES.md`. **✅ Prod verified live (controlled tab):** v1.23.19, no ribbon, no reload loop, clean load. **Earlier today (v1.23.18):** B038+F022+G012. **B040:** 7 casualties healed (targeted). **⏳ Jon re-test:** B041 (unlock sent quote → only real edit bumps); G009 (run `./deploy-test.sh` → test channel Test V.008, one reload, prod untouched). **Follow-ups:** B042 (dup docs), B037/B039, B041 budgetary-auto-clear nit-ratify, needs-review sent-quotes.
