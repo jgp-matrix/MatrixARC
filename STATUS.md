@@ -5,7 +5,11 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · loose-ends cleanup in progress (3 lanes)
+## Current — ✅ SESSION 2026-07-14 · prod v1.23.20 · DEPLOY BUNDLE READY: F023 + loose-ends + B042-fix
+
+> ## ✅✅ DEPLOY-READY BUNDLE (all Coach-approved, awaiting Jon "deploy"): F023 + loose-ends + B042-fix
+> **F023** (`b0744509`, board click-header filter) · **Loose-ends** (`1160f508`, B035/B036/B037/B039 — B039 nit=live-verify-later, not a blocker) · **B042-fix** (`b2aa0d96`, dedup guard stops new dup project docs). Different regions → merge clean. → one release (v1.23.21).
+> **F024 decisions locked (Jon 2026-07-14):** ACTIVE ECO column routing = **any active ECO** (computeActiveEco: draft/in_review/returned/sent/approved/in_production), **RED** header, + fold the "(BOM) In Process" color-key fix. **Builds AFTER this deploy** (on post-F023 master). **B042 cleanup** (36 stubs, archive) = after B042-fix ships.
 
 > ## 🔧 Loose-ends cleanup (Jon 2026-07-14)
 > - **🔎 Loose-ends batch** `loose-ends-b035-b036-b037-b039` (`1160f508`, Marc BUILT, Coach reviewing): B035 ($0 service-card blocks Send) + B036 (preserve quoteSent* in saveProject guards) + B037 (F022 header offline-queue) + B039 (tighten B038 retry to true empty-No.). B041 nit RATIFIED (no-bump).
