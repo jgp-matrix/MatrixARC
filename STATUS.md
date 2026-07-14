@@ -5,7 +5,7 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — ✅ SESSION 2026-07-13/14 · prod v1.23.17 · 2 prod issues triaged (B040 self-heal + owner-view-only=expected)
+## Current — ✅ SESSION 2026-07-14 · prod v1.23.18 · B038+F022+G012 SHIPPED
 
 > ## 🔎 Two prod issues (Jon, 2026-07-13/14) — Coach diagnosed
 > **#1 IN PROCESS should be QUOTES SENT → B040** (regression casualties): projects sent in the B034 window (12:36–13:42 MDT) persisted `quoteRev=quoteSentRev+1` → mis-columned. Jon chose **self-heal migration** → **✅ Marc BUILT** `b040-inprocess-selfheal` (`8a8fabf8`, +106/−1): guarded re-anchor in loadProjects (raw-doc guards: window[start−5min/END tight] + rev===sentRev+1 + no post-send qvHistory + no active ECO), targeted `.doc.update({quoteSentRev,quoteRevAtPrint})` bypassing hash/bump, idempotent (guard2 false after heal), 400ms-spaced, session healed-ids set. Board flips on load. **⏳ Coach data-migration review** (gate: can it EVER re-anchor a legit revision? + persist safety + idempotency) → Jon deploy. **#2 owner VIEW-ONLY on PRJ402131/402126 → NOT a bug (G011):** the sent-quote soft-block (`_sentSoftBlockActive`) makes any sent quote read-only for everyone incl. owner → click **"Verify with Project Owner & Enable Edits"** to edit (predates B034). Awaiting Jon's banner-text confirm; owner-exemption logged as **G011** design consideration.
@@ -13,8 +13,8 @@
 > ## 🧪 B034 re-test (Jon, prod v1.23.17): REGRESSION FIXED ✓ + 2 refinements
 > Steps 1–3, 5–7 PASSED. **Step 2 (send → stays Quotes Sent, NOT In Process) = the regression fix CONFIRMED ✓.** Bump-once + re-send cycle works. **2 items surfaced:** (a) **B041** — the bump fired on the "Verify & Enable Edits" unlock click (step 3), BEFORE the edit (Rule-2 deviation) → 🔎 Coach tracing (suspect F020 term-seed on edit-enter); (b) **G012** — status wording "Rev 02" → "Quote sent Qv02 to <recipient>" → 🔨 Marc building. B034 core = good; these are refinements. **✅ F005 Print-Only VERIFIED on prod (Jon 2026-07-14): PDF, no bump, no unlock.**
 
-## ✅✅ DEPLOY-READY (bundled, awaiting Jon's "deploy"): B038 + F022 + G012
-> B038 (Create-In-BC auto-retry, `9321a38a`, Coach APPROVE-nits) + F022 (PO upload + BC attach + View PO, `d6189a49`, Coach APPROVE after Replace-safety fix) + G012 (sent-quote status wording, `19864769`, Jon-confirmed, display-string). One deploy on Jon's go. **B041** (bump-on-unlock, Coach tracing) can fold in once fixed. B039/B037 = filed follow-ups.
+## ✅✅ SHIPPED v1.23.18 (release `8c537674`): B038 + F022 + G012
+> **B038** Create-In-BC auto-retry (transient empty-No. now self-heals, no dup) · **F022** PO Received drag-n-drop upload + BC attach (Replace-safe versioned filename) + "View PO" button · **G012** sent-quote status wording ("✓ Quote sent Qv.NN to <recipient> · date"). **⚠ Pre-deploy catch:** the SHELVED B040 self-heal code was found STAGED in the shared working tree — discarded before merge (safe on branch `b040-inprocess-selfheal` `8a8fabf8`); confirmed absent from the release. **⏳ Jon live-BC test (F022) on a DISPOSABLE project:** upload→BC attach correct name; Replace-same-PO#=exactly one attachment; View PO opens. **Follow-ups:** B039 (B038 regex-tighten), B037 (F022 offline-queue). **B041** (bump-on-unlock) still Coach-tracing → next deploy.
 
 > ## ✅✅ SHIPPED v1.23.17 (release `e6a1ac26`) — quote heading relabeled
 > `_quoteHeadingLabel` → **"Project Name: {name} - {customer} / PROJECT #: {cust#}"** (uses `project.bcCustomerName`; graceful fallbacks; no PO# on quotes). Coach APPROVE WITH NITS (narrow Sell-to vs Bill-to cosmetic edge, non-blocking).
