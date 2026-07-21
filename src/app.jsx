@@ -19892,6 +19892,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       if(!to){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:"No email address"}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:"",items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:false,error:"No email address"});
+        // B043: self-diagnosing log — a blank recipient means the RFQ silently doesn't send (BC email unresolved / none on file).
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){try{window.logDebugEntry({severity:"warn",source:"rfqSend",message:`Vendor ${group.vendorName} resolved to a blank recipient — RFQ not sent`,extra:{vendorName:group.vendorName,vendorNo:group.vendorNo||"",bcConnected:!!_bcToken,projectId:projectId||"",projectName:projectName||""}});}catch(_){}}
         continue;
       }
       setStatuses(prev=>({...prev,[group.vendorName]:{state:"sending"}}));
@@ -20053,16 +20055,21 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     // Send confirmation email to ARC user
     const sentVendors=historyEntries.filter(e=>e.sent&&e.vendorEmail!=="API");
     const apiVendorResults=historyEntries.filter(e=>e.sent&&e.vendorEmail==="API");
+    // B043: hoisted so the sender confirmation still fires on a zero-sent run (every supplier missing an email).
+    const failedVendors=historyEntries.filter(e=>!e.sent&&!e.skipped);
+    const anySent=sentVendors.length>0||apiVendorResults.length>0;
+    // B043 / NIT-1: summary Debug Log when a run sends nothing — split blank-email vs other-failure so a transport error isn't mislabeled.
+    if(!anySent&&failedVendors.length>0&&typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){try{const _blankFails=failedVendors.filter(v=>v.error==="No email address");const _otherFails=failedVendors.filter(v=>v.error!=="No email address");const _msg=_otherFails.length===0?`RFQ send produced 0 emails — ${_blankFails.length} supplier(s) had no email address`:(_blankFails.length===0?`RFQ send produced 0 emails — ${_otherFails.length} supplier(s) failed to send`:`RFQ send produced 0 emails — ${_blankFails.length} no email, ${_otherFails.length} failed to send`);window.logDebugEntry({severity:"warn",source:"rfqSend",message:_msg,extra:{blankEmail:_blankFails.map(v=>v.vendorName),failedToSend:_otherFails.map(v=>({vendorName:v.vendorName,error:v.error||"Unknown"})),bcConnected:!!_bcToken,projectId:projectId||"",projectName:projectName||""}});}catch(_){}}
     if(!graphToken)try{graphToken=await acquireGraphToken();}catch(e){}
-    if((sentVendors.length>0||apiVendorResults.length>0)&&graphToken&&fromEmail){
+    if((anySent||failedVendors.length>0)&&graphToken&&fromEmail){
       try{
         const now=new Date().toLocaleString("en-US",{month:"long",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"});
         let rows=sentVendors.map(v=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${v.vendorName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${v.vendorEmail}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#16a34a">✓ Sent</td></tr>`).join("");
         rows+=apiVendorResults.map(v=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${v.vendorName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">API Auto-Pricing</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#2563eb">✓ ${v.apiResults?v.apiResults.priced+" priced":"Complete"}</td></tr>`).join("");
-        const failedVendors=historyEntries.filter(e=>!e.sent&&!e.skipped);
+        // B043: failedVendors now hoisted above the gate — reuse it here.
         if(failedVendors.length>0)rows+=failedVendors.map(v=>`<tr><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;font-weight:600">${v.vendorName}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0">${v.vendorEmail||"—"}</td><td style="padding:6px 12px;border-bottom:1px solid #e2e8f0;color:#dc2626">✗ Failed: ${v.error||"Unknown"}</td></tr>`).join("");
-        const confirmHtml=`<div style="font-family:-apple-system,'Inter',sans-serif;max-width:600px;margin:0 auto;color:#1e293b"><div style="background:#f1f5f9;padding:24px 32px;border-bottom:2px solid #2563eb"><h2 style="margin:0;color:#2563eb;font-size:20px">RFQ Send Confirmation</h2></div><div style="padding:24px 32px"><p style="margin:0 0 8px;font-size:14px"><strong>Project:</strong> ${projectName||"—"}</p><p style="margin:0 0 8px;font-size:14px"><strong>BC Project:</strong> ${bcProjectNumber||"—"}</p><p style="margin:0 0 16px;font-size:14px"><strong>Sent:</strong> ${now}</p><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f8fafc"><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Supplier</th><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Sent To</th><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Status</th></tr></thead><tbody>${rows}</tbody></table><p style="margin:16px 0 0;font-size:12px;color:#94a3b8">This is an automated confirmation from ARC.</p></div></div>`;
-        await sendGraphEmail(graphToken,fromEmail,`RFQ Confirmation — ${projectName||bcProjectNumber||"Project"}`,confirmHtml);
+        const confirmHtml=`<div style="font-family:-apple-system,'Inter',sans-serif;max-width:600px;margin:0 auto;color:#1e293b"><div style="background:#f1f5f9;padding:24px 32px;border-bottom:2px solid #2563eb"><h2 style="margin:0;color:#2563eb;font-size:20px">RFQ Send Confirmation</h2></div><div style="padding:24px 32px">${!anySent?'<div style="background:#fef2f2;border:1px solid #dc2626;border-radius:6px;padding:12px 16px;margin:0 0 16px;color:#b91c1c;font-weight:600;font-size:14px">⚠ No RFQs were sent — every included supplier is missing an email address on file. Add supplier emails and resend.</div>':''}<p style="margin:0 0 8px;font-size:14px"><strong>Project:</strong> ${projectName||"—"}</p><p style="margin:0 0 8px;font-size:14px"><strong>BC Project:</strong> ${bcProjectNumber||"—"}</p><p style="margin:0 0 16px;font-size:14px"><strong>Sent:</strong> ${now}</p><table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f8fafc"><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Supplier</th><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Sent To</th><th style="padding:8px 12px;text-align:left;border-bottom:2px solid #2563eb;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b">Status</th></tr></thead><tbody>${rows}</tbody></table><p style="margin:16px 0 0;font-size:12px;color:#94a3b8">This is an automated confirmation from ARC.</p></div></div>`;
+        await sendGraphEmail(graphToken,fromEmail,anySent?`RFQ Confirmation — ${projectName||bcProjectNumber||"Project"}`:`RFQ NOT SENT — no supplier emails on file — ${projectName||bcProjectNumber||"Project"}`,confirmHtml);
         console.log("[RFQ] Confirmation email sent to",fromEmail);
       }catch(e){console.warn("[RFQ] Confirmation email failed:",e.message);}
     }
@@ -20072,6 +20079,10 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   }
   const stColors={sent:"#4ade80",error:"#f87171",skipped:"#64748b",sending:"#818cf8"};
   const stLabel=st=>st?.state==="sending"?(st.msg?`⏳ ${st.msg}`:"⏳ Sending…"):st?.state==="sent"?(st.msg?`✓ ${st.msg}`:"✓ Sent"):st?.state==="error"?`✗ ${st.msg||"Failed"}`:st?.state==="skipped"?"— Skipped":null;
+  // B043: warn-and-continue on blank-email vendors — surface them before + after send. Recomputes each render (live as the user types/toggles).
+  const _emailVendors=groups.filter(g=>included[g.vendorName]&&!isApiVendor(g.vendorName));
+  const _emailVendorCount=_emailVendors.length;
+  const _blankIncluded=_emailVendors.filter(g=>!_normalizeEmails(emails[g.vendorName])).map(g=>g.vendorName);
   return ReactDOM.createPortal(
     <>
     {previewGroup&&(
@@ -20144,6 +20155,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
                         {contacts.map((c,ci)=><option key={ci} value={c.email}>{c.name} — {c.email}</option>)}
                       </select>}
                     </div>
+                    {!_normalizeEmails(emails[g.vendorName])&&!contactsLoading&&<div style={{fontSize:10,color:"#f59e0b",fontWeight:600,marginTop:4}}>⚠ No email on file — {_bcToken?"none in Business Central for this vendor; add one above or this supplier will be skipped.":"Business Central isn't connected so it couldn't auto-fill; add one above or this supplier will be skipped."}</div>}
                     <label style={{display:"flex",alignItems:"center",gap:4,marginTop:3,cursor:"pointer",fontSize:10,color:remember[g.vendorName]?"#4ade80":"#64748b"}}>
                       <input type="checkbox" checked={!!remember[g.vendorName]} onChange={e=>{
                         const checked=e.target.checked;
@@ -20178,8 +20190,26 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
             );
           })}
         </div>
+        {_blankIncluded.length>0&&!done&&<div style={{background:"#3a1f00",border:"1px solid #92650e",borderRadius:6,padding:"7px 10px",marginBottom:10,fontSize:11,color:"#fcd34d",fontWeight:600}}>⚠ {_blankIncluded.length} of {_emailVendorCount} supplier{_emailVendorCount!==1?"s":""} {_blankIncluded.length===1?"has":"have"} no email address — {_blankIncluded.length===1?"it":"they"} will NOT be sent an RFQ: {_blankIncluded.join(", ")}</div>}
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",alignItems:"center"}}>
-          {done&&groups.filter(g=>included[g.vendorName]).every(g=>statuses[g.vendorName]?.state==="sent")&&<span style={{fontSize:12,color:"#4ade80",marginRight:"auto"}}>✓ All RFQs sent!</span>}
+          {done&&(()=>{
+            // B043: always report an outcome in-app, even on a partial/zero run (independent of MS365 delivery).
+            // NIT-1: split not-sent into blank-email vs other-failure so a transport error isn't mislabeled "no email address".
+            const inc=groups.filter(g=>included[g.vendorName]);
+            if(inc.length===0)return <span style={{fontSize:12,color:"#64748b",marginRight:"auto"}}>— No suppliers selected</span>;
+            const sentN=inc.filter(g=>statuses[g.vendorName]?.state==="sent").length;
+            const notSent=inc.filter(g=>statuses[g.vendorName]?.state!=="sent");
+            const blankN=notSent.filter(g=>statuses[g.vendorName]?.msg==="No email address").length;
+            const otherN=notSent.length-blankN;
+            if(sentN===inc.length)return <span style={{fontSize:12,color:"#4ade80",marginRight:"auto"}}>✓ All RFQs sent!</span>;
+            if(sentN===0){
+              if(otherN===0)return <span style={{fontSize:12,color:"#f59e0b",marginRight:"auto"}}>⚠ 0 RFQs sent — no supplier had an email address on file</span>;
+              if(blankN===0)return <span style={{fontSize:12,color:"#f87171",marginRight:"auto"}}>⚠ 0 RFQs sent — {otherN} failed to send</span>;
+              return <span style={{fontSize:12,marginRight:"auto"}}><span style={{color:"#f59e0b"}}>⚠ 0 sent · {blankN} no email</span><span style={{color:"#f87171"}}> · {otherN} failed</span></span>;
+            }
+            if(otherN===0)return <span style={{fontSize:12,marginRight:"auto"}}><span style={{color:"#4ade80"}}>✓ {sentN} sent</span><span style={{color:"#f59e0b"}}> · ⚠ {notSent.length} not sent (no email address)</span></span>;
+            return <span style={{fontSize:12,marginRight:"auto"}}><span style={{color:"#4ade80"}}>✓ {sentN} sent</span>{blankN>0&&<span style={{color:"#f59e0b"}}> · ⚠ {blankN} no email</span>}{otherN>0&&<span style={{color:"#f87171"}}> · ✗ {otherN} failed</span>}</span>;
+          })()}
           <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{done?"Close":"Cancel"}</button>
           {!sending&&!done&&<button onClick={()=>{if(onPrint)onPrint(groups);onClose();}} style={{background:"#1a1a2a",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📋 Print</button>}
           {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={groups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
