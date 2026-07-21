@@ -9,7 +9,9 @@
 
 > ## 🐛 B043 (NEW, HIGH) — Ryan's RFQ send: no sender confirmation + supplier emails blank
 > • Coach diagnose lane DONE (`docs/B043-RYAN-RFQ-COACH-TRACE.md`) — **BOTH symptoms = ONE root (H1):** RFQ mail sends client-side via MS Graph from the sender's mailbox; vendor recipient emails are BC-token-dependent (`bcGetVendorEmail` @6282 / `bcFetchVendorContacts` @19732 both return empty w/o `_bcToken`) → blank recipients SKIPPED (@19892) → supplier gets nothing; sender confirmation gated on ≥1 successful send (@20057) → zero sends = zero confirmation. Ryan-specific = team-member BC not connected / per-member key lacks vendor read (same class as B024).
-> • STATUS: **⏳ NEEDS JON** — needs a live Ryan send on PROD to promote H1 possible→active. Rule out H2 first (is Ryan on matrix-arc-test? test host suppresses all email @8586). Cheapest tell: Ryan's BC toolbar connection status. No fix built yet.
+> • LIVE TRIAGE (Jon): PROD + BC connected (blue) + Ryan sending fine now → not a broken account; root = blank-vendor-email data/handling path (all-blank send = zero sent + no confirmation).
+> • Marc build-ready plan DONE (`docs/B043-RYAN-RFQ-MARC-PLAN.md`) — all in `RfqEmailModal`, ~50-70 LOC, LOW-MED, not money-path: per-vendor "no email" marker + pre-send banner + guaranteed zero-sent feedback + Debug Log.
+> • STATUS: **⏳ NEEDS JON** — one ruling gates the build: **hard-block vs warn-and-continue** on blank-email vendors (Marc recommends warn-and-continue). Then build → validate → Jon live-test → deploy.
 
 > ## 🧳 (prior) SESSION END 2026-07-14 — parked for return (still valid)
 > Prod stable at **v1.23.22**. **Parked (all filed):** Quick-wins batch (Triangle bug eng #4 first, F024 ECO nit, B023, G007, B030, B029, B022); Engineer Review-markup feedback → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md`; Live-verify-later (B039, F022 PO test, B041 unlock re-test, `deploy-test.sh`); Deferred (B016-2/3, F014-B, F007/F016, tech-review cluster B024-B027/F017/F018).
