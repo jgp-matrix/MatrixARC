@@ -5,14 +5,14 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-21 · Jon BACK · prod v1.23.22 · session ACTIVE (freeze lifted)
+## Current — 🟢 2026-07-21 · Jon BACK · prod v1.23.23 · session ACTIVE (freeze lifted)
 
-> ## 🐛 B043 (NEW, HIGH) — Ryan's RFQ send: no sender confirmation + supplier emails blank
+> ## ✅ B043 SHIPPED TO PROD v1.23.23 (release 3a297d66) — Ryan's RFQ send hardened
 > • Coach diagnose lane DONE (`docs/B043-RYAN-RFQ-COACH-TRACE.md`) — **BOTH symptoms = ONE root (H1):** RFQ mail sends client-side via MS Graph from the sender's mailbox; vendor recipient emails are BC-token-dependent (`bcGetVendorEmail` @6282 / `bcFetchVendorContacts` @19732 both return empty w/o `_bcToken`) → blank recipients SKIPPED (@19892) → supplier gets nothing; sender confirmation gated on ≥1 successful send (@20057) → zero sends = zero confirmation. Ryan-specific = team-member BC not connected / per-member key lacks vendor read (same class as B024).
 > • LIVE TRIAGE (Jon): PROD + BC connected (blue) + Ryan sending fine now → not a broken account; root = blank-vendor-email data/handling path (all-blank send = zero sent + no confirmation).
 > • Marc build-ready plan DONE (`docs/B043-RYAN-RFQ-MARC-PLAN.md`) — all in `RfqEmailModal`, ~50-70 LOC, LOW-MED, not money-path: per-vendor "no email" marker + pre-send banner + guaranteed zero-sent feedback + Debug Log.
 > • Jon ruled: **warn-and-continue**. Marc BUILT (`RfqEmailModal`, master `d233d0f7`, `node validate_jsx.js` PASS, +35/-5 LOC). Coach review **APPROVE WITH NITS** — NIT-1 (blank-vs-failed label split + empty-included edge) folded in. Freddy independently re-validated PASS.
-> • STATUS: **⏳ NEEDS JON — deploy gate.** Code on master, NOT deployed (prod still v1.23.22). Verify wrinkle: the confirmation-EMAIL leg can only be verified on PROD (test host suppresses external email). Live-test scenarios: all-blank / partial / all-good / BC-disconnected.
+> • STATUS: **✅ DEPLOYED v1.23.23** (Jon deploy gate → prod). **⏳ Jon live-verify on prod:** all-blank send → "⚠ 0 RFQs sent" + "RFQ NOT SENT" confirmation email arrives; partial → good send + blanks flagged + confirmation fires; all-good → unchanged; `rfqSend` warn entries in debugLogs. Master==origin @3a297d66, tree clean.
 
 > ## 🧳 (prior) SESSION END 2026-07-14 — parked for return (still valid)
 > Prod stable at **v1.23.22**. **Parked (all filed):** Quick-wins batch (Triangle bug eng #4 first, F024 ECO nit, B023, G007, B030, B029, B022); Engineer Review-markup feedback → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md`; Live-verify-later (B039, F022 PO test, B041 unlock re-test, `deploy-test.sh`); Deferred (B016-2/3, F014-B, F007/F016, tech-review cluster B024-B027/F017/F018).
