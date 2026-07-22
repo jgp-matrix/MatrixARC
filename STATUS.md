@@ -22,7 +22,12 @@
 > • Jon ruled: flag-ON bypasses BOTH staleness AND cooldown; exclusions preserved. **✅ Marc BUILT (master `02579a1d`) + Coach APPROVE (no blockers/nits).** Default OFF → inert until an admin toggles it; rides to prod with F026. OBS-1 (Coach): customer-supplied rows land on a forced RFQ = pre-existing behavior, matches Jon's ruling — eyeball when toggled ON. **DEPLOY-READY (inert).**
 
 
-> ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — User 'To-Do' Dashboard = RIGHT-SIDE PANE (epic)
+> ## ✨ F025 — right-pane To-Do dashboard: BUILDING (final phase, sub-phased 3a→3e)
+> • Decisions locked: 8 pills (one per board column incl. Ready To Send) · always-personal scope · pill color = worst project in bucket · thresholds {yellow,red} pairs (Jon's cutoffs, Settings-editable, defaults for the 3 unspecified) · ECO real-BOM-hook · idle map unbounded.
+> • **3a BUILDING** (collapsible 380px rail + 8-pill grid + `_todoBucketOf`/`_bucketTimerColor` SSOT; no new persisted fields). Next: 3b list+RFQ line+quotes-weekly · 3c per-category threshold Settings · 3d ECO timer (new field+rules) · 3e idle-flash (per-user field). Each: build→Coach→test→deploy.
+> • Plan: `docs/F025-RIGHT-PANE-PLAN.md`.
+
+> ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — original reshape spec (see plan doc)
 > • Top-strip (v1, on TEST) SUPERSEDED → right-side pane (like in-project Panel/Quote Summary). Reqs captured: `docs/F025-V2-TODO-DASHBOARD-REQUIREMENTS.md`.
 > • Decomposed: **G013** (remove redundant tile status pills), **B044** (projects wrongly in READY TO REVIEW/SEND — evc predicate), **F026** (split evc→READY TO REVIEW+READY TO SEND, reorder IN PRE-REVIEW column, per-status timestamps, review→RFQ-return), **F027** (MANAGER role + priority flag), **F025** (right-pane: pill grid GREEN/YELLOW≥80%/RED≥100% + timer-sorted list + ECO list + Quotes-Sent follow-up + idle-flash 40h/24h).
 > • v1 foundation (statusChangedAt / _rfqAwaitingSummary / _statusClockStart / _attentionThresholdMs) REUSED.
