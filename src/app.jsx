@@ -48384,6 +48384,17 @@ function App({user}){
     fbDb.doc(`users/${user.uid}/notifications/${id}`).update({read:true}).catch(()=>{});
   }
 
+  // F031 #4: SSOT predicate — a supplier_quote notification is "handled / safe to clear"
+  // once its rfqUploads doc is imported/dismissed (the F031 #3 rule). ONE definition used
+  // by BOTH the per-row note/gate AND the batch "Clear received" button so it can't drift.
+  const _isNotifHandled=n=>n.type==='supplier_quote'&&(rfqStatusMap[n.rfqUploadId]==='imported'||rfqStatusMap[n.rfqUploadId]==='dismissed');
+
+  // F031 #4: batch clear — marks read every currently safe-to-clear notification in one
+  // pass (mirrors markAllNotifsRead's write, filtered to _isNotifHandled). Dropdown stays open.
+  function markSafeToClearNotifs(){
+    notifications.filter(_isNotifHandled).forEach(n=>fbDb.doc(`users/${user.uid}/notifications/${n.id}`).update({read:true}).catch(()=>{}));
+  }
+
   function closeSearch(){setShowSearch(false);}
   function openProjectFromSearch(p){handleOpen(p);closeSearch();}
   const sqRowRef=useRef(null);
@@ -49327,6 +49338,10 @@ INSTRUCTIONS:
             {showBellMenu&&(<div style={{position:"absolute",right:0,top:"calc(100% + 6px)",background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"6px 0",minWidth:320,maxWidth:380,boxShadow:"0 0 30px 8px rgba(56,189,248,0.6),0 8px 30px rgba(0,0,0,0.8)",zIndex:600}}>
               <div style={{padding:"10px 16px 8px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                 <span style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,flex:1}}>Notifications {notifications.length>0&&`(${notifications.length})`}</span>
+                {/* F031 #4: one-click clear of every "safe to clear" (handled) supplier-quote
+                    notification. Rendered only when ≥1 such item exists; count in the label.
+                    stopPropagation + no navigate → dropdown stays open, like the per-item ✕. */}
+                {(()=>{const _sc=notifications.filter(_isNotifHandled).length;return _sc>0&&<button title="Clear all already-received notifications" onClick={e=>{e.stopPropagation();markSafeToClearNotifs();}} style={{background:"none",border:"none",color:C.green,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>✓ Clear received ({_sc})</button>;})()}
                 {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
               </div>
               <div style={{height:notifMenuH,minHeight:120,maxHeight:"75vh",overflowY:"auto",resize:"vertical"}}
@@ -49336,8 +49351,7 @@ INSTRUCTIONS:
                   // F031 #3: a supplier_quote row is "handled" once its rfqUploads doc is
                   // imported/dismissed — the submissions modal (submitted-only) would open
                   // empty, so gate OFF the navigate and show a "safe to clear" note instead.
-                  const _rfqStatus=n.type==='supplier_quote'?rfqStatusMap[n.rfqUploadId]:undefined;
-                  const _rfqHandled=_rfqStatus==='imported'||_rfqStatus==='dismissed';
+                  const _rfqHandled=_isNotifHandled(n); // F031 #4: SSOT — same predicate the batch clear uses
                   const _clickable=n.type==='supplier_quote'&&!_rfqHandled;
                   return(
                   <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_clickable?"pointer":"default"}}
