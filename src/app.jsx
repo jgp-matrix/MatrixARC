@@ -16505,8 +16505,9 @@ function _rfqAwaitingSummary(project){
   const expired=pending.filter(r=>(now-r.rfqSentDate)>RFQ_EXPIRED_MS);
   const pendingVendors=new Set(pending.map(r=>r.bcVendorName||"Unknown"));
   const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
+  const sentVendors=new Set(allBom.map(r=>r.bcVendorName||"Unknown")); // distinct vendors an RFQ was SENT to (any rfqSentDate)
   const oldestSentDate=pending.length?Math.min(...pending.map(r=>r.rfqSentDate)):null;
-  return{pendingRowCount:pending.length,expiredRowCount:expired.length,awaitingVendorCount:pendingVendors.size,expiredVendorCount:expiredVendors.size,oldestSentDate};
+  return{pendingRowCount:pending.length,expiredRowCount:expired.length,awaitingVendorCount:pendingVendors.size,expiredVendorCount:expiredVendors.size,sentVendorCount:sentVendors.size,oldestSentDate};
 }
 // F025: aging-clock start for a project's CURRENT effective status. Prefers the exact
 // statusChangedAt stamp (added by saveProject/saveProjectPanel); falls back for legacy docs
@@ -46316,6 +46317,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const _activeEcoTile=computeActiveEco(p);
   const _hasActiveEcoTile=!!_activeEcoTile;
   const _ecoLabelInline=_activeEcoTile?` · ECO ${String(_activeEcoTile.number||0).padStart(2,"0")}`:"";
+  const _sentRfq=_rfqAwaitingSummary(p).sentVendorCount||0; // # RFQs sent for this project (distinct vendors) — shown alongside the received count
   // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
   // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
   const _idleBorderColor=bcDisconnected?"#64748b55":_hasActiveEcoTile?"#ef4444":"#4a5080";
@@ -46365,9 +46367,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     <div style={{fontSize:16,fontWeight:700,color:bcDisconnected?"#64748b":C.green,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",wordBreak:"break-word"}}>{p.name}</div>
     {/* Row 4: pills — RFQ count + LOST/status. Own row so they don't force tile width.
         Skipped entirely when nothing to show (no RFQs, not lost, and pill hidden per G013). */}
-    {(rfqCount>0||p.lostAt||!hideStatusPill)&&(
+    {(_sentRfq>0||rfqCount>0||p.lostAt||!hideStatusPill)&&(
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",minWidth:0}}>
-      {rfqCount>0&&<span style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
+      {_sentRfq>0&&<span title={`${_sentRfq} RFQ${_sentRfq>1?"s":""} sent to suppliers`} style={{background:"#12233a",color:"#7fb5e6",border:"1px solid #38bdf844",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",flexShrink:0}}>{_sentRfq} SENT</span>}
+      {rfqCount>0&&<span title={`${rfqCount} supplier quote${rfqCount>1?"s":""} received — awaiting review`} style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
       {/* DECISION(v1.19.753): When project.lostAt is set, replace the status badge with a
           dedicated red LOST pill so the tile reads at a glance in the Lost / All views. */}
       {p.lostAt?(
