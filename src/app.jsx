@@ -16524,6 +16524,35 @@ function _statusClockStart(project,eff){
 function _isMyProject(p,uid){
   return p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code);
 }
+// F026 (B044/B018) — SSOT status-split predicates. One definition each; every consumer calls
+// these (CLAUDE.md "Single Source of Truth for Dual-Consumer Predicates"). They REUSE the
+// existing row/gate helpers rather than re-inlining the rules:
+//   • anyRedRow   → _isBomRowFlaggedRed (the BOM row-color rule: qty=0 / $0 / no-priceDate /
+//                    stale priceDate / no-firm-LT, with the vendor-is-customer exemption)
+//   • issuesCleared → the two HARD send-blockers only (Jon 2026-07-21): unresolved tech-review
+//                    (_hasUnresolvedTechReview) + panel extractionReport.manualVerifyRequired.
+//                    Confidence chips + not-in-BC stay ADVISORY (don't gate READY TO REVIEW).
+//   • readyToSend  → the full send gate (findIncompleteQuoteItems empty) AND !anyRedRow.
+// This closes the B044 gap where the old `hasUnpriced` was strictly NARROWER than the red rule
+// + the send gate, so stale-date / qty=0 / no-firm-LT / tech-review / manualVerify projects
+// slipped into a "ready" bucket even though Send was blocked.
+function anyRedRow(project){
+  return ((project&&project.panels)||[]).some(pan=>(pan.bom||[]).some(r=>_isBomRowFlaggedRed(r,project.bcCustomerNumber,project.bcCustomerName)));
+}
+function issuesCleared(project){
+  if(_hasUnresolvedTechReview(project))return false;
+  return !((project&&project.panels)||[]).some(pan=>pan.extractionReport&&pan.extractionReport.manualVerifyRequired);
+}
+function readyToReview(project){
+  const panels=(project&&project.panels)||[];
+  const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
+  const priceable=panels.flatMap(pan=>(pan.bom||[]).filter(r=>!_isExcludedFromPriceCheck(r)));
+  const hasActiveRfqs=hasBom&&priceable.some(r=>r.rfqSentDate&&!r.bcPoDate);
+  return hasBom&&!hasActiveRfqs&&issuesCleared(project);
+}
+function readyToSend(project){
+  return readyToReview(project)&&findIncompleteQuoteItems(project).length===0&&!anyRedRow(project);
+}
 function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
   const panels=project.panels||[];
@@ -16551,7 +16580,9 @@ function computeProjectEffectiveStatus(project){
   if(!hasAnyDrawings&&!anyPanelStarted&&!hasBom)return"draft";
   // Check pricing completeness across all panels
   const priceable=panels.flatMap(pan=>(pan.bom||[]).filter(r=>!_isExcludedFromPriceCheck(r)));
-  const hasUnpriced=hasBom&&priceable.some(r=>!r.unitPrice||r.unitPrice===0||!r.priceDate);
+  // F026 (B044): the old narrow `hasUnpriced` (unitPrice/priceDate-only) was removed — routing now
+  // uses the SSOT anyRedRow (the full red rule) so stale-date / qty=0 / no-firm-LT reds can't slip
+  // into a "ready" bucket. hasActiveRfqs stays (below) for the awaiting-response route.
   // DECISION(v1.19.521): RFQ status = has items with RFQs sent but no vendor-confirmed price yet.
   // "No PO" alone doesn't trigger RFQ — items can have BC Item Card prices without Purchase Price records.
   // What matters is whether there are outstanding RFQs awaiting supplier response.
@@ -16574,8 +16605,15 @@ function computeProjectEffectiveStatus(project){
   }
   if(project.postReviewStatus==="pending")return"post_review";
   if(project.preReviewStatus==="pending")return"pre_review";
-  if((hasUnpriced||hasActiveRfqs)&&hasBom)return"rfqs";
-  if(hasBom&&!hasUnpriced&&!hasActiveRfqs)return"evc"; // Ready to review/send
+  // F026 (B044/B018): route on the SSOT predicates, not the narrow hasUnpriced. Any red row
+  // (stale-date / qty=0 / no-firm-LT / unpriced) OR an outstanding RFQ → back to RFQs
+  // Send/Receive. Then split the old single "evc" ready bucket into READY TO SEND (full send
+  // gate clear + no red rows) vs READY TO REVIEW (hard-issues clear — tech-review/manualVerify —
+  // but may still carry pricing/LT/red gaps to work). Ordering: send is the stricter subset of
+  // review, so test readyToSend first.
+  if(hasBom&&(anyRedRow(project)||hasActiveRfqs))return"rfqs";
+  if(readyToSend(project))return"evc_send";
+  if(readyToReview(project))return"evc_review";
   return pipelineStatus;
 }
 // Legacy wrapper — used by dashboard grouping and other callers
@@ -16593,6 +16631,9 @@ function Badge({status,project}){
     pre_review:["#1a1040","#a78bfa","In Pre-Review"],
     post_review:["#1a1040","#a78bfa","In Post-Review"],
     active_eco:["#1f0a0a","#fca5a5","Active ECO"],
+    // F026: evc split → two ready buckets. evc kept as a legacy fallback (no longer emitted).
+    evc_review:["#042f2e","#5eead4","Ready To Review"],
+    evc_send:[C.greenDim,C.green,"Ready To Send"],
     evc:[C.greenDim,C.green,"Ready"],
     extracted:[C.greenDim,C.green,"Ready"],
     validated:[C.greenDim,C.green,"Ready"],
@@ -37026,6 +37067,13 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   const _hasVerify=_incompleteItems.some(i=>i.isVerificationBlock);
                   const _hasTechReview=_incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
                   const _trCount=_incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
+                  // B018 (follow-up): this send-count is already on the SSOT send gate
+                  // (findIncompleteQuoteItems). It intentionally does NOT count lead-time-only reds
+                  // (#175: a non-firm LT is RFQ-eligible, not send-blocking), so it can differ from
+                  // the board's anyRedRow set (which DOES include LT reds → routes to RFQs). Fully
+                  // reconciling the count/messaging with anyRedRow is a behavior + wording change
+                  // (would start blocking Send on LT-only reds) — deferred to a separate B018 pass,
+                  // out of F026's read-path/routing scope.
                   const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
                   // DECISION(v1.19.681): Owner Priority Mode extends the send-block reasons.
                   const _sendBlocked=_incompleteItems.length>0||!!ownerPriorityActive;
@@ -44643,9 +44691,16 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // order rework, even if bcPoStatus is still "Open"/"purchasing" from the
       // original Won state. Without this carve-out, ECO-rework projects fall
       // through into a no-man's-land (excluded from both Sales AND Production).
-      const order=["draft","in_progress","process_rfq","evc","pre_review","active_eco","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",evc:"Ready To Review/Send",pre_review:"In Pre-Review",active_eco:"Active ECO",quotes_sent:"Quotes Sent"};
-      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc:"evc",pre_review:"pre_review",active_eco:"active_eco",extracted:"evc",validated:"evc",costed:"evc",quoted:"evc",pushed_to_bc:"evc",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
+      // F026: 8-column Sales board — IN PRE-REVIEW sits BETWEEN Ready To Review and Ready To Send.
+      const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send","active_eco","quotes_sent"];
+      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",ready_review:"Ready To Review",pre_review:"In Pre-Review",ready_send:"Ready To Send",active_eco:"Active ECO",quotes_sent:"Quotes Sent"};
+      // F026: statusToCol MUST stay TOTAL — any status computeProjectEffectiveStatus can emit needs
+      // an explicit column, or it silently ||"draft"-dumps below. The folded pipeline statuses
+      // (extracted/validated/costed/quoted/pushed_to_bc) reach here only when a project fell through
+      // the ready/rfqs branches (i.e. hard issues NOT cleared) → they belong in (BOM) In Process,
+      // not a "ready" column. post_review keeps its prior placement (Draft column fallback) — it's
+      // not a Sales-board state and was never given a column.
+      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc_review:"ready_review",evc_send:"ready_send",pre_review:"pre_review",post_review:"draft",active_eco:"active_eco",extracted:"in_progress",validated:"in_progress",costed:"in_progress",quoted:"in_progress",pushed_to_bc:"in_progress",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
       const map={};
       list.forEach(p=>{
         // F024: BROAD active-ECO predicate (computeActiveEco = ECO_ACTIVE_STATES) — matches
@@ -44775,7 +44830,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         const _now=Date.now();
         const _thrMs=_attentionThresholdMs();
         const _thrLabel=`${_pricingConfig.attentionThresholdValue||7}${(_pricingConfig.attentionThresholdUnit||'days').charAt(0)}`;
-        const _timingStates=new Set(["draft","in_progress","evc","pre_review","rfqs"]);
+        const _timingStates=new Set(["draft","in_progress","evc","evc_review","evc_send","pre_review","rfqs","active_eco","quotes_sent"]);
         const base=projects.filter(p=>!p.wonAt&&!p.lostAt&&!p.importedFromBC&&(!myProjectsOnly||_isMyProject(p,uid)));
         const awaitingIds=new Set();let awaitingVendorTot=0,awaitingExpired=false;
         const reviewIds=new Set();
@@ -44856,9 +44911,14 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
         // kanban and the focused single-column view share one definition (previously
         // computed per-column inside the map). View-only styling data — no behavior change.
-        const _statusColColors={Draft:C.muted,"(BOM) In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Active ECO":"#ef4444","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
-        const _statusColBg={Draft:C.border,"(BOM) In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review/Send":C.greenDim,"Active ECO":"#1f0a0a","Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
+        const _statusColColors={Draft:C.muted,"(BOM) In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review":"#5eead4","Ready To Send":C.green,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Active ECO":"#ef4444","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
+        const _statusColBg={Draft:C.border,"(BOM) In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review":"#042f2e","Ready To Send":C.greenDim,"Ready To Review/Send":C.greenDim,"Active ECO":"#1f0a0a","Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
         const _isStatusStyleView=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban");
+        // G013: on the Sales status board these columns already name the status in their header, so
+        // the per-tile status pill is redundant — suppress it for these 5 (Ready To Send / Active
+        // ECO / Quotes Sent KEEP the pill: it carries extra signal — "sendable", ECO red, locked-rev).
+        const _hidePillCols=new Set(["draft","in_progress","process_rfq","ready_review","pre_review"]);
+        const _hidePillFor=(key)=>groupBy==="status"&&_hidePillCols.has(key);
         const _colColorFor=(label)=>_isStatusStyleView?(_statusColColors[label]||C.muted):C.sub;
         const _colBgFor=(label)=>_isStatusStyleView?(_statusColBg[label]||C.border):"#3d6090";
         return(<>
@@ -44911,7 +44971,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                           onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
                           userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
                           remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
-                          activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}/>
+                          activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}
+                          hideStatusPill={_hidePillFor(g.key)}/>
                       ))}
                     </div>
                   ):(
@@ -44920,7 +44981,11 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 </div>
               );
             })():(
-            <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",paddingBottom:8}}>
+            /* F026: horizontal-scroll wrapper — the Sales board is now 8 columns. Columns keep
+               their readable minWidth (below) and the row scrolls horizontally when they don't
+               fit; on wide screens flex-grow still fills the width (no scrollbar). */
+            <div style={{overflowX:"auto",width:"100%"}}>
+            <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",minWidth:"min-content",paddingBottom:8}}>
               {groups.map((g,gi)=>{
                 const colColor=_colColorFor(g.label);
                 const colBg=_colBgFor(g.label);
@@ -44962,6 +45027,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                         userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
                         remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
                         activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}
+                        hideStatusPill={_hidePillFor(g.key)}
                         draggable={isNoCustomer}
                         onDragStart={isNoCustomer?e=>{e.dataTransfer.effectAllowed="move";setDragProjectId(p.id);}:undefined}
                         onDragEnd={isNoCustomer?()=>{setDragProjectId(null);setDropTarget(null);}:undefined}/>
@@ -44970,6 +45036,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 </div>
                 );
               })}
+            </div>
             </div>
             )}
             </>
@@ -44995,8 +45062,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=computeProjectEffectiveStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",active_eco:"#ef4444",evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",pre_review:"PRE-REVIEW",post_review:"POST-REVIEW",active_eco:"ACTIVE ECO",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
+                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",active_eco:"#ef4444",evc_review:"#5eead4",evc_send:C.green,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",pre_review:"PRE-REVIEW",post_review:"POST-REVIEW",active_eco:"ACTIVE ECO",evc_review:"READY TO REVIEW",evc_send:"READY TO SEND",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
@@ -46117,14 +46184,14 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,remoteTask,activeViewer}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,remoteTask,activeViewer,hideStatusPill}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=computeProjectEffectiveStatus(p);
   const bcDisconnected=p.bcEnv&&p.bcEnv!==_bcConfig.env;
-  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,active_eco:"#ef4444",evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",active_eco:"ACTIVE ECO",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
+  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,active_eco:"#ef4444",evc_review:"#5eead4",evc_send:C.green,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",active_eco:"ACTIVE ECO",evc_review:"READY TO REVIEW",evc_send:"READY TO SEND",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
   // DECISION(v1.19.858, ECO Stage A): Tiles for projects with an active draft
   // ECO get a red border + reddish-tinted background so they read at a glance
   // as "change order in flight". The ECO label (e.g. ECO 02) is rendered
@@ -46178,7 +46245,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
           style={{flexShrink:0,background:"#1f0a0a",color:"#fca5a5",border:"1px solid #ef444466",borderRadius:20,padding:"3px 12px",fontSize:11,fontWeight:800,letterSpacing:0.6,whiteSpace:"nowrap"}}>
           🗙 LOST
         </span>
-      ):(
+      ):hideStatusPill?null:(
         <div style={{flexShrink:0,fontSize:"0.75em"}}><Badge status={p.importedFromBC?"imported":st} project={p}/></div>
       )}
     </div>
