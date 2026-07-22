@@ -2188,6 +2188,11 @@ function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
 // OR is an admin (admins implicitly have every permission). Add new flags by toggling
 // them in the Team & Permissions modal — no schema change needed.
 function hasPermission(name){return _appCtx.role==="admin"||!!(_appCtx.permissions&&_appCtx.permissions[name]);}
+// F027: MANAGER permission flag — orthogonal to write access. A manager (or admin,
+// who implicitly passes) may pin/unpin any project to the top of the board even on a
+// locked project; it grants NO other write capability. Mirrors isReviewer's shape;
+// reuses _appCtx.permissions (populated at auth read + live member-doc update).
+function isManager(){return hasPermission("manager");}
 
 // ── TOOLTIPS ──
 let _tooltipsEnabled=true; // default; loaded from Firestore after auth
@@ -9399,7 +9404,10 @@ async function saveProject(uid,project){
         // reads data.quoteSentRev so the preserved value feeds the bump cap.
         {
           const _srvSent=_curDoc.data();
-          for(const _qf of ['quoteSentRev','quoteSentAt','quoteSentTo']){
+          // F027: priorityPinnedAt/By ride the SAME preserve-guard so a manager's pin
+          // survives a concurrent owner full-doc save that omits them (undefined = field
+          // absent → preserve; explicit null = intentional unpin → passes through).
+          for(const _qf of ['quoteSentRev','quoteSentAt','quoteSentTo','priorityPinnedAt','priorityPinnedBy']){
             if(_srvSent[_qf]!==undefined&&data[_qf]===undefined){
               data[_qf]=_srvSent[_qf];
             }
@@ -19410,6 +19418,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                   <th style={{textAlign:"left",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>User</th>
                   <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:80}} title="Admin can manage team members + permissions, write all settings, override locks">Admin</th>
                   <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:90}} title="Reviewer can approve/reject pre- and post-quote engineering reviews">Reviewer</th>
+                  <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:90}} title="Manager can pin/unpin any project to the top of the board (even locked projects). Grants no other write access.">Manager</th>
                 </tr>
               </thead>
               <tbody>
@@ -19417,6 +19426,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                   const isSelf=m.uid===uid;
                   const isAdmin=m.role==="admin";
                   const isReviewer=!!(m.permissions&&m.permissions.reviewer);
+                  const isManagerPerm=!!(m.permissions&&m.permissions.manager);
                   const saving=savingPerm===m.uid;
                   return(
                     <tr key={m.uid} style={{borderBottom:`1px solid ${C.border}22`,opacity:saving?0.5:1}}>
@@ -19438,6 +19448,13 @@ function TeamModal({uid,companyId,userRole,onClose}){
                           title={admin?"Toggle Reviewer permission":"Admins only"}
                           style={{cursor:(!admin||saving)?"not-allowed":"pointer",width:16,height:16}}/>
                       </td>
+                      <td style={{textAlign:"center",padding:"8px 10px"}}>
+                        <input type="checkbox" checked={isManagerPerm}
+                          onChange={e=>togglePermission(m.uid,"manager",e.target.checked)}
+                          disabled={!admin||saving}
+                          title={admin?"Toggle Manager permission":"Admins only"}
+                          style={{cursor:(!admin||saving)?"not-allowed":"pointer",width:16,height:16}}/>
+                      </td>
                     </tr>
                   );
                 })}
@@ -19447,6 +19464,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
               <strong style={{color:C.sub}}>Permission glossary:</strong>
               <br/>• <strong>Admin</strong> — manage team membership, override Won/Lost locks, edit all settings.
               <br/>• <strong>Reviewer</strong> — approve or reject pre-quote and post-PO engineering reviews.
+              <br/>• <strong>Manager</strong> — pin/unpin any project to the top of the board (works even on locked projects). Grants no other write access.
               <br/>More permission columns will be added as additional roles are defined.
             </div>
           </div>
@@ -36001,6 +36019,28 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       project.ownerLockActive&&React.createElement("span",{style:{fontSize:10,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 6px",marginLeft:4}},"ACTIVE")
                     );
                   }
+                  // F027: Pin-to-top checkbox — manager/admin only (not owner-gated), stacked
+                  // under the Sales column beside the Hold-priority checkbox. Writes via a
+                  // DEDICATED narrow ref.update() (NOT persistProject/saveProject) so the
+                  // pin lands even on a locked project — a full-doc set() fails the pin-only
+                  // rules carve-out. Any manager/admin may unpin any pin (global shared list).
+                  var pinEl=null;
+                  if(li===0&&(isManager()||isAdmin())){
+                    pinEl=React.createElement("label",{
+                      style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.muted,cursor:"pointer",marginTop:4},
+                      title:"Pin this project to the top of every board column. Any manager or admin can pin or unpin."
+                    },
+                      React.createElement("input",{type:"checkbox",checked:!!project.priorityPinnedAt,onChange:function(e){
+                        var _pinRef=fbDb.doc(`${_appCtx.projectsPath}/${project.id}`);
+                        var patch=e.target.checked
+                          ?{priorityPinnedAt:Date.now(),priorityPinnedBy:_appCtx.uid,updatedAt:Date.now()}
+                          :{priorityPinnedAt:null,priorityPinnedBy:null,updatedAt:Date.now()};
+                        _pinRef.update(patch).then(function(){onUpdate(Object.assign({},project,patch));}).catch(function(err){console.warn("[F027] pin update failed:",err);});
+                      },style:{cursor:"pointer"}}),
+                      React.createElement("span",null,"📌 Pin to top"),
+                      project.priorityPinnedAt&&React.createElement("span",{style:{fontSize:10,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 6px",marginLeft:4}},"ACTIVE")
+                    );
+                  }
                   var rowEl;
                   if(readOnly){
                     rowEl=React.createElement("div",{style:{display:"flex",alignItems:"center",gap:4,fontSize:11}},
@@ -36036,7 +36076,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       },style:{background:"#0d1526",border:"1px solid "+C.border,borderRadius:4,color:C.text,fontSize:11,padding:"2px 6px",cursor:"pointer",maxWidth:150}},opts)
                     );
                   }
-                  return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl);
+                  return React.createElement("div",{key:label,style:{display:"flex",flexDirection:"column",gap:0}},rowEl,holdEl,pinEl);
                 })}
               </div>
               {/* #187 §1.2 — project-level quote validity override (tier 2). Blank = fall through to customer/global default. */}
@@ -44536,6 +44576,11 @@ function ReportsModal({uid,onClose}){
   );
 }
 
+// F027: single source of truth for the priority-pin sort order. Most-recently-pinned
+// first; unpinned (no priorityPinnedAt) sort as 0 and, because Array.sort is stable,
+// keep their existing relative order. Reused by the future F025 pinned pane.
+function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinnedAt||0);}
+
 function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRetry,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnlyLocal,setMyProjectsOnlyLocal]=useState(false);
@@ -44886,7 +44931,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           myProjects=myProjects.filter(p=>deepSearch(p,q,0));
         }
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
-        const groups=groupProjects(myProjects);
+        const groups=groupProjects([...myProjects].sort(_priorityPinCompare));
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
         // kanban and the focused single-column view share one definition (previously
         // computed per-column inside the map). View-only styling data — no behavior change.
@@ -46189,8 +46234,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         owner-or-EDITING right; Row 2 = customer (own line); Row 3 = project name (up to 2 lines);
         Row 4 = pills (RFQ + LOST/status). Dropping the horizontal PRJ#+customer+owner cram lets
         the tile go narrow enough for all 8 Sales columns to fit without horizontal overflow. */}
-    {/* Row 1: PRJ# + inline ECO label + BC-disconnected ⚠ (left) · owner / EDITING (right) */}
+    {/* Row 1: 📌 pin badge + PRJ# + inline ECO label + BC-disconnected ⚠ (left) · owner / EDITING (right) */}
     <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+      {/* F027: small pin badge so it's visible at a glance WHY this tile floats to the top. */}
+      {p.priorityPinnedAt&&<span title="Pinned to top" style={{background:"#3a2800",color:"#fcd34d",borderRadius:20,padding:"1px 7px",fontSize:11,fontWeight:800,whiteSpace:"nowrap",flexShrink:0}}>📌</span>}
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}

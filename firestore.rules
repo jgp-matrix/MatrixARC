@@ -239,7 +239,7 @@ service cloud.firestore {
       // standard timestamp fields — anything else gets rejected back into the regular
       // isWonOrLostLocked check.
       function isOnlyUnlockRequestUpdate() {
-        let allowedKeys = ['unlockRequestedBy', 'lastUnlockRequest', 'updatedAt', 'updatedBy', 'lastQuoteHash', 'quoteRev', '_lastEffectiveStatus', 'statusChangedAt'];
+        let allowedKeys = ['unlockRequestedBy', 'lastUnlockRequest', 'updatedAt', 'updatedBy', 'lastQuoteHash', 'quoteRev', '_lastEffectiveStatus', 'statusChangedAt', 'priorityPinnedAt', 'priorityPinnedBy'];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
       // DECISION(v1.19.756/761): Pre-Review / Post-Review lock. While `preReviewStatus`
@@ -259,6 +259,20 @@ service cloud.firestore {
         let m = get(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data;
         return m.get('permissions', {}).get('reviewer', false) == true;
       }
+      // F027: MANAGER permission — mirrors isReviewer(). A manager (or admin, implicitly)
+      // may pin/unpin any project to the top of the board even while it is locked. This
+      // grants NO other write capability; the pin-only shape is enforced by
+      // isOnlyPriorityPinUpdate() below.
+      function isManagerMember() {
+        let m = get(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data;
+        return m.get('permissions', {}).get('manager', false) == true || isAdminMember();
+      }
+      // F027: the ONLY diff a manager-pin write may touch — the two pin fields plus the
+      // standard timestamp / status-derivation fields the app stamps alongside any write.
+      function isOnlyPriorityPinUpdate() {
+        let allowedKeys = ['priorityPinnedAt','priorityPinnedBy','updatedAt','updatedBy'];
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
+      }
       function isOnlyReviewStateUpdate() {
         let allowedKeys = [
           'preReviewStatus','preReviewApprovedAt','preReviewApprovedBy','preReviewNotes',
@@ -266,7 +280,7 @@ service cloud.firestore {
           'preReviewAssignedTo','preReviewAssignedToName',
           'postReviewStatus','postReviewApprovedAt','postReviewApprovedBy','postReviewNotes',
           'updatedAt','updatedBy','schemaVersion','lastQuoteHash','quoteRev',
-          '_lastEffectiveStatus','statusChangedAt'
+          '_lastEffectiveStatus','statusChangedAt','priorityPinnedAt','priorityPinnedBy'
         ];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
@@ -281,7 +295,7 @@ service cloud.firestore {
           'ecoFirstCreatedAt','ecoEditUnlockedAt','ecoEditUnlockedBy',
           'bcStatusForcedToQuote','bcStatusForcedToQuoteAt',
           'updatedAt','updatedBy','schemaVersion',
-          '_lastEffectiveStatus','statusChangedAt'
+          '_lastEffectiveStatus','statusChangedAt','priorityPinnedAt','priorityPinnedBy'
         ];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
@@ -338,7 +352,7 @@ service cloud.firestore {
       function isOnlyLeaseUpdate() {
         let allowed = ['editingBy','editingByName','editingTabId','editingClaimedAt','editingExpiresAt',
                        'editingLastActivityAt','editingAccessRequest','editingForcePending','updatedAt','updatedBy',
-                       '_lastEffectiveStatus','statusChangedAt'];
+                       '_lastEffectiveStatus','statusChangedAt','priorityPinnedAt','priorityPinnedBy'];
         let onlyLease = request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
         let cur = resource.data;
         let mayHold = !editingLeaseValid(cur)                          // free / crashed-stale → anyone may claim
@@ -415,16 +429,22 @@ service cloud.firestore {
         // lease-only diff) is REJECTED while another holds a fresh lease. Lease-management,
         // access-request (P2), force-arm (P3), review-state, unlock-request and ECO-index
         // updates carve out so the state machine + existing flows still work under the lock.
-        allow update: if canWrite() && !isOwnerPriorityLocked(resource.data)
-                                    && (!isWonOrLostLocked(resource.data) || isOnlyUnlockRequestUpdate() || isOnlyEcoIndexUpdate())
-                                    && (!isInReviewLocked(resource.data) || isOnlyReviewStateUpdate())
+        // F027: manager/admin pin-only writes bypass canWrite() + EVERY lock (first OR
+        // arm). The existing full gate is preserved BYTE-FOR-BYTE in the second arm, with
+        // isOnlyPriorityPinUpdate() added into each lock's carve-out group so a
+        // manager-who-also-has-write can pin under any single lock too.
+        allow update: if ( isOnlyPriorityPinUpdate() && isManagerMember() )
+                       || ( canWrite() && !isOwnerPriorityLocked(resource.data)
+                                    && (!isWonOrLostLocked(resource.data) || isOnlyUnlockRequestUpdate() || isOnlyEcoIndexUpdate() || isOnlyPriorityPinUpdate())
+                                    && (!isInReviewLocked(resource.data) || isOnlyReviewStateUpdate() || isOnlyPriorityPinUpdate())
                                     && (!isEditingLeaseLocked(resource.data)
                                           || isOnlyLeaseUpdate()
                                           || isOnlyAccessRequestUpdate()
                                           || isOnlyForceArmUpdate()
                                           || isOnlyReviewStateUpdate()
                                           || isOnlyUnlockRequestUpdate()
-                                          || isOnlyEcoIndexUpdate());
+                                          || isOnlyEcoIndexUpdate()
+                                          || isOnlyPriorityPinUpdate()) );
         allow delete: if canWrite();
 
         match /_snapshots/{snapshotId} {
