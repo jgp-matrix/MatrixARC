@@ -36966,7 +36966,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                         </button>
                         {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
                           if(openEqs>0)return React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?");
-                          return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));})()}
+                          return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer",flexShrink:1,minWidth:0,overflow:"hidden",display:"flex"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));})()}
                         {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
                         <span style={{fontSize:13,fontWeight:700,color:C.text,fontVariantNumeric:"tabular-nums",flexShrink:0,minWidth:72,textAlign:"right"}}>{pfmt(psp*pqty)}</span>
                       </div>
