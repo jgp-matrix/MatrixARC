@@ -5,7 +5,11 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.3 · session ACTIVE
+## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.4 · session ACTIVE
+
+> ## ✅✅✅ SHIPPED TO PROD v1.24.4 (release c2a78bf1) — big dashboard/reliability batch
+> Live for ALL users now: **F025 3a** To-Do right-pane (collapsible, "Jon's To-Do List", 8 equal 3-up pills w/ timeout colors, pill→My-Projects, By-Status full reset) · **G1** BC-reliability (search+pricing helpers now honest-health-gated) · **B045** notification BELL fix (index-free listener — bell finally works for everyone) · resizable+persistent bell dropdown · **B023** quote-summary price-clip · **SENT RFQ badge** on tiles. Hosting-only (no rules change). All Coach-vetted through Test V.021.
+> ⏳ Jon prod-verify: bell shows for all users (have a teammate confirm) · G1 mode-B (`_arcForceBc401=8`) · pane/tiles look right.
 
 > ## ✅✅ SHIPPED TO PROD v1.24.2/.3 — F027 MANAGER role + priority pin (rules+hosting)
 > • `permissions.manager` flag (admin-assigned in Team UI) · pin checkbox (manager/admin) on the project header, works on locked projects (rules carve-out). Coach APPROVE (NIT-1 folded). Rules verified via review + established live-testing (no emulator — existing gate byte-for-byte → no write-path regression).
