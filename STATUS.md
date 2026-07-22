@@ -5,7 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-22 · Jon BACK · prod v1.23.23 · session ACTIVE
+## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.1 · session ACTIVE
+
+> ## ✅✅ SHIPPED TO PROD v1.24.1 (release b6dc593c) — board split + tile rework + inert F028
+> • **F026** 8-column split (READY TO REVIEW · IN PRE-REVIEW · READY TO SEND) + **B044 fix** (send-blocked reds no longer show as "Ready"); **G013** tile pills removed; **tile restructure** (narrower/taller, customer own line, 2-line name, minWidth 130); **F028** RFQ-all-items toggle (inert, default OFF); v1 attention top-strip REMOVED (right-pane replaces it). Hosting-only (rules already live). Coach-reviewed throughout.
+> • ⏳ Jon prod-verify: board columns + tile layout + projects in correct columns.
+
 
 > ## ✨ F028 (NEW, MED) — Admin toggle: RFQ all items ignoring Priced Dates
 > • Jon: dual-ERP (ARC+M1) lag → want an admin Settings toggle to RFQ ALL of a supplier's quotable items every time, not just stale-priced. Add-only `_pricingConfig` flag, default OFF (opt-in). Money-path-adjacent → Coach review before deploy.
