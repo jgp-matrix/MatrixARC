@@ -16607,6 +16607,26 @@ function _pillColorForBucket(bucketProjects,bucket,now){
 function _mySalespersonCode(){
   return _appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code;
 }
+// B048 (Fix B): warm-cache hydrate — populate window._arcSalespersonCache SYNCHRONOUSLY at module load
+// from localStorage so _mySalespersonCode() resolves on the VERY FIRST render (no createdBy-only partial
+// pill count that then "jumps" once the live /Salesperson fetch lands). The live fetch keeps overwriting
+// this unconditionally on success → self-reconciles within seconds; a stale roster is harmless (email↔code
+// mapping rarely changes). Roster ONLY (no project/user/learning-DB data) — safe under Data Retention rules.
+const _ARC_SALESCACHE_KEY='arc_salesperson_cache';
+try{const _c=localStorage.getItem(_ARC_SALESCACHE_KEY);if(_c)window._arcSalespersonCache=JSON.parse(_c);}catch(_){}
+// B048 (Fix A): reactive-recompute plumbing. App registers setSalesCacheVer into _salesCacheVerSetter;
+// _landSalespersonCache() (called at every /Salesperson fetch-SUCCESS site) persists the warm cache AND
+// bumps the version so the TodoRail sales memo AND the board's _isMyProject scope recompute immediately —
+// instead of waiting on the fragile setTimeout(syncBcProjects,3000) that returns the same array ref and
+// gets bailed out by React. A shared version counter (not setProjects([...ps])) avoids masquerading a
+// cache change as a projects-array change; _isMyProject stays a single predicate — both consumers just
+// depend on the same bump.
+let _salesCacheVerSetter=null; // injected by React (App) to force a rail+board recompute
+function _landSalespersonCache(){
+  // Persist ONLY a non-empty roster (never persist an empty/failed fetch) — keeps the warm cache valid.
+  try{if(window._arcSalespersonCache&&window._arcSalespersonCache.length)localStorage.setItem(_ARC_SALESCACHE_KEY,JSON.stringify(window._arcSalespersonCache));}catch(_){}
+  try{if(_salesCacheVerSetter)_salesCacheVerSetter(v=>v+1);}catch(_){}
+}
 // F025: "my project" predicate — factored from the Dashboard :44690 filter so the board list
 // and the attention derive share one definition (no drift). Salesperson half now reads the
 // shared _mySalespersonCode (F032) — expression preserved verbatim, just factored.
@@ -43649,6 +43669,7 @@ function NewProjectModal({uid,onCreated,onClose}){
         const spData=(await spR.json()).value||[];
         setSalespersons(spData);
         window._arcSalespersonCache=spData;
+        _landSalespersonCache();/*B048: persist warm cache + bump rail/board version*/
         // Default salesperson to current user match
         const userEmail=fbAuth.currentUser?.email||"";
         const match=spData.find(s=>(s.E_Mail||"").toLowerCase()===userEmail.toLowerCase());
@@ -44696,7 +44717,7 @@ function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinn
 // click-routing changed: pills call onFocusBucket(kind,key) instead of the Dashboard-local board
 // setters, and App deep-links the Sales board via `pendingFocus`. Collapse state (`railOpen`) is
 // lifted to App (shared across tabs, persisted to the existing `arc_todo_rail_open` key).
-function TodoRail({projects,uid,userFirstName,railOpen,setRailOpen,onFocusBucket}){
+function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket}){
   // Coach: this now runs app-wide (every tab render), so memoize the per-role bucket derive on
   // [projects,uid]. Pill colors still use a fresh Date.now() at render so timer staleness stays live.
   const _sections=React.useMemo(()=>{
@@ -44725,7 +44746,10 @@ function TodoRail({projects,uid,userFirstName,railOpen,setRailOpen,onFocusBucket
     const progItems=_designerBase.filter(p=>_hasServiceOfType(p,"programming"));
     const commItems=_designerBase.filter(p=>_hasServiceOfType(p,"commissioning"));
     return {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems};
-  },[projects,uid]);
+    // B048 (Fix A): salesCacheVer is bumped when the BC /Salesperson roster lands — this dep makes the
+    // sales scope (via _isMyProject / _dashboardRoles, both reading window._arcSalespersonCache) recompute
+    // the instant the roster arrives, instead of waiting on the fragile 3s syncBcProjects timer.
+  },[projects,uid,salesCacheVer]);
 
   // Collapsed → thin discoverable strip (present on every tab so the rail can be reopened anywhere).
   if(!railOpen){
@@ -48059,6 +48083,9 @@ function App({user}){
   const [revWarnModal,setRevWarnModal]=useState(null); // {project, pendingAction}
   const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
   const [myProjectsOnly,setMyProjectsOnly]=useState(false);
+  // B048 (Fix A): bumped by _landSalespersonCache() when the BC /Salesperson roster lands → forces the
+  // TodoRail sales memo (via prop) + the board's _isMyProject scope to recompute immediately.
+  const [salesCacheVer,setSalesCacheVer]=useState(0);
   // F033: app-level To-Do rail — one shared open state (persisted to the existing localStorage key)
   // governs the rail on EVERY top-level nav tab, and pill clicks arrive as `pendingFocus` which the
   // Sales <Dashboard> consumes to deep-link its board (then clears via onPendingFocusApplied).
@@ -48589,7 +48616,7 @@ INSTRUCTIONS:
             // BC just came back online — refresh company info, salesperson cache, and process queue.
             // DECISION(v1.19.360): Include E_Mail and Phone_No in salesperson cache so Send Quote
             // signature can show the correct salesperson email/phone without an extra BC lookup.
-            fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
+            fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d){window._arcSalespersonCache=d.value||[];_landSalespersonCache();/*B048*/}}).catch(function(){});
             bcFetchCompanyInfo().then(info=>{
               if(info&&_appCtx.companyId){
                 const merged={...(_appCtx.company||{}),name:info.name||_appCtx.company?.name,address:info.address||_appCtx.company?.address,phone:info.phone||_appCtx.company?.phone};
@@ -48822,7 +48849,7 @@ INSTRUCTIONS:
       bootAttemptRef.current=0; // #143: clean boot → reset auto-retry counter
       setLoading(false);
       // Auto-connect BC silently in background
-      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;_setBcHealth('green');bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d)window._arcSalespersonCache=d.value||[];}).catch(function(){});
+      if(!_bcToken){acquireBcToken(false).then(async t=>{if(t){console.log("BC auto-connected silently");setBcOnline(true);bcOnlinePrev.current=true;_setBcHealth('green');bcProcessQueue();setProjects(ps=>[...ps]);fetch(BC_ODATA_BASE+"/Salesperson?$select=Code,Name,Job_Title,E_Mail,Phone_No&$filter=Blocked eq false",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d){window._arcSalespersonCache=d.value||[];_landSalespersonCache();/*B048*/}}).catch(function(){});
         // DECISION(v1.19.499): Load User list (page 774) for PM+Designer on app init
         fetch(BC_ODATA_BASE+"/User?$select=User_Name,Full_Name&$top=200",{headers:{"Authorization":"Bearer "+_bcToken}}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d){window._arcDesignerCache=(d.value||[]).filter(function(u){return u.User_Name&&!/^USER_/i.test(u.User_Name)&&!/^BC\./i.test(u.User_Name);}).map(function(u){return{Code:u.User_Name,Name:u.Full_Name&&!u.Full_Name.startsWith("user_")?u.Full_Name:u.User_Name};});console.log("User list cached:",window._arcDesignerCache.length,"users");}}).catch(function(){});}}).catch(()=>{});}
       // DECISION(v1.19.770): Cache company members on app boot so PanelListView dropdowns
@@ -48893,6 +48920,13 @@ INSTRUCTIONS:
   useEffect(()=>{
     _bcQueueCountSetter=setBcQueueCount;
     return()=>{_bcQueueCountSetter=null;};
+  },[]);
+
+  // B048 (Fix A): register the salesperson-cache version setter so _landSalespersonCache() can force a
+  // rail + board recompute the instant the /Salesperson roster lands (no dependence on the 3s timer).
+  useEffect(()=>{
+    _salesCacheVerSetter=setSalesCacheVer;
+    return()=>{_salesCacheVerSetter=null;};
   },[]);
 
   // B013-2 — subscribe to the honest BC-health signal. A real, unrecovered 401 (or a live BC-call
@@ -49542,7 +49576,7 @@ INSTRUCTIONS:
         const _projectViewOpen=view==="project"&&navTab===(projectOriginTab||"projects");
         const _f030Active=navTab==="user_dashboard"; // F030 suppression hook — no-op until F030 exists
         if(_projectViewOpen||_f030Active||showSearch)return null;
-        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus}/>;
+        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus}/>;
       })()}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
