@@ -28,7 +28,11 @@
 > • **B023 ✅ MERGED** (cherry-picked `811a6574`→master, auto-merged clean) + on Test V.013; worktree cleaned up.
 > • **3a UI tweaks ✅ MERGED** (cherry-pick `57dd891a`→master `2a096981`, clean) + on Test V.014: header "<FirstName>'s To-Do List" (no icon, +40% font), compact pills w/ larger labels. Worktree cleaned up.
 > • **★ Test V.017 = 3a + UI tweaks + B023 + G1 + feedback rounds** (pills 3-up/compact; pill→My-Projects; By-Status re-click clears focus; **project tiles now show "{n} SENT" RFQ badge beside "{n} RFQS" received** — `_rfqAwaitingSummary.sentVendorCount`). Prod untouched v1.24.3. ⏳ Jon eyeball + G1 mode-B verify → prod deploy (v1.24.4).
-> • F029: pinned NECESSARY→tabled for research; **build starts after V.017→prod.**
+> • F029: pinned NECESSARY→tabled for research; **build starts after prod deploy.**
+> • **Test V.018** adds: equal-size To-Do pill tiles w/ bottom-left-aligned values (Jon).
+
+> ## 🐛 B045 (NEW, HIGH) — in-app notification BELL never fired for anything
+> • Jon (2026-07-22): never seen a bell notification since built. **Escalated HIGH — F029's notify vision delivers via this bell.** Coach read-only diagnostic running (suspects: missing composite index on the `read==false`+`orderBy` query → silent listener error; create-rule requires `from` → silent-rejected creates; read-rule/uid/listener-mount). ⏳ diagnosis → fix (prerequisite/enabler for F029 Phase B).
 > • Jon V.015 item 1 (RFQ needing-approval "N RFQS" badge on tiles) = **verified INTACT** (ProjectTile :46370, survives G013/tile rework) — no regression, no change.
 > • **F030 filed (FUTURE, parked):** dedicated personal User Dashboard PAGE (own nav) = user's project tiles w/ $ totals + attention list + combined Outlook/ARC tasks + email/meeting awareness. Convergence of F025+F029. Jon-aware, build later.
 > • **Outlook/Graph research DONE** (`docs/OUTLOOK-GRAPH-TODO-RESEARCH.md`): Q1 To-Do↔Outlook sync + Q2/Q3 time-mgmt notify-tool both feasible on ARC's existing Graph plumbing; notify vision = foreground poll + existing bell (no server infra). **⏳ Jon decision: pursue (file F029 + greenlight Q1 pilot) or park.**
