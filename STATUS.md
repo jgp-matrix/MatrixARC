@@ -38,6 +38,9 @@
 > • F029: pinned NECESSARY→tabled for research; **build starts after prod deploy.**
 > • **Test V.021** adds: equal-size To-Do pill tiles w/ bottom-left-aligned values (Jon).
 
+> ## 🌐 F033 — global persistent To-Do rail (BUILT, Coach reviewing)
+> • Lifted the To-Do rail out of the Sales Dashboard into an app-level `<TodoRail>` — persists on every top-level tab (Sales/Purchasing/Engineering/Production/Items); suppressed in ProjectView + future-F030 hook + while AI Assistant open; shared collapse (localStorage); pill-click → Sales board via app-level `pendingFocus`. +146/-100, validate PASS. 🔎 Coach reviewing (pendingFocus race / no Sales regression / layout) → test → prod.
+
 > ## 👥 Andrew (Reviewer/Designer) feedback → B046 + F032 (role-aware dashboard)
 > • **B046** (name missing in To-Do header) ✅ FIXED on Test V.022 (userFirstName/memberMap fall back to displayName→email-prefix — all-users fix).
 > • **F032** ✅ BUILT + Coach APPROVE WITH NITS · **on Test V.023** — role-aware pane (stacked union of held roles); salesman pills gated on ACTUAL salesperson (fixes Andrew's phantom RFQs); Reviewer + Designer sections scoped assigned-to-me; new `permissions.designer` flag; admin gating on RAW flag (Jon: admins see only roles they hold, non-salesperson admin keeps Sales Pipeline). ⏳ Jon verify (set Andrew's Designer flag in Team settings to see the Engineering section). Ships next prod batch. Applies to F025 pane + future F030.
