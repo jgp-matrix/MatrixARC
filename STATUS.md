@@ -7,7 +7,13 @@
 
 ## Current — 🟢 2026-07-21 · Jon BACK · prod v1.23.23 · session ACTIVE (freeze lifted)
 
-> ## ✨ F025 (NEW, HIGH) — User 'attention' Dashboard (top strip on Projects board)
+> ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — User 'To-Do' Dashboard = RIGHT-SIDE PANE (epic)
+> • Top-strip (v1, on TEST) SUPERSEDED → right-side pane (like in-project Panel/Quote Summary). Reqs captured: `docs/F025-V2-TODO-DASHBOARD-REQUIREMENTS.md`.
+> • Decomposed: **G013** (remove redundant tile status pills), **B044** (projects wrongly in READY TO REVIEW/SEND — evc predicate), **F026** (split evc→READY TO REVIEW+READY TO SEND, reorder IN PRE-REVIEW column, per-status timestamps, review→RFQ-return), **F027** (MANAGER role + priority flag), **F025** (right-pane: pill grid GREEN/YELLOW≥80%/RED≥100% + timer-sorted list + ECO list + Quotes-Sent follow-up + idle-flash 40h/24h).
+> • v1 foundation (statusChangedAt / _rfqAwaitingSummary / _statusClockStart / _attentionThresholdMs) REUSED.
+> • STATUS: **2 Coach scoping lanes running** (B044 evc + Issues/clean-BOM predicates; column-split/timers/role/right-pane feasibility). **⏳ NEEDS JON — 3 planning decisions** (idle-timer per-user vs global; manager assignment; build sequence). Phased plan finalizes when Coach returns + Jon answers.
+
+> ## ✨ F025 v1 (SUPERSEDED) — attention top strip (on TEST V.009 only, never prod)
 > • Ask: glanceable "what needs me / what's timing out" — pending-RFQ visibility (Ryan/Noah pain) + aging alarm (DRAFT/IN PROCESS/READY/PRE-REVIEW/RFQ > ~1wk).
 > • Coach scoped (`docs/F025-ATTENTION-DASHBOARD-SCOPE.md`). Jon ruled: top-strip, My-Projects+toggle, ~7d admin-configurable. Pure client derive, LOW risk, build M.
 > • Jon ruled ALL decisions (2026-07-21): top-strip · My-Projects+toggle · ~7d admin-configurable · **EXACT time-in-status (new `statusChangedAt` stamp)** · READY-TO-REVIEW = evc bucket · 3 chips (⏳ awaiting RFQ · 📥 responses to review · ⏰ timing out).
