@@ -48045,9 +48045,13 @@ function App({user}){
   // Notifications listener
   useEffect(()=>{
     if(!user.uid)return;
-    const unsub=fbDb.collection(`users/${user.uid}/notifications`).where('read','==',false).orderBy('createdAt','desc').limit(50).onSnapshot(snap=>{
-      setNotifications(snap.docs.map(d=>({id:d.id,...d.data()})));
-    },()=>{});
+    // B045: was .where('read','==',false).orderBy('createdAt','desc') — that combo needs a composite
+    // index that was never created, so the listener silently errored (empty handler below) and the
+    // bell never fired for anything. Index-free: order+limit only, filter unread client-side. Error
+    // handler now LOGS so a future break can't hide the same way.
+    const unsub=fbDb.collection(`users/${user.uid}/notifications`).orderBy('createdAt','desc').limit(50).onSnapshot(snap=>{
+      setNotifications(snap.docs.map(d=>({id:d.id,...d.data()})).filter(n=>n.read!==true));
+    },(err)=>{console.warn('[notifications] listener error:',err&&err.message);});
     return()=>unsub();
   },[user.uid]);
 
