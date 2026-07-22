@@ -10,7 +10,7 @@
 > ## ✨ F028 (NEW, MED) — Admin toggle: RFQ all items ignoring Priced Dates
 > • Jon: dual-ERP (ARC+M1) lag → want an admin Settings toggle to RFQ ALL of a supplier's quotable items every time, not just stale-priced. Add-only `_pricingConfig` flag, default OFF (opt-in). Money-path-adjacent → Coach review before deploy.
 > • Coach scoped (`docs/F028-RFQ-ALL-ITEMS-SCOPE.md`): ONE choke point `_eligibilityReason` in `buildRfqSupplierGroups` (:6663); add-only `rfqAllItemsIgnoreStale` config flag, opt-in. Build S-M (M = threading a `forceAll` reason through group counters so it doesn't flip to lead-time-only).
-> • Jon ruled: flag-ON bypasses BOTH staleness AND cooldown; exclusions preserved. **✅ Marc BUILT + committed (master `02579a1d`, validate PASS). 🔎 Coach reviewing** (money-path, backgrounded). Default OFF → inert on test/prod until an admin toggles it. Then deploy gate. Note: customerSupplied not specially excluded by current RFQ code → follows existing behavior (separate tweak if Jon wants it excluded).
+> • Jon ruled: flag-ON bypasses BOTH staleness AND cooldown; exclusions preserved. **✅ Marc BUILT (master `02579a1d`) + Coach APPROVE (no blockers/nits).** Default OFF → inert until an admin toggles it; rides to prod with F026. OBS-1 (Coach): customer-supplied rows land on a forced RFQ = pre-existing behavior, matches Jon's ruling — eyeball when toggled ON. **DEPLOY-READY (inert).**
 
 
 > ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — User 'To-Do' Dashboard = RIGHT-SIDE PANE (epic)
