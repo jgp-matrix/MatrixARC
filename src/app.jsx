@@ -45200,17 +45200,17 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
               <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
               <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your projects, by attention</div>
             </div>
-            <div style={{padding:"12px 12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <div style={{padding:"10px 10px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
               {_todoBuckets.map(([key,label])=>{
                 const items=paneProjects.filter(p=>_todoBucketOf(p)===key);
                 const [col,bg]=_pillTint[_pillColorForBucket(items,key,_now)];
                 return(
-                  <div key={key} onClick={()=>setFocusedCol(key)} title={`Focus the board on ${label}`}
-                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"5px 7px",transition:"transform 0.1s"}}
+                  <div key={key} onClick={()=>{setMyProjectsOnly(true);setFocusedCol(key);}} title={`Show your ${label} projects`}
+                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"4px 5px",transition:"transform 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
                     onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
                     <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.5,lineHeight:1.2,minHeight:20}}>{label}</div>
-                    <div style={{fontSize:22,fontWeight:800,color:col,marginTop:2,fontFamily:"system-ui,sans-serif"}}>{items.length}</div>
+                    <div style={{fontSize:18,fontWeight:800,color:col,marginTop:1,fontFamily:"system-ui,sans-serif"}}>{items.length}</div>
                   </div>
                 );
               })}
