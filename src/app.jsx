@@ -2211,7 +2211,14 @@ function setTooltipsEnabled(v){
 // to output) so the user always sees + can change them before sending.
 const DEFAULT_PAYMENT_TERMS="Net 30 Days";
 const DEFAULT_SHIPPING_METHOD="Customer Handles Shipping";
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD,attentionThresholdDays:7};
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD,attentionThresholdValue:7,attentionThresholdUnit:'days'};
+// F025: attention-dashboard aging threshold as value×unit. Single source of truth for the ms conversion (derive + any future consumer).
+const _ATTENTION_UNIT_MS={minutes:60000,hours:3600000,days:86400000};
+function _attentionThresholdMs(){
+  const v=Math.max(1,parseInt(_pricingConfig.attentionThresholdValue)||7);
+  const u=_ATTENTION_UNIT_MS[_pricingConfig.attentionThresholdUnit]||_ATTENTION_UNIT_MS.days;
+  return v*u;
+}
 // DECISION(v1.20.28, Milestone C): Cost drift threshold for restore preview.
 // buildRestorePreview flags items where |liveCost - archivedCost| / archivedCost > this value.
 const COST_DRIFT_THRESHOLD=0.05;
@@ -2219,7 +2226,7 @@ async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD,attentionThresholdDays:c.attentionThresholdDays??7};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD,attentionThresholdValue:c.attentionThresholdValue??c.attentionThresholdDays??7,attentionThresholdUnit:c.attentionThresholdUnit??'days'};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
@@ -18371,8 +18378,9 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
   const [ecoDefaultLaborRate,setEcoDefaultLaborRate]=useState(_pricingConfig.ecoDefaultLaborRate??65);
   const [quoteValidityDays,setQuoteValidityDays]=useState(_pricingConfig.quoteValidityDays??30);
-  // F025: admin-configurable attention-dashboard aging threshold (days-in-status alarm)
-  const [attentionThresholdDays,setAttentionThresholdDays]=useState(_pricingConfig.attentionThresholdDays??7);
+  // F025: admin-configurable attention-dashboard aging threshold (value + unit; testable at minute-scale)
+  const [attentionThresholdValue,setAttentionThresholdValue]=useState(_pricingConfig.attentionThresholdValue??_pricingConfig.attentionThresholdDays??7);
+  const [attentionThresholdUnit,setAttentionThresholdUnit]=useState(_pricingConfig.attentionThresholdUnit??'days');
   // F020 (Option A): company-wide default quote terms (pre-fill blanks for new/non-BC customers)
   const [defaultPaymentTerms,setDefaultPaymentTerms]=useState(_pricingConfig.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS);
   const [defaultShippingMethod,setDefaultShippingMethod]=useState(_pricingConfig.defaultShippingMethod??DEFAULT_SHIPPING_METHOD);
@@ -18573,7 +18581,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim(),attentionThresholdDays}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim(),attentionThresholdValue,attentionThresholdUnit}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -18712,10 +18720,14 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
         <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
           <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Attention Dashboard</label>
           <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <input type="number" min="1" max="365" value={attentionThresholdDays} onChange={e=>setAttentionThresholdDays(Math.max(1,parseInt(e.target.value)||7))} style={{...inp(),width:140,textAlign:"right"}}/>
-            <span style={{color:C.muted,fontSize:14}}>days</span>
+            <input type="number" min="1" value={attentionThresholdValue} onChange={e=>setAttentionThresholdValue(Math.max(1,parseInt(e.target.value)||7))} style={{...inp(),width:100,textAlign:"right"}}/>
+            <select value={attentionThresholdUnit} onChange={e=>setAttentionThresholdUnit(e.target.value)} style={{...inp(),width:120}}>
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+              <option value="days">Days</option>
+            </select>
           </div>
-          <div style={{fontSize:11,color:C.muted,marginTop:4}}>How long a project may sit in Draft / In Process / Ready / Pre-Review / RFQ before the "Timing out" alert fires on the projects board (default 7).</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Projects sitting in Draft / In Process / Ready / Pre-Review / RFQ longer than this are flagged "Timing Out" on the projects board (default 7 days).</div>
         </div>
         )}
 
@@ -44761,8 +44773,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           Clicking a chip deep-links: groupBy→status, clear focusedCol, set attnFilter id-set. */}
       {!forceView&&(()=>{
         const _now=Date.now();
-        const _thrDays=_pricingConfig.attentionThresholdDays??7;
-        const _thrMs=_thrDays*24*60*60*1000;
+        const _thrMs=_attentionThresholdMs();
         const _timingStates=new Set(["draft","in_progress","evc","pre_review","rfqs"]);
         const base=projects.filter(p=>!p.wonAt&&!p.lostAt&&!p.importedFromBC&&(!myProjectsOnly||_isMyProject(p,uid)));
         const awaitingIds=new Set();let awaitingVendorTot=0,awaitingExpired=false;
