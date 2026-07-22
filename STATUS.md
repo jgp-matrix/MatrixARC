@@ -5,7 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-21 · Jon BACK · prod v1.23.23 · session ACTIVE (freeze lifted)
+## Current — 🟢 2026-07-22 · Jon BACK · prod v1.23.23 · session ACTIVE
+
+> ## ✨ F028 (NEW, MED) — Admin toggle: RFQ all items ignoring Priced Dates
+> • Jon: dual-ERP (ARC+M1) lag → want an admin Settings toggle to RFQ ALL of a supplier's quotable items every time, not just stale-priced. Add-only `_pricingConfig` flag, default OFF (opt-in). Money-path-adjacent → Coach review before deploy.
+> • STATUS: **Coach scoping** the RFQ staleness-filter site + toggle plumbing (parallel to the F026 build). Then plan → Jon → build → review → deploy.
+
 
 > ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — User 'To-Do' Dashboard = RIGHT-SIDE PANE (epic)
 > • Top-strip (v1, on TEST) SUPERSEDED → right-side pane (like in-project Panel/Quote Summary). Reqs captured: `docs/F025-V2-TODO-DASHBOARD-REQUIREMENTS.md`.
