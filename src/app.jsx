@@ -44931,7 +44931,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           myProjects=myProjects.filter(p=>deepSearch(p,q,0));
         }
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
-        const groups=groupProjects([...myProjects].sort(_priorityPinCompare));
+        const groups=groupProjects(myProjects);   // F027: priority-pin ordering is NOT applied to the main board (Jon) — it lives in the F025 To-Do list. _priorityPinCompare retained for that pane.
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
         // kanban and the focused single-column view share one definition (previously
         // computed per-column inside the map). View-only styling data — no behavior change.
@@ -46236,8 +46236,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         the tile go narrow enough for all 8 Sales columns to fit without horizontal overflow. */}
     {/* Row 1: 📌 pin badge + PRJ# + inline ECO label + BC-disconnected ⚠ (left) · owner / EDITING (right) */}
     <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
-      {/* F027: small pin badge so it's visible at a glance WHY this tile floats to the top. */}
-      {p.priorityPinnedAt&&<span title="Pinned to top" style={{background:"#3a2800",color:"#fcd34d",borderRadius:20,padding:"1px 7px",fontSize:11,fontWeight:800,whiteSpace:"nowrap",flexShrink:0}}>📌</span>}
+      {/* F027: pin badge intentionally NOT shown on the main board (Jon) — the priority pin belongs to the F025 To-Do list, not the main screen. */}
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
