@@ -28,8 +28,11 @@
 > • Parallel: **B023** (QUOTE SUMMARY price-clip) building in an ISOLATED WORKTREE (disjoint region → clean merge after 3a commits). Jon stepped away — ping on test-deploy.
 > • Plan: `docs/F025-RIGHT-PANE-PLAN.md`.
 
-> ## 🔎 B013 (parallel, read-only) — chronic multi-user BC reliability diagnostic
-> • Coach diagnosing (while F025 3a builds): the token/connection model, why the pill stays BLUE while calls 401 (failure mode B blind spot), why team members drop more (per-member API-key factor, failure mode A), + fix direction (honest health indicator / retry-on-401 / token auto-refresh). B013-1/2/3 already shipped the 401 sync-modal distinction; this targets the reliability layer. Will need live Debug Log capture to confirm active.
+> ## 🔎 B013 — ✅ DIAGNOSED (`docs/B013-BC-RELIABILITY-DIAGNOSIS.md`)
+> • B013-1/2/3+B021 already shipped → it's a COVERAGE HOLE. **Mode B root cause CONFIRMED:** ~7+ BC helpers (incl. Item Browser/BOM `bcSearchItems`) use raw fetch, bypass `bcGatedFetch` → their 401s never flip the pill = "search died while blue." **Mode A:** MSAL sessionStorage (per-tab) + no persistent MS session → members' silent refresh fails → honest red. **"per-member API key" = RED HERRING** (Anthropic keys, not BC). Gaps G1 (route raw-fetch thru gate — highest value, money-path→gate) · G2 (MSAL localStorage + proactive renew) · G3 (leading probe). **⏳ NEEDS JON: greenlight G1 build.**
+
+> ## 🔧 B023 — ✅ FIXED (worktree `811a6574`, pending merge)
+> • One-line QUOTE SUMMARY layout fix (status-pill wrapper shrinkable → long status truncates, price never clipped). Merge onto master after 3a commits, re-validate (worktree used --no-verify), deploy with 3a. "IN ETR" abbreviation = optional Jon follow-up.
 
 > ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — original reshape spec (see plan doc)
 > • Top-strip (v1, on TEST) SUPERSEDED → right-side pane (like in-project Panel/Quote Summary). Reqs captured: `docs/F025-V2-TODO-DASHBOARD-REQUIREMENTS.md`.
