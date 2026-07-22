@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.4 · session ACTIVE
+## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.5 · session ACTIVE
+
+> ## ✅✅ SHIPPED TO PROD v1.24.5 (release d07eb7e9) — role-aware dashboard + name fix
+> **F032** role-differentiated To-Do pane (Salesman pills only for actual salespeople → Andrew's phantom RFQs gone; Reviewer + Designer sections assigned-to-me; new `permissions.designer` flag; admins see only roles they hold) + **B046** name fallback (all members get a name). Hosting-only. Coach APPROVE WITH NITS. ⏳ Jon: set Andrew's Designer flag in Team→Permissions so his Engineering section populates.
 
 > ## ✅✅✅ SHIPPED TO PROD v1.24.4 (release c2a78bf1) — big dashboard/reliability batch
 > Live for ALL users now: **F025 3a** To-Do right-pane (collapsible, "Jon's To-Do List", 8 equal 3-up pills w/ timeout colors, pill→My-Projects, By-Status full reset) · **G1** BC-reliability (search+pricing helpers now honest-health-gated) · **B045** notification BELL fix (index-free listener — bell finally works for everyone) · resizable+persistent bell dropdown · **B023** quote-summary price-clip · **SENT RFQ badge** on tiles. Hosting-only (no rules change). All Coach-vetted through Test V.021.
