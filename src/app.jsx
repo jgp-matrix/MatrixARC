@@ -4373,25 +4373,18 @@ async function bcLookupCustomer(customerNumber,opts){
   const compId=await bcGetCompanyId();
   if(!compId)return null;
   const url=`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${customerNumber}'&$top=1&$select=number,displayName`;
-  const MAX_RETRIES=3;
-  for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
-    try{
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
-      if(r.status===429&&attempt<MAX_RETRIES){
-        const delay=1000*Math.pow(2,attempt);
-        console.warn(`bcLookupCustomer: 429 rate limit, retry ${attempt+1}/${MAX_RETRIES} in ${delay}ms`);
-        await new Promise(res=>setTimeout(res,delay));
-        continue;
-      }
-      if(r.status===401){_bcToken=null;return null;}
-      if(!r.ok){console.warn("bcLookupCustomer failed:",r.status);return null;}
-      const d=await r.json();
-      const v=d.value;
-      if(!v||!v.length)return null;
-      return{number:v[0].number||"",displayName:v[0].displayName||""};
-    }catch(e){if(e.name==="AbortError")throw e;console.warn("bcLookupCustomer error:",e);return null;}
-  }
-  return null;
+  // B013-G1: route through bcGatedFetch. The gate now owns 429 retry (was the inline MAX_RETRIES
+  // backoff loop) AND 401 silent-refresh+replay + honest-health pill + 45s timeout. Removing the inline
+  // _bcToken=null-on-401 (which silently returned null with the pill still green). Return contract
+  // unchanged: {number,displayName} on match, null on no-match/failure; AbortError still propagates.
+  try{
+    const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+    if(!r.ok){console.warn("bcLookupCustomer failed:",r.status);return null;}
+    const d=await r.json();
+    const v=d.value;
+    if(!v||!v.length)return null;
+    return{number:v[0].number||"",displayName:v[0].displayName||""};
+  }catch(e){if(e.name==="AbortError")throw e;console.warn("bcLookupCustomer error:",e);return null;}
 }
 
 async function bcLoadAllProjects(){
@@ -4856,15 +4849,11 @@ async function _bcFetchItems(compId,filter,top,skip){
   const blockedFilter=filter?`(${filter}) and blocked eq false`:`blocked eq false`;
   const url=`${BC_API_BASE}/companies(${compId})/items?$filter=${blockedFilter}&$top=${top}&$skip=${skip}&$orderby=number`;
   console.log("bcSearchItems URL:",url);
-  const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  if(r.status===401){
-    _bcToken=await acquireBcToken(false)||null;
-    if(!_bcToken)return null;
-    const r2=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-    if(!r2.ok){_bcToken=null;return null;}
-    const d2=await r2.json();
-    return(d2.value||[]).map(item=>({number:item.number||"",displayName:item.displayName||"",unitCost:item.unitCost??null,unitPrice:item.unitPrice??null,inventory:item.inventory||0,lastModifiedDateTime:item.lastModifiedDateTime||"",vendorNo:item.vendorNo||""}));
-  }
+  // B013-G1: route through bcGatedFetch — the gate now owns 401 silent-refresh+replay,
+  // the honest-health pill (_setBcHealth red on give-up), the 45s timeout, and the semaphore.
+  // The old inline _bcToken=null + one-shot refresh bypassed the gate and left the pill green
+  // on a dead token ("search died while blue"). Return contract unchanged: array on success, null on failure.
+  const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!r.ok){console.warn("bcSearchItems failed:",r.status,await r.text());return null;}
   const d=await r.json();
   return(d.value||[]).map(item=>({
@@ -4884,12 +4873,10 @@ async function _bcFetchItemsViaItemCard(filter,top,skip){
   const blockedFilter=filter?`(${filter}) and Blocked eq false`:`Blocked eq false`;
   const url=`${BC_ODATA_BASE}/ItemCard?$filter=${blockedFilter}&$top=${top}&$skip=${skip}&$orderby=No`;
   console.log("bcSearchItems URL (ItemCard):",url);
-  let r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  if(r.status===401){
-    _bcToken=await acquireBcToken(false)||null;
-    if(!_bcToken)return null;
-    r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  }
+  // B013-G1: route through bcGatedFetch (gate owns 401 refresh+replay, health pill, timeout, semaphore).
+  // The 7-field parallel fan-out from bcSearchItems shares the gate's 6-slot semaphore — 6 run, the
+  // 7th queues then runs (no deadlock, each releases on completion). Return contract unchanged.
+  const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!r.ok){console.warn("bcSearchItems(ItemCard) failed:",r.status,await r.text());return null;}
   const d=await r.json();
   return(d.value||[]).map(item=>({
@@ -5563,7 +5550,9 @@ async function bcFetchPurchasePrices(partNumbers){
     const filterClauses=batch.map(pn=>`Item_No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
     const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=Item_No,Vendor_No,Direct_Unit_Cost,Starting_Date,Unit_of_Measure_Code`;
     try{
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      // B013-G1: gate the pricing read — 401 now flips the pill red + auto-refreshes instead of a
+      // silent partial Map with a green pill. Success-path data + return contract (Map) unchanged.
+      const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
       if(!r.ok){console.warn("bcFetchPurchasePrices batch failed:",r.status);continue;}
       const d=await r.json();
       (d.value||[]).forEach(rec=>{
@@ -5601,7 +5590,9 @@ async function bcFetchPurchasePricesMultiVendor(partNumbers,opts){
     const filterClauses=batch.map(pn=>`Item_No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
     const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=Item_No,Vendor_No,Direct_Unit_Cost,Starting_Date,Unit_of_Measure_Code`;
     try{
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+      // B013-G1: gate the pricing read (health + 401 refresh + timeout + semaphore). Success-path
+      // data + return contract (Map keyed by part:vendor) unchanged; AbortError still propagates.
+      const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
       if(!r.ok){console.warn("bcFetchPurchasePricesMultiVendor batch failed:",r.status);continue;}
       const d=await r.json();
       (d.value||[]).forEach(rec=>{
@@ -5639,7 +5630,9 @@ async function bcFetchItemCardCosts(partNumbers,opts){
     const filterClauses=batch.map(pn=>`No eq '${pn.replace(/'/g,"''")}'`).join(' or ');
     const url=`${baseUrl}?$filter=${encodeURIComponent(filterClauses)}&$select=No,Unit_Cost,Description`;
     try{
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+      // B013-G1: gate the ItemCard cost read (health + 401 refresh + timeout + semaphore).
+      // Success-path data + return contract (Map keyed by No) unchanged; AbortError still propagates.
+      const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
       if(!r.ok)continue;
       const d=await r.json();
       for(const item of (d.value||[])){
@@ -6003,25 +5996,16 @@ async function bcLookupVendor(vendorNo,opts){
   const compId=await bcGetCompanyId();
   if(!compId)return null;
   const url=`${BC_API_BASE}/companies(${compId})/vendors?$filter=number eq '${vendorNo}'&$top=1&$select=number,displayName`;
-  const MAX_RETRIES=3;
-  for(let attempt=0;attempt<=MAX_RETRIES;attempt++){
-    try{
-      const r=await fetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
-      if(r.status===429&&attempt<MAX_RETRIES){
-        const delay=1000*Math.pow(2,attempt);
-        console.warn(`bcLookupVendor: 429 rate limit, retry ${attempt+1}/${MAX_RETRIES} in ${delay}ms`);
-        await new Promise(res=>setTimeout(res,delay));
-        continue;
-      }
-      if(r.status===401){_bcToken=null;return null;}
-      if(!r.ok){console.warn("bcLookupVendor failed:",r.status);return null;}
-      const d=await r.json();
-      const v=d.value;
-      if(!v||!v.length)return null;
-      return{number:v[0].number||"",displayName:v[0].displayName||""};
-    }catch(e){if(e.name==="AbortError")throw e;console.warn("bcLookupVendor error:",e);return null;}
-  }
-  return null;
+  // B013-G1: route through bcGatedFetch (gate owns 429 retry + 401 refresh/replay + health + timeout).
+  // Return contract unchanged: {number,displayName} on match, null otherwise; AbortError still propagates.
+  try{
+    const r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"},signal:opts?.signal});
+    if(!r.ok){console.warn("bcLookupVendor failed:",r.status);return null;}
+    const d=await r.json();
+    const v=d.value;
+    if(!v||!v.length)return null;
+    return{number:v[0].number||"",displayName:v[0].displayName||""};
+  }catch(e){if(e.name==="AbortError")throw e;console.warn("bcLookupVendor error:",e);return null;}
 }
 
 async function bcListGenProdPostingGroups(){
@@ -47350,7 +47334,8 @@ function ItemsTab({uid}){
       for(let i=0;i<itemNos.length;i+=BATCH)batches.push(itemNos.slice(i,i+BATCH));
       await Promise.all(batches.map(async batch=>{
         const f=batch.map(n=>`Item_No eq '${n.replace(/'/g,"''")}'`).join(' or ');
-        const r=await fetch(
+        // B013-G1: gate the Item Browser price-date read (health + 401 refresh + timeout + semaphore).
+        const r=await bcGatedFetch(
           `${BC_ODATA_BASE}/${ppPage}?$select=Item_No,Starting_Date&$filter=(${f})&$top=500`,
           {headers:{"Authorization":`Bearer ${_bcToken}`}});
         if(!r.ok)return;
@@ -47413,9 +47398,11 @@ function ItemsTab({uid}){
       if(q&&q.trim()){
         // Two parallel queries — BC doesn't support OR across field types
         const s=q.trim().replace(/'/g,"''");
+        // B013-G1: gate the Item Browser search reads — a raw-fetch 401 here silently returned []
+        // ("no results") with the pill still green. Gate now flips it red + refreshes. Merge logic below unchanged.
         const [rNo,rDesc]=await Promise.all([
-          fetch(`${base}&$filter=startswith(No,'${s}')`,{headers:hdrs}),
-          fetch(`${base}&$filter=contains(Description,'${s}')`,{headers:hdrs})
+          bcGatedFetch(`${base}&$filter=startswith(No,'${s}')`,{headers:hdrs}),
+          bcGatedFetch(`${base}&$filter=contains(Description,'${s}')`,{headers:hdrs})
         ]);
         const noItems=rNo.ok?(await rNo.json()).value||[]:[];
         const descItems=rDesc.ok?(await rDesc.json()).value||[]:[];
@@ -47425,7 +47412,7 @@ function ItemsTab({uid}){
         setHasMore(false);
         fetchPurchasePriceDates(merged.map(i=>i.No));
       }else{
-        const r=await fetch(`${base}&$skip=${sk}`,{headers:hdrs});
+        const r=await bcGatedFetch(`${base}&$skip=${sk}`,{headers:hdrs});
         if(!r.ok)throw new Error(`BC ${r.status}`);
         const batch=(await r.json()).value||[];
         if(sk===0)setItems(batch);
