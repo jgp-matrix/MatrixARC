@@ -2211,7 +2211,7 @@ function setTooltipsEnabled(v){
 // to output) so the user always sees + can change them before sending.
 const DEFAULT_PAYMENT_TERMS="Net 30 Days";
 const DEFAULT_SHIPPING_METHOD="Customer Handles Shipping";
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD,attentionThresholdValue:7,attentionThresholdUnit:'days'};
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD,attentionThresholdValue:7,attentionThresholdUnit:'days',rfqAllItemsIgnoreStale:false};
 // F025: attention-dashboard aging threshold as value×unit. Single source of truth for the ms conversion (derive + any future consumer).
 const _ATTENTION_UNIT_MS={minutes:60000,hours:3600000,days:86400000};
 function _attentionThresholdMs(){
@@ -2226,7 +2226,7 @@ async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD,attentionThresholdValue:c.attentionThresholdValue??c.attentionThresholdDays??7,attentionThresholdUnit:c.attentionThresholdUnit??'days'};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD,attentionThresholdValue:c.attentionThresholdValue??c.attentionThresholdDays??7,attentionThresholdUnit:c.attentionThresholdUnit??'days',rfqAllItemsIgnoreStale:c.rfqAllItemsIgnoreStale??false};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
@@ -6664,6 +6664,13 @@ async function buildRfqSupplierGroups(bom){
     if(r.isLaborRow||r.priceSource==="manual")return null;
     if(r.isContingency||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase()))return null;
     if(RFQ_EXCLUDE_ITEMS.test(r.description||"")||RFQ_EXCLUDE_ITEMS.test(r.partNumber||""))return null;
+    // F028 (admin opt-in, default off): when rfqAllItemsIgnoreStale is on, every quotable
+    // row that clears the exclusion gate above is RFQ'd for pricing regardless of Priced-Date
+    // staleness AND the 30-day re-send cooldown ("disregard recency — always get fresh quotes",
+    // for running dual ERPs). Returned as a PRICE request ("forceAll") so a fresh, price-complete
+    // group is NOT flipped into lead-time-only mode. Exclusion categories are unchanged — this
+    // widens ONLY the staleness/recency gating below.
+    if(_pricingConfig.rfqAllItemsIgnoreStale)return "forceAll";
     // DECISION(v1.19.704): 30-day RFQ cooldown applies ONLY to price-based inclusion.
     // Missing lead times are independent — a vendor may have recently quoted prices but
     // never returned lead times, or we may be iterating on RFQs during setup/testing.
@@ -6714,19 +6721,22 @@ async function buildRfqSupplierGroups(bom){
     }
     if(!vendorName)vendorName="Unknown Supplier";
     if(!groupMap[vendorName]){
-      groupMap[vendorName]={vendorName,vendorNo,items:[],itemsMissingPrice:0,itemsMissingLeadTime:0,itemsStalePrice:0};
+      groupMap[vendorName]={vendorName,vendorNo,items:[],itemsMissingPrice:0,itemsMissingLeadTime:0,itemsStalePrice:0,itemsForced:0};
     }
     const grp=groupMap[vendorName];
     grp.items.push({...item,_rfqReason:reason});
     if(reason==="missingPrice")grp.itemsMissingPrice++;
     else if(reason==="stalePrice")grp.itemsStalePrice++;
     else if(reason==="missingLeadTime")grp.itemsMissingLeadTime++;
+    else if(reason==="forceAll")grp.itemsForced++; // F028: forced PRICE request — does not increment missing/stale counters
   }
   // DECISION(v1.19.699): For each group, compute whether it's a "lead-time-only" group
   // (every row is in because of missingLeadTime — no price issues). Pre-populates the
   // per-vendor "Request Lead Times Only" checkbox.
   for(const g of Object.values(groupMap)){
-    g.defaultLeadTimeOnly=g.items.every(it=>_hasPrice(it))&&g.itemsMissingLeadTime>0;
+    // F028: forced (all-items) rows are PRICE requests — never let them flip a group into
+    // lead-time-only mode. Guard on both the flag and the presence of any forced row.
+    g.defaultLeadTimeOnly=!_pricingConfig.rfqAllItemsIgnoreStale&&g.itemsForced===0&&g.items.every(it=>_hasPrice(it))&&g.itemsMissingLeadTime>0;
   }
   const RFQ_EXCLUDE_VENDORS=/^matrix\s*systems|crate|job\s*buyoff|job\s*buy.?off/i;
   const filtered=Object.values(groupMap).filter(g=>!RFQ_EXCLUDE_VENDORS.test(g.vendorName));
@@ -18422,6 +18432,8 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   // F025: admin-configurable attention-dashboard aging threshold (value + unit; testable at minute-scale)
   const [attentionThresholdValue,setAttentionThresholdValue]=useState(_pricingConfig.attentionThresholdValue??_pricingConfig.attentionThresholdDays??7);
   const [attentionThresholdUnit,setAttentionThresholdUnit]=useState(_pricingConfig.attentionThresholdUnit??'days');
+  // F028: admin-gated — RFQ all quotable items, ignoring Priced-Date staleness AND the 30-day re-send cooldown (opt-in, default off; recommended while running dual ERPs)
+  const [rfqAllItemsIgnoreStale,setRfqAllItemsIgnoreStale]=useState(_pricingConfig.rfqAllItemsIgnoreStale??false);
   // F020 (Option A): company-wide default quote terms (pre-fill blanks for new/non-BC customers)
   const [defaultPaymentTerms,setDefaultPaymentTerms]=useState(_pricingConfig.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS);
   const [defaultShippingMethod,setDefaultShippingMethod]=useState(_pricingConfig.defaultShippingMethod??DEFAULT_SHIPPING_METHOD);
@@ -18622,7 +18634,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim(),attentionThresholdValue,attentionThresholdUnit}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim(),attentionThresholdValue,attentionThresholdUnit,rfqAllItemsIgnoreStale}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -18753,6 +18765,25 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             ))}
           </div>
         </div>
+
+        {/* F028 — RFQ all items, ignore Priced Dates (admin only). Opt-in inverse of the
+            staleness thresholds above: when ON, RFQs request pricing for EVERY quotable
+            item of a supplier regardless of Priced-Date recency AND the 30-day re-send
+            cooldown. Exclusion categories are unchanged — this only widens price staleness. */}
+        {isAdmin()&&(
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:600,color:C.text}}>RFQ all items (ignore Priced Dates)</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:2}}>When on, RFQs request pricing for every quotable item of a supplier regardless of how recent its price is (recommended while running dual ERPs).</div>
+            </div>
+            <button onClick={()=>setRfqAllItemsIgnoreStale(v=>!v)}
+              style={{flexShrink:0,width:44,height:24,borderRadius:12,border:"none",cursor:"pointer",background:rfqAllItemsIgnoreStale?"#4f46e5":"#3a3a5a",position:"relative",transition:"background 0.2s"}}>
+              <div style={{position:"absolute",top:3,left:rfqAllItemsIgnoreStale?22:3,width:18,height:18,borderRadius:"50%",background:"#fff",transition:"left 0.2s",boxShadow:"0 1px 3px rgba(0,0,0,0.4)"}}/>
+            </button>
+          </div>
+        </div>
+        )}
 
         {/* F025 — Attention Dashboard aging threshold (admin only). Projects sitting in
             DRAFT / IN PROCESS / READY / PRE-REVIEW / RFQ longer than this fire the
