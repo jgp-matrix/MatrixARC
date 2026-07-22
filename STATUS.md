@@ -24,7 +24,8 @@
 
 > ## ✨ F025 — right-pane To-Do dashboard: BUILDING (final phase, sub-phased 3a→3e)
 > • Decisions locked: 8 pills (one per board column incl. Ready To Send) · always-personal scope · pill color = worst project in bucket · thresholds {yellow,red} pairs (Jon's cutoffs, Settings-editable, defaults for the 3 unspecified) · ECO real-BOM-hook · idle map unbounded.
-> • **3a BUILDING** (collapsible 380px rail + 8-pill grid + `_todoBucketOf`/`_bucketTimerColor` SSOT; no new persisted fields). Next: 3b list+RFQ line+quotes-weekly · 3c per-category threshold Settings · 3d ECO timer (new field+rules) · 3e idle-flash (per-user field). Each: build→Coach→test→deploy.
+> • **3a BUILT** (collapsible 380px rail + 8-pill grid; refactored board grouping to shared `_todoBucketOf` SSOT; no new persisted fields; validate+scope PASS). 🔎 **Coach reviewing** (priority: board-grouping refactor byte-equivalent). Next: 3b list+RFQ line+quotes-weekly · 3c threshold Settings · 3d ECO timer · 3e idle-flash.
+> • Parallel: **B023** (QUOTE SUMMARY price-clip) building in an ISOLATED WORKTREE (disjoint region → clean merge after 3a commits). Jon stepped away — ping on test-deploy.
 > • Plan: `docs/F025-RIGHT-PANE-PLAN.md`.
 
 > ## 🔎 B013 (parallel, read-only) — chronic multi-user BC reliability diagnostic
