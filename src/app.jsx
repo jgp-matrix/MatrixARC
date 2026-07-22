@@ -20911,10 +20911,22 @@ function PurchasePriceCheckModal({diffs,onAccept,onClose}){
 }
 
 // ── PORTAL SUBMISSIONS MODAL ──
-function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf}){
+function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf,focusUploadId}){
   const [applying,setApplying]=useState(null); // submission.id being applied
   const fmtDate=ts=>ts?new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):"—";
   const fmtPrice=p=>p!=null?"$"+Number(p).toFixed(2):"—";
+  // F031 #2: when opened from a supplier_quote notification, scroll the matching submission
+  // into view and briefly highlight it. Presentational only — no price/apply logic touched.
+  // No-op if focusUploadId is falsy or not present in this (submitted-only) list.
+  const focusRef=useRef(null);
+  const [focusFlash,setFocusFlash]=useState(false);
+  useEffect(()=>{
+    if(!focusUploadId||!submissions.some(s=>s.id===focusUploadId))return;
+    const t=setTimeout(()=>{focusRef.current?.scrollIntoView({block:"center",behavior:"smooth"});},60);
+    setFocusFlash(true);
+    const t2=setTimeout(()=>setFocusFlash(false),2400);
+    return()=>{clearTimeout(t);clearTimeout(t2);};
+  },[focusUploadId,submissions]);
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
       <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:680,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
@@ -20932,8 +20944,9 @@ function PortalSubmissionsModal({submissions,onClose,onApplyPrices,onImportPdf})
             const hasAnyPrice=(sub.lineItems||[]).some(i=>i.unitPrice!=null);
             const hasAnyLeadTime=(sub.lineItems||[]).some(i=>i.leadTimeDays!=null&&i.leadTimeDays>0);
             const canApply=hasAnyPrice||hasAnyLeadTime;
+            const _isFocus=!!focusUploadId&&sub.id===focusUploadId;
           return(
-            <div key={sub.id} style={{background:"#0a0a18",border:`1px solid ${isLtOnly?"#fcd34d":"#3d6090"}`,borderRadius:8,padding:"14px 16px",marginBottom:12}}>
+            <div key={sub.id} ref={_isFocus?focusRef:undefined} style={{background:_isFocus&&focusFlash?"#12203a":"#0a0a18",border:`1px solid ${_isFocus&&focusFlash?"#38bdf8":(isLtOnly?"#fcd34d":"#3d6090")}`,borderRadius:8,padding:"14px 16px",marginBottom:12,boxShadow:_isFocus&&focusFlash?"0 0 0 2px rgba(56,189,248,0.55)":"none",transition:"background 0.6s ease, box-shadow 0.6s ease, border-color 0.6s ease"}}>
               <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
                 <span style={{fontWeight:700,color:isLtOnly?"#fcd34d":"#818cf8",fontSize:14}}>{isLtOnly?"📅 ":""}{sub.vendorName||"—"}</span>
                 {isLtOnly&&<span style={{background:"#fef9c3",color:"#78350f",padding:"1px 6px",borderRadius:3,fontSize:10,fontWeight:700}}>LEAD TIMES</span>}
@@ -37951,7 +37964,7 @@ function OwnerTakeoverModal({ownerName,onClose,onConfirm}){
 }
 
 // ── PROJECT VIEW ──
-function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,onArchive,autoOpenPortal,onPortalOpened,autoOpenCustomerReview,onCustomerReviewOpened}){
+function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,onArchive,autoOpenPortal,onPortalOpened,portalFocusId,autoOpenCustomerReview,onCustomerReviewOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
   const projectRef=useRef(migrateProject(init));
   // DECISION(v1.19.785): ECO scope tab + editor state. Phase 1 of the ECO plan
@@ -38202,6 +38215,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [externalUpdate,setExternalUpdate]=useState(false);
   const lastSavedAt=useRef(null);
   const [showPortalModal,setShowPortalModal]=useState(false);
+  // F031 #2: submission id to scroll to + highlight in the portal modal. Seeded from the
+  // App-level portalFocusId prop when the modal auto-opens from a notification; cleared on
+  // modal close so a later manual open doesn't re-focus a stale submission.
+  const [portalFocusSub,setPortalFocusSub]=useState(null);
   const [showPoModal,setShowPoModal]=useState(false);
   const [showPriceCheckModal,setShowPriceCheckModal]=useState(false);
   const [priceCheckDiffs,setPriceCheckDiffs]=useState(null);
@@ -38434,6 +38451,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // Auto-open portal modal when navigated from a notification
   useEffect(()=>{
     if(autoOpenPortal&&portalSubmissions.length>0){
+      setPortalFocusSub(portalFocusId||null); // F031 #2: seed focus target before opening
       setShowPortalModal(true);
       onPortalOpened?.();
     }
@@ -40414,7 +40432,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             try{await saveProject(uid,updated);}catch(e){console.warn("PO doc save failed:",e);}
           }}/>}
           {showPriceCheckModal&&priceCheckDiffs&&<PurchasePriceCheckModal diffs={priceCheckDiffs} onAccept={applyPriceCheckDiffs} onClose={dismissPriceCheckDiffs}/>}
-          {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} onClose={()=>setShowPortalModal(false)} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
+          {showPortalModal&&<PortalSubmissionsModal submissions={portalSubmissions} focusUploadId={portalFocusSub} onClose={()=>{setShowPortalModal(false);setPortalFocusSub(null);}} onApplyPrices={applyPortalPrices} onImportPdf={()=>{setShowPortalModal(false);setPortalFocusSub(null);setSqPanelBom((projectRef.current.panels||[])[0]?.bom||[]);setShowSqModal(true);}}/>}
           {quoteReview&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
               <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
@@ -48155,6 +48173,10 @@ function App({user}){
   const [notifMenuH,setNotifMenuH]=useState(()=>{try{return parseInt(localStorage.getItem('arc_notif_menu_height'))||360;}catch(_){return 360;}});
   const [notifications,setNotifications]=useState([]);
   const [pendingPortalOpen,setPendingPortalOpen]=useState(null); // projectId to auto-open portal modal
+  // F031 #2: rfqUploadId (=submission doc id / token) carried from a supplier_quote bell
+  // notification so the portal modal can scroll to + briefly highlight the just-arrived
+  // submission instead of opening at the top of the list. Presentational only.
+  const [pendingPortalFocusId,setPendingPortalFocusId]=useState(null);
   // DECISION(v1.19.781): Same deep-link pattern for the customer-review responses modal.
   // Set by (a) clicking a customer_review bell notification and (b) the ?openCustomerReview=<projectId>
   // URL param handler below. ProjectView reads this via the autoOpenCustomerReview prop and
@@ -48361,7 +48383,8 @@ function App({user}){
     setShowBellMenu(false);
     if(notif.type==='supplier_quote'&&notif.projectId){
       const proj=projects.find(p=>p.id===notif.projectId);
-      if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);}
+      // F031 #2: also carry the submission token so the modal focuses the just-arrived one.
+      if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);setPendingPortalFocusId(notif.rfqUploadId||null);}
     }else if(notif.type==='customer_review'&&notif.projectId){
       // DECISION(v1.19.781): Customer-review notifications now deep-link the same way
       // as supplier-quote notifications — opens the project AND auto-opens the
@@ -48370,6 +48393,12 @@ function App({user}){
       if(proj){handleOpen(proj);setPendingCustomerReviewOpen(notif.projectId);}
     }else if(notif.type==='issue_report'){
       setShowDebugLogs(true);
+    }else if((notif.type==='pre_review'||notif.type==='unlock_request'||notif.type==='unlock_granted')&&notif.projectId){
+      // B049: review/unlock notifications land on the project (same behavior as the
+      // pre-review email deep-link ?openProject=). No dedicated surface exists, so
+      // opening the project is the correct target.
+      const proj=projects.find(p=>p.id===notif.projectId);
+      if(proj)handleOpen(proj);
     }
   }
 
@@ -49352,10 +49381,16 @@ INSTRUCTIONS:
                   // imported/dismissed — the submissions modal (submitted-only) would open
                   // empty, so gate OFF the navigate and show a "safe to clear" note instead.
                   const _rfqHandled=_isNotifHandled(n); // F031 #4: SSOT — same predicate the batch clear uses
-                  const _clickable=n.type==='supplier_quote'&&!_rfqHandled;
+                  // B049: widen click-through to every deep-linkable type. supplier_quote keeps its
+                  // F031 #3/#4 "already handled" suppression exactly; other types are navigable when
+                  // they carry the id their handler needs (all have a projectId except issue_report,
+                  // which opens the Debug Logs).
+                  const _navigable=n.type==='supplier_quote'?!_rfqHandled
+                    :(['pre_review','customer_review','issue_report'].includes(n.type)
+                      ||(['unlock_request','unlock_granted'].includes(n.type)&&!!n.projectId));
                   return(
-                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_clickable?"pointer":"default"}}
-                    onClick={()=>_clickable?handleNotifClick(n):undefined}>
+                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_navigable?"pointer":"default"}}
+                    onClick={()=>_navigable?handleNotifClick(n):undefined}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
                       <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'📥':'🔔'}</span>
                       <div style={{flex:1,minWidth:0}}>
@@ -49364,6 +49399,8 @@ INSTRUCTIONS:
                         {n.type==='supplier_quote'&&(_rfqHandled
                           ?<span style={{fontSize:11,fontWeight:700,color:C.green,opacity:0.8}}>✓ Already received — safe to clear</span>
                           :<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>)}
+                        {/* B049: generic click affordance for the newly-navigable non-quote types. */}
+                        {n.type!=='supplier_quote'&&_navigable&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>{n.type==='issue_report'?'View in Debug Logs →':'Open project →'}</span>}
                         <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
                       </div>
                       {/* F031 #1: per-notification Clear — stops row navigate, marks read (drops
@@ -49577,7 +49614,7 @@ INSTRUCTIONS:
           projects, engineering, purchasing, production. */}
       {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
         <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView key={openProject.id} project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} onPortalOpened={()=>setPendingPortalOpen(null)} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
+          <ProjectView key={openProject.id} project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} portalFocusId={pendingPortalOpen===openProject.id?pendingPortalFocusId:null} onPortalOpened={()=>{setPendingPortalOpen(null);setPendingPortalFocusId(null);}} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
         </ErrorBoundary>
       )}
       </div>{/* end main content column */}
