@@ -27,7 +27,7 @@
 > • **3a ✅ on TEST V.013** (master `9cf4c7c4`). Coach CHANGES-REQUIRED → FIXED (pane filter now mirrors the board's inclusion chain; dropped `!wonAt` so Active-ECO pill counts match the board — the count-parity blocker). Collapsible 380px rail + 8-pill grid; board grouping refactored to shared `_todoBucketOf` (byte-equivalent per Coach). ⏳ Jon eyeball on test. Next: 3b list+RFQ+quotes-weekly · 3c threshold Settings · 3d ECO timer · 3e idle-flash.
 > • **B023 ✅ MERGED** (cherry-picked `811a6574`→master, auto-merged clean) + on Test V.013; worktree cleaned up.
 > • **3a UI tweaks ✅ MERGED** (cherry-pick `57dd891a`→master `2a096981`, clean) + on Test V.014: header "<FirstName>'s To-Do List" (no icon, +40% font), compact pills w/ larger labels. Worktree cleaned up.
-> • **★ Test V.014 = 3a + UI tweaks + B023 + G1** (prod untouched v1.24.3). ⏳ Jon eyeball (pane/pills/header + price-clip) + G1 mode-B verify → then prod deploy.
+> • **★ Test V.015 = 3a + UI tweaks + B023 + G1 + V.014-feedback tweaks** (pills 3-up + compact; pill click → My-Projects scope). Prod untouched v1.24.3. ⏳ Jon eyeball + G1 mode-B verify → then prod deploy.
 > • **Outlook/Graph research DONE** (`docs/OUTLOOK-GRAPH-TODO-RESEARCH.md`): Q1 To-Do↔Outlook sync + Q2/Q3 time-mgmt notify-tool both feasible on ARC's existing Graph plumbing; notify vision = foreground poll + existing bell (no server infra). **⏳ Jon decision: pursue (file F029 + greenlight Q1 pilot) or park.**
 > • Plan: `docs/F025-RIGHT-PANE-PLAN.md`.
 
