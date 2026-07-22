@@ -44687,7 +44687,112 @@ function ReportsModal({uid,onClose}){
 // keep their existing relative order. Reused by the future F025 pinned pane.
 function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinnedAt||0);}
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRetry,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp}){
+// F033: APP-LEVEL To-Do rail. Lifted out of Dashboard (was the F032 `_railEligible` <aside>)
+// so it PERSISTS across every top-level nav tab (Sales / Purchasing / Engineering / Production /
+// Items-Vendors) instead of living only on the Sales board. Data deps are all app-level:
+// `projects`, `uid`, `userFirstName`, `_appCtx.permissions` (via _dashboardRoles), plus the module
+// helpers (_dashboardRoles / _todoBucketOf / _pillColorForBucket / _isMyProject / _hasServiceOfType).
+// The role sections + pill styling + counts are BYTE-IDENTICAL to F032 — only the mount point and
+// click-routing changed: pills call onFocusBucket(kind,key) instead of the Dashboard-local board
+// setters, and App deep-links the Sales board via `pendingFocus`. Collapse state (`railOpen`) is
+// lifted to App (shared across tabs, persisted to the existing `arc_todo_rail_open` key).
+function TodoRail({projects,uid,userFirstName,railOpen,setRailOpen,onFocusBucket}){
+  // Coach: this now runs app-wide (every tab render), so memoize the per-role bucket derive on
+  // [projects,uid]. Pill colors still use a fresh Date.now() at render so timer staleness stays live.
+  const _sections=React.useMemo(()=>{
+    const _roles=_dashboardRoles(uid);
+    // ── SALESMAN scope (UNCHANGED from shipped F032) ── mirror the board's status-list inclusion
+    // chain EXACTLY so pane counts == board column counts; only intended divergence is always-personal
+    // scope (_isMyProject forced on). Do NOT add !wonAt — _todoBucketOf's PO'd carve-out sheds plain-Won.
+    const salesProjects=projects.filter(p=>_isMyProject(p,uid)&&(!p.transferred||p.transferredTo!==uid)&&!p.importedFromBC&&!p.lostAt);
+    const _todoBuckets=[
+      ["draft","Draft"],
+      ["in_progress","(BOM) In Process"],
+      ["process_rfq","Pending RFQs"],
+      ["ready_review","Ready To Review"],
+      ["pre_review","In Pre-Review"],
+      ["ready_send","Ready To Send"],
+      ["active_eco","Active ECO"],
+      ["quotes_sent","Quotes Sent"]
+    ];
+    // ── REVIEWER scope: projects ASSIGNED TO ME for review (NOT _isMyProject) ──
+    const _reviewBase=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&!p.lostAt);
+    const preRevItems=_reviewBase.filter(p=>p.preReviewStatus==="pending"&&(p.preReviewAssignedTo===uid||(!p.preReviewAssignedTo&&p.bcDesignerUid===uid)));
+    const postRevItems=_reviewBase.filter(p=>p.postReviewStatus==="pending"&&(p.postReviewAssignedTo===uid||(!p.postReviewAssignedTo&&p.bcDesignerUid===uid)));
+    // ── DESIGNER scope: projects where I'm the assigned BC designer, by service-card type ──
+    const _designerBase=projects.filter(p=>p.bcDesignerUid===uid&&(!p.transferred||p.transferredTo!==uid)&&!p.lostAt);
+    const engItems=_designerBase.filter(p=>_hasServiceOfType(p,"engineering"));
+    const progItems=_designerBase.filter(p=>_hasServiceOfType(p,"programming"));
+    const commItems=_designerBase.filter(p=>_hasServiceOfType(p,"commissioning"));
+    return {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems};
+  },[projects,uid]);
+
+  // Collapsed → thin discoverable strip (present on every tab so the rail can be reopened anywhere).
+  if(!railOpen){
+    return(
+      <div style={{width:40,flexShrink:0,borderLeft:`1px solid ${C.border}`,background:"#080810",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:14}}>
+        <button onClick={()=>setRailOpen(true)} title="Show the To-Do list"
+          style={{background:"#0c2a46",color:C.accent,border:`1.5px solid ${C.accent}`,borderRadius:8,width:30,height:46,cursor:"pointer",fontSize:16,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center"}}>📋</button>
+      </div>
+    );
+  }
+
+  const {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems}=_sections;
+  const _now=Date.now();
+  const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
+  const _neutralTint=[C.sub,"#101018"]; // color-less pill (count only) — no clean time source
+  // Shared pill renderer — identical styling to the shipped F032 tile. `color` is
+  // "green"|"yellow"|"red" (timer) or null (neutral / count-only).
+  const _pill=(key,label,count,color,onClick,title)=>{
+    const [col,bg]=color?_pillTint[color]:_neutralTint;
+    return(
+      <div key={key} onClick={onClick} title={title}
+        style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"6px 8px",height:72,display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
+        onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
+        onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
+        <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
+        <div style={{fontSize:20,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{count}</div>
+      </div>
+    );
+  };
+  const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
+  const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{children}</div>);
+  return(
+    <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",height:"100%",overflowY:"auto"}}>
+      <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:8}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
+          <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your work, by attention</div>
+        </div>
+        <button onClick={()=>setRailOpen(false)} title="Hide the To-Do pane" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"2px 4px"}}>▸</button>
+      </div>
+      {_roles.includes("reviewer")&&(<>
+        {_sectionHeader("Review Queue")}
+        {_grid([
+          _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for pre-review"),
+          _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for post-review")
+        ])}
+      </>)}
+      {_roles.includes("designer")&&(<>
+        {_sectionHeader("Engineering")}
+        {_grid([
+          _pill("engineering","Engineering Design",engItems.length,null,()=>onFocusBucket("designer"),"Your Engineering Design projects"),
+          _pill("programming","Programming",progItems.length,null,()=>onFocusBucket("designer"),"Your Programming projects"),
+          _pill("commissioning","Commissioning",commItems.length,null,()=>onFocusBucket("designer"),"Your Commissioning projects")
+        ])}
+      </>)}
+      {_roles.includes("salesman")&&(<>
+        {_sectionHeader("Sales Pipeline")}
+        {_grid(_todoBuckets.map(([key,label])=>{
+          const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
+          return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>onFocusBucket("salesman",key),`Show your ${label} projects`);
+        }))}
+      </>)}
+    </aside>
+  );
+}
+
+function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRetry,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp,pendingFocus,onPendingFocusApplied}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnlyLocal,setMyProjectsOnlyLocal]=useState(false);
   const myProjectsOnly=myProjectsOnlyProp!=null?myProjectsOnlyProp:myProjectsOnlyLocal;
@@ -44702,12 +44807,27 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
   // F023: reset the focus whenever the view (groupBy) changes, so a stale column key
   // from another view (e.g. "status" → "production") never lingers.
   useEffect(()=>{
+    // F033: skip the reset once when a pendingFocus apply intentionally changed groupBy, so the
+    // salesman focusedCol it set in the same pass isn't wiped.
+    if(_focusApplyRef.current){_focusApplyRef.current=false;return;}
     setFocusedCol(null);
   },[groupBy]);
-  // F025 (3a): collapsible right-side To-Do rail. Open state persisted to localStorage
-  // (default open). Local UI state only — no Firestore read/write.
-  const [railOpen,setRailOpen]=useState(()=>{try{const v=localStorage.getItem('arc_todo_rail_open');return v===null?true:v==="1";}catch(e){return true;}});
-  useEffect(()=>{try{localStorage.setItem('arc_todo_rail_open',railOpen?"1":"0");}catch(e){}},[railOpen]);
+  // F033: the To-Do rail (+ its open state) moved to the app-level <TodoRail>. The rail's pill
+  // clicks now arrive here as `pendingFocus` (an App-level request to deep-link this Sales board).
+  // `_focusApplyRef` lets the pendingFocus apply survive the [groupBy] reset effect below when it
+  // has to change groupBy (skip-once), so a salesman focusedCol isn't clobbered by the reset.
+  const _focusApplyRef=useRef(false);
+  useEffect(()=>{
+    if(!pendingFocus)return;
+    if(pendingFocus.kind==="reviewer"||pendingFocus.kind==="designer"){
+      setGroupBy("engineering");
+    }else{ // salesman → my-projects status kanban focused on the clicked bucket
+      setMyProjectsOnly(true);
+      if(groupBy!=="status"){_focusApplyRef.current=true;setGroupBy("status");}
+      setFocusedCol(pendingFocus.key);
+    }
+    onPendingFocusApplied&&onPendingFocusApplied();
+  },[pendingFocus]);
   const bgTasks=useBgTasks();
 
   function groupProjects(list){
@@ -44923,9 +45043,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       {label}
     </button>
   );
-  // F025 (3a): the To-Do rail shows only on the main Projects page in the status (kanban) view.
-  const _railEligible=!forceView&&groupBy==="status";
-
   return(
     <div style={{display:"flex",alignItems:"flex-start",width:"100%"}}>
     <div style={{flex:1,minWidth:0}}>
@@ -44987,9 +45104,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
             My Projects
           </button>
         </div>
-        {_railEligible&&<button onClick={()=>setRailOpen(v=>!v)} title={railOpen?"Hide the To-Do pane":"Show the To-Do pane"} style={{marginLeft:"auto",background:railOpen?"#0c2a46":"#383850",color:railOpen?C.accent:C.muted,border:railOpen?`1.5px solid ${C.accent}`:"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
-          📋 To-Do {railOpen?"▸":"◂"}
-        </button>}
       </div>}
 
       {loading&&!bootError&&(
@@ -45229,94 +45343,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       })()}
     </div>
     </div>
-    {_railEligible&&railOpen&&(
-      <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",position:"sticky",top:0,alignSelf:"stretch",maxHeight:"100vh",overflowY:"auto"}}>
-        {(()=>{
-          // F025 (3a): pill grid — always the current user's OWN projects (regardless of the
-          // board's My/Team toggle), minus terminal Won/Lost. Bucketing via the SSOT _todoBucketOf
-          // so counts equal the board column counts; pill color = worst-timer project in the bucket.
-          const _now=Date.now();
-          // F032: the pane is now ROLE-AWARE. _dashboardRoles(uid) returns the ordered sections
-          // the user should see (reviewer → designer → salesman). Each section carries its OWN
-          // buckets + scope — a reviewer's "my work" ≠ createdBy/salesperson (that was the item-2
-          // bug where a reviewer/designer saw the salesman pipeline). Salesman section is
-          // PRESERVED VERBATIM (same scope, buckets, styling, deep-link) — reviewers/designers
-          // simply don't get it unless they're an actual salesperson (or hold no role → fallback).
-          const _roles=_dashboardRoles(uid);
-          const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
-          const _neutralTint=[C.sub,"#101018"]; // color-less pill (count only) — no clean time source
-          // Shared pill renderer — identical styling to the shipped F025 tile. `color` is
-          // "green"|"yellow"|"red" (timer) or null (neutral / count-only).
-          const _pill=(key,label,count,color,onClick,title)=>{
-            const [col,bg]=color?_pillTint[color]:_neutralTint;
-            return(
-              <div key={key} onClick={onClick} title={title}
-                style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"6px 8px",height:72,display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
-                onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
-                onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-                <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
-                <div style={{fontSize:20,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{count}</div>
-              </div>
-            );
-          };
-          const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
-          const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{children}</div>);
-          // ── SALESMAN scope (UNCHANGED from shipped F025) ──
-          // Mirror the board's status-list inclusion chain EXACTLY (transferred/importedFromBC/lostAt) so pane
-          // pill counts == board column counts; the ONLY intended divergence is always-personal scope (_isMyProject
-          // forced on). Do NOT add !wonAt — _todoBucketOf's PO'd carve-out sheds plain-Won, while active-ECO (Won)
-          // projects correctly route to the active_eco bucket (Coach 3a review, count-parity fix).
-          const salesProjects=projects.filter(p=>_isMyProject(p,uid)&&(!p.transferred||p.transferredTo!==uid)&&!p.importedFromBC&&!p.lostAt);
-          const _todoBuckets=[
-            ["draft","Draft"],
-            ["in_progress","(BOM) In Process"],
-            ["process_rfq","Pending RFQs"],
-            ["ready_review","Ready To Review"],
-            ["pre_review","In Pre-Review"],
-            ["ready_send","Ready To Send"],
-            ["active_eco","Active ECO"],
-            ["quotes_sent","Quotes Sent"]
-          ];
-          // ── REVIEWER scope: projects ASSIGNED TO ME for review (NOT _isMyProject) ──
-          const _reviewBase=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&!p.lostAt);
-          const preRevItems=_reviewBase.filter(p=>p.preReviewStatus==="pending"&&(p.preReviewAssignedTo===uid||(!p.preReviewAssignedTo&&p.bcDesignerUid===uid)));
-          const postRevItems=_reviewBase.filter(p=>p.postReviewStatus==="pending"&&(p.postReviewAssignedTo===uid||(!p.postReviewAssignedTo&&p.bcDesignerUid===uid)));
-          // ── DESIGNER scope: projects where I'm the assigned BC designer, by service-card type ──
-          const _designerBase=projects.filter(p=>p.bcDesignerUid===uid&&(!p.transferred||p.transferredTo!==uid)&&!p.lostAt);
-          const engItems=_designerBase.filter(p=>_hasServiceOfType(p,"engineering"));
-          const progItems=_designerBase.filter(p=>_hasServiceOfType(p,"programming"));
-          const commItems=_designerBase.filter(p=>_hasServiceOfType(p,"commissioning"));
-          return(<>
-            <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`}}>
-              <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your work, by attention</div>
-            </div>
-            {_roles.includes("reviewer")&&(<>
-              {_sectionHeader("Review Queue")}
-              {_grid([
-                _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>setGroupBy("engineering"),"Projects assigned to you for pre-review"),
-                _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>setGroupBy("engineering"),"Projects assigned to you for post-review")
-              ])}
-            </>)}
-            {_roles.includes("designer")&&(<>
-              {_sectionHeader("Engineering")}
-              {_grid([
-                _pill("engineering","Engineering Design",engItems.length,null,()=>setGroupBy("engineering"),"Your Engineering Design projects"),
-                _pill("programming","Programming",progItems.length,null,()=>setGroupBy("engineering"),"Your Programming projects"),
-                _pill("commissioning","Commissioning",commItems.length,null,()=>setGroupBy("engineering"),"Your Commissioning projects")
-              ])}
-            </>)}
-            {_roles.includes("salesman")&&(<>
-              {_sectionHeader("Sales Pipeline")}
-              {_grid(_todoBuckets.map(([key,label])=>{
-                const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
-                return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>{setMyProjectsOnly(true);setFocusedCol(key);},`Show your ${label} projects`);
-              }))}
-            </>)}
-          </>);
-        })()}
-      </aside>
-    )}
     </div>
   );
 }
@@ -48027,6 +48053,15 @@ function App({user}){
   const [revWarnModal,setRevWarnModal]=useState(null); // {project, pendingAction}
   const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
   const [myProjectsOnly,setMyProjectsOnly]=useState(false);
+  // F033: app-level To-Do rail — one shared open state (persisted to the existing localStorage key)
+  // governs the rail on EVERY top-level nav tab, and pill clicks arrive as `pendingFocus` which the
+  // Sales <Dashboard> consumes to deep-link its board (then clears via onPendingFocusApplied).
+  const [railOpen,setRailOpen]=useState(()=>{try{const v=localStorage.getItem('arc_todo_rail_open');return v===null?true:v==="1";}catch(e){return true;}});
+  useEffect(()=>{try{localStorage.setItem('arc_todo_rail_open',railOpen?"1":"0");}catch(e){}},[railOpen]);
+  const [pendingFocus,setPendingFocus]=useState(null); // {kind:'salesman'|'reviewer'|'designer', key?}
+  // Rail pill → bring the Sales board into view + hand it a focus request. setView("dashboard")
+  // ensures the Sales <Dashboard> (not an open ProjectView) is what renders under the projects tab.
+  const handleRailFocus=(kind,key)=>{setView("dashboard");setNavTab("projects");setPendingFocus({kind,key:key||null});};
   const [showNew,setShowNew]=useState(false);
   const [showSettings,setShowSettings]=useState(false);
   const [showApiSetup,setShowApiSetup]=useState(false);
@@ -49406,7 +49441,7 @@ INSTRUCTIONS:
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly} pendingFocus={pendingFocus} onPendingFocusApplied={()=>setPendingFocus(null)}/>
         </>
       )}
       {/* ProjectView render moved out of the navTab==="projects" block (v1.19.787) so the
@@ -49455,6 +49490,17 @@ INSTRUCTIONS:
         </ErrorBoundary>
       )}
       </div>{/* end main content column */}
+      {/* F033: app-level To-Do rail — persistent right column across every top-level nav tab.
+          SUPPRESSED when: (a) an open project's ProjectView is on-screen (it has its own right pane),
+          (b) the future F030 User Dashboard is active (navTab==="user_dashboard" — a hook that never
+          matches today since no such tab exists yet; wired now so F030 just works when it lands), and
+          (c) the AI Assistant slide-out is open (showSearch) so they don't fight for the right edge. */}
+      {(()=>{
+        const _projectViewOpen=view==="project"&&navTab===(projectOriginTab||"projects");
+        const _f030Active=navTab==="user_dashboard"; // F030 suppression hook — no-op until F030 exists
+        if(_projectViewOpen||_f030Active||showSearch)return null;
+        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus}/>;
+      })()}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
         <div style={{width:420,height:"100%",display:"flex",flexDirection:"column",visibility:showSearch?"visible":"hidden"}}>
