@@ -48632,7 +48632,10 @@ INSTRUCTIONS:
         _appCtx.projectsPath=`users/${user.uid}/projects`;
       }
       await Promise.all([loadApiKey(user.uid),loadPricingConfig(user.uid),loadDefaultBomItems(user.uid),loadLaborRates(user.uid),loadMfrDenylist(user.uid)]);
-      fbDb.doc(`users/${user.uid}/config/profile`).get().then(d=>{if(d.exists)setUserFirstName(d.data().firstName||"");}).catch(()=>{});
+      // B046: firstName lives in config/profile only if the user set it in Settings; invited members
+      // never do → fall back to auth displayName (first word) then the email prefix so EVERY user gets a name.
+      {const _nameFallback=(user.displayName||"").trim().split(/\s+/)[0]||(user.email||"").split("@")[0]||"";
+       fbDb.doc(`users/${user.uid}/config/profile`).get().then(d=>{setUserFirstName((d.exists&&d.data().firstName)||_nameFallback);}).catch(()=>{setUserFirstName(_nameFallback);});}
       // Load company members → uid→name map for project ownership display
       if(profile?.companyId){
         loadCompanyMembers(profile.companyId).then(async mems=>{
@@ -48640,7 +48643,7 @@ INSTRUCTIONS:
           const profileDocs=await Promise.all(mems.map(m=>fbDb.doc(`users/${m.uid}/config/profile`).get().catch(()=>null)));
           mems.forEach((m,i)=>{
             const pd=profileDocs[i];
-            const fn=pd&&pd.exists?pd.data().firstName||"":"";
+            const fn=(pd&&pd.exists&&pd.data().firstName)||(m.email||"").split("@")[0]||""; // B046: fall back to email prefix so members w/o a set profile name still show
             map[m.uid]={email:m.email||"",firstName:fn};
           });
           setMemberMap(map);
