@@ -45016,7 +45016,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                their readable minWidth (below) and the row scrolls horizontally when they don't
                fit; on wide screens flex-grow still fills the width (no scrollbar). */
             <div style={{overflowX:"auto",width:"100%"}}>
-            <div style={{display:"flex",gap:16,alignItems:"flex-start",width:"100%",minWidth:"min-content",paddingBottom:8}}>
+            <div style={{display:"flex",gap:10,alignItems:"flex-start",width:"100%",minWidth:"min-content",paddingBottom:8}}>
               {groups.map((g,gi)=>{
                 const colColor=_colColorFor(g.label);
                 const colBg=_colBgFor(g.label);
@@ -45029,7 +45029,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 // the column has no items so empty columns stay visually quiet.
                 const colTotal=g.items.reduce((s,p)=>s+computeProjectTotal(p),0);
                 return(
-                <div key={gi} style={{flex:"1 1 0",minWidth:180}}
+                <div key={gi} style={{flex:"1 1 0",minWidth:150}}
                   onDragOver={isDropTarget?e=>{e.preventDefault();setDropTarget(gi);}:undefined}
                   onDragLeave={isDropTarget?e=>{if(!e.currentTarget.contains(e.relatedTarget))setDropTarget(null);}:undefined}
                   onDrop={isDropTarget?e=>{e.preventDefault();setDropTarget(null);if(dragProjectId)assignCustomer(dragProjectId,g.label,g.customerNumber);setDragProjectId(null);}:undefined}>
@@ -46241,7 +46241,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     draggable={isDraggable||false}
     onDragStart={onDragStart}
     onDragEnd={onDragEnd}
-    style={{...card({padding:"4px 10px"}),...(_tileBg?{background:_tileBg}:{}),border:`1px solid ${_idleBorderColor}`,opacity:bcDisconnected?0.5:1,cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
+    style={{...card({padding:"4px 8px"}),...(_tileBg?{background:_tileBg}:{}),border:`1px solid ${_idleBorderColor}`,opacity:bcDisconnected?0.5:1,cursor:isDraggable?"grab":"pointer",transition:"border-color 0.15s,transform 0.15s",position:"relative",display:"flex",flexDirection:"column",gap:1}}
     onMouseEnter={e=>{e.currentTarget.style.borderColor=_idleHoverColor;e.currentTarget.style.transform="translateY(-2px)";}}
     onMouseLeave={e=>{e.currentTarget.style.borderColor=_idleBorderColor;e.currentTarget.style.transform="none";}}>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
@@ -46263,7 +46263,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         }
         const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];
         const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;
-        return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;
+        return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:46,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;
       })()}
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
