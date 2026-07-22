@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.1 · session ACTIVE
+## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.2 · session ACTIVE
+
+> ## ✅✅ SHIPPED TO PROD v1.24.2 — F027 MANAGER role + priority pin (rules+hosting)
+> • `permissions.manager` flag (admin-assigned in Team UI) · pin checkbox (manager/admin) pins to top of board, works on locked projects (rules carve-out) · 📌 tile badge · pinned-first sort. Coach APPROVE (NIT-1 folded). Rules verified via review + established live-testing (Java/emulator NOT adopted — existing gate preserved byte-for-byte → no write-path regression; only the new pin arm is new). ⏳ Jon live-verify: assign manager, pin locked project, view+manager can't otherwise edit.
 
 > ## ✅✅ SHIPPED TO PROD v1.24.1 (release b6dc593c) — board split + tile rework + inert F028
 > • **F026** 8-column split (READY TO REVIEW · IN PRE-REVIEW · READY TO SEND) + **B044 fix** (send-blocked reds no longer show as "Ready"); **G013** tile pills removed; **tile restructure** (narrower/taller, customer own line, 2-line name, minWidth 130); **F028** RFQ-all-items toggle (inert, default OFF); v1 attention top-strip REMOVED (right-pane replaces it). Hosting-only (rules already live). Coach-reviewed throughout.
