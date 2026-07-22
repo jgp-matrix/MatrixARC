@@ -10,7 +10,7 @@
 > ## ✨ F028 (NEW, MED) — Admin toggle: RFQ all items ignoring Priced Dates
 > • Jon: dual-ERP (ARC+M1) lag → want an admin Settings toggle to RFQ ALL of a supplier's quotable items every time, not just stale-priced. Add-only `_pricingConfig` flag, default OFF (opt-in). Money-path-adjacent → Coach review before deploy.
 > • Coach scoped (`docs/F028-RFQ-ALL-ITEMS-SCOPE.md`): ONE choke point `_eligibilityReason` in `buildRfqSupplierGroups` (:6663); add-only `rfqAllItemsIgnoreStale` config flag, opt-in. Build S-M (M = threading a `forceAll` reason through group counters so it doesn't flip to lead-time-only).
-> • STATUS: **⏳ NEEDS JON — 2 rulings before build:** (1) does flag-ON also bypass the 30-day re-send cooldown (rec YES)? (2) confirm customerSupplied + manual rows stay excluded (rec YES).
+> • Jon ruled: flag-ON bypasses BOTH staleness AND the 30-day cooldown. Exclusions = PRESERVE today's exact set (F028 changes only staleness/cooldown gating, not which categories are excluded). **STATUS: 🔨 Marc BUILDING** (backgrounded) → Coach review (money-path) → deploy gate. Note: customerSupplied not specially excluded by current RFQ code → follows existing behavior (flag to Jon; separate tweak if he wants it excluded).
 
 
 > ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — User 'To-Do' Dashboard = RIGHT-SIDE PANE (epic)
@@ -21,7 +21,7 @@
 > • Phases: 0 (G013) → 1 (F026 split/reorder + B044/B018 fix + timestamps) → 2 (F027 manager+pin) → 3 (F025 right-pane).
 > • ✅ ALL decisions locked (Jon 2026-07-21): width = horizontal-scroll board + collapsible rail; READY-TO-REVIEW gate = tech-review + manualVerify only (confidence/BC advisory). Master plan fully specced.
 > • Marc BUILT (master `a1d49f02`, +84/-17, validate PASS). **Coach APPROVE WITH NITS** — routing correct/total, SSOT-clean, kanban lockstep, matches Issues-gate ruling. Nits (Jon-facing): (a) vendor-is-customer $0 rows now reach a Ready column (was pinned in RFQs) — correct SSOT fix, eyeball on test; (b) _timingStates now incl. quotes_sent/active_eco (Phase-3 will define per-bucket timers anyway); (c) one-time aging re-stamp on legacy evc projects (benign). B018 deferred.
-> • STATUS: **⏳ NEEDS JON — deploy gate.** Visible board change (8 columns, projects move) → recommend TEST-channel first to eyeball the column moves, then prod. Projects that move: send-ready→Ready To Send; send-blocked reds→RFQs; tech-review/manualVerify-blocked→In Process.
+> • **✅ ON TEST — Test V.010** (`matrix-arc-test.web.app`, prod untouched v1.23.23). **⏳ Jon eyeballing the 8-column split on test** (Ready To Review · Pre-Review · Ready To Send; projects moved per B044 fix). On Jon OK → prod deploy (minor bump). No rules change (read-path/UI only).
 
 > ## ✨ F025 v1 (SUPERSEDED) — attention top strip (on TEST V.009 only, never prod)
 > • Ask: glanceable "what needs me / what's timing out" — pending-RFQ visibility (Ryan/Noah pain) + aging alarm (DRAFT/IN PROCESS/READY/PRE-REVIEW/RFQ > ~1wk).
