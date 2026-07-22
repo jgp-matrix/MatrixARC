@@ -44774,6 +44774,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       {!forceView&&(()=>{
         const _now=Date.now();
         const _thrMs=_attentionThresholdMs();
+        const _thrLabel=`${_pricingConfig.attentionThresholdValue||7}${(_pricingConfig.attentionThresholdUnit||'days').charAt(0)}`;
         const _timingStates=new Set(["draft","in_progress","evc","pre_review","rfqs"]);
         const base=projects.filter(p=>!p.wonAt&&!p.lostAt&&!p.importedFromBC&&(!myProjectsOnly||_isMyProject(p,uid)));
         const awaitingIds=new Set();let awaitingVendorTot=0,awaitingExpired=false;
@@ -44789,7 +44790,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         const chips=[];
         if(awaitingIds.size>0)chips.push({key:"awaiting",label:"⏳ Awaiting RFQ Response",head:awaitingIds.size,sub:`${awaitingVendorTot} vendor${awaitingVendorTot!==1?"s":""}`,color:awaitingExpired?"#f87171":"#818cf8",bg:awaitingExpired?"#2a0a0a":"#1e1b4b",ids:awaitingIds,filterLabel:"Awaiting RFQ response"});
         if(reviewIds.size>0)chips.push({key:"review",label:"📥 Responses To Review",head:reviewIds.size,sub:"to import",color:"#4ade80",bg:"#0d1f0d",ids:reviewIds,filterLabel:"Responses ready to review"});
-        if(timingIds.size>0)chips.push({key:"timing",label:"⏰ Timing Out",head:timingIds.size,sub:`>${_thrDays}d in status`,color:"#f59e0b",bg:"#3a1f00",ids:timingIds,filterLabel:"Timing out"});
+        if(timingIds.size>0)chips.push({key:"timing",label:"⏰ Timing Out",head:timingIds.size,sub:`>${_thrLabel} in status`,color:"#f59e0b",bg:"#3a1f00",ids:timingIds,filterLabel:"Timing out"});
         if(chips.length===0)return <div style={{fontSize:12,color:C.muted,marginBottom:8,padding:"4px 2px",opacity:0.75}}>✓ You're all caught up — nothing needs attention</div>;
         return <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"stretch"}}>
           {chips.map(c=>(
