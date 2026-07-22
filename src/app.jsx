@@ -16537,6 +16537,71 @@ function _statusClockStart(project,eff){
   }
   return eff==="draft"?(project.createdAt||project.updatedAt||Date.now()):(project.updatedAt||project.createdAt||Date.now());
 }
+// F025 (sub-phase 3a): To-Do pane bucketing + timer SSOT.
+// _todoBucketOf is the SINGLE source of truth for mapping a project → a Sales-board column
+// key. Both the board's groupBy==="status" grouping AND the To-Do pill grid call it, so pane
+// pill counts always equal the board column counts (CLAUDE.md "Single Source of Truth for
+// Dual-Consumer Predicates" — factor the RULE, not the inputs). Returns the board column KEY
+// (draft/in_progress/process_rfq/ready_review/pre_review/ready_send/active_eco/quotes_sent)
+// so a pill click can pass it straight to the F023 setFocusedCol. Returns null for projects the
+// status board excludes (PO'd, non-ECO → they live in the Production/Purchasing tabs). Pure/read-only.
+function _todoBucketOf(project){
+  if(!project)return null;
+  const activeEco=computeActiveEco(project);
+  // Board status-view carve-out (mirrors groupProjects): a Won/PO'd project that is NOT in
+  // active-ECO rework belongs to Production/Purchasing, not the Sales board — no To-Do bucket.
+  if((project.bcPoStatus==="purchasing"||project.bcPoStatus==="Open")&&!activeEco)return null;
+  const eff=activeEco?"active_eco":computeProjectEffectiveStatus(project);
+  // TOTAL map — every status computeProjectEffectiveStatus can emit needs an explicit column, or
+  // it silently ||"draft"-dumps. Folds the pipeline statuses → in_progress and both *_sent → quotes_sent.
+  const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc_review:"ready_review",evc_send:"ready_send",pre_review:"pre_review",post_review:"draft",active_eco:"active_eco",extracted:"in_progress",validated:"in_progress",costed:"in_progress",quoted:"in_progress",pushed_to_bc:"in_progress",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
+  return statusToCol[eff]||"draft";
+}
+// F025 (3a): per-bucket aging thresholds (ms). DEFAULTS ONLY — sub-phase 3c adds the editable
+// _pricingConfig.attentionThresholds + Settings UI; _todoThresholdMsFor reads the override first
+// so 3c lands with zero rework here. Windows per Jon's spec (y = explicit, else 80% of r):
+//   draft 4h/6h · in_progress 4h/7h · process_rfq 4d/5d · ready_review 1.6d/2d ·
+//   pre_review 19.2h/24h · ready_send 3.2h/4h · active_eco 3d/4d · quotes_sent 1.6wk/2wk.
+const _TODO_THRESHOLD_DEFAULTS={
+  draft:{yellowMs:4*36e5,redMs:6*36e5},
+  in_progress:{yellowMs:4*36e5,redMs:7*36e5},
+  process_rfq:{yellowMs:4*24*36e5,redMs:5*24*36e5},
+  ready_review:{yellowMs:Math.round(1.6*24*36e5),redMs:2*24*36e5},
+  pre_review:{yellowMs:Math.round(0.8*24*36e5),redMs:24*36e5},
+  ready_send:{yellowMs:Math.round(0.8*4*36e5),redMs:4*36e5},
+  active_eco:{yellowMs:3*24*36e5,redMs:4*24*36e5},
+  quotes_sent:{yellowMs:Math.round(0.8*14*24*36e5),redMs:14*24*36e5}
+};
+// {yellowMs,redMs} for a bucket — 3c override wins, else the default. Pure/read-only.
+function _todoThresholdMsFor(bucket){
+  return (_pricingConfig.attentionThresholds?.[bucket])??_TODO_THRESHOLD_DEFAULTS[bucket]??_TODO_THRESHOLD_DEFAULTS.draft;
+}
+// Time-in-bucket start. 3a: uses _statusClockStart for every bucket (ECO's ecoLastBomChangeAt +
+// idle overlay are LATER sub-phases — for 3a ECO falls back to the active_eco status clock). Pure.
+function _todoClockStart(project,bucket){
+  const eff=computeActiveEco(project)?"active_eco":computeProjectEffectiveStatus(project);
+  return _statusClockStart(project,eff);
+}
+// "green"|"yellow"|"red" from elapsed-in-bucket vs the bucket's thresholds. Render-time only
+// (no module cache, no stale closure → Async-Ownership safe). Pure.
+function _bucketTimerColor(project,bucket,now){
+  const th=_todoThresholdMsFor(bucket);
+  const elapsed=(now||Date.now())-_todoClockStart(project,bucket);
+  if(th.redMs&&elapsed>=th.redMs)return"red";
+  if(th.yellowMs&&elapsed>=th.yellowMs)return"yellow";
+  return"green";
+}
+// Worst timer color across a bucket's projects — RED if ANY project is red, else YELLOW if any
+// yellow, else GREEN. Surfaces the single most-forgotten project in the bucket. Pure.
+function _pillColorForBucket(bucketProjects,bucket,now){
+  let worst="green";
+  for(const p of (bucketProjects||[])){
+    const c=_bucketTimerColor(p,bucket,now);
+    if(c==="red")return"red";
+    if(c==="yellow")worst="yellow";
+  }
+  return worst;
+}
 // F025: "my project" predicate — factored from the Dashboard :44690 filter so the board list
 // and the attention derive share one definition (no drift).
 function _isMyProject(p,uid){
@@ -44598,6 +44663,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
   useEffect(()=>{
     setFocusedCol(null);
   },[groupBy]);
+  // F025 (3a): collapsible right-side To-Do rail. Open state persisted to localStorage
+  // (default open). Local UI state only — no Firestore read/write.
+  const [railOpen,setRailOpen]=useState(()=>{try{const v=localStorage.getItem('arc_todo_rail_open');return v===null?true:v==="1";}catch(e){return true;}});
+  useEffect(()=>{try{localStorage.setItem('arc_todo_rail_open',railOpen?"1":"0");}catch(e){}},[railOpen]);
   const bgTasks=useBgTasks();
 
   function groupProjects(list){
@@ -44758,24 +44827,14 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // F026: 8-column Sales board — IN PRE-REVIEW sits BETWEEN Ready To Review and Ready To Send.
       const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send","active_eco","quotes_sent"];
       const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",ready_review:"Ready To Review",pre_review:"In Pre-Review",ready_send:"Ready To Send",active_eco:"Active ECO",quotes_sent:"Quotes Sent"};
-      // F026: statusToCol MUST stay TOTAL — any status computeProjectEffectiveStatus can emit needs
-      // an explicit column, or it silently ||"draft"-dumps below. The folded pipeline statuses
-      // (extracted/validated/costed/quoted/pushed_to_bc) reach here only when a project fell through
-      // the ready/rfqs branches (i.e. hard issues NOT cleared) → they belong in (BOM) In Process,
-      // not a "ready" column. post_review keeps its prior placement (Draft column fallback) — it's
-      // not a Sales-board state and was never given a column.
-      const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc_review:"ready_review",evc_send:"ready_send",pre_review:"pre_review",post_review:"draft",active_eco:"active_eco",extracted:"in_progress",validated:"in_progress",costed:"in_progress",quoted:"in_progress",pushed_to_bc:"in_progress",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
+      // F025 (3a): column routing now delegates to the SSOT _todoBucketOf (the TOTAL status→column
+      // map + the active-ECO override + the PO'd carve-out all live there), so the To-Do pane pills
+      // and these board columns can't drift. _todoBucketOf returns null for board-excluded (PO'd,
+      // non-ECO → Production/Purchasing) projects — skip those here exactly as before.
       const map={};
       list.forEach(p=>{
-        // F024: BROAD active-ECO predicate (computeActiveEco = ECO_ACTIVE_STATES) — matches
-        // the red ECO tiles. Keep any-active-ECO project in the Sales board (not routed to
-        // purchasing via the guard below) and land it in the dedicated "active_eco" column.
-        // Once the ECO reaches a terminal state, computeActiveEco returns null and the project
-        // re-locks / routes back to Active/Production normally.
-        const _activeEco=computeActiveEco(p);
-        if((p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")&&!_activeEco)return;
-        const st=_activeEco?"active_eco":computeProjectEffectiveStatus(p);
-        const col=statusToCol[st]||"draft";
+        const col=_todoBucketOf(p);
+        if(!col)return;
         if(!map[col])map[col]=[];
         map[col].push(p);
       });
@@ -44823,8 +44882,12 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       {label}
     </button>
   );
+  // F025 (3a): the To-Do rail shows only on the main Projects page in the status (kanban) view.
+  const _railEligible=!forceView&&groupBy==="status";
 
   return(
+    <div style={{display:"flex",alignItems:"flex-start",width:"100%"}}>
+    <div style={{flex:1,minWidth:0}}>
     <div style={{maxWidth:2100,margin:"0 auto",padding:32,minWidth:0,width:"100%",boxSizing:"border-box"}}>
 
       {!forceView&&<div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
@@ -44883,6 +44946,9 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
             My Projects
           </button>
         </div>
+        {_railEligible&&<button onClick={()=>setRailOpen(v=>!v)} title={railOpen?"Hide the To-Do pane":"Show the To-Do pane"} style={{marginLeft:"auto",background:railOpen?"#0c2a46":"#383850",color:railOpen?C.accent:C.muted,border:railOpen?`1.5px solid ${C.accent}`:"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
+          📋 To-Do {railOpen?"▸":"◂"}
+        </button>}
       </div>}
 
       {loading&&!bootError&&(
@@ -45120,6 +45186,55 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           )}
         </>);
       })()}
+    </div>
+    </div>
+    {_railEligible&&railOpen&&(
+      <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",position:"sticky",top:0,alignSelf:"stretch",maxHeight:"100vh",overflowY:"auto"}}>
+        {(()=>{
+          // F025 (3a): pill grid — always the current user's OWN projects (regardless of the
+          // board's My/Team toggle), minus terminal Won/Lost. Bucketing via the SSOT _todoBucketOf
+          // so counts equal the board column counts; pill color = worst-timer project in the bucket.
+          const _now=Date.now();
+          // Mirror the board's status-list inclusion chain EXACTLY (transferred/importedFromBC/lostAt) so pane
+          // pill counts == board column counts; the ONLY intended divergence is always-personal scope (_isMyProject
+          // forced on). Do NOT add !wonAt — _todoBucketOf's PO'd carve-out sheds plain-Won, while active-ECO (Won)
+          // projects correctly route to the active_eco bucket (Coach 3a review, count-parity fix).
+          const paneProjects=projects.filter(p=>_isMyProject(p,uid)&&(!p.transferred||p.transferredTo!==uid)&&!p.importedFromBC&&!p.lostAt);
+          const _todoBuckets=[
+            ["draft","Draft"],
+            ["in_progress","(BOM) In Process"],
+            ["process_rfq","Pending RFQs"],
+            ["ready_review","Ready To Review"],
+            ["pre_review","In Pre-Review"],
+            ["ready_send","Ready To Send"],
+            ["active_eco","Active ECO"],
+            ["quotes_sent","Quotes Sent"]
+          ];
+          const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
+          return(<>
+            <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`}}>
+              <div style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.5}}>📋 TO-DO</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your projects, by attention</div>
+            </div>
+            <div style={{padding:"12px 12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              {_todoBuckets.map(([key,label])=>{
+                const items=paneProjects.filter(p=>_todoBucketOf(p)===key);
+                const [col,bg]=_pillTint[_pillColorForBucket(items,key,_now)];
+                return(
+                  <div key={key} onClick={()=>setFocusedCol(key)} title={`Focus the board on ${label}`}
+                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"8px 10px",transition:"transform 0.1s"}}
+                    onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
+                    onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
+                    <div style={{fontSize:9,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.5,lineHeight:1.25,minHeight:22}}>{label}</div>
+                    <div style={{fontSize:22,fontWeight:800,color:col,marginTop:2,fontFamily:"system-ui,sans-serif"}}>{items.length}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </>);
+        })()}
+      </aside>
+    )}
     </div>
   );
 }
