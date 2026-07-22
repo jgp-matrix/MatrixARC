@@ -38,8 +38,9 @@
 > • F029: pinned NECESSARY→tabled for research; **build starts after prod deploy.**
 > • **Test V.021** adds: equal-size To-Do pill tiles w/ bottom-left-aligned values (Jon).
 
-> ## 🌐 F033 — global persistent To-Do rail (BUILT, Coach reviewing)
-> • Lifted the To-Do rail out of the Sales Dashboard into an app-level `<TodoRail>` — persists on every top-level tab (Sales/Purchasing/Engineering/Production/Items); suppressed in ProjectView + future-F030 hook + while AI Assistant open; shared collapse (localStorage); pill-click → Sales board via app-level `pendingFocus`. +146/-100, validate PASS. 🔎 Coach reviewing (pendingFocus race / no Sales regression / layout) → test → prod.
+> ## 🌐 F033 — global persistent To-Do rail ✅✅ SHIPPED PROD v1.24.6 (c1054057)
+> • App-level `<TodoRail>` — persists on every top-level tab; suppressed in ProjectView + future-F030 hook + while AI Assistant open; shared collapse; pill-click → Sales board via `pendingFocus`. Coach APPROVE WITH NITS (race verified correct, no Sales regression, flag can't stick). Shipped straight to prod per Jon (code-level review; UI-only). ⏳ Jon prod-verify: rail on each tab · non-Sales pill-click → Sales focused · collapse persists · no double right-pane w/ AI Assistant open. Rollback = redeploy prior if any layout issue.
+> • **F031 Clear ✕ (#1)** 🔨 BUILDING (tree now clean post-F033 → direct build, no worktree).
 
 > ## 👥 Andrew (Reviewer/Designer) feedback → B046 + F032 (role-aware dashboard)
 > • **B046** (name missing in To-Do header) ✅ FIXED on Test V.022 (userFirstName/memberMap fall back to displayName→email-prefix — all-users fix).
