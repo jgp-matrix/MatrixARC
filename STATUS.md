@@ -7,6 +7,11 @@
 
 ## Current — 🟢 2026-07-21 · Jon BACK · prod v1.23.23 · session ACTIVE (freeze lifted)
 
+> ## ✨ F025 (NEW, HIGH) — User 'attention' Dashboard (top strip on Projects board)
+> • Ask: glanceable "what needs me / what's timing out" — pending-RFQ visibility (Ryan/Noah pain) + aging alarm (DRAFT/IN PROCESS/READY/PRE-REVIEW/RFQ > ~1wk).
+> • Coach scoped (`docs/F025-ATTENTION-DASHBOARD-SCOPE.md`). Jon ruled: top-strip, My-Projects+toggle, ~7d admin-configurable. Pure client derive, LOW risk, build M.
+> • STATUS: **⏳ NEEDS JON** — 3 design decisions before build plan: (1) aging clock staleness-proxy-now vs exact `statusChangedAt`; (2) READY-TO-REVIEW target; (3) RFQ return-leg "ready to review" chip.
+
 > ## ✅ B043 SHIPPED TO PROD v1.23.23 (release 3a297d66) — Ryan's RFQ send hardened
 > • Coach diagnose lane DONE (`docs/B043-RYAN-RFQ-COACH-TRACE.md`) — **BOTH symptoms = ONE root (H1):** RFQ mail sends client-side via MS Graph from the sender's mailbox; vendor recipient emails are BC-token-dependent (`bcGetVendorEmail` @6282 / `bcFetchVendorContacts` @19732 both return empty w/o `_bcToken`) → blank recipients SKIPPED (@19892) → supplier gets nothing; sender confirmation gated on ≥1 successful send (@20057) → zero sends = zero confirmation. Ryan-specific = team-member BC not connected / per-member key lacks vendor read (same class as B024).
 > • LIVE TRIAGE (Jon): PROD + BC connected (blue) + Ryan sending fine now → not a broken account; root = blank-vendor-email data/handling path (all-blank send = zero sent + no confirmation).
