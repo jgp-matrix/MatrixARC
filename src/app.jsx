@@ -44863,7 +44863,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
     }
   }
   const filterBtn=(label,val)=>(
-    <button key={val} onClick={()=>{setFocusedCol(null);setGroupBy(val);}} style={{background:groupBy===val?C.accent:"#383850",color:groupBy===val?"#fff":C.muted,border:groupBy===val?`1.5px solid ${C.accent}`:"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
+    <button key={val} onClick={()=>{setFocusedCol(null);setMyProjectsOnly(false);setGroupBy(val);}} style={{background:groupBy===val?C.accent:"#383850",color:groupBy===val?"#fff":C.muted,border:groupBy===val?`1.5px solid ${C.accent}`:"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
       {label}
     </button>
   );
