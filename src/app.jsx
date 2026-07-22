@@ -2211,7 +2211,7 @@ function setTooltipsEnabled(v){
 // to output) so the user always sees + can change them before sending.
 const DEFAULT_PAYMENT_TERMS="Net 30 Days";
 const DEFAULT_SHIPPING_METHOD="Customer Handles Shipping";
-let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD};
+let _pricingConfig={contingencyBOM:1500,contingencyConsumables:400,budgetaryContingencyPct:20,codaleStaleDays:30,bcStaleDays:60,defaultStaleDays:60,ecoDefaultLaborRate:65,quoteValidityDays:30,defaultPaymentTerms:DEFAULT_PAYMENT_TERMS,defaultShippingMethod:DEFAULT_SHIPPING_METHOD,attentionThresholdDays:7};
 // DECISION(v1.20.28, Milestone C): Cost drift threshold for restore preview.
 // buildRestorePreview flags items where |liveCost - archivedCost| / archivedCost > this value.
 const COST_DRIFT_THRESHOLD=0.05;
@@ -2219,7 +2219,7 @@ async function loadPricingConfig(uid){
   try{
     const path=_appCtx.configPath?`${_appCtx.configPath}/pricing`:`users/${uid}/config/pricing`;
     const d=await fbDb.doc(path).get();
-    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD};}
+    if(d.exists){const c=d.data();_pricingConfig={contingencyBOM:c.contingencyBOM??1500,contingencyConsumables:c.contingencyConsumables??400,budgetaryContingencyPct:c.budgetaryContingencyPct??20,codaleStaleDays:c.codaleStaleDays??30,bcStaleDays:c.bcStaleDays??60,defaultStaleDays:c.defaultStaleDays??60,ecoDefaultLaborRate:c.ecoDefaultLaborRate??65,quoteValidityDays:c.quoteValidityDays??30,defaultPaymentTerms:c.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS,defaultShippingMethod:c.defaultShippingMethod??DEFAULT_SHIPPING_METHOD,attentionThresholdDays:c.attentionThresholdDays??7};}
   }catch(e){}
 }
 async function savePricingConfig(uid,cfg){
@@ -9466,6 +9466,25 @@ async function saveProject(uid,project){
     data.quoteRev=1;
     data.lastQuoteHash=_computeQuoteHash(data);
   }
+  // F025: stamp statusChangedAt when the effective status transitions. Baseline = the SERVER
+  // value (_lastEffectiveStatus on the fresh _curDoc), so a stale-client full-doc set() can
+  // never wipe the fields — they're always rewritten from server truth (same self-guarding
+  // pattern as the ownerTakeover / quoteSent* guards above). Seed path (no prior baseline):
+  // record the current status WITHOUT stamping — avoids a mass clock-reset making every
+  // existing project look "just entered status" (the dashboard A5 fallback supplies the clock
+  // until a real transition). Unchanged / seed → never fabricate a stamp; carry the server
+  // stamp if present, else preserve whatever the incoming write already had (no wipe on a
+  // transient _curDoc read failure). Client-time Date.now() matches every sibling stamp and
+  // the uniform client-time aging compare. Computed here — AFTER every guard that mutates
+  // `data` (panels merge, review/quote-field restore, quoteRev bump) — so the status is final.
+  {
+    const _effSP=computeProjectEffectiveStatus(data);
+    const _prevEffSP=(_curDoc&&_curDoc.exists)?_curDoc.data()._lastEffectiveStatus:undefined;
+    const _srvStampSP=(_curDoc&&_curDoc.exists)?_curDoc.data().statusChangedAt:undefined;
+    data._lastEffectiveStatus=_effSP;
+    if(_prevEffSP!==undefined&&_prevEffSP!==_effSP)data.statusChangedAt=Date.now();
+    else data.statusChangedAt=_srvStampSP!==undefined?_srvStampSP:data.statusChangedAt;
+  }
   // Don't store page images in Firestore — strip dataUrls from panels
   // DECISION(v1.19.421): Include updatedBy (uid) so concurrent editing detection can
   // distinguish own saves from other users' saves.
@@ -9733,6 +9752,20 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
       }
     }else{
       liveProject={...liveProject,quoteRev:liveProject.quoteRev||1,lastQuoteHash:newQuoteHash};
+    }
+    // F025: mirror saveProject's statusChangedAt stamp. `liveProject` spreads the fresh server
+    // doc (`proj`), so proj._lastEffectiveStatus / proj.statusChangedAt are the server baseline
+    // — a stale panel save can't wipe them (self-guarding). This is the path that drives
+    // draft→in_progress→evc/rfqs during background extraction (panel status flows only through
+    // here). Seed / unchanged → carry the server stamp (never fabricate); real transition →
+    // stamp Date.now(). Runs after the quote-rev block so effective status reflects the bump.
+    {
+      const _effSPP=computeProjectEffectiveStatus(liveProject);
+      const _prevEffSPP=proj._lastEffectiveStatus;
+      const _srvStampSPP=proj.statusChangedAt;
+      liveProject._lastEffectiveStatus=_effSPP;
+      if(_prevEffSPP!==undefined&&_prevEffSPP!==_effSPP)liveProject.statusChangedAt=Date.now();
+      else liveProject.statusChangedAt=_srvStampSPP!==undefined?_srvStampSPP:liveProject.statusChangedAt;
     }
     const _prOvr=_pendingPreReviewOverrides[projectId];
     if(_prOvr&&!liveProject.preReviewStatus)Object.assign(liveProject,_prOvr);
@@ -16450,6 +16483,40 @@ function formatIncompleteQuoteAlert(issues){
   const suffix=`\n\nUse "🖨 Just Print" if you only want a hard copy for review.`;
   return `Quote cannot be SENT:\n\n${parts.join("\n\n")}${suffix}`;
 }
+// F025: shared RFQ-awaiting summary (SSOT for the panel-badge + the dashboard attention chip).
+// Factored verbatim from the panel-badge IIFE (:36889) so the two consumers can't drift, per
+// the CLAUDE.md dual-consumer-predicate rule. Uses r.bcVendorName (the badge's field). Does NOT
+// unify the row-based hasActiveRfqs in computeProjectEffectiveStatus — that's a different rule.
+function _rfqAwaitingSummary(project){
+  const now=Date.now();
+  const RFQ_EXPIRED_MS=5*24*60*60*1000; // 5 days
+  const RFQ_COOLDOWN_MS=30*24*60*60*1000;
+  const allBom=(project&&project.panels||[]).flatMap(p=>p.bom||[]).filter(r=>!r.isLaborRow&&r.rfqSentDate);
+  const pending=allBom.filter(r=>r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_COOLDOWN_MS&&!r.bcPoDate&&(!r.unitPrice||r.unitPrice===0));
+  const expired=pending.filter(r=>(now-r.rfqSentDate)>RFQ_EXPIRED_MS);
+  const pendingVendors=new Set(pending.map(r=>r.bcVendorName||"Unknown"));
+  const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
+  const oldestSentDate=pending.length?Math.min(...pending.map(r=>r.rfqSentDate)):null;
+  return{pendingRowCount:pending.length,expiredRowCount:expired.length,awaitingVendorCount:pendingVendors.size,expiredVendorCount:expiredVendors.size,oldestSentDate};
+}
+// F025: aging-clock start for a project's CURRENT effective status. Prefers the exact
+// statusChangedAt stamp (added by saveProject/saveProjectPanel); falls back for legacy docs
+// that predate the stamp — pre_review→preReviewSubmittedAt, rfqs→oldest non-labor rfqSentDate,
+// draft→createdAt, everything else→updatedAt. Pure/read-only.
+function _statusClockStart(project,eff){
+  if(project&&project.statusChangedAt)return project.statusChangedAt;
+  if(eff==="pre_review"&&project.preReviewSubmittedAt)return project.preReviewSubmittedAt;
+  if(eff==="rfqs"){
+    const dates=(project.panels||[]).flatMap(p=>p.bom||[]).filter(r=>!r.isLaborRow&&r.rfqSentDate).map(r=>r.rfqSentDate);
+    if(dates.length)return Math.min(...dates);
+  }
+  return eff==="draft"?(project.createdAt||project.updatedAt||Date.now()):(project.updatedAt||project.createdAt||Date.now());
+}
+// F025: "my project" predicate — factored from the Dashboard :44690 filter so the board list
+// and the attention derive share one definition (no drift).
+function _isMyProject(p,uid){
+  return p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code);
+}
 function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
   const panels=project.panels||[];
@@ -18304,6 +18371,8 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   const [defaultStaleDays,setDefaultStaleDays]=useState(_pricingConfig.defaultStaleDays??60);
   const [ecoDefaultLaborRate,setEcoDefaultLaborRate]=useState(_pricingConfig.ecoDefaultLaborRate??65);
   const [quoteValidityDays,setQuoteValidityDays]=useState(_pricingConfig.quoteValidityDays??30);
+  // F025: admin-configurable attention-dashboard aging threshold (days-in-status alarm)
+  const [attentionThresholdDays,setAttentionThresholdDays]=useState(_pricingConfig.attentionThresholdDays??7);
   // F020 (Option A): company-wide default quote terms (pre-fill blanks for new/non-BC customers)
   const [defaultPaymentTerms,setDefaultPaymentTerms]=useState(_pricingConfig.defaultPaymentTerms??DEFAULT_PAYMENT_TERMS);
   const [defaultShippingMethod,setDefaultShippingMethod]=useState(_pricingConfig.defaultShippingMethod??DEFAULT_SHIPPING_METHOD);
@@ -18504,7 +18573,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function save(){
     setSaving(true);
     await Promise.all([
-      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim()}),
+      savePricingConfig(uid,{contingencyBOM:bomVal,contingencyConsumables:consVal,budgetaryContingencyPct:budgPct,codaleStaleDays,bcStaleDays,defaultStaleDays,ecoDefaultLaborRate,quoteValidityDays,defaultPaymentTerms:(defaultPaymentTerms||"").trim(),defaultShippingMethod:(defaultShippingMethod||"").trim(),attentionThresholdDays}),
       saveDefaultBomItems(uid,defaultItems),
       isAdmin()?saveLaborRates(uid,laborRates):Promise.resolve()
     ]);
@@ -18635,6 +18704,20 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
             ))}
           </div>
         </div>
+
+        {/* F025 — Attention Dashboard aging threshold (admin only). Projects sitting in
+            DRAFT / IN PROCESS / READY / PRE-REVIEW / RFQ longer than this fire the
+            "⏰ Timing out" chip on the projects board. Clones the Quote Validity block. */}
+        {isAdmin()&&(
+        <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
+          <label style={{fontSize:12,color:C.sub,display:"block",marginBottom:4,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5}}>Attention Dashboard</label>
+          <div style={{display:"flex",alignItems:"center",gap:6}}>
+            <input type="number" min="1" max="365" value={attentionThresholdDays} onChange={e=>setAttentionThresholdDays(Math.max(1,parseInt(e.target.value)||7))} style={{...inp(),width:140,textAlign:"right"}}/>
+            <span style={{color:C.muted,fontSize:14}}>days</span>
+          </div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>How long a project may sit in Draft / In Process / Ready / Pre-Review / RFQ before the "Timing out" alert fires on the projects board (default 7).</div>
+        </div>
+        )}
 
         {/* ── AUTO-ADD BOM ITEMS ── */}
         <div style={{borderTop:`1px solid ${C.border}`,marginTop:8,paddingTop:16,marginBottom:16}}>
@@ -36887,17 +36970,11 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                 {/* B033: RFQ / Upload-Quote row is BOM-part sourcing — hidden for
                     services-only quotes (no sp / no BOM). */}
                 {sp&&(()=>{
-                  const now=Date.now();
-                  const RFQ_EXPIRED_MS=5*24*60*60*1000; // 5 days
-                  const RFQ_COOLDOWN_MS=30*24*60*60*1000;
-                  const allBom=(project.panels||[]).flatMap(p=>p.bom||[]).filter(r=>!r.isLaborRow&&r.rfqSentDate);
-                  const pending=allBom.filter(r=>r.rfqSentDate&&(now-r.rfqSentDate)<RFQ_COOLDOWN_MS&&!r.bcPoDate&&(!r.unitPrice||r.unitPrice===0));
-                  const expired=pending.filter(r=>(now-r.rfqSentDate)>RFQ_EXPIRED_MS);
-                  const awaitingCount=pending.length-expired.length;
-                  // Group by vendor for count
-                  const pendingVendors=new Set(pending.map(r=>r.bcVendorName||"Unknown"));
-                  const expiredVendors=new Set(expired.map(r=>r.bcVendorName||"Unknown"));
-                  const badge=expired.length>0?`⚠ ${expiredVendors.size} Expired RFQ${expiredVendors.size!==1?"s":""}`:awaitingCount>0?`${pendingVendors.size} RFQ${pendingVendors.size!==1?"s":""} Awaiting Response`:null;
+                  // F025: RFQ-awaiting counts now come from the shared _rfqAwaitingSummary SSOT
+                  // (same values the dashboard attention chip consumes). Badge string reproduced
+                  // byte-for-byte across all 3 branches (expired / awaiting / none).
+                  const _rs=_rfqAwaitingSummary(project);
+                  const badge=_rs.expiredRowCount>0?`⚠ ${_rs.expiredVendorCount} Expired RFQ${_rs.expiredVendorCount!==1?"s":""}`:(_rs.pendingRowCount-_rs.expiredRowCount)>0?`${_rs.awaitingVendorCount} RFQ${_rs.awaitingVendorCount!==1?"s":""} Awaiting Response`:null;
                   return <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
                     <button data-tour="rfq-btn"
                       onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onSendRfqEmails}
@@ -44380,9 +44457,23 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
   // null = show all columns (normal kanban); else = the focused column's KEY (not label).
   // View-only local UI state — no Firestore read/write, no status mutation.
   const [focusedCol,setFocusedCol]=useState(null);
+  // F025: attention-strip deep-link filter — {label, ids:Set}. Null = no filter. View-only
+  // local UI state (no Firestore read/write, no status mutation), like focusedCol.
+  const [attnFilter,setAttnFilter]=useState(null);
+  // F025: armed by an attention-chip click immediately before it flips groupBy→"status", so the
+  // [groupBy] reset effect below PRESERVES the freshly-set attnFilter instead of wiping it. A
+  // genuine user grouping switch leaves it false → filter clears as normal. Only armed when the
+  // click actually changes groupBy (see chip onClick), so the flag can never go stale.
+  const _attnClickRef=useRef(false);
   // F023: reset the focus whenever the view (groupBy) changes, so a stale column key
   // from another view (e.g. "status" → "production") never lingers.
-  useEffect(()=>{setFocusedCol(null);},[groupBy]);
+  // F025: clear the attention filter on a genuine user view switch (mirrors focusedCol), but
+  // PRESERVE it when the switch was initiated by an attention-chip deep-link (_attnClickRef).
+  useEffect(()=>{
+    setFocusedCol(null);
+    if(_attnClickRef.current)_attnClickRef.current=false; // consume the chip-click flag; keep attnFilter
+    else setAttnFilter(null);                              // user-driven view switch → clear filter
+  },[groupBy]);
   const bgTasks=useBgTasks();
 
   function groupProjects(list){
@@ -44663,6 +44754,44 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         </div>
       </div>}
 
+      {/* F025 — ATTENTION STRIP. Render-time derive (no useMemo/module cache, per the Async
+          Ownership Rule — recompute each render from in-memory `projects`). Renders exactly one
+          <div> (chips row OR the calm empty line), so it's a single sibling of the top-level div
+          — fragment-safe. Respects the My/Team toggle; excludes terminal (won/lost/imported).
+          Clicking a chip deep-links: groupBy→status, clear focusedCol, set attnFilter id-set. */}
+      {!forceView&&(()=>{
+        const _now=Date.now();
+        const _thrDays=_pricingConfig.attentionThresholdDays??7;
+        const _thrMs=_thrDays*24*60*60*1000;
+        const _timingStates=new Set(["draft","in_progress","evc","pre_review","rfqs"]);
+        const base=projects.filter(p=>!p.wonAt&&!p.lostAt&&!p.importedFromBC&&(!myProjectsOnly||_isMyProject(p,uid)));
+        const awaitingIds=new Set();let awaitingVendorTot=0,awaitingExpired=false;
+        const reviewIds=new Set();
+        const timingIds=new Set();
+        for(const p of base){
+          const _rs=_rfqAwaitingSummary(p);
+          if(_rs.pendingRowCount>0){awaitingIds.add(p.id);awaitingVendorTot+=_rs.awaitingVendorCount;if(_rs.expiredRowCount>0)awaitingExpired=true;}
+          if((rfqCounts&&rfqCounts[p.id])>0)reviewIds.add(p.id);
+          const _eff=computeProjectEffectiveStatus(p);
+          if(_timingStates.has(_eff)&&(_now-_statusClockStart(p,_eff))>_thrMs)timingIds.add(p.id);
+        }
+        const chips=[];
+        if(awaitingIds.size>0)chips.push({key:"awaiting",label:"⏳ Awaiting RFQ Response",head:awaitingIds.size,sub:`${awaitingVendorTot} vendor${awaitingVendorTot!==1?"s":""}`,color:awaitingExpired?"#f87171":"#818cf8",bg:awaitingExpired?"#2a0a0a":"#1e1b4b",ids:awaitingIds,filterLabel:"Awaiting RFQ response"});
+        if(reviewIds.size>0)chips.push({key:"review",label:"📥 Responses To Review",head:reviewIds.size,sub:"to import",color:"#4ade80",bg:"#0d1f0d",ids:reviewIds,filterLabel:"Responses ready to review"});
+        if(timingIds.size>0)chips.push({key:"timing",label:"⏰ Timing Out",head:timingIds.size,sub:`>${_thrDays}d in status`,color:"#f59e0b",bg:"#3a1f00",ids:timingIds,filterLabel:"Timing out"});
+        if(chips.length===0)return <div style={{fontSize:12,color:C.muted,marginBottom:8,padding:"4px 2px",opacity:0.75}}>✓ You're all caught up — nothing needs attention</div>;
+        return <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"stretch"}}>
+          {chips.map(c=>(
+            <div key={c.key} onClick={()=>{if(groupBy!=="status")_attnClickRef.current=true;setGroupBy("status");setFocusedCol(null);setAttnFilter({label:c.filterLabel,ids:c.ids});}} title={`Click to filter to ${c.head} project${c.head!==1?"s":""}`}
+              style={{display:"flex",flexDirection:"column",alignItems:"flex-start",justifyContent:"center",background:c.bg,border:`1px solid ${c.color}44`,borderRadius:8,padding:"6px 14px",minWidth:150,cursor:"pointer",transition:"transform 0.1s"}}
+              onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"} onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
+              <div style={{fontSize:9,fontWeight:700,color:c.color,textTransform:"uppercase",letterSpacing:0.6,opacity:0.85}}>{c.label}</div>
+              <div style={{fontSize:15,fontWeight:800,color:c.color,marginTop:1,fontFamily:"system-ui,sans-serif"}}>{c.head} <span style={{fontSize:10,fontWeight:500,opacity:0.7}}>{c.sub}</span></div>
+            </div>
+          ))}
+        </div>;
+      })()}
+
       {loading&&!bootError&&(
         <div style={{textAlign:"center",padding:80,color:C.muted}}>
           <div className="spin" style={{fontSize:24,marginBottom:12}}>◌</div>
@@ -44687,7 +44816,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         let myProjects=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&(groupBy==="imported"||groupBy==="active"||groupBy==="purchasing"||groupBy==="purchasing_kanban"||groupBy==="engineering"||groupBy==="budgetary"||groupBy==="lost"||groupBy==="production"||forceView==="purchasing"||forceView==="engineering"||forceView==="purchasing_kanban"||!p.importedFromBC));
         // "My Projects" filter — show only projects created by or assigned to current user
         if(myProjectsOnly){
-          myProjects=myProjects.filter(p=>p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code));
+          myProjects=myProjects.filter(p=>_isMyProject(p,uid)); // F025: shared predicate (SSOT with the attention derive)
         }
         // Apply search filter
         // DECISION(v1.19.517): Deep search ALL string fields in the project object
@@ -44708,6 +44837,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           }
           myProjects=myProjects.filter(p=>deepSearch(p,q,0));
         }
+        // F025: attention-strip deep-link — narrow the board to the clicked chip's id-set.
+        if(attnFilter)myProjects=myProjects.filter(p=>attnFilter.ids.has(p.id));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
@@ -44719,6 +44850,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         const _colColorFor=(label)=>_isStatusStyleView?(_statusColColors[label]||C.muted):C.sub;
         const _colBgFor=(label)=>_isStatusStyleView?(_statusColBg[label]||C.border):"#3d6090";
         return(<>
+          {/* F025: attention deep-link active — clear banner (mirrors the F023 focus reset). */}
+          {attnFilter&&(
+            <div style={{marginBottom:14,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+              <button onClick={()=>setAttnFilter(null)} style={{...btn(C.border,C.text),fontSize:12,padding:"6px 12px"}}>← Clear filter</button>
+              <span style={{fontSize:12,color:C.muted}}>Filtered to: <span style={{color:C.sub,fontWeight:700}}>{attnFilter.label}</span> ({attnFilter.ids.size})</span>
+            </div>
+          )}
           {!loading&&!bootError&&myProjects.length===0&&transferred.length===0&&(
             <div style={{textAlign:"center",padding:80,color:C.muted}}>
               <div style={{fontSize:52,marginBottom:16,opacity:0.2}}>⬡</div>

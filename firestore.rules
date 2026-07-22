@@ -239,7 +239,7 @@ service cloud.firestore {
       // standard timestamp fields — anything else gets rejected back into the regular
       // isWonOrLostLocked check.
       function isOnlyUnlockRequestUpdate() {
-        let allowedKeys = ['unlockRequestedBy', 'lastUnlockRequest', 'updatedAt', 'updatedBy', 'lastQuoteHash', 'quoteRev'];
+        let allowedKeys = ['unlockRequestedBy', 'lastUnlockRequest', 'updatedAt', 'updatedBy', 'lastQuoteHash', 'quoteRev', '_lastEffectiveStatus', 'statusChangedAt'];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
       // DECISION(v1.19.756/761): Pre-Review / Post-Review lock. While `preReviewStatus`
@@ -265,7 +265,8 @@ service cloud.firestore {
           'preReviewSubmittedAt','preReviewSubmittedBy',
           'preReviewAssignedTo','preReviewAssignedToName',
           'postReviewStatus','postReviewApprovedAt','postReviewApprovedBy','postReviewNotes',
-          'updatedAt','updatedBy','schemaVersion','lastQuoteHash','quoteRev'
+          'updatedAt','updatedBy','schemaVersion','lastQuoteHash','quoteRev',
+          '_lastEffectiveStatus','statusChangedAt'
         ];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
@@ -279,7 +280,8 @@ service cloud.firestore {
           'ecoCounter','activeEcoId','ecoSummary','effectivePanelTotals',
           'ecoFirstCreatedAt','ecoEditUnlockedAt','ecoEditUnlockedBy',
           'bcStatusForcedToQuote','bcStatusForcedToQuoteAt',
-          'updatedAt','updatedBy','schemaVersion'
+          'updatedAt','updatedBy','schemaVersion',
+          '_lastEffectiveStatus','statusChangedAt'
         ];
         return request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowedKeys);
       }
@@ -335,7 +337,8 @@ service cloud.firestore {
       // A real content save also touches panels/bom ⇒ fails hasOnly() ⇒ falls through to the lock check.
       function isOnlyLeaseUpdate() {
         let allowed = ['editingBy','editingByName','editingTabId','editingClaimedAt','editingExpiresAt',
-                       'editingLastActivityAt','editingAccessRequest','editingForcePending','updatedAt','updatedBy'];
+                       'editingLastActivityAt','editingAccessRequest','editingForcePending','updatedAt','updatedBy',
+                       '_lastEffectiveStatus','statusChangedAt'];
         let onlyLease = request.resource.data.diff(resource.data).affectedKeys().hasOnly(allowed);
         let cur = resource.data;
         let mayHold = !editingLeaseValid(cur)                          // free / crashed-stale → anyone may claim
