@@ -12,7 +12,7 @@
 > • Coach scoped (`docs/F025-ATTENTION-DASHBOARD-SCOPE.md`). Jon ruled: top-strip, My-Projects+toggle, ~7d admin-configurable. Pure client derive, LOW risk, build M.
 > • Jon ruled ALL decisions (2026-07-21): top-strip · My-Projects+toggle · ~7d admin-configurable · **EXACT time-in-status (new `statusChangedAt` stamp)** · READY-TO-REVIEW = evc bucket · 3 chips (⏳ awaiting RFQ · 📥 responses to review · ⏰ timing out).
 > • Marc build-ready plan DONE (`docs/F025-ATTENTION-DASHBOARD-PLAN.md`) — 6 pieces, ~140-160 LOC, chip#2 source (`rfqCounts`) already exists (no new listener). Save-path piece A (`statusChangedAt` in saveProject+saveProjectPanel) is the sensitive bit → Coach gate + live backward-compat before deploy.
-> • STATUS: **⏳ NEEDS JON — plan approval gate.** Approve plan (Marc recs on 4 residuals) → build → Coach save-path review → live backward-compat → deploy (target v1.24.0 minor).
+> • Jon APPROVED plan (2026-07-21, Marc recs on all residuals). **STATUS: 🔨 Marc BUILDING** (backgrounded) — 6 pieces A-E. Next: Coach save-path review (piece A) → live backward-compat (Jon) → deploy gate (target v1.24.0).
 
 > ## ✅ B043 SHIPPED TO PROD v1.23.23 (release 3a297d66) — Ryan's RFQ send hardened
 > • Coach diagnose lane DONE (`docs/B043-RYAN-RFQ-COACH-TRACE.md`) — **BOTH symptoms = ONE root (H1):** RFQ mail sends client-side via MS Graph from the sender's mailbox; vendor recipient emails are BC-token-dependent (`bcGetVendorEmail` @6282 / `bcFetchVendorContacts` @19732 both return empty w/o `_bcToken`) → blank recipients SKIPPED (@19892) → supplier gets nothing; sender confirmation gated on ≥1 successful send (@20057) → zero sends = zero confirmation. Ryan-specific = team-member BC not connected / per-member key lacks vendor read (same class as B024).
