@@ -29,3 +29,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.024 | v1.24.6-T024 | 6cdf3679 | (no description) | 2026-07-22 |
 | V.025 | v1.24.7-T025 | 5de11e66 | (no description) | 2026-07-22 |
 | V.026 | v1.24.8-T026 | c6bb03b1 | (no description) | 2026-07-22 |
+| V.027 | v1.24.8-T027 | fc68b9c3 | (no description) | 2026-07-22 |
