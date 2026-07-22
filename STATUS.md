@@ -11,7 +11,9 @@
 > • Top-strip (v1, on TEST) SUPERSEDED → right-side pane (like in-project Panel/Quote Summary). Reqs captured: `docs/F025-V2-TODO-DASHBOARD-REQUIREMENTS.md`.
 > • Decomposed: **G013** (remove redundant tile status pills), **B044** (projects wrongly in READY TO REVIEW/SEND — evc predicate), **F026** (split evc→READY TO REVIEW+READY TO SEND, reorder IN PRE-REVIEW column, per-status timestamps, review→RFQ-return), **F027** (MANAGER role + priority flag), **F025** (right-pane: pill grid GREEN/YELLOW≥80%/RED≥100% + timer-sorted list + ECO list + Quotes-Sent follow-up + idle-flash 40h/24h).
 > • v1 foundation (statusChangedAt / _rfqAwaitingSummary / _statusClockStart / _attentionThresholdMs) REUSED.
-> • STATUS: **2 Coach scoping lanes running** (B044 evc + Issues/clean-BOM predicates; column-split/timers/role/right-pane feasibility). **⏳ NEEDS JON — 3 planning decisions** (idle-timer per-user vs global; manager assignment; build sequence). Phased plan finalizes when Coach returns + Jon answers.
+> • Jon decisions locked: per-user idle · admin-assigned manager · foundation-first. Both Coach lanes DONE. **★ PHASED MASTER PLAN: `docs/F025-V2-MASTER-PLAN.md`.** B044 = real bug (evc `hasUnpriced` narrower than red-rule/send-gate) → SSOT consolidation fixes B044+B018+enables split. Manager = `permissions.manager` flag (reuse reviewer). Board already 7-col flexbox (reorder trivial). Timer infra mostly exists + lock-safe.
+> • Phases: 0 (G013) → 1 (F026 split/reorder + B044/B018 fix + timestamps) → 2 (F027 manager+pin) → 3 (F025 right-pane).
+> • STATUS: **⏳ NEEDS JON — 2 open decisions before Phase 1 build:** (1) 8-column + 380px-rail WIDTH strategy (biggest risk); (2) which "Issues" gate READY TO REVIEW (confidence+BC chips vs tech-review+manualVerify only). Other Coach decisions baked with recs (veto-able).
 
 > ## ✨ F025 v1 (SUPERSEDED) — attention top strip (on TEST V.009 only, never prod)
 > • Ask: glanceable "what needs me / what's timing out" — pending-RFQ visibility (Ryan/Noah pain) + aging alarm (DRAFT/IN PROCESS/READY/PRE-REVIEW/RFQ > ~1wk).
