@@ -48329,6 +48329,13 @@ function App({user}){
     notifications.forEach(n=>fbDb.doc(`users/${user.uid}/notifications/${n.id}`).update({read:true}).catch(()=>{}));
   }
 
+  // F031 #1: single-item clear — mirrors markAllNotifsRead's write. Setting read:true
+  // drops the item from the live listener filter (.filter(n=>n.read!==true)) so the row
+  // vanishes while the dropdown stays open. Add-only write; no field removed.
+  function markNotifRead(id){
+    fbDb.doc(`users/${user.uid}/notifications/${id}`).update({read:true}).catch(()=>{});
+  }
+
   function closeSearch(){setShowSearch(false);}
   function openProjectFromSearch(p){handleOpen(p);closeSearch();}
   const sqRowRef=useRef(null);
@@ -49281,6 +49288,11 @@ INSTRUCTIONS:
                         {n.type==='supplier_quote'&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>}
                         <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
                       </div>
+                      {/* F031 #1: per-notification Clear — stops row navigate, marks read (drops
+                          from the live list), keeps the dropdown open. Universal across types. */}
+                      <button title="Clear this notification" onClick={e=>{e.stopPropagation();markNotifRead(n.id);}}
+                        style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,lineHeight:1,padding:"0 2px",flexShrink:0,alignSelf:"flex-start"}}
+                        onMouseEnter={e=>e.currentTarget.style.color="#f1f5f9"} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
                     </div>
                   </div>
                 ))}
