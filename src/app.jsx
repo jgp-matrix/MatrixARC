@@ -44758,7 +44758,7 @@ function TodoRail({projects,uid,userFirstName,railOpen,setRailOpen,onFocusBucket
   const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
   const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{children}</div>);
   return(
-    <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",height:"100%",overflowY:"auto"}}>
+    <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",alignSelf:"stretch",overflowY:"auto"}}>
       <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:8}}>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
