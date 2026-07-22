@@ -48253,6 +48253,21 @@ function App({user}){
     return()=>{try{unsub();}catch(_){}};
   },[user.uid]);
 
+  // F031 #3: all-status RFQ map keyed by rfqUploads doc id (= the token carried on
+  // each supplier_quote notification as n.rfqUploadId). Read-only listener (no
+  // statusFilter → every status). Lets the bell dropdown tell a still-pending
+  // "submitted" RFQ (open the submissions modal) from one that's already been
+  // received/handled ('imported'/'dismissed'), whose modal would open empty — so
+  // that row shows a "safe to clear" note instead of a dead navigate.
+  const [rfqStatusMap,setRfqStatusMap]=useState({});
+  useEffect(()=>{
+    if(!user.uid)return;
+    const unsub=_listenRfqUploadsTeamScoped(user.uid,{},(allDocs)=>{
+      setRfqStatusMap(Object.fromEntries(allDocs.map(d=>[d.id,d.status])));
+    });
+    return()=>{try{unsub();}catch(_){}};
+  },[user.uid]);
+
   // DECISION(v1.19.599): Team-wide active-task visibility. Listens to company/activeExtractions
   // and surfaces OTHER members' in-progress extractions / pricing / validation on everyone's
   // dashboard.
@@ -49277,15 +49292,24 @@ INSTRUCTIONS:
               <div style={{height:notifMenuH,minHeight:120,maxHeight:"75vh",overflowY:"auto",resize:"vertical"}}
                 onMouseUp={e=>{const h=e.currentTarget.offsetHeight;if(h&&h!==notifMenuH){setNotifMenuH(h);try{localStorage.setItem('arc_notif_menu_height',String(h));}catch(_){}}}}>
                 {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
-                {notifications.map(n=>(
-                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:n.type==='supplier_quote'?"pointer":"default"}}
-                    onClick={()=>n.type==='supplier_quote'?handleNotifClick(n):undefined}>
+                {notifications.map(n=>{
+                  // F031 #3: a supplier_quote row is "handled" once its rfqUploads doc is
+                  // imported/dismissed — the submissions modal (submitted-only) would open
+                  // empty, so gate OFF the navigate and show a "safe to clear" note instead.
+                  const _rfqStatus=n.type==='supplier_quote'?rfqStatusMap[n.rfqUploadId]:undefined;
+                  const _rfqHandled=_rfqStatus==='imported'||_rfqStatus==='dismissed';
+                  const _clickable=n.type==='supplier_quote'&&!_rfqHandled;
+                  return(
+                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_clickable?"pointer":"default"}}
+                    onClick={()=>_clickable?handleNotifClick(n):undefined}>
                     <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
                       <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'📥':'🔔'}</span>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
                         <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
-                        {n.type==='supplier_quote'&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>}
+                        {n.type==='supplier_quote'&&(_rfqHandled
+                          ?<span style={{fontSize:11,fontWeight:700,color:C.green,opacity:0.8}}>✓ Already received — safe to clear</span>
+                          :<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>)}
                         <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
                       </div>
                       {/* F031 #1: per-notification Clear — stops row navigate, marks read (drops
@@ -49295,7 +49319,8 @@ INSTRUCTIONS:
                         onMouseEnter={e=>e.currentTarget.style.color="#f1f5f9"} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
               {/* Push notification toggle. DECISION(v1.19.762): gate on the static
                   browser-feature check (_pushSupported) instead of fbMessaging — the
