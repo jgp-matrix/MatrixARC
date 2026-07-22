@@ -12,8 +12,8 @@
 - **ECO reset = event-driven** — piggyback existing review-invalidation BOM-edit events (`onPreReviewInvalidated`/`onReviewerEdit`, fire on qty/partNumber/add/remove) to stamp a new `ecoLastBomChangeAt`.
 - **Priority pin = global** (one shared prioritized list; managers curate the team's queue), add-only `priorityPinnedAt`/`priorityPinnedBy`, allowed on locked projects (added to lock carve-outs like statusChangedAt).
 - **Right rail = full-height sticky** (matches in-project pane feel); the top-strip (v1) is **removed** in its favor.
-- **★ OPEN — width strategy (needs Jon):** 8 columns + 380px rail overflows ~1440px laptops. See the question below.
-- **★ OPEN — READY-TO-REVIEW Issues gate (needs Jon):** which "Issues" gate the READY TO REVIEW bucket — confidence + BC chips (advisory today), or only tech-review + manualVerify (already hard send-gates)?
+- **✅ Width strategy (Jon 2026-07-21):** horizontal-scroll the kanban (`overflow-x:auto` wrapper, columns keep readable minWidth) + a **collapsible right rail** (toggle to reclaim full board width). Solves the 8-col + 380px-rail overflow without cramping tiles.
+- **✅ READY-TO-REVIEW Issues gate (Jon 2026-07-21):** gate on **tech-review + manualVerify only** (the existing hard send-blockers). Confidence chips + not-in-BC stay ADVISORY (visible, don't hold a project out of READY TO REVIEW). So `issuesCleared(project) = !_hasUnresolvedTechReview(project) && no manualVerifyRequired`.
 
 ## Data-model additions (ALL add-only, no migration, no schema bump)
 `ecoLastBomChangeAt` · `lastOpenedAt` (per-user — a `users/{uid}` map or durable per-user stamp) · `priorityPinnedAt` + `priorityPinnedBy` · `_pricingConfig.attentionThresholds{ per-bucket {value,unit} }` · member `permissions.manager`. (Existing `statusChangedAt`/`_lastEffectiveStatus` reused.)
@@ -28,7 +28,7 @@
    - `anyRedRow(project)` = any non-labor row `_isBomRowFlaggedRed` (:16282).
    - `readyToReview(project)` = `hasBom && !hasActiveRfqs && issuesCleared(project)` (may still have red/LT/pricing gaps).
    - `readyToSend(project)` = `readyToReview && findIncompleteQuoteItems(project).length===0 && !anyRedRow(project)`.
-   - `issuesCleared(project)` = no low/med-confidence row · no not-in-BC row · `!_hasUnresolvedTechReview` · no `manualVerifyRequired` (final composition pending the Issues-gate decision).
+   - `issuesCleared(project)` = `!_hasUnresolvedTechReview(project) && no panel manualVerifyRequired` (Jon: tech-review + manualVerify only; confidence/BC chips advisory).
 2. **Fix B044/B018:** replace the narrow `hasUnpriced` (:16554) routing so a send-blocked project can NOT land in a "ready" bucket; align the send-count/messaging (B018) onto the same SSOT.
 3. **Emit split statuses:** `computeProjectEffectiveStatus` returns `evc_review` / `evc_send`; add `if(hasBom && anyRedRow) return "rfqs"` (review-with-red-rows → back to RFQs) after the quoteSent/postReview/preReview-pending short-circuits.
 4. **Kanban triple in lockstep** (:44646-44648): `order` → `[draft, in_progress, process_rfq, ready_review, pre_review, ready_send, active_eco, quotes_sent]` (pre_review between review & send); `labels` + `statusToCol` + `_statusColColors/_statusColBg` + `Badge` map (:16589) + transferred-tile maps — add the two new keys; keep `statusToCol` total.
