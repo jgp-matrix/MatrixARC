@@ -45207,11 +45207,11 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 const [col,bg]=_pillTint[_pillColorForBucket(items,key,_now)];
                 return(
                   <div key={key} onClick={()=>{setMyProjectsOnly(true);setFocusedCol(key);}} title={`Show your ${label} projects`}
-                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"4px 5px",transition:"transform 0.1s"}}
+                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"6px 8px",height:72,display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
                     onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-                    <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.5,lineHeight:1.2,minHeight:20}}>{label}</div>
-                    <div style={{fontSize:18,fontWeight:800,color:col,marginTop:1,fontFamily:"system-ui,sans-serif"}}>{items.length}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
+                    <div style={{fontSize:20,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{items.length}</div>
                   </div>
                 );
               })}
