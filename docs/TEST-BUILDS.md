@@ -11,3 +11,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | Build | Bundle tag | Base SHA | Change | Date |
 |-------|-----------|----------|--------|------|
 | V.007 | v1.23.18-T007 | 2cfc12a | G009 seed — test-env versioning introduced (TEST_BUILD counter + ribbon badge + deploy-test.sh + freshness loop-guard) | 2026-07-14 |
+| V.009 | v1.23.23-T009 | a86df6eb | (no description) | 2026-07-22 |
