@@ -45197,7 +45197,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
           return(<>
             <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`}}>
-              <div style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.5}}>📋 TO-DO</div>
+              <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
               <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your projects, by attention</div>
             </div>
             <div style={{padding:"12px 12px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -45206,10 +45206,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 const [col,bg]=_pillTint[_pillColorForBucket(items,key,_now)];
                 return(
                   <div key={key} onClick={()=>setFocusedCol(key)} title={`Focus the board on ${label}`}
-                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"8px 10px",transition:"transform 0.1s"}}
+                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"5px 7px",transition:"transform 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
                     onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-                    <div style={{fontSize:9,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.5,lineHeight:1.25,minHeight:22}}>{label}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.5,lineHeight:1.2,minHeight:20}}>{label}</div>
                     <div style={{fontSize:22,fontWeight:800,color:col,marginTop:2,fontFamily:"system-ui,sans-serif"}}>{items.length}</div>
                   </div>
                 );
