@@ -46459,7 +46459,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         Row 4 = pills (RFQ + LOST/status). Dropping the horizontal PRJ#+customer+owner cram lets
         the tile go narrow enough for all 8 Sales columns to fit without horizontal overflow. */}
     {/* Row 1: 📌 pin badge + PRJ# + inline ECO label + BC-disconnected ⚠ (left) · owner / EDITING (right) */}
-    <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+    {/* B047: overflow:hidden is the safety net — the right-side name/EDITING must NEVER bleed past the tile edge. */}
+    <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0,overflow:"hidden"}}>
       {/* F027: pin badge intentionally NOT shown on the main board (Jon) — the priority pin belongs to the F025 To-Do list, not the main screen. */}
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
@@ -46474,11 +46475,16 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
           // DECISION(v1.19.604): First name only — "Noah Parkinson EDITING" was getting cut off.
           const fullName=activeViewer.userName||(activeViewer.userEmail||"").split("@")[0]||"Teammate";
           const firstName=fullName.split(/\s+/)[0].slice(0,10);
-          return<div title={`${activeViewer.userName||activeViewer.userEmail} is viewing this project`} style={{fontSize:9,color:"#fcd34d",fontWeight:700,letterSpacing:0.3,maxWidth:100,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0,animation:"pulseYellow 2s ease-in-out infinite"}}>{firstName} EDITING</div>;
+          // B047: EDITING indicator is the long case ("RYAN EDITING") — allow it to WRAP to a second line
+          // (right-justified) instead of overflowing. Shrinkable (no flexShrink:0 + minWidth:0) so the flex
+          // spacer collapses first and this block ellipsizes/wraps within the tile; overflow:hidden on the row clips any residual.
+          return<div title={`${activeViewer.userName||activeViewer.userEmail} is viewing this project`} style={{fontSize:9,color:"#fcd34d",fontWeight:700,letterSpacing:0.3,maxWidth:64,minWidth:0,overflow:"hidden",whiteSpace:"normal",wordBreak:"break-word",lineHeight:1.15,textAlign:"right",textTransform:"uppercase",animation:"pulseYellow 2s ease-in-out infinite"}}>{firstName} EDITING</div>;
         }
         const owner=memberMap&&p.createdBy&&memberMap[p.createdBy];
         const name=owner?owner.firstName||owner.email.split("@")[0]:userFirstName;
-        return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textTransform:"uppercase",flexShrink:0}}>{name}</div>:null;
+        // B047: plain owner name — shrinkable (no flexShrink:0 + minWidth:0) so it truncates within the tile
+        // instead of overflowing; kept pinned right by the flex:1 spacer above, right-aligned text.
+        return name?<div style={{fontSize:9,color:C.muted,fontWeight:600,letterSpacing:0.3,maxWidth:60,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",textAlign:"right",textTransform:"uppercase"}}>{name}</div>:null;
       })()}
     </div>
     {/* Row 2: customer name on its own line (with logo) — full tile width, ellipsis */}
