@@ -35,6 +35,10 @@
 > • F029: pinned NECESSARY→tabled for research; **build starts after prod deploy.**
 > • **Test V.021** adds: equal-size To-Do pill tiles w/ bottom-left-aligned values (Jon).
 
+> ## 👥 Andrew (Reviewer/Designer) feedback → B046 + F032 (role-aware dashboard)
+> • **B046** (name missing in To-Do header) ✅ FIXED on Test V.022 (userFirstName/memberMap fall back to displayName→email-prefix — all-users fix).
+> • **F032** (`docs/F032-ROLE-DIFFERENTIATED-DASHBOARD.md`) 🔨 BUILDING — role-differentiated pane: Salesman pills ONLY for actual salespeople (fixes Andrew's phantom RFQs), Reviewer section (In-Pre-Review + Needs-Post-Review assigned-to-me), Designer section (BC-assigned by service type), new `permissions.designer` flag, multi-role=stacked sections. → Coach review → test. Applies to F025 pane + future F030 page. **Validates the all-users principle.**
+
 > ## 🐛 B045 — bell never fired: ROOT-CAUSED + FIXED (on Test V.021)
 > • ROOT CAUSE (Coach, code-confirmed): listener query `.where(read==false).orderBy(createdAt)` needed an uncreated composite index → silently errored (empty `()=>{}` handler) → list stayed `[]` forever. Creates/rules/render all healthy. **Fixed (Jon chose index-free):** `orderBy(createdAt desc).limit(50)` + client-filter `read!==true`; error handler now logs. **⏳ Jon verify on Test V.021: does the bell NOW show notifications?** (test shares prod data → any real unread should appear = confirmation). **★ Unblocks F029 Phase B** (reuse this bell).
 > • Jon V.015 item 1 (RFQ needing-approval "N RFQS" badge on tiles) = **verified INTACT** (ProjectTile :46370, survives G013/tile rework) — no regression, no change.
