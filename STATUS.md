@@ -27,6 +27,9 @@
 > • **3a BUILDING** (collapsible 380px rail + 8-pill grid + `_todoBucketOf`/`_bucketTimerColor` SSOT; no new persisted fields). Next: 3b list+RFQ line+quotes-weekly · 3c per-category threshold Settings · 3d ECO timer (new field+rules) · 3e idle-flash (per-user field). Each: build→Coach→test→deploy.
 > • Plan: `docs/F025-RIGHT-PANE-PLAN.md`.
 
+> ## 🔎 B013 (parallel, read-only) — chronic multi-user BC reliability diagnostic
+> • Coach diagnosing (while F025 3a builds): the token/connection model, why the pill stays BLUE while calls 401 (failure mode B blind spot), why team members drop more (per-member API-key factor, failure mode A), + fix direction (honest health indicator / retry-on-401 / token auto-refresh). B013-1/2/3 already shipped the 401 sync-modal distinction; this targets the reliability layer. Will need live Debug Log capture to confirm active.
+
 > ## ✨ F025 v2 RESHAPE (Jon 2026-07-21) — original reshape spec (see plan doc)
 > • Top-strip (v1, on TEST) SUPERSEDED → right-side pane (like in-project Panel/Quote Summary). Reqs captured: `docs/F025-V2-TODO-DASHBOARD-REQUIREMENTS.md`.
 > • Decomposed: **G013** (remove redundant tile status pills), **B044** (projects wrongly in READY TO REVIEW/SEND — evc predicate), **F026** (split evc→READY TO REVIEW+READY TO SEND, reorder IN PRE-REVIEW column, per-status timestamps, review→RFQ-return), **F027** (MANAGER role + priority flag), **F025** (right-pane: pill grid GREEN/YELLOW≥80%/RED≥100% + timer-sorted list + ECO list + Quotes-Sent follow-up + idle-flash 40h/24h).
