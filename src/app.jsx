@@ -44548,22 +44548,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
   // null = show all columns (normal kanban); else = the focused column's KEY (not label).
   // View-only local UI state — no Firestore read/write, no status mutation.
   const [focusedCol,setFocusedCol]=useState(null);
-  // F025: attention-strip deep-link filter — {label, ids:Set}. Null = no filter. View-only
-  // local UI state (no Firestore read/write, no status mutation), like focusedCol.
-  const [attnFilter,setAttnFilter]=useState(null);
-  // F025: armed by an attention-chip click immediately before it flips groupBy→"status", so the
-  // [groupBy] reset effect below PRESERVES the freshly-set attnFilter instead of wiping it. A
-  // genuine user grouping switch leaves it false → filter clears as normal. Only armed when the
-  // click actually changes groupBy (see chip onClick), so the flag can never go stale.
-  const _attnClickRef=useRef(false);
   // F023: reset the focus whenever the view (groupBy) changes, so a stale column key
   // from another view (e.g. "status" → "production") never lingers.
-  // F025: clear the attention filter on a genuine user view switch (mirrors focusedCol), but
-  // PRESERVE it when the switch was initiated by an attention-chip deep-link (_attnClickRef).
   useEffect(()=>{
     setFocusedCol(null);
-    if(_attnClickRef.current)_attnClickRef.current=false; // consume the chip-click flag; keep attnFilter
-    else setAttnFilter(null);                              // user-driven view switch → clear filter
   },[groupBy]);
   const bgTasks=useBgTasks();
 
@@ -44852,44 +44840,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         </div>
       </div>}
 
-      {/* F025 — ATTENTION STRIP. Render-time derive (no useMemo/module cache, per the Async
-          Ownership Rule — recompute each render from in-memory `projects`). Renders exactly one
-          <div> (chips row OR the calm empty line), so it's a single sibling of the top-level div
-          — fragment-safe. Respects the My/Team toggle; excludes terminal (won/lost/imported).
-          Clicking a chip deep-links: groupBy→status, clear focusedCol, set attnFilter id-set. */}
-      {!forceView&&(()=>{
-        const _now=Date.now();
-        const _thrMs=_attentionThresholdMs();
-        const _thrLabel=`${_pricingConfig.attentionThresholdValue||7}${(_pricingConfig.attentionThresholdUnit||'days').charAt(0)}`;
-        const _timingStates=new Set(["draft","in_progress","evc","evc_review","evc_send","pre_review","rfqs","active_eco","quotes_sent"]);
-        const base=projects.filter(p=>!p.wonAt&&!p.lostAt&&!p.importedFromBC&&(!myProjectsOnly||_isMyProject(p,uid)));
-        const awaitingIds=new Set();let awaitingVendorTot=0,awaitingExpired=false;
-        const reviewIds=new Set();
-        const timingIds=new Set();
-        for(const p of base){
-          const _rs=_rfqAwaitingSummary(p);
-          if(_rs.pendingRowCount>0){awaitingIds.add(p.id);awaitingVendorTot+=_rs.awaitingVendorCount;if(_rs.expiredRowCount>0)awaitingExpired=true;}
-          if((rfqCounts&&rfqCounts[p.id])>0)reviewIds.add(p.id);
-          const _eff=computeProjectEffectiveStatus(p);
-          if(_timingStates.has(_eff)&&(_now-_statusClockStart(p,_eff))>_thrMs)timingIds.add(p.id);
-        }
-        const chips=[];
-        if(awaitingIds.size>0)chips.push({key:"awaiting",label:"⏳ Awaiting RFQ Response",head:awaitingIds.size,sub:`${awaitingVendorTot} vendor${awaitingVendorTot!==1?"s":""}`,color:awaitingExpired?"#f87171":"#818cf8",bg:awaitingExpired?"#2a0a0a":"#1e1b4b",ids:awaitingIds,filterLabel:"Awaiting RFQ response"});
-        if(reviewIds.size>0)chips.push({key:"review",label:"📥 Responses To Review",head:reviewIds.size,sub:"to import",color:"#4ade80",bg:"#0d1f0d",ids:reviewIds,filterLabel:"Responses ready to review"});
-        if(timingIds.size>0)chips.push({key:"timing",label:"⏰ Timing Out",head:timingIds.size,sub:`>${_thrLabel} in status`,color:"#f59e0b",bg:"#3a1f00",ids:timingIds,filterLabel:"Timing out"});
-        if(chips.length===0)return <div style={{fontSize:12,color:C.muted,marginBottom:8,padding:"4px 2px",opacity:0.75}}>✓ You're all caught up — nothing needs attention</div>;
-        return <div style={{display:"flex",gap:8,marginBottom:8,flexWrap:"wrap",alignItems:"stretch"}}>
-          {chips.map(c=>(
-            <div key={c.key} onClick={()=>{if(groupBy!=="status")_attnClickRef.current=true;setGroupBy("status");setFocusedCol(null);setAttnFilter({label:c.filterLabel,ids:c.ids});}} title={`Click to filter to ${c.head} project${c.head!==1?"s":""}`}
-              style={{display:"flex",flexDirection:"column",alignItems:"flex-start",justifyContent:"center",background:c.bg,border:`1px solid ${c.color}44`,borderRadius:8,padding:"6px 14px",minWidth:150,cursor:"pointer",transition:"transform 0.1s"}}
-              onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"} onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-              <div style={{fontSize:9,fontWeight:700,color:c.color,textTransform:"uppercase",letterSpacing:0.6,opacity:0.85}}>{c.label}</div>
-              <div style={{fontSize:15,fontWeight:800,color:c.color,marginTop:1,fontFamily:"system-ui,sans-serif"}}>{c.head} <span style={{fontSize:10,fontWeight:500,opacity:0.7}}>{c.sub}</span></div>
-            </div>
-          ))}
-        </div>;
-      })()}
-
       {loading&&!bootError&&(
         <div style={{textAlign:"center",padding:80,color:C.muted}}>
           <div className="spin" style={{fontSize:24,marginBottom:12}}>◌</div>
@@ -44935,8 +44885,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           }
           myProjects=myProjects.filter(p=>deepSearch(p,q,0));
         }
-        // F025: attention-strip deep-link — narrow the board to the clicked chip's id-set.
-        if(attnFilter)myProjects=myProjects.filter(p=>attnFilter.ids.has(p.id));
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
         const groups=groupProjects(myProjects);
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
@@ -44953,13 +44901,6 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         const _colColorFor=(label)=>_isStatusStyleView?(_statusColColors[label]||C.muted):C.sub;
         const _colBgFor=(label)=>_isStatusStyleView?(_statusColBg[label]||C.border):"#3d6090";
         return(<>
-          {/* F025: attention deep-link active — clear banner (mirrors the F023 focus reset). */}
-          {attnFilter&&(
-            <div style={{marginBottom:14,display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
-              <button onClick={()=>setAttnFilter(null)} style={{...btn(C.border,C.text),fontSize:12,padding:"6px 12px"}}>← Clear filter</button>
-              <span style={{fontSize:12,color:C.muted}}>Filtered to: <span style={{color:C.sub,fontWeight:700}}>{attnFilter.label}</span> ({attnFilter.ids.size})</span>
-            </div>
-          )}
           {!loading&&!bootError&&myProjects.length===0&&transferred.length===0&&(
             <div style={{textAlign:"center",padding:80,color:C.muted}}>
               <div style={{fontSize:52,marginBottom:16,opacity:0.2}}>⬡</div>
