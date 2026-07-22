@@ -47986,6 +47986,8 @@ function App({user}){
   const [showGearMenu,setShowGearMenu]=useState(false);
   const [showUserMenu,setShowUserMenu]=useState(false);
   const [showBellMenu,setShowBellMenu]=useState(false);
+  // B045/#3: persist the notification dropdown's height so a user can stretch it taller and it sticks.
+  const [notifMenuH,setNotifMenuH]=useState(()=>{try{return parseInt(localStorage.getItem('arc_notif_menu_height'))||360;}catch(_){return 360;}});
   const [notifications,setNotifications]=useState([]);
   const [pendingPortalOpen,setPendingPortalOpen]=useState(null); // projectId to auto-open portal modal
   // DECISION(v1.19.781): Same deep-link pattern for the customer-review responses modal.
@@ -49130,7 +49132,8 @@ INSTRUCTIONS:
                 <span style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,flex:1}}>Notifications {notifications.length>0&&`(${notifications.length})`}</span>
                 {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
               </div>
-              <div style={{maxHeight:360,overflowY:"auto"}}>
+              <div style={{height:notifMenuH,minHeight:120,maxHeight:"75vh",overflowY:"auto",resize:"vertical"}}
+                onMouseUp={e=>{const h=e.currentTarget.offsetHeight;if(h&&h!==notifMenuH){setNotifMenuH(h);try{localStorage.setItem('arc_notif_menu_height',String(h));}catch(_){}}}}>
                 {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
                 {notifications.map(n=>(
                   <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:n.type==='supplier_quote'?"pointer":"default"}}
