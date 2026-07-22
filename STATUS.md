@@ -24,8 +24,8 @@
 
 > ## ✨ F025 — right-pane To-Do dashboard: BUILDING (final phase, sub-phased 3a→3e)
 > • Decisions locked: 8 pills (one per board column incl. Ready To Send) · always-personal scope · pill color = worst project in bucket · thresholds {yellow,red} pairs (Jon's cutoffs, Settings-editable, defaults for the 3 unspecified) · ECO real-BOM-hook · idle map unbounded.
-> • **3a BUILT** (collapsible 380px rail + 8-pill grid; refactored board grouping to shared `_todoBucketOf` SSOT; no new persisted fields; validate+scope PASS). 🔎 **Coach reviewing** (priority: board-grouping refactor byte-equivalent). Next: 3b list+RFQ line+quotes-weekly · 3c threshold Settings · 3d ECO timer · 3e idle-flash.
-> • Parallel: **B023** (QUOTE SUMMARY price-clip) building in an ISOLATED WORKTREE (disjoint region → clean merge after 3a commits). Jon stepped away — ping on test-deploy.
+> • **3a ✅ on TEST V.013** (master `9cf4c7c4`). Coach CHANGES-REQUIRED → FIXED (pane filter now mirrors the board's inclusion chain; dropped `!wonAt` so Active-ECO pill counts match the board — the count-parity blocker). Collapsible 380px rail + 8-pill grid; board grouping refactored to shared `_todoBucketOf` (byte-equivalent per Coach). ⏳ Jon eyeball on test. Next: 3b list+RFQ+quotes-weekly · 3c threshold Settings · 3d ECO timer · 3e idle-flash.
+> • **B023 ✅ MERGED** (cherry-picked `811a6574`→master, auto-merged clean) + on Test V.013; worktree cleaned up.
 > • Plan: `docs/F025-RIGHT-PANE-PLAN.md`.
 
 > ## 🔎 B013 — ✅ DIAGNOSED (`docs/B013-BC-RELIABILITY-DIAGNOSIS.md`)
