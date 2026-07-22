@@ -31,8 +31,8 @@
 > • F029: pinned NECESSARY→tabled for research; **build starts after prod deploy.**
 > • **Test V.018** adds: equal-size To-Do pill tiles w/ bottom-left-aligned values (Jon).
 
-> ## 🐛 B045 (NEW, HIGH) — in-app notification BELL never fired for anything
-> • Jon (2026-07-22): never seen a bell notification since built. **Escalated HIGH — F029's notify vision delivers via this bell.** Coach read-only diagnostic running (suspects: missing composite index on the `read==false`+`orderBy` query → silent listener error; create-rule requires `from` → silent-rejected creates; read-rule/uid/listener-mount). ⏳ diagnosis → fix (prerequisite/enabler for F029 Phase B).
+> ## 🐛 B045 — bell never fired: ROOT-CAUSED + FIXED (on Test V.019)
+> • ROOT CAUSE (Coach, code-confirmed): listener query `.where(read==false).orderBy(createdAt)` needed an uncreated composite index → silently errored (empty `()=>{}` handler) → list stayed `[]` forever. Creates/rules/render all healthy. **Fixed (Jon chose index-free):** `orderBy(createdAt desc).limit(50)` + client-filter `read!==true`; error handler now logs. **⏳ Jon verify on Test V.019: does the bell NOW show notifications?** (test shares prod data → any real unread should appear = confirmation). **★ Unblocks F029 Phase B** (reuse this bell).
 > • Jon V.015 item 1 (RFQ needing-approval "N RFQS" badge on tiles) = **verified INTACT** (ProjectTile :46370, survives G013/tile rework) — no regression, no change.
 > • **F030 filed (FUTURE, parked):** dedicated personal User Dashboard PAGE (own nav) = user's project tiles w/ $ totals + attention list + combined Outlook/ARC tasks + email/meeting awareness. Convergence of F025+F029. Jon-aware, build later.
 > • **Outlook/Graph research DONE** (`docs/OUTLOOK-GRAPH-TODO-RESEARCH.md`): Q1 To-Do↔Outlook sync + Q2/Q3 time-mgmt notify-tool both feasible on ARC's existing Graph plumbing; notify vision = foreground poll + existing bell (no server infra). **⏳ Jon decision: pursue (file F029 + greenlight Q1 pilot) or park.**
