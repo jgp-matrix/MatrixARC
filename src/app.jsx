@@ -1262,6 +1262,10 @@ const SERVICE_CARD_LABELS={
   programming:"Programming",
   commissioning:"Commissioning",
 };
+// F032: does a project carry a service card of the given lineType? SSOT — the engineering
+// board (groupBy==="engineering") and the To-Do pane's designer section both call this, so the
+// work-type signal can't drift (CLAUDE.md "Single Source of Truth"). Pure/read-only.
+function _hasServiceOfType(p,t){return Array.isArray(p.serviceCards)&&p.serviceCards.some(sc=>sc&&sc.lineType===t);}
 const SERVICE_CARD_DEFAULTS={
   engineering:{
     description:"Engineering Design",
@@ -2193,6 +2197,10 @@ function hasPermission(name){return _appCtx.role==="admin"||!!(_appCtx.permissio
 // locked project; it grants NO other write capability. Mirrors isReviewer's shape;
 // reuses _appCtx.permissions (populated at auth read + live member-doc update).
 function isManager(){return hasPermission("manager");}
+// F032: DESIGNER permission flag — admin-assigned in Team & Permissions, mirrors
+// isManager()/isReviewer's shape. Powers the role-differentiated To-Do pane (designer
+// section). No schema change — reuses _appCtx.permissions (member doc), add-only flag.
+function isDesigner(){return hasPermission("designer");}
 
 // ── TOOLTIPS ──
 let _tooltipsEnabled=true; // default; loaded from Firestore after auth
@@ -16553,6 +16561,11 @@ const _TODO_THRESHOLD_DEFAULTS={
   process_rfq:{yellowMs:4*24*36e5,redMs:5*24*36e5},
   ready_review:{yellowMs:Math.round(1.6*24*36e5),redMs:2*24*36e5},
   pre_review:{yellowMs:Math.round(0.8*24*36e5),redMs:24*36e5},
+  // F032: post-review mirrors pre-review (~19.2h yellow / 24h red). TUNABLE — Settings per-category
+  // override lands in F025 sub-phase 3c (reads _pricingConfig.attentionThresholds first). Engineering
+  // designer buckets are deliberately NOT listed: they have no clean time-in-status source, so those
+  // pills render color-less (count only) rather than mis-color (Part D spec clause).
+  post_review:{yellowMs:Math.round(0.8*24*36e5),redMs:24*36e5},
   ready_send:{yellowMs:Math.round(0.8*4*36e5),redMs:4*36e5},
   active_eco:{yellowMs:3*24*36e5,redMs:4*24*36e5},
   quotes_sent:{yellowMs:Math.round(0.8*14*24*36e5),redMs:14*24*36e5}
@@ -16587,10 +16600,43 @@ function _pillColorForBucket(bucketProjects,bucket,now){
   }
   return worst;
 }
+// F032: resolve the CURRENT user's BC salesperson code (email↔_arcSalespersonCache match).
+// SSOT — both _isMyProject's salesperson half AND _isSalesperson read this, so "who is a
+// salesperson" is defined in ONE place and can't drift (CLAUDE.md "Single Source of Truth").
+// Returns the Code string, or a falsy value if the user maps to no salesperson. Pure/read-only.
+function _mySalespersonCode(){
+  return _appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code;
+}
 // F025: "my project" predicate — factored from the Dashboard :44690 filter so the board list
-// and the attention derive share one definition (no drift).
+// and the attention derive share one definition (no drift). Salesperson half now reads the
+// shared _mySalespersonCode (F032) — expression preserved verbatim, just factored.
 function _isMyProject(p,uid){
-  return p.createdBy===uid||p.bcSalespersonCode===(_appCtx.role&&window._arcSalespersonCache?.find(s=>(s.E_Mail||"").toLowerCase()===(fbAuth.currentUser?.email||"").toLowerCase())?.Code);
+  return p.createdBy===uid||p.bcSalespersonCode===_mySalespersonCode();
+}
+// F032: ACTUAL-salesperson test — true iff the user resolves to a BC salesperson code (the
+// SAME email↔cache match _isMyProject uses, via _mySalespersonCode). Merely CREATING a project
+// (createdBy) does NOT make you a salesperson — this is the item-2 fix so a reviewer/designer
+// (Andrew) who owns projects does NOT get the sales pills. `uid` kept for signature symmetry
+// with _dashboardRoles(uid); resolution is inherently current-user (email-based). Pure.
+function _isSalesperson(uid){
+  return !!_mySalespersonCode();
+}
+// F032: ordered list of To-Do pane sections the user should see. Order = reviewer → designer →
+// salesman (Jon decision 5). A section appears only for each role the user actually holds
+// (reviewer/designer via the permission flag; admins implicitly pass hasPermission → see both).
+// FALLBACK: a user holding NONE of the three still gets the salesman section, so legacy/edge
+// users (no salesperson code, no reviewer/designer flag) never see an empty pane. Pure.
+function _dashboardRoles(uid){
+  const roles=[];
+  // F032 (Jon): gate on the RAW permission flag, NOT hasPermission — hasPermission is true for ALL
+  // admins, which would (a) clutter an admin pane with empty Review/Engineering sections and (b) DROP
+  // the Sales Pipeline for a non-salesperson admin (a regression). Raw flag = each user sees only the
+  // roles they actually hold; a non-salesperson admin with no flags falls through to the salesman fallback.
+  if(_appCtx.permissions&&_appCtx.permissions.reviewer)roles.push("reviewer");
+  if(_appCtx.permissions&&_appCtx.permissions.designer)roles.push("designer");
+  if(_isSalesperson(uid))roles.push("salesman");
+  if(!roles.length)roles.push("salesman"); // fallback — avoid an empty pane for role-less users
+  return roles;
 }
 // F026 (B044/B018) — SSOT status-split predicates. One definition each; every consumer calls
 // these (CLAUDE.md "Single Source of Truth for Dual-Consumer Predicates"). They REUSE the
@@ -19468,6 +19514,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                   <th style={{textAlign:"left",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5}}>User</th>
                   <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:80}} title="Admin can manage team members + permissions, write all settings, override locks">Admin</th>
                   <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:90}} title="Reviewer can approve/reject pre- and post-quote engineering reviews">Reviewer</th>
+                  <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:90}} title="Designer sees an Engineering section in their To-Do list (their assigned Engineering Design / Programming / Commissioning projects). Grants no write access.">Designer</th>
                   <th style={{textAlign:"center",padding:"8px 10px",fontSize:11,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,width:90}} title="Manager can pin/unpin any project to the top of the board (even locked projects). Grants no other write access.">Manager</th>
                 </tr>
               </thead>
@@ -19476,6 +19523,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
                   const isSelf=m.uid===uid;
                   const isAdmin=m.role==="admin";
                   const isReviewer=!!(m.permissions&&m.permissions.reviewer);
+                  const isDesignerPerm=!!(m.permissions&&m.permissions.designer); // F032
                   const isManagerPerm=!!(m.permissions&&m.permissions.manager);
                   const saving=savingPerm===m.uid;
                   return(
@@ -19499,6 +19547,13 @@ function TeamModal({uid,companyId,userRole,onClose}){
                           style={{cursor:(!admin||saving)?"not-allowed":"pointer",width:16,height:16}}/>
                       </td>
                       <td style={{textAlign:"center",padding:"8px 10px"}}>
+                        <input type="checkbox" checked={isDesignerPerm}
+                          onChange={e=>togglePermission(m.uid,"designer",e.target.checked)}
+                          disabled={!admin||saving}
+                          title={admin?"Toggle Designer permission":"Admins only"}
+                          style={{cursor:(!admin||saving)?"not-allowed":"pointer",width:16,height:16}}/>
+                      </td>
+                      <td style={{textAlign:"center",padding:"8px 10px"}}>
                         <input type="checkbox" checked={isManagerPerm}
                           onChange={e=>togglePermission(m.uid,"manager",e.target.checked)}
                           disabled={!admin||saving}
@@ -19514,6 +19569,7 @@ function TeamModal({uid,companyId,userRole,onClose}){
               <strong style={{color:C.sub}}>Permission glossary:</strong>
               <br/>• <strong>Admin</strong> — manage team membership, override Won/Lost locks, edit all settings.
               <br/>• <strong>Reviewer</strong> — approve or reject pre-quote and post-PO engineering reviews.
+              <br/>• <strong>Designer</strong> — adds an Engineering section to the To-Do list showing this user's assigned Engineering Design / Programming / Commissioning projects. Grants no write access.
               <br/>• <strong>Manager</strong> — pin/unpin any project to the top of the board (works even on locked projects). Grants no other write access.
               <br/>More permission columns will be added as additional roles are defined.
             </div>
@@ -44779,7 +44835,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         post_review:"Needs Post-Review",
       };
       const map={};
-      const _hasServiceOfType=(p,t)=>Array.isArray(p.serviceCards)&&p.serviceCards.some(sc=>sc&&sc.lineType===t);
+      // F032: _hasServiceOfType is now module-level (SSOT, shared with the To-Do designer section).
       list.forEach(p=>{
         if(_hasServiceOfType(p,"engineering")){if(!map.engineering_design)map.engineering_design=[];map.engineering_design.push(p);}
         if(_hasServiceOfType(p,"programming")){if(!map.programming)map.programming=[];map.programming.push(p);}
@@ -45180,11 +45236,37 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           // board's My/Team toggle), minus terminal Won/Lost. Bucketing via the SSOT _todoBucketOf
           // so counts equal the board column counts; pill color = worst-timer project in the bucket.
           const _now=Date.now();
+          // F032: the pane is now ROLE-AWARE. _dashboardRoles(uid) returns the ordered sections
+          // the user should see (reviewer → designer → salesman). Each section carries its OWN
+          // buckets + scope — a reviewer's "my work" ≠ createdBy/salesperson (that was the item-2
+          // bug where a reviewer/designer saw the salesman pipeline). Salesman section is
+          // PRESERVED VERBATIM (same scope, buckets, styling, deep-link) — reviewers/designers
+          // simply don't get it unless they're an actual salesperson (or hold no role → fallback).
+          const _roles=_dashboardRoles(uid);
+          const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
+          const _neutralTint=[C.sub,"#101018"]; // color-less pill (count only) — no clean time source
+          // Shared pill renderer — identical styling to the shipped F025 tile. `color` is
+          // "green"|"yellow"|"red" (timer) or null (neutral / count-only).
+          const _pill=(key,label,count,color,onClick,title)=>{
+            const [col,bg]=color?_pillTint[color]:_neutralTint;
+            return(
+              <div key={key} onClick={onClick} title={title}
+                style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"6px 8px",height:72,display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
+                onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
+                onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
+                <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
+                <div style={{fontSize:20,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{count}</div>
+              </div>
+            );
+          };
+          const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
+          const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{children}</div>);
+          // ── SALESMAN scope (UNCHANGED from shipped F025) ──
           // Mirror the board's status-list inclusion chain EXACTLY (transferred/importedFromBC/lostAt) so pane
           // pill counts == board column counts; the ONLY intended divergence is always-personal scope (_isMyProject
           // forced on). Do NOT add !wonAt — _todoBucketOf's PO'd carve-out sheds plain-Won, while active-ECO (Won)
           // projects correctly route to the active_eco bucket (Coach 3a review, count-parity fix).
-          const paneProjects=projects.filter(p=>_isMyProject(p,uid)&&(!p.transferred||p.transferredTo!==uid)&&!p.importedFromBC&&!p.lostAt);
+          const salesProjects=projects.filter(p=>_isMyProject(p,uid)&&(!p.transferred||p.transferredTo!==uid)&&!p.importedFromBC&&!p.lostAt);
           const _todoBuckets=[
             ["draft","Draft"],
             ["in_progress","(BOM) In Process"],
@@ -45195,27 +45277,42 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
             ["active_eco","Active ECO"],
             ["quotes_sent","Quotes Sent"]
           ];
-          const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
+          // ── REVIEWER scope: projects ASSIGNED TO ME for review (NOT _isMyProject) ──
+          const _reviewBase=projects.filter(p=>(!p.transferred||p.transferredTo!==uid)&&!p.lostAt);
+          const preRevItems=_reviewBase.filter(p=>p.preReviewStatus==="pending"&&(p.preReviewAssignedTo===uid||(!p.preReviewAssignedTo&&p.bcDesignerUid===uid)));
+          const postRevItems=_reviewBase.filter(p=>p.postReviewStatus==="pending"&&(p.postReviewAssignedTo===uid||(!p.postReviewAssignedTo&&p.bcDesignerUid===uid)));
+          // ── DESIGNER scope: projects where I'm the assigned BC designer, by service-card type ──
+          const _designerBase=projects.filter(p=>p.bcDesignerUid===uid&&(!p.transferred||p.transferredTo!==uid)&&!p.lostAt);
+          const engItems=_designerBase.filter(p=>_hasServiceOfType(p,"engineering"));
+          const progItems=_designerBase.filter(p=>_hasServiceOfType(p,"programming"));
+          const commItems=_designerBase.filter(p=>_hasServiceOfType(p,"commissioning"));
           return(<>
             <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`}}>
               <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
-              <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your projects, by attention</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your work, by attention</div>
             </div>
-            <div style={{padding:"10px 10px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>
-              {_todoBuckets.map(([key,label])=>{
-                const items=paneProjects.filter(p=>_todoBucketOf(p)===key);
-                const [col,bg]=_pillTint[_pillColorForBucket(items,key,_now)];
-                return(
-                  <div key={key} onClick={()=>{setMyProjectsOnly(true);setFocusedCol(key);}} title={`Show your ${label} projects`}
-                    style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"6px 8px",height:72,display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
-                    onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
-                    onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-                    <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
-                    <div style={{fontSize:20,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{items.length}</div>
-                  </div>
-                );
-              })}
-            </div>
+            {_roles.includes("reviewer")&&(<>
+              {_sectionHeader("Review Queue")}
+              {_grid([
+                _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>setGroupBy("engineering"),"Projects assigned to you for pre-review"),
+                _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>setGroupBy("engineering"),"Projects assigned to you for post-review")
+              ])}
+            </>)}
+            {_roles.includes("designer")&&(<>
+              {_sectionHeader("Engineering")}
+              {_grid([
+                _pill("engineering","Engineering Design",engItems.length,null,()=>setGroupBy("engineering"),"Your Engineering Design projects"),
+                _pill("programming","Programming",progItems.length,null,()=>setGroupBy("engineering"),"Your Programming projects"),
+                _pill("commissioning","Commissioning",commItems.length,null,()=>setGroupBy("engineering"),"Your Commissioning projects")
+              ])}
+            </>)}
+            {_roles.includes("salesman")&&(<>
+              {_sectionHeader("Sales Pipeline")}
+              {_grid(_todoBuckets.map(([key,label])=>{
+                const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
+                return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>{setMyProjectsOnly(true);setFocusedCol(key);},`Show your ${label} projects`);
+              }))}
+            </>)}
           </>);
         })()}
       </aside>
