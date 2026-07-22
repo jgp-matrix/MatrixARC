@@ -40422,6 +40422,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             const updated={...projectRef.current,bcPoStatus:"Open",bcPoNumber:poNum,wonAt:Date.now(),wonBy:uid,postReviewStatus:"pending",postReviewSubmittedAt:Date.now(),updatedAt:Date.now(),...(poDocMeta?{customerPoDoc:poDocMeta}:{})};
             setProject(updated);projectRef.current=updated;onChange&&onChange(updated);
             try{await saveProject(uid,updated);}catch(e){console.warn("PO save failed:",e);}
+            // B050: notify the post-review assignee (the project designer) that the PO
+            // was received and the project now needs post-PO production review. Mirrors
+            // the pre_review bell create — writes a doc to the assignee's notifications
+            // collection with projectId (for click-nav). Post-review has no explicit
+            // assignment picker, so the assignee is the implicit reviewer used everywhere
+            // else: postReviewAssignedTo || bcDesignerUid. Skip when there is no assignee
+            // or the assignee is the current user (no self-notify).
+            try{
+              const _postRevUid=updated.postReviewAssignedTo||updated.bcDesignerUid||null;
+              if(_postRevUid&&_postRevUid!==uid){
+                await fbDb.collection(`users/${_postRevUid}/notifications`).add({
+                  type:"post_review",title:"Post-PO Review Assigned to You",
+                  body:`${updated.bcProjectNumber||""} — ${updated.name||""} PO received — needs post-PO production review`,
+                  projectId:updated.id,projectName:updated.name||"",createdAt:Date.now(),read:false,from:uid});
+              }
+            }catch(ne){console.warn("Post-review notification failed:",ne);}
             // Prompt to upload production drawings
             setShowProductionUpload({poNumber:poNum,dueDate});
           }} onSavePoDoc={async(poDocMeta)=>{
@@ -48393,7 +48409,7 @@ function App({user}){
       if(proj){handleOpen(proj);setPendingCustomerReviewOpen(notif.projectId);}
     }else if(notif.type==='issue_report'){
       setShowDebugLogs(true);
-    }else if((notif.type==='pre_review'||notif.type==='unlock_request'||notif.type==='unlock_granted')&&notif.projectId){
+    }else if((notif.type==='pre_review'||notif.type==='post_review'||notif.type==='unlock_request'||notif.type==='unlock_granted')&&notif.projectId){
       // B049: review/unlock notifications land on the project (same behavior as the
       // pre-review email deep-link ?openProject=). No dedicated surface exists, so
       // opening the project is the correct target.
@@ -49386,7 +49402,7 @@ INSTRUCTIONS:
                   // they carry the id their handler needs (all have a projectId except issue_report,
                   // which opens the Debug Logs).
                   const _navigable=n.type==='supplier_quote'?!_rfqHandled
-                    :(['pre_review','customer_review','issue_report'].includes(n.type)
+                    :(['pre_review','post_review','customer_review','issue_report'].includes(n.type)
                       ||(['unlock_request','unlock_granted'].includes(n.type)&&!!n.projectId));
                   return(
                   <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_navigable?"pointer":"default"}}
