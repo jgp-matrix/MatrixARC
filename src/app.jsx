@@ -16289,18 +16289,48 @@ function _vendorMatchesCustomer(vNo,vName,cNo,cName){
   if(vn.length>=3&&cn.length>=3&&(cn.startsWith(vn)||vn.startsWith(cn)))return true;
   return false;
 }
+// B018 — Effective priced-date accessor (SSOT). The Priced-Date COLUMN a user sees reads
+// bcPoDate for BC-priced rows (the PO/vendor-quote date) and priceDate for everything else.
+// Several BC refresh paths advance bcPoDate WITHOUT syncing priceDate, so a BC row could show a
+// fresh valid date in the column yet be flagged RED (and counted "incomplete" → block Send, and
+// trip _hasRedRows → silently downgrade the quote to Budgetary) because the red-flag /
+// send-gate read the stale-or-missing priceDate instead. Route EVERY staleness/missing read
+// (red-flag, send-block count, and the column itself) through this one accessor so the column and
+// the gate can't drift again (#175/#178/#179 single-source rule — factor the rule, not the inputs).
+// READ-ONLY: no field/write/schema change. Non-BC rows (priceSource!=="bc") return priceDate
+// exactly as before, so their behavior is unchanged.
+function _effectivePriceDate(r){
+  return (r && r.priceSource==="bc" && "bcPoDate" in r) ? r.bcPoDate : r.priceDate;
+}
 function _isBomRowFlaggedRed(r,customerNo,customerName){
   if(!r||r.isLaborRow)return false;
   const vendorIsCustomer=_vendorMatchesCustomer(r.bcVendorNo,r.bcVendorName,customerNo,customerName);
   if(!r.customerSupplied&&+r.qty===0)return true;
   if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
   if(!_isExcludedFromPriceCheck(r)&&!vendorIsCustomer){
-    if(!r.priceDate)return true;
+    const _pd=_effectivePriceDate(r);            // B018: BC rows use bcPoDate for the date gate
+    if(!_pd)return true;
     const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
-    if((Date.now()-r.priceDate)>staleMs)return true;
+    if((Date.now()-_pd)>staleMs)return true;
     if(!_hasFirmLeadTime(r))return true;
   }
   return false;
+}
+// B018 (Problem A) — count of rows flagged RED SOLELY because of a missing/non-firm lead time
+// (they will be RFQ'd, they do NOT block Send — #175). Surfaced separately in the send-block
+// overlay so sales sees which reds actually gate Send vs which just route to an RFQ. Derived
+// purely from _isBomRowFlaggedRed (SSOT — no red-rule re-inlining, so it can't drift): a row is
+// "LT-only red" iff it is red now but would NOT be red if a firm lead time were stamped. Any red
+// caused (even partly) by qty/price/date short-circuits BEFORE the LT check, so it stays red under
+// the firm-LT probe and is correctly excluded from M.
+function _ltOnlyRedCount(project){
+  if(!project)return 0;
+  const cNo=project.bcCustomerNumber,cName=project.bcCustomerName;
+  let m=0;
+  (project.panels||[]).forEach(p=>(p.bom||[]).forEach(r=>{
+    if(_isBomRowFlaggedRed(r,cNo,cName)&&!_isBomRowFlaggedRed({...r,leadTimeDays:1,leadTimeSource:"manual"},cNo,cName))m++;
+  }));
+  return m;
 }
 // #199 — Per-line Tech Review flag. One rule, two altitudes (dual-consumer: row indicator +
 // send gate) — placed next to _isBomRowFlaggedRed, the other dual-consumer row predicate.
@@ -16419,8 +16449,9 @@ function findIncompleteQuoteItems(project){
       if(!r.qty||+r.qty===0)reasons.push("qty");
       if(!_vic&&(!r.unitPrice||+r.unitPrice===0))reasons.push("price");
       if(!_vic){
-        if(!r.priceDate)reasons.push("priced date");
-        else if((Date.now()-r.priceDate)>staleMs)reasons.push("stale price (>"+(staleMs/(24*60*60*1000))+"d)");
+        const _pd=_effectivePriceDate(r);   // B018: BC rows use bcPoDate — same effective date as the red-flag + column
+        if(!_pd)reasons.push("priced date");
+        else if((Date.now()-_pd)>staleMs)reasons.push("stale price (>"+(staleMs/(24*60*60*1000))+"d)");
       }
       if(reasons.length){
         issues.push({
@@ -30589,7 +30620,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       //   >  stale                  → red     "stale — refresh recommended"
                       if(row.isLaborRow)return{color:C.muted};
                       if(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)return{color:"#4ade80",fontWeight:700};
-                      const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
+                      const d=_effectivePriceDate(row); // B018: single source shared with the red-flag + send gate
                       if(!d)return{color:C.muted};
                       const age=Date.now()-d;
                       const staleDays=(_pricingConfig&&_pricingConfig.defaultStaleDays)||60;
@@ -30600,7 +30631,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       return{color:"#f87171",fontWeight:700};
                     })()}}
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
-                      const d=row.priceSource==="bc"&&"bcPoDate"in row?row.bcPoDate:row.priceDate;
+                      const d=_effectivePriceDate(row); // B018: single source shared with the red-flag + send gate
                       const vendor=row.bcVendorName||(row.priceSource==="manual"?"Manual Entry":null);
                       setPriceTooltip({x:e.clientX,y:e.clientY,vendor,date:d,price:row.unitPrice,source:row.priceSource});
                     }:undefined}
@@ -30608,7 +30639,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       setPriceTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev);
                     }:undefined}
                     onMouseLeave={(!row.isLaborRow&&row.unitPrice!=null)?()=>setPriceTooltip(null):undefined}>
-                      {row.isLaborRow?"—":(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)?"Matrix":row.priceSource==="bc"&&"bcPoDate"in row?(row.bcPoDate?new Date(row.bcPoDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"No POs"):row.priceDate?new Date(row.priceDate).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":"—"}
+                      {row.isLaborRow?"—":(/matrix\s*systems/i.test(row.bcVendorName||"")||/^job.?buyoff$/i.test(row.partNumber||"")||/crate/i.test(row.description||"")||row.isContingency)?"Matrix":(()=>{const _d=_effectivePriceDate(row);const _isBc=row.priceSource==="bc"&&"bcPoDate"in row;return _d?new Date(_d).toLocaleDateString("en-US",{month:"short",day:"numeric"}):row.rfqSentDate?"RFQ Sent":_isBc?"No POs":"—";})()}
                     </td>
                     <td style={{padding:"3px 10px 3px 6px",textAlign:"center",width:44}}>
                       {!readOnly&&!row.isLaborRow&&(()=>{
@@ -37277,21 +37308,23 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   const _hasVerify=_incompleteItems.some(i=>i.isVerificationBlock);
                   const _hasTechReview=_incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
                   const _trCount=_incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
-                  // B018 (follow-up): this send-count is already on the SSOT send gate
-                  // (findIncompleteQuoteItems). It intentionally does NOT count lead-time-only reds
-                  // (#175: a non-firm LT is RFQ-eligible, not send-blocking), so it can differ from
-                  // the board's anyRedRow set (which DOES include LT reds → routes to RFQs). Fully
-                  // reconciling the count/messaging with anyRedRow is a behavior + wording change
-                  // (would start blocking Send on LT-only reds) — deferred to a separate B018 pass,
-                  // out of F026's read-path/routing scope.
+                  // B018 (Problem A — split-by-reason): _pricingCount (N) is the SSOT send-block
+                  // count off findIncompleteQuoteItems — it intentionally does NOT count lead-time-only
+                  // reds (#175: a non-firm LT is RFQ-eligible, NOT send-blocking). Those LT-only reds
+                  // (M = _mLtOnly, from _ltOnlyRedCount) are the board's anyRedRow set minus the send
+                  // gate. Send-blocking behavior is UNCHANGED — LT reds still don't gate Send; the
+                  // banner now just SPLITS the display so sales sees "N block Send (fix these)" vs
+                  // "M flagged for lead time (will be RFQ'd, won't block)" instead of one lumped "fix
+                  // all red rows" message. Presentational only.
                   const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
+                  const _mLtOnly=_ltOnlyRedCount(project); // B018: LT-only red count (RFQ'd, non-blocking)
                   // DECISION(v1.19.681): Owner Priority Mode extends the send-block reasons.
                   const _sendBlocked=_incompleteItems.length>0||!!ownerPriorityActive;
                   return(<>
                     {_sendBlocked&&(
                       <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
                         <div style={{fontWeight:700,color:C.yellow,marginBottom:4,fontSize:12}}>⚠ Send blocked{_hasVerify?" — BOM verification required":""}{_hasTechReview?(_hasVerify?" + ":" — ")+_trCount+" line"+(_trCount>1?"s":"")+" need Technical Review":""}{_pricingCount>0?((_hasVerify||_hasTechReview)?" + ":` — `)+_pricingCount+" item"+(_pricingCount>1?"s":"")+" incomplete":""}</div>
-                        <div style={{marginBottom:8}}>{_hasVerify&&"This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending. "}{_pricingCount>0&&((_hasVerify?"Also fix ":"Fix ")+_pricingCount+" red row"+(_pricingCount>1?"s":"")+" with incomplete pricing (missing price, qty, or priced date). ")}{_hasTechReview&&(_trCount+" line"+(_trCount>1?"s":"")+" require Technical Review sign-off — click 'Send for Technical Review', or have an engineer resolve the flagged lines.")}{(!_hasVerify&&!_hasTechReview&&_pricingCount===0)?"Fix the red rows in the BOM below. Once fixed, the Send button will enable.":""}</div>
+                        <div style={{marginBottom:8}}>{_hasVerify&&"This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending. "}{_pricingCount>0&&(<span><b>{_pricingCount+(_pricingCount===1?" blocks":" block")+" Send:"}</b>{" incomplete pricing (missing price, qty, or priced date). "}</span>)}{_mLtOnly>0&&(<span><b>{_mLtOnly+" flagged for lead time:"}</b>{" will be RFQ'd, won't block Send. "}</span>)}{_hasTechReview&&(_trCount+" line"+(_trCount>1?"s":"")+" require Technical Review sign-off — click 'Send for Technical Review', or have an engineer resolve the flagged lines.")}{(!_hasVerify&&!_hasTechReview&&_pricingCount===0&&_mLtOnly===0)?"Fix the red rows in the BOM below. Once fixed, the Send button will enable.":""}</div>
                         {/* DECISION(v1.19.670): Just Print button lives directly in the banner so
                            users aren't blocked from printing a review copy when Send is disabled.
                            Previously the banner said "use Just Print from the Send dialog" — but the
