@@ -5,7 +5,13 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-22 · prod v1.24.13 · session CLOSED (clean)
+## Current — 🟢 2026-07-23 · prod v1.24.13 · ACTIVE session (analysis)
+
+> ## 🔍 2026-07-23 — Primary/Secondary supplier matrix (NEW, analysis) — filed F041
+> **Ask (Jon):** Salesmen price BOM items from non-primary suppliers → Purchasing has to re-source. Want a Primary/Secondary supplier matrix: BOM items default to PRIMARY supplier sourcing unless Purchasing picks a secondary. Sales↔Purchasing flow still TBD (no ARC Purchasing module yet — purchasing done in the old system).
+> **STATUS:** 🏈 Coach lane RUNNING — code-grounded trace of ARC's current supplier/vendor model, pricing-source precedence, BC ItemVendorCatalog integration + where a Primary/Secondary predicate plugs in. Freddy researched BC's side in parallel (BC = single default `Vendor No.` + flat Item Vendor Catalog; NO native ranked primary/secondary). Synthesis → recommendations pending Coach report. Analysis-only, no build.
+
+
 
 > ## 🧾 SESSION END 2026-07-22 — big dashboard/notifications/markup batch shipped (v1.23.23 → v1.24.13, ~175 commits)
 > **Shipped to prod after v1.24.5:** v1.24.6 F033 (rail on every tab) · v1.24.7 F031 #1 (Clear ✕) · v1.24.8 F031 #3 + B047 (name overflow) · v1.24.9 divider+B048+F031#4+B049+F031#2 (notification click-nav, 2 pre-existing bugs fixed) + B050 (post-review bell) · v1.24.10 F025 3b (Needs-Attention list + RFQ awaiting rows) · v1.24.11 tile font bump · **v1.24.12 B018** (money-path: phantom-red BC rows blocking Send / forcing Budgetary — `_effectivePriceDate` SSOT accessor; + split-by-reason send-block overlay) · **v1.24.13 F030** (MY DASHBOARD page) **+ F029 slice-1** (live Outlook Email panel, read-only/zero-persistence, Coach privacy-approved) **+ B051** (triangle/line markup render).
