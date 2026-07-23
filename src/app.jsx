@@ -5504,6 +5504,12 @@ function bcNormalizeMfrCode(rawMfr,uid){
 // still populate the row locally; ARC just stops poisoning BC's shared catalog. Does NOT affect the
 // manual price-confirm push, portal apply, DigiKey/Mouser, or supplier-quote-import writes.
 const SCRAPER_BC_WRITEBACK_ENABLED=false;
+// B053 / PRJ402119 (2026-07-23) — KILL SWITCH for AUTOMATIC BC re-pricing (the 5-min poll + the
+// on-open price-check). These re-read BC and overwrite row prices, so they RE-CLOBBER a salesman's
+// manual fix with BC's still-poisoned $0.71 (a confirmed fix is stamped priceSource:"bc" → poll-eligible)
+// and drive the repeat "Accept new prices" nag. DISABLED until BC is cleaned + primary-vendor selection
+// (F041) lands. Manual "Get New Pricing", portal apply, and supplier-quote import are unaffected.
+const AUTO_BC_REPRICE_ENABLED=false;
 async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return{ok:true};
   try{
@@ -25356,6 +25362,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   useEffect(()=>{
     const POLL_MS=5*60*1000;
     async function pollBcPricing(){
+      if(!AUTO_BC_REPRICE_ENABLED)return; // B053: auto BC re-price disabled (was re-clobbering fixes w/ poisoned $0.71)
       if(bcPollRunning.current||!_bcToken)return;
       // B016-1(b): only poll BC when the tab is visible, and skip entirely when the
       // project is bound to a different BC env (previously unguarded here).
@@ -38485,6 +38492,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(isUnlockEdge)priceCheckRan.current=false;
     else if(priceCheckRan.current)return;
     function tryCheck(){
+      if(!AUTO_BC_REPRICE_ENABLED)return; // B053: on-open auto price-check disabled (re-clobber + repeat-$0.71 nag)
       if(priceCheckRan.current||!_bcToken)return;
       // FROZEN-QUOTE GUARD (#186 / Coach C126): skip the auto BC price-check while the quote is
       // frozen — otherwise it nags on every open of a locked quote AND lets Accept/Dismiss
