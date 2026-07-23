@@ -5,7 +5,13 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🔴 2026-07-23 · prod v1.24.14 · EMERGENCY (PRJ402119 pricing)
+## Current — 🔴 2026-07-23 · prod v1.24.15 · EMERGENCY (PRJ402119 pricing)
+
+> ## ✅ SHIPPED PROD v1.24.15 (release `7efbfad1`) — B052 + F045 (PRJ402119 recurrence-prevention, round 1)
+> **B052** = BC poll divergence guard (the direct preventer — 5-min poll no longer silently applies a large downward BC swing; keeps price, flags `bcPollDivergence` → now renders RED via `_isBomRowFlaggedRed` + trips send-warning). **F045** = Budgetary checkbox gated to Manager/Admin (client-side; server-hoist fast-follow). Both Coach-reviewed (B052 APPROVE-WITH-NITS, nits fixed). Hosting-only.
+> **⏳ Jon prod-verify:** F045 (non-manager sees greyed Budgetary + tooltip). B052 effect is non-visual until the poll catches a divergence (then red row). **Still building:** F050 → F044 → F048 → F049 → F045-server.
+> **OPEN trace question (Jon):** PRJ402119 sits IN PROCESS despite "customer received quote" — red rows. Who/how/why: HOW/WHY = poll-revert-during-B013 (strong, code+circumstantial); WHO = not recoverable (no price attribution). Live row-read of L3 R4/R54 still not done — offered to Jon now (runPricingAudit / controlled-tab read) to definitively confirm which rows are red + were `priceSource:"bc"`.
+
 
 > ## 🚨 2026-07-23 — PRJ402119 PRICING INCIDENT (money-path emergency) — investigation + F044–F047
 > **What happened:** a quote for PRJ402119 went to a customer with wrong pricing + red rows — a ~$6000 item priced at **$12**. Major financial loss. Jon's key question: **human error vs. the recent BC-write-failure bug** (correct price shown on screen but never persisted → false sense of security). That distinction drives the fix.
