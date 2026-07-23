@@ -5741,6 +5741,92 @@ async function runPricingAudit(uid,onProgress){
   };
 }
 
+// F050 Phase 3 — PRICE PLAUSIBILITY SWEEP (READ-ONLY).
+// Walks every project → panel → priceable BOM row and gets an on-demand AI price
+// estimate (estimatePrices → Sonnet, batched 10/call, concurrency 3), then flags rows
+// priced implausibly LOW vs the estimate. Catches a bad stored price (e.g. PRJ402119's
+// $12 stainless enclosure that came from bad BC data) before more quotes ship.
+// Threshold: flag when unitPrice < aiEstimate * PLAUSIBILITY_RATIO. Severity by gap size.
+// NO MUTATIONS — report only. Progress callback fires with {phase, projectsScanned,
+// totalProjects, msg}. Modeled verbatim on runPricingAudit's iteration + progress pattern.
+const PLAUSIBILITY_RATIO=0.5;   // flag when stored price < AI estimate × this
+const PLAUSIBILITY_HIGH_RATIO=0.2;   // HIGH severity when stored < AI estimate × this
+// Pass 1 only — load projects + collect priceable candidate rows. READ-ONLY, no AI.
+// Split out so the modal can show a row/cost estimate BEFORE firing any Sonnet calls.
+async function collectPlausibilityCandidates(uid,onProgress){
+  const update=(p)=>{try{onProgress&&onProgress(p);}catch(_){}};
+  update({phase:"loading",msg:"Loading projects…"});
+  const projects=await loadProjects(uid);
+  update({phase:"scanning",msg:`Scanning ${projects.length} project(s) for priceable rows…`,projectsScanned:0,totalProjects:projects.length});
+  const candidates=[];
+  for(let pi=0;pi<projects.length;pi++){
+    const proj=projects[pi];
+    update({phase:"scanning",msg:`Scanning ${proj.name||proj.id}…`,projectsScanned:pi,totalProjects:projects.length});
+    (proj.panels||[]).forEach((panel,panelIdx)=>{
+      (panel.bom||[]).forEach((row,rowIdx)=>{
+        if(_isExcludedFromPriceCheck(row))return;
+        if(+row.qty===0)return;
+        const pn=(row.partNumber||"").trim();
+        if(!pn)return;
+        const up=+row.unitPrice;
+        if(!(up>0))return; // no stored price → nothing to flag as too-low (unpriced is a separate concern)
+        candidates.push({
+          id:candidates.length, // simple integer id → reliable AI echo through estimatePrices
+          projectId:proj.id,
+          projectName:proj.name||proj.id,
+          projectNumber:proj.bcProjectNumber||null,
+          panelId:panel.id,panelIdx,
+          panelName:panel.name||panel.drawingNo||"Panel",
+          rowId:row.id,rowIdx,
+          itemNo:row.itemNo||"",
+          partNumber:pn,
+          description:row.description||"",
+          manufacturer:row.manufacturer||"",
+          qty:+row.qty||0,
+          unitPrice:up,
+          priceSource:row.priceSource||"",
+          vendor:row.bcVendorName||row.vendor||"",
+        });
+      });
+    });
+  }
+  return{projectCount:projects.length,candidates};
+}
+async function runPlausibilitySweep(uid,onProgress,pre){
+  const update=(p)=>{try{onProgress&&onProgress(p);}catch(_){}};
+  let projectCount,candidates;
+  if(pre&&Array.isArray(pre.candidates)){projectCount=pre.projectCount;candidates=pre.candidates;}
+  else{const c=await collectPlausibilityCandidates(uid,update);projectCount=c.projectCount;candidates=c.candidates;}
+  const totalBatches=Math.ceil(candidates.length/10);
+  update({phase:"ai",msg:`Estimating prices for ${candidates.length} row(s) via AI (~${totalBatches} call(s))…`,candidates:candidates.length,totalBatches});
+  const estItems=candidates.map(c=>({id:c.id,partNumber:c.partNumber,description:c.description,manufacturer:c.manufacturer}));
+  const est=await estimatePrices(estItems);
+  update({phase:"compare",msg:`Comparing ${candidates.length} row(s)…`});
+  const results=[];
+  for(const c of candidates){
+    const e=est[c.id]||est[String(c.id)];
+    const aiEstimate=(e&&e.unitPrice!=null)?+e.unitPrice:null;
+    if(aiEstimate==null||!(aiEstimate>0))continue; // AI couldn't price → cannot judge plausibility
+    const ratio=c.unitPrice/aiEstimate;
+    if(ratio>=PLAUSIBILITY_RATIO)continue; // stored price plausible → not flagged
+    const severity=ratio<PLAUSIBILITY_HIGH_RATIO?"high":"med";
+    results.push({
+      projectNumber:c.projectNumber,projectId:c.projectId,projectName:c.projectName,
+      panelId:c.panelId,panelName:c.panelName,rowId:c.rowId,rowIdx:c.rowIdx,itemNo:c.itemNo,
+      partNumber:c.partNumber,description:c.description,unitPrice:c.unitPrice,
+      aiEstimate,ratio,severity,priceSource:c.priceSource,vendor:c.vendor,
+      aiBasis:(e&&e.basis)||"",
+    });
+  }
+  results.sort((a,b)=>a.ratio-b.ratio); // worst gap (smallest ratio) first
+  const summary={
+    high:results.filter(r=>r.severity==="high").length,
+    med:results.filter(r=>r.severity==="med").length,
+  };
+  update({phase:"done",msg:`Sweep complete — ${summary.high} high, ${summary.med} medium of ${candidates.length} row(s) scanned.`});
+  return{scannedProjects:projectCount,scannedRows:candidates.length,aiCalls:totalBatches,results,summary};
+}
+
 let _odataPageCache=null;
 let _odataPagePromise=null;
 async function bcDiscoverODataPages(){
@@ -41541,6 +41627,191 @@ function PricingAuditModal({uid,onClose}){
   );
 }
 
+// F050 Phase 3 — Price Plausibility Sweep report UI. Cloned from PricingAuditModal.
+// Two-phase: (1) "Scan Projects" collects priceable rows (no AI) and shows a row/cost
+// estimate; (2) "Run AI Sweep" fires the Sonnet estimate + comparison. READ-ONLY report —
+// no navigation/mutation (parity with PricingAuditModal, which also does neither).
+function PlausibilitySweepModal({uid,onClose}){
+  const [preparing,setPreparing]=useState(false);
+  const [prep,setPrep]=useState(null);       // {projectCount, candidates} from Pass 1
+  const [running,setRunning]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [result,setResult]=useState(null);
+  const [error,setError]=useState("");
+  const [sevFilter,setSevFilter]=useState("all"); // all | high | med
+
+  async function scanProjects(){
+    setPreparing(true);setError("");setResult(null);setProgress({phase:"start",msg:"Loading…"});
+    try{
+      const p=await collectPlausibilityCandidates(uid,x=>setProgress(x));
+      setPrep(p);
+    }catch(e){
+      console.error("[Plausibility Sweep] scan failed:",e);
+      setError(e.message||"Scan failed");
+    }finally{
+      setPreparing(false);setProgress(null);
+    }
+  }
+
+  async function runSweep(){
+    setRunning(true);setError("");setResult(null);setProgress({phase:"start",msg:"Starting…"});
+    try{
+      const r=await runPlausibilitySweep(uid,x=>setProgress(x),prep);
+      setResult(r);
+    }catch(e){
+      console.error("[Plausibility Sweep] failed:",e);
+      setError(e.message||"Sweep failed");
+    }finally{
+      setRunning(false);
+    }
+  }
+
+  function exportCsv(){
+    if(!result||!result.results)return;
+    const header=["Severity","Project #","Project","Panel","Item #","Part Number","Description","Stored Unit $","AI Estimate $","Ratio","Price Source","Vendor","AI Basis"];
+    const csv=[header.join(",")].concat(
+      result.results.map(r=>[
+        r.severity,
+        r.projectNumber||"",
+        `"${(r.projectName||"").replace(/"/g,'""')}"`,
+        `"${(r.panelName||"").replace(/"/g,'""')}"`,
+        r.itemNo||"",
+        `"${(r.partNumber||"").replace(/"/g,'""')}"`,
+        `"${(r.description||"").replace(/"/g,'""')}"`,
+        r.unitPrice??"",
+        r.aiEstimate??"",
+        r.ratio!=null?r.ratio.toFixed(3):"",
+        r.priceSource||"",
+        `"${(r.vendor||"").replace(/"/g,'""')}"`,
+        `"${(r.aiBasis||"").replace(/"/g,'""')}"`,
+      ].join(","))
+    ).join("\n");
+    const blob=new Blob([csv],{type:"text/csv"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=`plausibility-sweep-${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},100);
+  }
+
+  const filteredRows=React.useMemo(()=>{
+    if(!result||!result.results)return[];
+    let rows=result.results.slice();
+    if(sevFilter!=="all")rows=rows.filter(r=>r.severity===sevFilter);
+    return rows; // already sorted worst-gap-first by the engine
+  },[result,sevFilter]);
+
+  const totalBatches=prep?Math.ceil(prep.candidates.length/10):0;
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:1200,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <h3 style={{margin:0,color:C.text}}>Price Plausibility Sweep</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"2px 8px"}}>✕</button>
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+          Scans every priceable BOM row across all your projects and compares its stored price to a fresh AI market estimate. Flags rows priced implausibly low — catches bad stored prices (e.g. a $12 stainless enclosure) before more quotes ship.
+          <br/><strong>High:</strong> stored price under {Math.round(PLAUSIBILITY_HIGH_RATIO*100)}% of the AI estimate.
+          <br/><strong>Medium:</strong> stored price under {Math.round(PLAUSIBILITY_RATIO*100)}% of the AI estimate.
+          <br/>Read-only — no prices are changed.
+        </div>
+
+        {!prep&&!running&&!result&&!error&&(
+          <button onClick={scanProjects} disabled={preparing} style={{background:"#0891b2",color:"#fff",border:"none",borderRadius:8,padding:"10px 24px",fontSize:14,fontWeight:600,cursor:preparing?"default":"pointer",alignSelf:"flex-start",opacity:preparing?0.6:1}}>{preparing?"Scanning…":"Scan Projects"}</button>
+        )}
+
+        {prep&&!running&&!result&&(
+          prep.candidates.length===0?(
+            <div style={{padding:"12px 16px",background:"#0d2a18",border:"1px solid #22c55e88",borderRadius:6,color:"#86efac",fontSize:13}}>
+              No priceable rows found across {prep.projectCount} project(s). Nothing to sweep.
+            </div>
+          ):(
+            <div style={{padding:"14px 16px",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8}}>
+              <div style={{fontSize:13,color:C.text,marginBottom:10,lineHeight:1.6}}>
+                Found <strong>{prep.candidates.length}</strong> priceable row(s) across <strong>{prep.projectCount}</strong> project(s).
+                <br/>Running the sweep makes ~<strong>{totalBatches}</strong> Sonnet AI call(s) (10 rows each). Continue?
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <button onClick={runSweep} style={{background:"#0891b2",color:"#fff",border:"none",borderRadius:8,padding:"9px 22px",fontSize:13,fontWeight:600,cursor:"pointer"}}>Run AI Sweep</button>
+                <button onClick={()=>setPrep(null)} style={{background:C.border,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 22px",fontSize:13,cursor:"pointer"}}>Cancel</button>
+              </div>
+            </div>
+          )
+        )}
+
+        {running&&progress&&(
+          <div style={{padding:"16px 0",color:C.muted,fontSize:13}}>
+            <div style={{fontWeight:700,color:C.accent,marginBottom:6}}>{progress.phase==="done"?"Done":"Running…"}</div>
+            <div>{progress.msg||"Working…"}</div>
+            {progress.totalProjects>0&&progress.projectsScanned!=null&&(
+              <div style={{marginTop:8,height:4,background:C.border,borderRadius:2,overflow:"hidden"}}>
+                <div style={{width:`${Math.round((progress.projectsScanned/progress.totalProjects)*100)}%`,height:"100%",background:C.accent,transition:"width 0.2s"}}/>
+              </div>
+            )}
+          </div>
+        )}
+        {error&&(
+          <div style={{padding:"12px 16px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:13}}>
+            <strong>Sweep failed:</strong> {error}
+          </div>
+        )}
+        {result&&(
+          <>
+            <div style={{display:"flex",gap:12,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+              <div style={{display:"flex",gap:8,fontSize:12}}>
+                <div style={{padding:"4px 10px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontWeight:700}}>High: {result.summary.high}</div>
+                <div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>Medium: {result.summary.med}</div>
+                <div style={{padding:"4px 10px",color:C.muted}}>{result.scannedRows} rows / {result.scannedProjects} projects / ~{result.aiCalls} AI calls</div>
+              </div>
+              <div style={{flex:1}}/>
+              <select value={sevFilter} onChange={e=>setSevFilter(e.target.value)} style={{background:"#0a0a16",color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"4px 8px",fontSize:12}}>
+                <option value="all">All severities</option>
+                <option value="high">High only</option>
+                <option value="med">Medium only</option>
+              </select>
+              <button onClick={exportCsv} style={{background:"#2563eb",color:"#fff",border:"none",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Export CSV</button>
+              <button onClick={()=>{setResult(null);setPrep(null);}} style={{background:C.border,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 14px",fontSize:12,cursor:"pointer"}}>Re-scan</button>
+            </div>
+            <div style={{flex:1,overflow:"auto",border:`1px solid ${C.border}`,borderRadius:6}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5}}>
+                <thead style={{position:"sticky",top:0,background:"#0a0a12",zIndex:1}}>
+                  <tr>
+                    {["Severity","Project","Panel","Part #","Description","Stored $","AI Est $","Stored % of Est"].map(h=>(
+                      <th key={h} style={{padding:"8px 10px",textAlign:"left",borderBottom:`1px solid ${C.border}`,color:C.sub,fontWeight:700,whiteSpace:"nowrap"}}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.length===0&&(
+                    <tr><td colSpan={8} style={{padding:"24px",textAlign:"center",color:C.muted}}>No implausible prices found.</td></tr>
+                  )}
+                  {filteredRows.map((r,i)=>{
+                    const tone=r.severity==="high"?{bg:"#3a0a0a44",fg:"#fca5a5"}:{bg:"#3a1f0044",fg:"#fcd34d"};
+                    return(
+                      <tr key={`${r.projectId}-${r.rowId}-${i}`} style={{background:tone.bg}} title={r.aiBasis?`AI basis: ${r.aiBasis}`:undefined}>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:tone.fg,fontWeight:700,textTransform:"uppercase",fontSize:10}}>{r.severity}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.text}}>{r.projectNumber?r.projectNumber+" — ":""}{r.projectName}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted}}>{r.panelName}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.text,fontFamily:"Consolas,monospace",fontWeight:600}}>{r.partNumber}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.muted,maxWidth:300,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={r.description}>{r.description}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.red,textAlign:"right",fontFamily:"Consolas,monospace",fontWeight:600}}>{r.unitPrice!=null?`$${(+r.unitPrice).toFixed(2)}`:"—"}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:C.green,textAlign:"right",fontFamily:"Consolas,monospace"}}>{r.aiEstimate!=null?`$${(+r.aiEstimate).toFixed(2)}`:"—"}</td>
+                        <td style={{padding:"6px 10px",borderBottom:`1px solid ${C.border}`,color:tone.fg,textAlign:"right",fontFamily:"Consolas,monospace",fontWeight:700}}>{r.ratio!=null?`${Math.round(r.ratio*100)}%`:"—"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 // ── PRICING REPORTS MODAL ──
 function PricingReportsModal({uid,onClose}){
   const [runs,setRuns]=useState([]);
@@ -42192,6 +42463,7 @@ function APISetupModal({uid,onClose}){
   const [apiTesting,setApiTesting]=useState(false);
   const [showPricingReports,setShowPricingReports]=useState(false);
   const [showPricingAudit,setShowPricingAudit]=useState(false);
+  const [showPlausibilitySweep,setShowPlausibilitySweep]=useState(false);
   // Custom scraper configs — stored at company level in Firestore
   const [customScrapers,setCustomScrapers]=useState([]);
   const [scrapersLoading,setScrapersLoading]=useState(true);
@@ -42740,6 +43012,16 @@ function APISetupModal({uid,onClose}){
           <button onClick={()=>setShowPricingAudit(true)} style={{background:"#7c3aed",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Run Pricing Audit</button>
         </div>
         {showPricingAudit&&<PricingAuditModal uid={uid} onClose={()=>setShowPricingAudit(false)}/>}
+
+        {/* F050 Phase 3 — Price Plausibility Sweep. Read-only AI cross-check that flags
+            BOM rows priced implausibly low vs an on-demand Sonnet estimate. Same admin
+            gating + section styling as Pricing Audit above. No mutations. */}
+        <div style={{marginTop:24,marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+          <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Price Plausibility Sweep</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Scan every priceable BOM row across all projects and flag any priced implausibly low vs a fresh AI market estimate. Read-only — surfaces a row + AI-call estimate before running.</div>
+          <button onClick={()=>setShowPlausibilitySweep(true)} style={{background:"#0891b2",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Run Plausibility Sweep</button>
+        </div>
+        {showPlausibilitySweep&&<PlausibilitySweepModal uid={uid} onClose={()=>setShowPlausibilitySweep(false)}/>}
 
         <div style={{marginTop:24,textAlign:"center"}}>
           <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
