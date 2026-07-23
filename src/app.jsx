@@ -37277,8 +37277,15 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   );
                 })()}
                 {(()=>{const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);if(!sp)return null;const isBudg=(sp.pricing||{}).isBudgetary||false;
-                  return <label style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",cursor:"pointer",fontSize:11,color:isBudg?"#f59e0b":"#64748b",marginTop:2}}>
-                    <input type="checkbox" checked={isBudg} onChange={e=>saveSelectedPricing({isBudgetary:e.target.checked})} style={{accentColor:"#f59e0b",width:13,height:13,cursor:"pointer"}}/>
+                  // F045 (2026-07-23): only Manager/Admin may set a quote Budgetary (isManager() includes admin).
+                  // Non-managers see it greyed + disabled with a tooltip. Client-side gate; server-side enforcement
+                  // (hoisting isBudgetary out of the panels[] array so Firestore rules can guard it) is a fast-follow
+                  // — see docs/PRJ402119-PRICING-INCIDENT.md (F045). Budgetary is the band-aid that lets red/estimated
+                  // quotes go out, so gating it to managers is a governance control.
+                  const _canBudg=isManager();
+                  const _budgTip=_canBudg?(isBudg?"Budgetary Quote — pricing is estimated":"Mark as Budgetary Quote"):"Only managers can set quotes to budgetary";
+                  return <label title={_budgTip} style={{display:"flex",alignItems:"center",gap:6,padding:"6px 10px",cursor:_canBudg?"pointer":"not-allowed",fontSize:11,color:isBudg?"#f59e0b":"#64748b",marginTop:2,opacity:_canBudg?1:0.55}}>
+                    <input type="checkbox" checked={isBudg} disabled={!_canBudg} onChange={e=>{if(!_canBudg)return;saveSelectedPricing({isBudgetary:e.target.checked});}} style={{accentColor:"#f59e0b",width:13,height:13,cursor:_canBudg?"pointer":"not-allowed"}}/>
                     {isBudg?"Budgetary Quote — pricing is estimated":"Mark as Budgetary Quote"}
                   </label>;
                 })()}
