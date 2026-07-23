@@ -41311,6 +41311,10 @@ function CodaleTestPanel({uid}){
 
   async function runFullUpdate(){
     if(!_bcToken){setError("Connect to Business Central first");return;}
+    // B053 / PRJ402119 (2026-07-23): Codale Full Update drives the same scraper extraction that bulk-wrote
+    // garbage $0.71 into BC (vendor V00165). Gated with the scraper write-back kill-switch — clicking it
+    // would re-poison BC. Re-enabled once the scraper extraction fix + write-side plausibility gate ship.
+    if(!SCRAPER_BC_WRITEBACK_ENABLED){setError("Codale Full Update is temporarily disabled (pricing-data incident): it uses the scraper path that wrote bad $0.71 prices into BC. It will be re-enabled after the scraper fix + plausibility gate ship.");return;}
     const _syncStart=Date.now();
     setUpdating(true);setError(null);setResults(null);setUpdateStatus({phase:"Fetching Codale items from BC…",detail:"",scraped:0,written:0,total:0,errors:0});
     try{
