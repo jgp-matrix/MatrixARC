@@ -49865,7 +49865,11 @@ INSTRUCTIONS:
       </div>
       {/* Content — padded below fixed header + tab bar */}
       <div style={{flex:1,paddingTop:122,display:"flex",height:"100vh",overflow:"hidden"}}>
-      <div style={{flex:1,minWidth:0,overflowY:"auto"}}>
+      {/* G017 (2026-07-23): the main content column is its own viewport-locked scroll pane — explicit
+          height + minHeight:0 (matching the rail fix) so it scrolls INDEPENDENTLY of the To-Do rail
+          instead of letting the document scroll and dragging the rail with it. 122px = the row's
+          fixed-header paddingTop. */}
+      <div style={{flex:1,minWidth:0,height:"calc(100vh - 122px)",minHeight:0,overflowY:"auto"}}>
       <VendorSyncFloater onSwitchToItems={()=>{setNavTab("items");}}/>
       {/* DECISION(v1.19.787): Tab dashboards + project view rendering rules.
           The simple model: project view ONLY renders under its origin tab. Other tabs
