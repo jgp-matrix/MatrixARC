@@ -49770,19 +49770,19 @@ INSTRUCTIONS:
           <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px",marginBottom:18}}>
             <TodoRail pageMode pageSection="pills" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
           </div>
-          {/* ROW 2 — (Needs Attention | My Projects) side-by-side in the main area, plus the
-              notifications side panel (📧 Email scaffold above the 🔔 ARC bell list). */}
+          {/* ROW 2 — F030 r3: three reflowing columns, left→right:
+              [Needs Attention | My Projects] · [📧 Email window] · [🔔 ARC bell — skinny far-right]. */}
           <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
-            <div style={{flex:"0 1 500px",minWidth:0,display:"flex",gap:18,flexWrap:"wrap"}}>
+            <div style={{flex:"0 1 740px",minWidth:0,display:"flex",gap:18,flexWrap:"wrap"}}>
               {/* Needs Attention (LEFT) — page-mode TodoRail pageSection="attention": renders ONLY the
                   timer-sorted attention list, same _sections/attention derivation as the pills band above. */}
-              <div style={{flex:"1 1 230px",minWidth:0,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+              <div style={{flex:"1 1 345px",minWidth:0,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
                 <TodoRail pageMode pageSection="attention" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
               </div>
               {/* My Projects (RIGHT) — project rows + $ totals; scoped via the _isMyProject SSOT (same
                   scope expression the rail's memo uses); $ total mirrors the buildArcContext
                   Σ qty*unitPrice pattern. NOT the heavy Dashboard kanban tile component. */}
-              <div style={{flex:"1 1 230px",minWidth:0}}>
+              <div style={{flex:"1 1 345px",minWidth:0}}>
                 {(()=>{
                   const myProjects=projects.filter(p=>_isMyProject(p,user.uid)&&(!p.transferred||p.transferredTo!==user.uid)&&!p.importedFromBC&&!p.lostAt);
                   if(!myProjects.length)return null;
@@ -49810,11 +49810,10 @@ INSTRUCTIONS:
                 })()}
               </div>
             </div>
-            {/* SIDE PANEL — notifications. F030 r2 (2026-07-22): grows to absorb the width freed by the
-                skinnier Needs Attention / My Projects columns (flex "1 1 560px" / minWidth 420) so the
-                Email rows fit a subject line + a one-line body preview. Two stacked labeled sections:
-                📧 Email on top, 🔔 ARC Notifications below. */}
-            <div style={{flex:"1 1 560px",minWidth:420,display:"flex",flexDirection:"column",gap:14,alignSelf:"stretch"}}>
+            {/* 📧 EMAIL COLUMN — F030 r3 (2026-07-22): the Email window is now its OWN Row-2 column
+                (no longer stacked with the bell). It sits between the pipelines and the skinny bell
+                column at a comfortable width for subject + one-line preview. */}
+            <div style={{flex:"1 1 380px",minWidth:320,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
               {/* 📧 Email — F029 Outlook mount point. Email DATA is deferred (F029 not wired), so this is
                   a STATIC scaffold: a labeled section + placeholder empty state + sample subject/preview
                   rows sized for a two-line (bold subject + muted body preview) layout. NO Outlook/Graph
@@ -49834,9 +49833,11 @@ INSTRUCTIONS:
                   ))}
                 </div>
               </div>
-              {/* 🔔 ARC Notifications — the EXISTING live bell window (unread-only). Reuses the bell's
-                  onSnapshot listener + state (no new query) and the ONE shared renderNotifRow. Behavior
-                  unchanged — it now simply sits BELOW the Email section and is explicitly labeled. */}
+            </div>
+            {/* 🔔 ARC NOTIFICATIONS COLUMN — the EXISTING live bell window (unread-only), now split into
+                its OWN SKINNY far-right Row-2 column. Reuses the bell's onSnapshot listener + state (no new
+                query) and the ONE shared renderNotifRow. Behavior unchanged — only position/width changed. */}
+            <div style={{flex:"0 0 260px",minWidth:220,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
               <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",flex:1,display:"flex",flexDirection:"column",minHeight:0}}>
                 <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>🔔 ARC Notifications {notifications.length>0&&`(${notifications.length})`}</span>
