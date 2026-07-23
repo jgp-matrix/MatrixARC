@@ -31021,30 +31021,30 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   }} style={{background:"#ffffff",border:"1px solid #ef4444",borderRadius:3,color:"#1e293b",fontSize:11,padding:"4px 8px",width:"100%",outline:"none",fontFamily:"inherit"}}/>
                   <div style={{fontSize:9,color:"#ef4444",marginTop:2}}>Enter to save · Esc to cancel</div>
                 </div>}
-                {/* SVG overlay for shapes */}
-                <svg style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:6}}>
+                {/* SVG overlay for shapes — unit viewBox (0-100) so <polygon>/<polyline> points (which cannot use %) render; preserveAspectRatio="none" stretches to fill. vector-effect="non-scaling-stroke" keeps stroke widths/dashes in pixel space (identical to the old no-viewBox behavior). B051. */}
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{position:"absolute",inset:0,width:"100%",height:"100%",pointerEvents:"none",zIndex:6}}>
                   {(pg.reviewShapes||[]).map((shp,si)=>{
                     const stroke=shp.color||"#ef4444";const sw=shp.strokeWidth||2;
-                    if(shp.type==="line"&&shp.points){const pts=shp.points.map(p=>p.x+"%,"+p.y+"%").join(" ");return <polyline key={shp.id||si} points={pts} stroke={stroke} strokeWidth={sw} fill="none" strokeLinejoin="round" strokeLinecap="round"/>;}
-                    if(shp.type==="line")return <line key={shp.id||si} x1={shp.x1+"%"} y1={shp.y1+"%"} x2={shp.x2+"%"} y2={shp.y2+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
-                    if(shp.type==="circle")return <circle key={shp.id||si} cx={shp.cx+"%"} cy={shp.cy+"%"} r={shp.r+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;
-                    if(shp.type==="rect"){const x=Math.min(shp.x1,shp.x2),y=Math.min(shp.y1,shp.y2),w=Math.abs(shp.x2-shp.x1),h=Math.abs(shp.y2-shp.y1);return <rect key={shp.id||si} x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} fill="none"/>;}
-                    if(shp.type==="triangle"){const cx=(shp.x1+shp.x2)/2,cy=shp.y1,bx1=shp.x1,by=shp.y2,bx2=shp.x2;return <polygon key={shp.id||si} points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} fill="none"/>;}
+                    if(shp.type==="line"&&shp.points){const pts=shp.points.map(p=>p.x+","+p.y).join(" ");return <polyline key={shp.id||si} points={pts} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" fill="none" strokeLinejoin="round" strokeLinecap="round"/>;}
+                    if(shp.type==="line")return <line key={shp.id||si} x1={shp.x1} y1={shp.y1} x2={shp.x2} y2={shp.y2} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" fill="none"/>;
+                    if(shp.type==="circle")return <circle key={shp.id||si} cx={shp.cx} cy={shp.cy} r={shp.r} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" fill="none"/>;
+                    if(shp.type==="rect"){const x=Math.min(shp.x1,shp.x2),y=Math.min(shp.y1,shp.y2),w=Math.abs(shp.x2-shp.x1),h=Math.abs(shp.y2-shp.y1);return <rect key={shp.id||si} x={x} y={y} width={w} height={h} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" fill="none"/>;}
+                    if(shp.type==="triangle"){const cx=(shp.x1+shp.x2)/2,cy=shp.y1,bx1=shp.x1,by=shp.y2,bx2=shp.x2;return <polygon key={shp.id||si} points={`${cx},${cy} ${bx1},${by} ${bx2},${by}`} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" fill="none"/>;}
                     return null;
                   })}
                   {/* In-progress polyline */}
                   {polylinePoints.length>0&&(()=>{
                     const allPts=[...polylinePoints,...(polylinePreview?[polylinePreview]:[])];
-                    const pts=allPts.map(p=>p.x+"%,"+p.y+"%").join(" ");
-                    return <><polyline points={pts} stroke="#ef4444" strokeWidth={2} fill="none" strokeDasharray="6 3" strokeLinejoin="round" strokeLinecap="round"/>
-                      {polylinePoints.map((p,i)=><circle key={i} cx={p.x+"%"} cy={p.y+"%"} r="3" fill="#ef4444"/>)}</>;
+                    const pts=allPts.map(p=>p.x+","+p.y).join(" ");
+                    return <><polyline points={pts} stroke="#ef4444" strokeWidth={2} vectorEffect="non-scaling-stroke" fill="none" strokeDasharray="6 3" strokeLinejoin="round" strokeLinecap="round"/>
+                      {polylinePoints.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r="1" fill="#ef4444"/>)}</>;
                   })()}
                   {/* Rubber-band for non-line shapes */}
                   {drawingShape&&(()=>{
                     const s=drawingShape;const stroke="#ef4444";const sw=2;
-                    if(s.type==="circle"){const r=Math.sqrt((s.x2-s.x1)**2+(s.y2-s.y1)**2);return <circle cx={s.x1+"%"} cy={s.y1+"%"} r={r+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
-                    if(s.type==="rect"){const x=Math.min(s.x1,s.x2),y=Math.min(s.y1,s.y2),w=Math.abs(s.x2-s.x1),h=Math.abs(s.y2-s.y1);return <rect x={x+"%"} y={y+"%"} width={w+"%"} height={h+"%"} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
-                    if(s.type==="triangle"){const cx=(s.x1+s.x2)/2,cy=s.y1,bx1=s.x1,by=s.y2,bx2=s.x2;return <polygon points={`${cx}%,${cy}% ${bx1}%,${by}% ${bx2}%,${by}%`} stroke={stroke} strokeWidth={sw} strokeDasharray="6 3" fill="none"/>;}
+                    if(s.type==="circle"){const r=Math.sqrt((s.x2-s.x1)**2+(s.y2-s.y1)**2);return <circle cx={s.x1} cy={s.y1} r={r} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" strokeDasharray="6 3" fill="none"/>;}
+                    if(s.type==="rect"){const x=Math.min(s.x1,s.x2),y=Math.min(s.y1,s.y2),w=Math.abs(s.x2-s.x1),h=Math.abs(s.y2-s.y1);return <rect x={x} y={y} width={w} height={h} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" strokeDasharray="6 3" fill="none"/>;}
+                    if(s.type==="triangle"){const cx=(s.x1+s.x2)/2,cy=s.y1,bx1=s.x1,by=s.y2,bx2=s.x2;return <polygon points={`${cx},${cy} ${bx1},${by} ${bx2},${by}`} stroke={stroke} strokeWidth={sw} vectorEffect="non-scaling-stroke" strokeDasharray="6 3" fill="none"/>;}
                     return null;
                   })()}
                 </svg>
