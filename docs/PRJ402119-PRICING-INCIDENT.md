@@ -74,6 +74,34 @@ Quote-send writes (`:34490` and parallel path `:40469`): `quoteSentAt, quoteSent
 
 ---
 
+# ⭐⭐⭐ FORENSIC CONFIRMATION (live prod read, 2026-07-23, controlled tab)
+
+Read PRJ402119 live via the app's own `loadProjects` (inherited Jon's auth). **The hypothesis was half-right on mechanism but the actual source is simpler and confirmed: bad BC master data, not a poll-revert.**
+
+**Panel 3 ("Line 3"), Row 4 — the incident item:**
+- Part **SCE-60XEL4912SS6LP** — "ENCLOSURE SS316, 2DR XEL, 60"X49"" (a large stainless enclosure — the ~$6000 item).
+- `unitPrice = 12`, **`priceSource = "bc"`**, `bcVerify = {status:"in-bc", at: 2026-06-19}`, vendor **Galco Industrial Electronics (V00233)**.
+- **In ARC the $12 is a BC-sourced price — NOT a manual entry** (`priceSource:"bc"`, not `"manual"`). No human typed $12 in ARC.
+- **BC LIVE LOOKUP NOW:** `bcFetchPurchasePrices(['SCE-60XEL4912SS6LP'])` → `directUnitCost: 12`, startingDate 2026-06-19, vendor V00233. **BC itself holds $12 for this enclosure right now.**
+
+**Timeline:** created **2026-06-02** → Row 4 priced **2026-06-19** (BC purchase-price record also dated 06-19) → quote sent **2026-06-22**. All before the B013 fix (July 11), but the mechanism turns out to be simpler than a poll-revert.
+
+**ROOT CAUSE (confirmed):**
+1. **BC has bad master data** — a purchase price of **$12** for a ~$6000 SS enclosure (vendor Galco/V00233, dated 06-19). Likely a data-entry or units/UOM error in BC.
+2. ARC **faithfully pulled BC's $12** as the price (verified "in-bc") on 06-19.
+3. Quote sent 06-22 with $12, because **nothing in ARC flags a magnitude-implausible price** ($12 is non-zero + fresh date + in-bc → not red, not send-blocked).
+
+**WHO:** no one in ARC — the $12 originates in **BC** (whoever created that BC purchase-price record on 06-19, vendor Galco). A BC data question, outside ARC's records. ARC also stamps no author on price writes regardless.
+
+**⚠ REPRIORITIZATION forced by this data:**
+- **F050 (plausibility / magnitude check) is now the #1 preventer** — it's the ONLY fix that catches a bad-magnitude price pulled straight from BC. Candidate reference signal: BC price vs. the AI-estimated price (a $12 vs ~$6000 divergence flags loudly).
+- **B052 (poll divergence guard, SHIPPED)** would NOT have caught THIS — the price was $12 from the initial BC pull, not a revert from a higher persisted value (B052 fires only on a high→low poll change). Still valid for the revert case.
+- **F044 (block-on-red)** would NOT have caught it either ($12 wasn't red).
+- **ACTION OUTSIDE ARC (Jon/purchasing):** correct the BC purchase price for SCE-60XEL4912SS6LP (vendor V00233/Galco) — until fixed, ARC will keep pulling $12.
+- Other flagged low rows on Panel 3: idx 7 & 11 (OVIVO, $0 → red/price-missing), idx 14 (SCE-LFMTGK mounting kit $12.97 — verify). Labor rows 1-3 ($45) are fine.
+
+---
+
 # LANE 1 — Pricing attribution + BC-write window + red-block / budgetary / audit
 
 ## ⭐⭐ THE CONVERGENT ROOT-CAUSE (both lanes agree) — likely NOT human error
