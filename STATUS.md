@@ -8,7 +8,7 @@
 ## Current — 🟢 2026-07-23 · prod v1.24.13 · ACTIVE session
 
 > ## 🔧 2026-07-23 — To-Do pane follow-ups (NEW) — G017 (independent scroll) + F043 (hover→highlight)
-> **G017 (Jon):** make the To-Do side pane scroll separately from the main page. Freddy trace: the STANDING right rail already IS an independent scroll pane (fixed header + `height:100vh/overflow:hidden` row + rail `overflowY:auto`, border-box) — so this is likely the **MY DASHBOARD (F030) page** (pageMode rail scrolls WITH the page by design) OR a live-only bug. **⏳ Disambiguating surface with Jon before any layout change** (regression risk to working main-column scroll).
+> **G017 (Jon):** make the To-Do side pane scroll separately from the main page. Surface = **standing right rail** (Jon confirmed). Fix BUILT + on **Test V.041**: standing-rail aside pinned to `height:calc(100vh - 122px)` + `minHeight:0` + `overflowY:auto` (explicit viewport-lock instead of `alignSelf:stretch` — forces nested flex scroll to engage across browsers). Scoped to the 380px rail; main column untouched. Best-effort (couldn't observe live) — **⏳ Jon verify on test; if still off, need exact symptom** (no scroll at all / scrolling rail moves page / bottom cut off).
 > **F043 (Jon):** hover a right-pane tile/row → highlight the corresponding project on the main screen (F034-family). New feature — needs main board ProjectTile ↔ rail-row shared project-id + hover state. To be scoped once surface confirmed.
 > **STATUS:** both filed; awaiting Jon surface-confirm. F042 + G016 still on Test V.040 awaiting eyeball.
 
