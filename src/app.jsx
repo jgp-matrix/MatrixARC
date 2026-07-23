@@ -44771,7 +44771,7 @@ function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinn
 // click-routing changed: pills call onFocusBucket(kind,key) instead of the Dashboard-local board
 // setters, and App deep-links the Sales board via `pendingFocus`. Collapse state (`railOpen`) is
 // lifted to App (shared across tabs, persisted to the existing `arc_todo_rail_open` key).
-function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket}){
+function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject}){
   // Coach: this now runs app-wide (every tab render), so memoize the per-role bucket derive on
   // [projects,uid]. Pill colors still use a fresh Date.now() at render so timer staleness stays live.
   const _sections=React.useMemo(()=>{
@@ -44799,7 +44799,22 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     const engItems=_designerBase.filter(p=>_hasServiceOfType(p,"engineering"));
     const progItems=_designerBase.filter(p=>_hasServiceOfType(p,"programming"));
     const commItems=_designerBase.filter(p=>_hasServiceOfType(p,"commissioning"));
-    return {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems};
+    // F025 3b: flatten the ALREADY-SCOPED, role-filtered sets above into {project,bucket} pairs
+    // for the timer-sorted attention list. Derived from the SAME sets that feed the pills → the
+    // list can't drift from the counts (the 3a non-equivalent-filter lesson). DESIGNER buckets are
+    // EXCLUDED (Jon decision 3 — no clean time-in-status source, so they'd mis-color/mis-sort).
+    // The attention filter (yellow/red) + sort run at RENDER with a fresh _now, not here — this
+    // memo only fixes the candidate set (deps [projects,uid,salesCacheVer]).
+    const attnCandidates=[];
+    if(_roles.includes("salesman"))for(const p of salesProjects){const b=_todoBucketOf(p);if(b)attnCandidates.push({project:p,bucket:b});}
+    if(_roles.includes("reviewer")){
+      for(const p of preRevItems)attnCandidates.push({project:p,bucket:"pre_review"});
+      for(const p of postRevItems)attnCandidates.push({project:p,bucket:"post_review"});
+    }
+    // Bucket→label map (from the sales _todoBuckets + the two reviewer pill labels). Row labels reuse
+    // the SAME text the pills show, so the list and pills always name a bucket identically.
+    const _bucketLabels=Object.assign(Object.fromEntries(_todoBuckets),{pre_review:"In Pre-Review",post_review:"Needs Post-Review"});
+    return {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems,attnCandidates,_bucketLabels};
     // B048 (Fix A): salesCacheVer is bumped when the BC /Salesperson roster lands — this dep makes the
     // sales scope (via _isMyProject / _dashboardRoles, both reading window._arcSalespersonCache) recompute
     // the instant the roster arrives, instead of waiting on the fragile 3s syncBcProjects timer.
@@ -44815,7 +44830,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     );
   }
 
-  const {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems}=_sections;
+  const {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems,attnCandidates,_bucketLabels}=_sections;
   const _now=Date.now();
   const _pillTint={green:[C.green,C.greenDim],yellow:[C.yellow,C.yellowDim],red:[C.red,C.redDim]};
   const _neutralTint=[C.sub,"#101018"]; // color-less pill (count only) — no clean time source
@@ -44835,6 +44850,30 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   };
   const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
   const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{children}</div>);
+  // F025 3b: compact elapsed formatter (m/h/d) — same shape as the archive formatTimeAgo pattern,
+  // inlined here since that helper is scoped to another component. Shows exact time-in-status.
+  const _fmtElapsed=ms=>{const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<24)return h+"h";return Math.round(h/24)+"d";};
+  const _dayAge=ts=>Math.max(0,Math.round((_now-ts)/(24*36e5)));
+  // F025 3b: attention list — RENDER-time filter (decision 4: yellow+red only) + sort. _bucketTimerColor
+  // / _todoClockStart / _todoThresholdMsFor are the 3a SSOTs (NOT forked). "N on track" counts the rest.
+  const _attn=[];let _onTrack=0;
+  for(const c of attnCandidates){
+    const color=_bucketTimerColor(c.project,c.bucket,_now);
+    if(color==="yellow"||color==="red")_attn.push({...c,color});
+    else _onTrack++;
+  }
+  // Sort: normalized overdue index DESC (elapsed / this bucket's redMs — raw elapsed isn't comparable
+  // across buckets). Tie-break: raw elapsed DESC, then project number.
+  const _sortMetrics=c=>{const start=_todoClockStart(c.project,c.bucket);const elapsed=_now-start;const red=_todoThresholdMsFor(c.bucket).redMs||1;return{norm:elapsed/red,elapsed};};
+  _attn.sort((a,b)=>{
+    const ka=_sortMetrics(a),kb=_sortMetrics(b);
+    if(kb.norm!==ka.norm)return kb.norm-ka.norm;
+    if(kb.elapsed!==ka.elapsed)return kb.elapsed-ka.elapsed;
+    return String(a.project.bcProjectNumber||"").localeCompare(String(b.project.bcProjectNumber||""));
+  });
+  // Sales Pipeline header roll-up (decision 2): count of MY sales projects still awaiting an RFQ
+  // response. Reuses _rfqAwaitingSummary (SSOT) — no re-count. Only meaningful for the salesman role.
+  const _rfqRollup=_roles.includes("salesman")?salesProjects.reduce((n,p)=>n+(_rfqAwaitingSummary(p).awaitingVendorCount>0?1:0),0):0;
   return(
     <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",alignSelf:"stretch",overflowY:"auto"}}>
       <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:8}}>
@@ -44860,11 +44899,56 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
         ])}
       </>)}
       {_roles.includes("salesman")&&(<>
-        {_sectionHeader("Sales Pipeline")}
+        {_sectionHeader(`Sales Pipeline${_rfqRollup?` · ${_rfqRollup} awaiting RFQ responses`:""}`)}
         {_grid(_todoBuckets.map(([key,label])=>{
           const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
           return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>onFocusBucket("salesman",key),`Show your ${label} projects`);
         }))}
+      </>)}
+      {/* F025 3b: timer-sorted attention list — most-overdue-first, yellow+red only (decision 4),
+          designer buckets excluded (decision 3). Rows open the project (decision 1). Scrolls within
+          the aside (already overflowY:auto). Rendered only when there ARE candidates so designer-only
+          users don't get an empty block. */}
+      {attnCandidates.length>0&&(<>
+        {_sectionHeader("Needs Attention")}
+        <div style={{padding:"4px 10px 8px"}}>
+          {_attn.length===0
+            ?<div style={{padding:"10px 6px",fontSize:12,color:C.green,fontWeight:600}}>✓ All caught up — nothing needs attention.</div>
+            :_attn.map(({project,bucket,color})=>{
+              const [col]=_pillTint[color];
+              const elapsed=_now-_todoClockStart(project,bucket);
+              const rfq=_rfqAwaitingSummary(project);
+              const showRfq=rfq.sentVendorCount>0;
+              const rfqRed=rfq.expiredVendorCount>0;
+              return(
+                <div key={project.id+":"+bucket} onClick={()=>onOpenProject&&onOpenProject(project)}
+                  title={`Open ${project.bcProjectNumber||project.name||"project"}`}
+                  style={{cursor:"pointer",display:"flex",gap:8,alignItems:"stretch",background:"#0c0c16",border:`1px solid ${C.border}`,borderLeft:`3px solid ${col}`,borderRadius:6,padding:"7px 9px",marginBottom:5,transition:"transform 0.1s"}}
+                  onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
+                  onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                      {project.bcProjectNumber||"(no #)"}{project.name?` — ${project.name}`:""}
+                    </div>
+                    <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                      <span style={{color:col,fontWeight:700}}>{_bucketLabels[bucket]||bucket}</span>
+                      {" · "}{_fmtElapsed(elapsed)} in status
+                    </div>
+                    {showRfq&&(
+                      <div style={{fontSize:10,marginTop:3,color:rfqRed?C.red:C.muted,fontWeight:rfqRed?700:500}}>
+                        📤 {rfq.sentVendorCount} RFQ{rfq.sentVendorCount===1?"":"s"} out · {rfq.awaitingVendorCount} awaiting
+                        {rfq.oldestSentDate?` · oldest ${_dayAge(rfq.oldestSentDate)}d`:""}
+                        {rfqRed?` · ${rfq.expiredVendorCount} overdue`:""}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          {_attn.length>0&&_onTrack>0&&(
+            <div style={{padding:"6px 6px 2px",fontSize:10,color:C.muted}}>{_onTrack} on track</div>
+          )}
+        </div>
       </>)}
     </aside>
   );
@@ -49680,7 +49764,7 @@ INSTRUCTIONS:
         const _projectViewOpen=view==="project"&&navTab===(projectOriginTab||"projects");
         const _f030Active=navTab==="user_dashboard"; // F030 suppression hook — no-op until F030 exists
         if(_projectViewOpen||_f030Active||showSearch)return null;
-        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus}/>;
+        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>;
       })()}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
