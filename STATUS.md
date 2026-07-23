@@ -5,7 +5,13 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-22 · Jon BACK · prod v1.24.5 · session ACTIVE
+## Current — 🟢 2026-07-22 · prod v1.24.13 · session CLOSED (clean)
+
+> ## 🧾 SESSION END 2026-07-22 — big dashboard/notifications/markup batch shipped (v1.23.23 → v1.24.13, ~175 commits)
+> **Shipped to prod after v1.24.5:** v1.24.6 F033 (rail on every tab) · v1.24.7 F031 #1 (Clear ✕) · v1.24.8 F031 #3 + B047 (name overflow) · v1.24.9 divider+B048+F031#4+B049+F031#2 (notification click-nav, 2 pre-existing bugs fixed) + B050 (post-review bell) · v1.24.10 F025 3b (Needs-Attention list + RFQ awaiting rows) · v1.24.11 tile font bump · **v1.24.12 B018** (money-path: phantom-red BC rows blocking Send / forcing Budgetary — `_effectivePriceDate` SSOT accessor; + split-by-reason send-block overlay) · **v1.24.13 F030** (MY DASHBOARD page) **+ F029 slice-1** (live Outlook Email panel, read-only/zero-persistence, Coach privacy-approved) **+ B051** (triangle/line markup render).
+> **In flight at close:** Coach scope for **F035+F040 (interactive markup)** done → plan saved `docs/F035-F040-INTERACTIVE-MARKUP-SCOPE.md`. **⭐ NEXT UP #1 = F035-move + F040** (build move-first).
+> **⏳ Jon (non-blocking):** verify B051 on prod (draw triangle/line + circle→oval call) · F036/F038 clarifications · G015 test-ribbon fix (offered). Engineer feedback triaged → B051 done, F034-F040/G014 queued (`docs/ENGINEER-FEEDBACK-TRIAGE.md`).
+> **State:** master==origin, working tree clean, prod v1.24.13 ACTIVE (no freeze).
 
 > ## ✅✅ SHIPPED TO PROD v1.24.5 (release d07eb7e9) — role-aware dashboard + name fix
 > **F032** role-differentiated To-Do pane (Salesman pills only for actual salespeople → Andrew's phantom RFQs gone; Reviewer + Designer sections assigned-to-me; new `permissions.designer` flag; admins see only roles they hold) + **B046** name fallback (all members get a name). Hosting-only. Coach APPROVE WITH NITS. ⏳ Jon: set Andrew's Designer flag in Team→Permissions so his Engineering section populates.

@@ -39,8 +39,21 @@
 - Non-blocking nits: F031 #2 (rare abnormal-data dead-click) + `_navigable` projectId consistency; B018 (`_redReasonBreakdown` #192 instrumentation drift; optional poll-hardening to sync priceDate on dateChanged); F029 slice-1 (button-handler unmount guards; dead `conversationId`).
 - Older: B016-2/3 (deferred), tech-review cluster (B024-B027/F017/F018), ~90 legacy `#N` items.
 
+## ⭐ NEXT UP (ranked — shovel-ready first)
+1. **F035-move + F040** (interactive markup) — **#1, plan ready** (`docs/F035-F040-INTERACTIVE-MARKUP-SCOPE.md`). Jon's live-tested need: placed shapes can't be moved; notes should sit beside the shape, movable, with a leader line. Build split: **F035-move first (S–M)** → F040 (M, one PR) → F035-resize (L, fast-follow). 6 Coach-rec'd decisions to confirm at kickoff (select-tool, resize-defer, centroid anchor, legacy offset, live-track leader, no empty-note labels). Add-only `noteX/noteY`, no migration.
+2. **F034** (click markup in list → highlight on drawing) — MED-HIGH, M; same overlay, natural to fold with F035/F040.
+3. **F037** (highlighter tool) — MED, M; straightforward now B051's viewBox is in.
+4. **F039** (Escape reverts part#/qty BOM edit) — MED, S; mirror the price cell's existing Escape-revert.
+5. **G015** (test ribbon overlaps markup toolbar) — MED, S; blocks testing drawing-review on test — do this early so F035/F040/etc. are test-verifiable. Jon offered-the-fix, awaiting his go.
+6. **F036** (edit shape-note text + wrap) — MED, S–M; ⚠ needs Jon: pin-edit (maybe already shipped) vs shape-note. Defaults chosen.
+7. **F038** (free-text markup) — LOW-MED, M; ⚠ Jon product call: text tool vs note variant.
+8. **G014** (per-page markup group spacing) — LOW, S; needs page-group structure first.
+9. **F029 phase A** (two-way To-Do↔Outlook Tasks sync, `Tasks.ReadWrite`) — next Outlook slice after the email panel; plan `docs/F029-PLAN.md`.
+10. **Non-blocking nit cleanup** — B018 `_redReasonBreakdown` #192 drift + optional poll-hardening; F031 #2 abnormal-data dead-click + `_navigable` projectId consistency; F029 slice-1 button-handler unmount guards + dead `conversationId`.
+
+**New-this-session bug still needing Jon's verify (not scoping):** B051 circle→oval on non-square drawing pages — leave as-is or add the `<ellipse>` aspect-comp follow-up (Jon's call after drawing on prod).
+
 ## Next-session startup
 1. Boot via `/ARC-team-Startup` (subagent-lane model).
 2. Prod is **v1.24.13, ACTIVE** (no freeze).
-3. Check `docs/` for the **F035/F040 interactive-markup scope** (Coach lane was finishing at close) → present plan + build (move-first).
-4. Likely-next: the markup interactive cluster (F035/F040), then F034/F037, and F036/F038 pending Jon's clarifications; G015 test-ribbon fix if Jon wants it.
+3. Start with **⭐ NEXT UP #1** (F035-move + F040) — plan is ready; confirm the 6 decisions, then build move-first. Consider **G015** (#5) early so it's testable on test.
