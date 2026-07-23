@@ -102,6 +102,22 @@ Read PRJ402119 live via the app's own `loadProjects` (inherited Jon's auth). **T
 
 ---
 
+# ⭐ SENT-LOCK vs STALENESS + THE "IN PROCESS" DEMOTION — corrected (Coach trace 2026-07-23)
+
+**Premise ("staleness demotes a sent quote to IN PROCESS") does NOT match the code. Two separate things:**
+
+1. **Staleness → rows go RED: YES, unconditionally.** `_isBomRowFlaggedRed` (`:16458`) is row-only (no project/sent-state); the 60-day staleness branch (`:16467-16471`) fires on any priceable row, sent or not. So a sent quote's rows DO paint red once prices age. (Cosmetic in the BOM table + feeds anything reading `anyRedRow`/`_hasRedRows` OUTSIDE the sent short-circuit — e.g. the #192 auto-Budgetary logic.)
+2. **Staleness → column demotion: NO.** `computeProjectEffectiveStatus` (`:16878`) has a `quoteSent` short-circuit (`:16924`) that runs BEFORE the `anyRedRow` routing (`:16936`): a sent, non-diverged quote returns `firm_sent`/`budgetary_sent` → pinned to **Quotes Sent** (`_todoBucketOf:16738`). Red/stale rows NEVER reach the demotion path for a sent quote.
+3. **The ONLY thing that demotes a sent quote to IN PROCESS = REV DIVERGENCE** (`quoteRev > quoteSentRev`, `:16926`) — i.e. **something edited the quote AFTER it was sent** (B034 Change B). Not calendar aging.
+
+**⇒ Noah's four IN-PROCESS jobs are there because they were EDITED post-send (rev bumped), NOT because of staleness.** Their red rows are a *separate* issue (staleness / price-drift / price=0). PRJ402119's raw `status:"draft"` is inert (send never advances raw `status`); its IN-PROCESS placement is divergence.
+**Likely culprit for the post-send edit:** the auto-price-check-on-open / poll interplay (a reopened sent quote whose `quoteLocked` cleared or expired can get a price change applied that bumps `quoteRev`) — ties back to the same drift mechanism. **Needs live confirm: read `quoteRev` vs `quoteSentRev` on the four.**
+
+**Reframed fixes:**
+- **The demotion fix = F048 true lock** — a genuinely locked sent BOM can't be edited post-send → no rev divergence → no IN-PROCESS demotion. This is the real fix for "shouldn't be in IN PROCESS."
+- **Staleness-red-on-sent** (cosmetic/auto-Budgetary) → skip the staleness red branch when the BOM is sent-locked (`_isBomLocked`/F048, option iii). **Staleness-ONLY** — keep qty=0/price=0/`bcPollDivergence` red even when sent (real defects).
+- **F051** (pre-send freshness-through-validity gate) unchanged — the before-send half.
+
 # LANE 1 — Pricing attribution + BC-write window + red-block / budgetary / audit
 
 ## ⭐⭐ THE CONVERGENT ROOT-CAUSE (both lanes agree) — likely NOT human error
