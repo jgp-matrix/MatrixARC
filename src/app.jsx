@@ -44883,7 +44883,12 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     const [col,bg]=color?_pillTint[color]:_neutralTint;
     return(
       <div key={key} onClick={onClick} title={title}
-        style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,padding:"6px 8px",height:72,display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
+        style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,
+          padding:pageMode?"4px 9px":"6px 8px",
+          // F030 r2 (2026-07-22): pageMode tiles are only as tall as title+value needs (minHeight
+          // lets a wrapped label grow instead of clip). Standing rail keeps the fixed 72px tile.
+          ...(pageMode?{minHeight:42}:{height:72}),
+          display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
         onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
         onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
         <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
@@ -44924,6 +44929,31 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // (standing rail). "pills" ⇒ role queue + Sales Pipeline pills only. "attention" ⇒ Needs Attention only.
   const _showPills=!pageSection||pageSection==="pills";
   const _showAttn=!pageSection||pageSection==="attention";
+  // F030 r2 (2026-07-22): factor each role's pill group into a reusable fragment (same _sections/
+  // bucket derivation — NO data-logic fork) so pageMode can arrange Review Quote | Engineering
+  // side-by-side while the standing rail keeps them stacked. null when the role isn't present.
+  const _reviewerGroup=_roles.includes("reviewer")?(<>
+    {_sectionHeader("Review Queue")}
+    {_grid([
+      _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for pre-review"),
+      _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for post-review")
+    ])}
+  </>):null;
+  const _designerGroup=_roles.includes("designer")?(<>
+    {_sectionHeader("Engineering")}
+    {_grid([
+      _pill("engineering","Engineering Design",engItems.length,null,()=>onFocusBucket("designer"),"Your Engineering Design projects"),
+      _pill("programming","Programming",progItems.length,null,()=>onFocusBucket("designer"),"Your Programming projects"),
+      _pill("commissioning","Commissioning",commItems.length,null,()=>onFocusBucket("designer"),"Your Commissioning projects")
+    ])}
+  </>):null;
+  const _salesGroup=_roles.includes("salesman")?(<>
+    {_sectionHeader(`Sales Pipeline${_rfqRollup?` · ${_rfqRollup} awaiting RFQ responses`:""}`)}
+    {_grid(_todoBuckets.map(([key,label])=>{
+      const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
+      return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>onFocusBucket("salesman",key),`Show your ${label} projects`);
+    }))}
+  </>):null;
   return(
     <aside style={pageMode
       ?{width:"100%",display:"flex",flexDirection:"column",background:"transparent"}
@@ -44937,28 +44967,23 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
         </div>
         <button onClick={()=>setRailOpen(false)} title="Hide the To-Do pane" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"2px 4px"}}>▸</button>
       </div>)}
-      {_showPills&&_roles.includes("reviewer")&&(<>
-        {_sectionHeader("Review Queue")}
-        {_grid([
-          _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for pre-review"),
-          _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for post-review")
-        ])}
-      </>)}
-      {_showPills&&_roles.includes("designer")&&(<>
-        {_sectionHeader("Engineering")}
-        {_grid([
-          _pill("engineering","Engineering Design",engItems.length,null,()=>onFocusBucket("designer"),"Your Engineering Design projects"),
-          _pill("programming","Programming",progItems.length,null,()=>onFocusBucket("designer"),"Your Programming projects"),
-          _pill("commissioning","Commissioning",commItems.length,null,()=>onFocusBucket("designer"),"Your Commissioning projects")
-        ])}
-      </>)}
-      {_showPills&&_roles.includes("salesman")&&(<>
-        {_sectionHeader(`Sales Pipeline${_rfqRollup?` · ${_rfqRollup} awaiting RFQ responses`:""}`)}
-        {_grid(_todoBuckets.map(([key,label])=>{
-          const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
-          return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>onFocusBucket("salesman",key),`Show your ${label} projects`);
-        }))}
-      </>)}
+      {/* F030 r2 (2026-07-22): pageMode lays Sales Pipeline as its own full-width row, then places
+          Review Quote (LEFT) beside Engineering (RIGHT) in a horizontal flex row. The standing rail
+          keeps the original stacked order (reviewer → designer → salesman). Same group fragments in
+          both branches — placement only. */}
+      {_showPills&&(pageMode?(<>
+        {_salesGroup}
+        {(_reviewerGroup||_designerGroup)&&(
+          <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-start"}}>
+            {_reviewerGroup&&<div style={{flex:"1 1 260px",minWidth:0}}>{_reviewerGroup}</div>}
+            {_designerGroup&&<div style={{flex:"1 1 260px",minWidth:0}}>{_designerGroup}</div>}
+          </div>
+        )}
+      </>):(<>
+        {_reviewerGroup}
+        {_designerGroup}
+        {_salesGroup}
+      </>))}
       {/* F025 3b: timer-sorted attention list — most-overdue-first, yellow+red only (decision 4),
           designer buckets excluded (decision 3). Rows open the project (decision 1). Scrolls within
           the aside (already overflowY:auto). Rendered only when there ARE candidates so designer-only
@@ -49748,16 +49773,16 @@ INSTRUCTIONS:
           {/* ROW 2 — (Needs Attention | My Projects) side-by-side in the main area, plus the
               notifications side panel (📧 Email scaffold above the 🔔 ARC bell list). */}
           <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
-            <div style={{flex:"1 1 620px",minWidth:0,display:"flex",gap:18,flexWrap:"wrap"}}>
+            <div style={{flex:"0 1 500px",minWidth:0,display:"flex",gap:18,flexWrap:"wrap"}}>
               {/* Needs Attention (LEFT) — page-mode TodoRail pageSection="attention": renders ONLY the
                   timer-sorted attention list, same _sections/attention derivation as the pills band above. */}
-              <div style={{flex:"1 1 300px",minWidth:0,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+              <div style={{flex:"1 1 230px",minWidth:0,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
                 <TodoRail pageMode pageSection="attention" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
               </div>
               {/* My Projects (RIGHT) — project rows + $ totals; scoped via the _isMyProject SSOT (same
                   scope expression the rail's memo uses); $ total mirrors the buildArcContext
                   Σ qty*unitPrice pattern. NOT the heavy Dashboard kanban tile component. */}
-              <div style={{flex:"1 1 300px",minWidth:0}}>
+              <div style={{flex:"1 1 230px",minWidth:0}}>
                 {(()=>{
                   const myProjects=projects.filter(p=>_isMyProject(p,user.uid)&&(!p.transferred||p.transferredTo!==user.uid)&&!p.importedFromBC&&!p.lostAt);
                   if(!myProjects.length)return null;
@@ -49785,10 +49810,11 @@ INSTRUCTIONS:
                 })()}
               </div>
             </div>
-            {/* SIDE PANEL — notifications. WIDENED (basis 440 / minWidth 380) so the Email rows fit a
-                subject line + a one-line body preview. Two stacked labeled sections: 📧 Email on top,
-                🔔 ARC Notifications below. */}
-            <div style={{flex:"0 1 440px",minWidth:380,display:"flex",flexDirection:"column",gap:14,alignSelf:"stretch"}}>
+            {/* SIDE PANEL — notifications. F030 r2 (2026-07-22): grows to absorb the width freed by the
+                skinnier Needs Attention / My Projects columns (flex "1 1 560px" / minWidth 420) so the
+                Email rows fit a subject line + a one-line body preview. Two stacked labeled sections:
+                📧 Email on top, 🔔 ARC Notifications below. */}
+            <div style={{flex:"1 1 560px",minWidth:420,display:"flex",flexDirection:"column",gap:14,alignSelf:"stretch"}}>
               {/* 📧 Email — F029 Outlook mount point. Email DATA is deferred (F029 not wired), so this is
                   a STATIC scaffold: a labeled section + placeholder empty state + sample subject/preview
                   rows sized for a two-line (bold subject + muted body preview) layout. NO Outlook/Graph
