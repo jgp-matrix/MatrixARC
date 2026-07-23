@@ -7,6 +7,11 @@
 
 ## Current — 🔴 2026-07-23 · prod v1.24.17 · EMERGENCY (PRJ402119 — all auto-pricing OFF, RFQ-only)
 
+> ## 🔒 RFQ PATH PROTECTION (Jon: "if RFQ breaks we're done") — verifying
+> RFQ is now the ONLY pricing-into-BC path. **Freddy self-check: CLEAN** — all 3 kill-switch flags (`SCRAPER_BC_WRITEBACK_ENABLED`/`AUTO_PRICING_ENABLED`/`AUTO_BC_REPRICE_ENABLED`) appear ONLY at scraper/auto-pricing/pricing-button/poll/on-open sites (grep-confirmed :15705/:25391/:28426/:28754/:28865/:29985/:29991/:38522/:41344); NONE touch `doApplyPortalPrices` (~:39944) or its BC pushes (~:39999/:40005). 🏈 Coach lane doing full end-to-end trace (RFQ send→portal→apply→BC + F041 impact + `extractSupplierQuotePricing` CF) for a GO/NO-GO.
+> **F041 (primary-vendor selection): rewrite of `bcFetchPurchasePrices` APPLIED but UNCOMMITTED + INERT** (backward-compat: no-opts callers = legacy). Callers not yet wired. **HOLDING F041 finish + all deploys until the RFQ GO.**
+
+
 > ## ✅ SHIPPED PROD v1.24.17 (release `a92b1f30`) — ALL AUTOMATED PRICING DISABLED (Jon: "only RFQs for now")
 > `AUTO_PRICING_ENABLED=false` gates BOTH pricing engines — foreground `runPricingOnPanel` (`:28399`, the "Get New Pricing"/"Refresh All" buttons + reconciliation/post-extract auto-invokes) AND background `runPricingBackground` (`:15679`, post-extract). Covers BC-pull + Codale/Royal scrapers + AI estimate. The two buttons now alert "send an RFQ" instead of running. + Codale Full Update button gated (`runFullUpdate`). **Still working:** RFQ, portal apply, manual per-row price entry, and the F050 read-only plausibility sweep (reads, never sets). **⏳ Jon prod-verify:** "Get New Pricing" alerts to RFQ; extraction produces a BOM with no auto-prices.
 > **RE-ENABLE prerequisites (queued, build-ready):** F041 primary-vendor selection (`docs/F041-PRIMARY-VENDOR-FIX.md`) + write-side plausibility gate + fixed scraper extraction. Flip `AUTO_PRICING_ENABLED`/`SCRAPER_BC_WRITEBACK_ENABLED`/`AUTO_BC_REPRICE_ENABLED` back on ONLY after those land. **BC cleanup (V00373 $0.71) + re-price the 627 rows** still pending (BC-admin + F041).
