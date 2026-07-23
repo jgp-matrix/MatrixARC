@@ -44972,6 +44972,12 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // inlined here since that helper is scoped to another component. Shows exact time-in-status.
   const _fmtElapsed=ms=>{const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<24)return h+"h";return Math.round(h/24)+"d";};
   const _dayAge=ts=>Math.max(0,Math.round((_now-ts)/(24*36e5)));
+  // F043 (2026-07-23): hovering an attention row highlights the matching project tile on the board.
+  // DOM/imperative (mirrors the tiles' own imperative hover) — no lifted state, so the board doesn't
+  // re-render on every hover (Dashboard/ProjectTile are unmemoized). No-op when the project isn't on
+  // the current board (querySelector finds nothing) — covers the tabs/rows with no matching tile.
+  // Uses boxShadow (accent glow ring) so it doesn't collide with the tile's own border-color hover.
+  const _hlBoardTile=(pid,on)=>{try{const el=document.querySelector('[data-project-tile="'+pid+'"]');if(el)el.style.boxShadow=on?`0 0 0 2px ${C.accent}, 0 0 12px 2px ${C.accent}66`:"";}catch(_){}};
   // F042 (2026-07-23): attention list now includes ALL colors — the old yellow+red-only filter is dropped
   // and the "N on track" hidden green-count is retired (greens are now listed). Universe is unchanged
   // (role-scoped candidates; designer buckets still excluded — no clean time-in-status source). color is
@@ -45077,8 +45083,8 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
                 <div key={project.id+":"+bucket} onClick={()=>onOpenProject&&onOpenProject(project)}
                   title={`Open ${project.bcProjectNumber||project.name||"project"}`}
                   style={{cursor:"pointer",display:"flex",gap:8,alignItems:"stretch",background:"#0c0c16",border:`1px solid ${C.border}`,borderLeft:`3px solid ${col}`,borderRadius:6,padding:"7px 9px",marginBottom:5,transition:"transform 0.1s"}}
-                  onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
-                  onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
+                  onMouseEnter={e=>{e.currentTarget.style.transform="translateX(1px)";_hlBoardTile(project.id,true);}}
+                  onMouseLeave={e=>{e.currentTarget.style.transform="translateX(0)";_hlBoardTile(project.id,false);}}>
                   <div style={{flex:1,minWidth:0}}>
                     <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                       {project.bcProjectNumber||"(no #)"}{project.name?` — ${project.name}`:""}
@@ -46763,6 +46769,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const _tileBg=bcDisconnected?undefined:_hasActiveEcoTile?"#1f0a0a":undefined;
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
+    data-project-tile={p.id}/* F043: lets a To-Do rail-row hover find + glow this tile (see _hlBoardTile) */
     draggable={isDraggable||false}
     onDragStart={onDragStart}
     onDragEnd={onDragEnd}
