@@ -5,7 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-23 · prod v1.24.13 · ACTIVE session
+## Current — 🟢 2026-07-23 · prod v1.24.14 · ACTIVE session
+
+> ## ✅✅✅ SHIPPED TO PROD v1.24.14 (release `a2c44601`) — To-Do pane batch
+> **F042** (NEEDS ATTENTION shows ALL projects incl. green, sorted Ship Date → Est. Prod. Done → most-untouched; footer = total count) · **G016** (top status tiles shrunk 72→52px to reclaim space) · **G017** (rail + main Project column each their own viewport-locked independent scroll pane). All Jon-verified on Test V.039→V.042, hosting-only, advisory-review clean. One shared `TodoRail` edit covers rail + MY DASHBOARD page.
+> **⏳ Jon prod-verify:** the three above on prod. **Next:** F043 (hover rail row → highlight matching project on board) to scope. F041 (supplier matrix) still PARKED at direction (ii).
+
 
 > ## 🔧 2026-07-23 — To-Do pane follow-ups (NEW) — G017 (independent scroll) + F043 (hover→highlight)
 > **G017 (Jon):** make the To-Do side pane scroll separately from the main page. Surface = **standing right rail** (Jon confirmed). Fix BUILT + on **Test V.041**: standing-rail aside pinned to `height:calc(100vh - 122px)` + `minHeight:0` + `overflowY:auto` (explicit viewport-lock instead of `alignSelf:stretch` — forces nested flex scroll to engage across browsers). Scoped to the 380px rail; main column untouched. Rail fix CONFIRMED working by Jon. **Round 2 (Test V.042):** Jon's symptom = mousing over the main Project section scrolls the whole document (dragging the rail with it) → the main content column (`:49862`) had `overflowY:auto` but no definite height (relied on stretch, same latent issue the rail had). Applied the SAME fix to the main column: `height:calc(100vh - 122px)` + `minHeight:0`. Now both panes are independent viewport-locked scroll containers. **⏳ Jon verify V.042.**
