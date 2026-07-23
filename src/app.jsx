@@ -16371,6 +16371,10 @@ function _effectivePriceDate(r){
 }
 function _isBomRowFlaggedRed(r,customerNo,customerName){
   if(!r||r.isLaborRow)return false;
+  // B052 (2026-07-23): a poll-caught price divergence (the 5-min BC poll tried to apply a large downward
+  // swing — see pollBcPricing) keeps the row RED until a human reviews/clears it. Makes B052's otherwise-
+  // invisible flag immediately visible + send-gated via the existing SSOT, ahead of F050's fuller UX.
+  if(r.bcPollDivergence)return true;
   const vendorIsCustomer=_vendorMatchesCustomer(r.bcVendorNo,r.bcVendorName,customerNo,customerName);
   if(!r.customerSupplied&&+r.qty===0)return true;
   if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
@@ -25296,7 +25300,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const dateChanged=newPoDate!==r.bcPoDate;
           if(!priceChanged&&!dateChanged)return r;
           // B052: large downward divergence → do NOT auto-apply; keep current price, flag for review.
-          const bigDrop=priceChanged&&r.unitPrice>0&&unitPrice<r.unitPrice*BC_POLL_DIVERGENCE_RATIO&&(r.unitPrice-unitPrice)>=BC_POLL_DIVERGENCE_MIN_DELTA;
+          // Coerce current price numerically (codebase convention, e.g. _isBomRowFlaggedRed +r.unitPrice).
+          const cur=+r.unitPrice||0;
+          const bigDrop=priceChanged&&cur>0&&unitPrice<cur*BC_POLL_DIVERGENCE_RATIO&&(cur-unitPrice)>=BC_POLL_DIVERGENCE_MIN_DELTA;
           if(bigDrop){
             divergedRows.push({id:String(r.id),partNumber:pn,prevPrice:r.unitPrice,bcPrice:unitPrice});
             // keep unitPrice/priceDate as-is; allow the harmless forward date update; record the divergence.
