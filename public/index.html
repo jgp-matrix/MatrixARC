@@ -240,7 +240,7 @@ const APP_VERSION="v1.24.9";
 // deploy-test.sh, NEVER reset, NEVER touched by deploy.sh (prod). Format "NNN" (zero-padded).
 // Consumed by: (1) the freshness loop-guard below, and (2) TestEnvBanner (src/app.jsx),
 // which shows "Test V.<TEST_BUILD>" on the test host only. Prod ignores it entirely.
-const TEST_BUILD="029";
+const TEST_BUILD="030";
 // Version freshness check — if the deployed version.json differs from the loaded build,
 // the browser is serving stale HTML. Clear SW caches and hard-reload.
 // G009 loop-guard: compare a COMBINED build id on both sides so this fires correctly on the
@@ -483,6 +483,6 @@ async function unsubscribePushNotifications(uid){
 // Originally it was top-level here; that required messaging to load eagerly on every
 // page. Now this block is a no-op marker.
 </script>
-<script src="index.bundle.js?v=v1.24.9"></script>
+<script src="index.bundle.js?v=v1.24.9-T030"></script>
 </body>
 </html>
