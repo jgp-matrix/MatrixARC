@@ -1,7 +1,16 @@
 # F041 — Primary/Secondary Supplier Matrix — Analysis & Options
 
 **Author:** Freddy Lyst (analyst) · **Code trace:** Coach (Sam Wize) · **Date:** 2026-07-23
-**Status:** ANALYSIS — no build. Awaiting Jon direction on source-of-truth + enforcement posture.
+**Status:** ANALYSIS — no build.
+
+## ✅ Decisions locked (Jon, 2026-07-23)
+- **Axis 1 — Source of truth: HYBRID.** BC ItemCard `Vendor_No` seeds primary; ARC overlays ranking +
+  overrides + enforcement layer.
+- **Axis 2 — Enforcement posture: SOFT-GATE (near-term).** Default to primary; one-time confirm + a
+  Purchasing-visible flag when a salesman prices off-primary. Hard-gate deferred to the Purchasing module.
+
+**Still open:** granularity (per-item vs per-manufacturer), Sales↔Purchasing handoff (Jon working through
+the flow), reconcile-vs-supersede `manufacturerVendorMap`. See "Decisions needed" below.
 
 ---
 
@@ -145,15 +154,19 @@ the already-shipped `manufacturerVendorMap` + `bcGetItemVendorNo` + the SSOT pre
 
 ## Decisions needed from Jon (before any build)
 
-1. **Source of truth (Axis 1):** A / B / **C** — where does "primary" live?
-2. **Enforcement posture (Axis 1):** 1 / **2** / 3 — surface, soft-gate, or hard-gate now?
+1. ~~**Source of truth (Axis 1):**~~ ✅ **HYBRID** (Jon 2026-07-23).
+2. ~~**Enforcement posture (Axis 2):**~~ ✅ **SOFT-GATE near-term** (Jon 2026-07-23).
 3. **Primary granularity:** per-**item** (like BC `Vendor_No`) or per-**manufacturer** (like the shipped
-   `manufacturerVendorMap`), or both? This determines how we reconcile with the existing learner.
-4. **Sales↔Purchasing handoff:** since purchasing is external today — is the near-term goal purely
-   *quote-time* correctness (salesman quotes off the primary), or does Purchasing need an ARC signal/export
-   telling them "this line was sourced off-primary, here's why"?
-5. **Reconcile vs. supersede `manufacturerVendorMap`:** extend the existing learner into the matrix, or
-   stand up a distinct per-item primary store beside it? (Recommend extend.)
+   `manufacturerVendorMap`), or both? Determines how we reconcile with the existing learner.
+   *Freddy default (assumed unless Jon overrides): **per-item primary is authoritative**, seeded/suggested
+   by the per-manufacturer learner — matches how BC keys it and how a salesman thinks about "this part."*
+4. **Sales↔Purchasing handoff (Jon still working through the flow):** since purchasing is external today —
+   is the near-term goal purely *quote-time* correctness (salesman quotes off the primary), or does
+   Purchasing also need an ARC signal/export ("this line was sourced off-primary, here's why")? **← the one
+   genuinely open product question; no rush.**
+5. **Reconcile vs. supersede `manufacturerVendorMap`:** *Freddy default (assumed unless Jon overrides):
+   **extend** the existing learner — the matrix reads/writes it as the per-manufacturer seed and adds an
+   explicit per-item primary + off-primary detection on top. No parallel store.*
 
 ---
 
