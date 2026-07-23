@@ -102,6 +102,53 @@ Read PRJ402119 live via the app's own `loadProjects` (inherited Jon's auth). **T
 
 ---
 
+# ⭐⭐⭐⭐ TRUE ROOT CAUSE — ARC picks the WRONG VENDOR's BC purchase price (proven live, 2026-07-23)
+
+**The plausibility sweep found 627 rows / 40 projects priced implausibly low (heavy $0.71, vendor "Royal Wholesale"/V00373). Live multi-vendor BC lookup PROVES it's an ARC selection bug, not BC corruption:**
+
+`bcFetchPurchasePricesMultiVendor(['HMIST6500'])` →
+- **HMIST6500 : V00040 → $1,632** (startingDate ~Mar 2026) ✅ correct price
+- **HMIST6500 : V00373 → $0.71** (startingDate ~Aug 2026, NEWER) ❌ junk
+- `bcFetchPurchasePrices(['HMIST6500'])` (ARC's live-pricing picker) returns **V00373 $0.71** — it selects the **most-recent-Starting_Date** record **across ALL vendors**.
+
+**⇒ ROOT CAUSE:** ARC's single-vendor purchase-price selection picks the **newest** PurchasePrice regardless of vendor. Vendor **V00373 (Royal Wholesale)** has bogus **$0.71** placeholder entries with recent dates across hundreds of parts → they override the correct vendor's real price on every affected row. **BC has the correct prices** (Jon confirmed by checking BC directly — the correct records exist under the proper vendor); ARC just grabs the wrong (newest) one.
+
+**This supersedes the earlier "bad BC data" framing.** (The PRJ402119 $12 enclosure is the same mechanism — a junk vendor record won on recency. Jon's manual BC fix there patched one part; the SELECTION bug is the systemic cause.)
+
+**THE SYSTEMIC FIX = F041 (Primary/Secondary supplier matrix), now URGENT + validated.** ARC must price from the **PRIMARY vendor** (or the item's default vendor / exclude junk vendors), NOT "newest record across all vendors." That single change corrects all 627 rows at once (they'd read V00040's $1,632, not V00373's $0.71). `bcFetchPurchasePricesMultiVendor` (`:5587`, already exists, currently unused in live pricing) is the building block. Selection lives in `bcFetchPurchasePrices` (`:5547`).
+
+**Two remediation tracks:**
+1. **ARC (primary/systemic):** fix `bcFetchPurchasePrices` vendor selection → price from primary vendor, not most-recent. = F041. Corrects everything at once + robust even if junk vendor entries exist.
+2. **BC data (secondary/hygiene):** find why **V00373/Royal Wholesale** has $0.71 placeholders across hundreds of parts (scraper writeback? bad import?) and clean them. Root-cause lane investigating whether an ARC scraper wrote them (→ stop recurrence).
+
+**Defenses (already moving):** F050 sweep CAUGHT it (validated); F050 send-block + B052 guard + F048 lock contain it. But the selection fix (F041) is what actually corrects the prices.
+
+## ⭐ FULL CHAIN CONFIRMED (Coach root-cause lane + Jon confirmed BC Purchase Price card holds $0.71)
+**A feedback loop — ARC poisoned its own source of truth:**
+1. **Origin — the custom (Royal Wholesale) scraper writes garbage to BC.** Extraction `functions/index.js:1937-1951` grabs the **first `$X.XX` anywhere on the page** (`:1940`) — on a no-match/promo/footer it returns a recurring garbage constant ($0.71). ARC's only gate is `numPrice>0` (`src/app.jsx:28780`); it stamps `priceSource:"bc"` and **pushes to BC** — `bcPushPurchasePrice` (`:5498`) + `bcPatchItemOData(...,{Unit_Cost})` (`:28820-28821`) — under scraper vendor **V00373**. NO plausibility check. (Codale path `:28658/28672/28711` is similar but better-guarded — matches Royal = 431/627.)
+2. **Now BC holds bogus $0.71** for V00373 (recent date) alongside the correct vendor's price (V00040 @ $1,632, older). ✅ **Jon confirmed the BC Purchase Price card shows $0.71.**
+3. **Selection — ARC picks the newest.** `bcFetchPurchasePrices` (`:5547`, mapping `:5572` — faithful, no scaling bug) returns most-recent-Starting_Date across ALL vendors → V00373's $0.71 beats V00040's $1,632.
+4. **Spread — poll + on-open re-assert it.** `pollBcPricing` (`:25349`) + on-open check (`:38499/38551`) re-serve $0.71 to every project sharing the part (40 projects). B052's guard has a **$5-floor hole** (`BC_POLL_DIVERGENCE_MIN_DELTA=5`) so cheap parts ($4.51→$0.71 = $3.80 drop) slip through, and it doesn't cover the scraper-write door at all.
+
+**Ruled out:** ARC read-side field/scaling bug (mapping faithful). **Root = scraper garbage → write-back to BC → most-recent selection → poll spread.** Both defects are ARC.
+
+## REMEDIATION (ordered — order matters)
+1. **🚨 STOP THE BLEEDING (urgent):** gate/disable the scraper's write-back to BC (`:28820-28821` push + Codale `:28711`) AND the poll/on-open auto-apply — every scrape/open currently re-poisons BC. (Aligns with B053 "auto-pricing does more harm than good.")
+2. **Fix scraper extraction** (`functions/index.js:1940`) — require part-match + plausibility, return null on no confident match (mirror Codale Strategy 2).
+3. **Write-side plausibility gate** (`:28780` + Codale `:28658`) — reject/flag a scraped price implausibly low vs AI estimate/prior BEFORE stamping "bc" + before pushing (reuse F050 `PLAUSIBILITY_RATIO`). Consider `priceSource:"scraper"` (not "bc") so scraped values don't inherit BC authority.
+4. **Selection fix = F041** — `bcFetchPurchasePrices` price from PRIMARY vendor, not most-recent (`bcFetchPurchasePricesMultiVendor:5587` is the building block). Junk vendor records then can't win.
+5. **Clean BC** — bulk-remove V00373 $0.71 (+ other garbage constants) PurchasePrice/Item-Card entries. AFTER #1 (else re-poison).
+6. **Re-price the 627 rows** — after BC clean + selection fixed.
+7. **Tighten B052** ($5 floor → ratio-only) + ship F050 send-block. Defenses.
+**Good news:** correct prices still exist in BC (under proper vendors); F050 sweep gives the full 627-row triage list; BC wasn't destroyed, just out-competed on recency.
+
+## "HOW did $0.71 get onto so many items? Is there a record?" (Jon, 2026-07-23)
+**HOW (mechanism):** the Royal Wholesale custom scraper's extraction grabs the **first `$X.XX` anywhere on the page** (`functions/index.js:1940`). When a part isn't confidently matched (no product / promo / footer / a static element), it returns a fixed garbage value (~$0.71). ARC's only gate is `numPrice>0` (`src/app.jsx:28780`) → stamps `priceSource:"bc"` → **pushes to BC** `Direct_Unit_Cost` + Item Card `Unit_Cost` (`:28820-28821`) under vendor V00373. Same page element every run ⇒ same $0.71 repeatedly.
+**Is there a record?**
+- **ARC: essentially NONE.** `users/{uid}/pricingSyncLog` is **empty** (live check); ARC stamps no actor/when on price/scraper writes (the F046 audit gap). ARC cannot say which run did it.
+- **BC: YES — the record is the `Starting_Date` on each bogus record.** Live sample of V00373 $0.71 records dated **2026-05-14, 05-15, 05-20 (×2), 05-26, 07-09, 07-11 (×2), 07-14** — **NOT one event; recurring across ~2+ months** (every Royal scrape run on unmatched parts). BC's own change-log (created-by/date) is the authoritative trail.
+**⇒ It's an ongoing leak, not a one-time import.** A cleanup script (purge V00373 garbage-constant PurchasePrice/Item-Card records) is needed — but MUST follow stopping the scraper write-back (Remediation #1), else the next scrape re-poisons.
+
 # ⭐ SENT-LOCK vs STALENESS + THE "IN PROCESS" DEMOTION — corrected (Coach trace 2026-07-23)
 
 **Premise ("staleness demotes a sent quote to IN PROCESS") does NOT match the code. Two separate things:**
