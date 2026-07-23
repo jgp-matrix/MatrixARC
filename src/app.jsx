@@ -8650,6 +8650,73 @@ async function graphSearchEmails(graphToken,query,top=15){
   }catch(e){console.warn("graphSearchEmails error:",e);return[];}
 }
 
+// F029 slice-1 (2026-07-22): fetch the signed-in user's RELEVANT Outlook emails for the F030
+// dashboard Email panel. "Relevant" = high-importance (last {daysBack}d, inbox) OR subject/body
+// contains "RFQ" (Graph $search, all folders — a matching Sent item is accepted). Two Graph calls
+// merged client-side because $filter+$orderby (importance) and $search (RFQ text) are mutually
+// exclusive in one request. READ-ONLY: /me/... with the user's OWN delegated Mail.Read token
+// (already consented — no new scope). Nothing is persisted; the result lives only in ephemeral
+// React state. Distinct from graphSearchEmails (Send-Quote thread picker), which is left untouched.
+// Throws on HTTP 429 (with .status/.retryAfter) so the poller can back off; degrades gracefully
+// (partial/empty) on any other error.
+async function graphFetchRelevantEmails(graphToken,{daysBack=30,top=25}={}){
+  if(!graphToken)return[];
+  const SELECT="id,subject,bodyPreview,from,receivedDateTime,webLink,importance,conversationId,isRead";
+  const H={"Authorization":`Bearer ${graphToken}`};
+  const mapMsg=m=>({
+    id:m.id,
+    subject:m.subject||"(No Subject)",
+    preview:(m.bodyPreview||"").slice(0,120),
+    from:m.from?.emailAddress?.name||m.from?.emailAddress?.address||"Unknown",
+    receivedDateTime:m.receivedDateTime,
+    webLink:m.webLink||"",
+    importance:m.importance||"normal",
+    isRead:m.isRead
+  });
+  const throw429=r=>{const e=new Error("Graph throttled (429)");e.status=429;e.retryAfter=r.headers.get("Retry-After")||"60";return e;};
+  const sinceIso=new Date(Date.now()-daysBack*86400000).toISOString();
+  // Call A — high-importance inbox messages received in the last {daysBack} days.
+  const fetchImportance=async withOrder=>{
+    const filter=encodeURIComponent(`importance eq 'high' and receivedDateTime ge ${sinceIso}`);
+    let url=`https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$filter=${filter}`;
+    if(withOrder)url+="&$orderby="+encodeURIComponent("receivedDateTime desc");
+    url+=`&$top=${top}&$select=${SELECT}`;
+    const r=await fetch(url,{headers:H});
+    if(r.status===429)throw throw429(r);
+    if(!r.ok){const e=new Error("importance query failed");e.status=r.status;e.body=await r.text().catch(()=>"");throw e;}
+    return((await r.json()).value||[]);
+  };
+  let importanceMsgs=[];
+  try{
+    importanceMsgs=await fetchImportance(true);
+  }catch(e){
+    if(e.status===429)throw e; // propagate — caller backs off
+    // InefficientFilter / 400 when $orderby is combined with this $filter on some mailboxes:
+    // retry without $orderby and sort client-side (the merge below sorts anyway).
+    if(e.status===400){
+      try{importanceMsgs=await fetchImportance(false);}
+      catch(e2){if(e2.status===429)throw e2;console.warn("graphFetchRelevantEmails importance fallback failed:",e2.status,(e2.body||"").slice(0,160));}
+    }else{console.warn("graphFetchRelevantEmails importance failed:",e.status,(e.body||"").slice(0,160));}
+  }
+  // Call B — RFQ text match (subject+body+sender), relevance order, all folders. $search cannot be
+  // combined with $orderby and requires the ConsistencyLevel:eventual header. Single token "RFQ".
+  let rfqMsgs=[];
+  try{
+    const r=await fetch(`https://graph.microsoft.com/v1.0/me/messages?$search=${encodeURIComponent('"RFQ"')}&$top=${top}&$select=${SELECT}`,{
+      headers:{...H,"ConsistencyLevel":"eventual"}
+    });
+    if(r.status===429)throw throw429(r);
+    if(r.ok)rfqMsgs=((await r.json()).value||[]);
+    else{const t=await r.text().catch(()=>"");console.warn("graphFetchRelevantEmails RFQ search failed:",r.status,t.slice(0,160));}
+  }catch(e){if(e.status===429)throw e;console.warn("graphFetchRelevantEmails RFQ search error:",e);}
+  // Merge: dedupe by id, sort receivedDateTime desc, cap {top}.
+  const byId=new Map();
+  for(const m of [...importanceMsgs,...rfqMsgs]){if(m&&m.id&&!byId.has(m.id))byId.set(m.id,mapMsg(m));}
+  return Array.from(byId.values())
+    .sort((a,b)=>new Date(b.receivedDateTime||0)-new Date(a.receivedDateTime||0))
+    .slice(0,top);
+}
+
 // DECISION(v1.19.588): Fetch an Outlook attachment via Microsoft Graph given the Office.js drag JSON.
 // Modern "New Outlook" and Outlook on the Web use an Office.js drag protocol where the attachment
 // never reaches dataTransfer.files — only a JSON descriptor. This helper parses that descriptor,
@@ -48372,6 +48439,12 @@ function App({user}){
   // B045/#3: persist the notification dropdown's height so a user can stretch it taller and it sticks.
   const [notifMenuH,setNotifMenuH]=useState(()=>{try{return parseInt(localStorage.getItem('arc_notif_menu_height'))||360;}catch(_){return 360;}});
   const [notifications,setNotifications]=useState([]);
+  // F029 slice-1 (2026-07-22): relevant Outlook emails for the F030 dashboard Email panel.
+  // READ-ONLY + ephemeral — NEVER persisted to Firestore (lives only in this state).
+  // Status: checking | connected | disconnected | loading | error.
+  const [outlookEmails,setOutlookEmails]=useState([]);
+  const [outlookMailStatus,setOutlookMailStatus]=useState("checking");
+  const [outlookMailFetchedAt,setOutlookMailFetchedAt]=useState(null);
   const [pendingPortalOpen,setPendingPortalOpen]=useState(null); // projectId to auto-open portal modal
   // F031 #2: rfqUploadId (=submission doc id / token) carried from a supplier_quote bell
   // notification so the portal modal can scroll to + briefly highlight the just-arrived
@@ -48443,6 +48516,53 @@ function App({user}){
     },(err)=>{console.warn('[notifications] listener error:',err&&err.message);});
     return()=>unsub();
   },[user.uid]);
+
+  // F029 slice-1 (2026-07-22): dashboard Email panel — load/refresh relevant Outlook emails.
+  // READ-ONLY, ephemeral: sets React state only, writes NOTHING to Firestore. Reuses the existing
+  // MSAL/Graph token helpers (no new scope). tryGraphTokenSilent = no popup; acquireGraphToken =
+  // interactive (behind the Connect Outlook button).
+  const _loadOutlookMail=async tok=>{
+    try{
+      const rows=await graphFetchRelevantEmails(tok,{daysBack:30,top:25});
+      setOutlookEmails(rows);setOutlookMailFetchedAt(Date.now());setOutlookMailStatus("connected");
+    }catch(e){console.warn("[outlookMail] load failed:",e);setOutlookMailStatus("error");}
+  };
+  const refreshOutlookMail=async()=>{
+    const tok=await tryGraphTokenSilent().catch(()=>null);
+    if(!tok){setOutlookMailStatus("disconnected");return;}
+    await _loadOutlookMail(tok);
+  };
+  const connectOutlook=async()=>{
+    setOutlookMailStatus("loading");
+    const tok=await acquireGraphToken().catch(()=>null);
+    if(!tok){setOutlookMailStatus("disconnected");return;}
+    await _loadOutlookMail(tok);
+  };
+  // On-mount fetch (silent — NO popup on load; a token miss just renders Connect Outlook) + a light
+  // 5-min poll that runs ONLY while the dashboard tab is active AND the page is visible. Honors a
+  // 429 Retry-After by skipping until the backoff clears. Not real-time push — polling only.
+  useEffect(()=>{
+    if(navTab!=="user_dashboard")return;
+    let cancelled=false,retryUntil=0;
+    const tick=async()=>{
+      if(cancelled||document.hidden||Date.now()<retryUntil)return;
+      const tok=await tryGraphTokenSilent().catch(()=>null);
+      if(cancelled)return;
+      if(!tok){setOutlookMailStatus(s=>s==="loading"?s:"disconnected");return;}
+      try{
+        const rows=await graphFetchRelevantEmails(tok,{daysBack:30,top:25});
+        if(cancelled)return;
+        setOutlookEmails(rows);setOutlookMailFetchedAt(Date.now());setOutlookMailStatus("connected");
+      }catch(e){
+        if(cancelled)return;
+        if(e&&e.status===429){const ra=parseInt(e.retryAfter||"60",10);if(!isNaN(ra))retryUntil=Date.now()+ra*1000;}
+        setOutlookMailStatus("error");
+      }
+    };
+    tick();
+    const id=setInterval(tick,5*60*1000);
+    return()=>{cancelled=true;clearInterval(id);};
+  },[navTab]);
 
   // DECISION(v1.19.594): Auto-open Debug Logs when arriving via ?openDebugLogs=1
   // (used by Issue Report push/email deep-links).
@@ -49814,25 +49934,55 @@ INSTRUCTIONS:
                 (no longer stacked with the bell). It sits between the pipelines and the skinny bell
                 column at a comfortable width for subject + one-line preview. */}
             <div style={{flex:"1 1 380px",minWidth:320,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
-              {/* 📧 Email — F029 Outlook mount point. Email DATA is deferred (F029 not wired), so this is
-                  a STATIC scaffold: a labeled section + placeholder empty state + sample subject/preview
-                  rows sized for a two-line (bold subject + muted body preview) layout. NO Outlook/Graph
-                  calls here — the real data lands when F029 ships. */}
-              <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-                <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>📧 Email</span>
-                  <span style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.6,border:`1px solid ${C.border}`,borderRadius:20,padding:"2px 8px"}}>Coming soon</span>
+              {/* 📧 Email — F029 slice-1 (2026-07-22): live Outlook panel showing the user's relevant
+                  emails (high-importance + RFQ) via the existing Graph/MSAL stack. READ-ONLY + ephemeral
+                  (state only, nothing persisted). States: checking / loading / disconnected (Connect
+                  Outlook) / connected (row list) / error. On-load + 5-min visible-tab poll + manual ↻. */}
+              {(()=>{
+                const _mailAgo=ts=>{
+                  if(!ts)return"";
+                  const m=Math.max(0,Math.round((Date.now()-ts)/60000));
+                  if(m<1)return"just now";
+                  if(m<60)return`${m}m ago`;
+                  const h=Math.round(m/60);return h<24?`${h}h ago`:`${Math.round(h/24)}d ago`;
+                };
+                return(
+                <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+                  <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>📧 Email</span>
+                    {outlookMailStatus==="connected"&&outlookMailFetchedAt&&<span style={{fontSize:10,color:C.muted}}>updated {_mailAgo(outlookMailFetchedAt)}</span>}
+                    {(outlookMailStatus==="connected"||outlookMailStatus==="error")&&(
+                      <button title="Refresh email" onClick={refreshOutlookMail} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:15,fontWeight:700,padding:0,lineHeight:1}}>↻</button>
+                    )}
+                  </div>
+                  <div style={{padding:"10px 12px"}}>
+                    {outlookMailStatus==="checking"&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Checking Outlook…</div>}
+                    {outlookMailStatus==="loading"&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Connecting to Outlook…</div>}
+                    {outlookMailStatus==="disconnected"&&(
+                      <div style={{padding:"8px 4px 12px"}}>
+                        <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.5}}>Connect Outlook to see your high-importance and RFQ emails here.</div>
+                        <button onClick={connectOutlook} style={{background:C.accent,color:"#fff",border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Connect Outlook</button>
+                      </div>
+                    )}
+                    {outlookMailStatus==="error"&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Couldn't load email — try ↻ refresh.</div>}
+                    {outlookMailStatus==="connected"&&outlookEmails.length===0&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>No relevant emails.</div>}
+                    {outlookMailStatus==="connected"&&outlookEmails.map(m=>{
+                      const isHigh=m.importance==="high";
+                      return(
+                        <div key={m.id} onClick={()=>{if(m.webLink)window.open(m.webLink,"_blank","noopener");}} title={m.subject}
+                          style={{cursor:m.webLink?"pointer":"default",background:"#0c0c16",border:`1px solid ${C.border}`,borderRadius:6,padding:"9px 12px",marginBottom:6}}>
+                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
+                            <span style={{fontSize:13,fontWeight:m.isRead?700:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{!m.isRead&&<span style={{color:C.accent,marginRight:4}}>●</span>}{m.subject}</span>
+                            <span style={{flexShrink:0,fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,borderRadius:10,padding:"1px 7px",color:isHigh?"#fca5a5":"#93c5fd",background:isHigh?"#3f1d1d":"#1e293b"}}>{isHigh?"High":"RFQ"}</span>
+                          </div>
+                          <div style={{fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.from} · {m.preview}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-                <div style={{padding:"10px 12px"}}>
-                  <div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Outlook not connected — email notifications will appear here.</div>
-                  {[0,1].map(i=>(
-                    <div key={"email-scaffold-"+i} style={{background:"#0c0c16",border:`1px dashed ${C.border}`,borderRadius:6,padding:"9px 12px",marginBottom:6,opacity:0.55}}>
-                      <div style={{fontSize:13,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Email subject line will appear here</div>
-                      <div style={{fontSize:12,color:C.muted,marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>A one-line preview of the email body will appear here once Outlook is connected…</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                );
+              })()}
             </div>
             {/* 🔔 ARC NOTIFICATIONS COLUMN — the EXISTING live bell window (unread-only), now split into
                 its OWN SKINNY far-right Row-2 column. Reuses the bell's onSnapshot listener + state (no new
