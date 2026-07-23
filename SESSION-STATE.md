@@ -1,38 +1,46 @@
-# Session State — 2026-07-14 MDT · 🧳 Jon AWAY ~4 days (back ~07-18) · prod FROZEN at v1.23.22 · NO deploys/changes until return
+# Session State — 2026-07-22 MDT · prod ACTIVE at v1.24.13 · big dashboard/notifications batch shipped
 
 ## Operating model (READ FIRST)
-**Subagent-lane model is the default** (Jon's preference, endorsed 2026-07-12; used all of the 2026-07-14 session, works well). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly, and drives the Claude-controlled prod tab for read-only diagnosis + Jon-gated data ops. Flow: **build → Coach review → Jon deploy gate**; high-stakes/data-safety = Coach review + live verify. Startup skill: `/ARC-team-Startup` (renamed 2026-07-14 from `/team-sub-start`); close-out skill: `/ARC-team-Closeout` (added 2026-07-14 — no peer clear-check, skips deploy when frozen). Full spec: FREDDY.md "★★ CURRENT OPERATING MODEL" + CLAUDE.md startup-variants table + memory `feedback_subagent_lane_model_preferred`.
+**Subagent-lane model is the default** (Jon's standing preference). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly. Flow: **build (worktree) → cherry-pick to master → test deploy → Jon eyeball → prod deploy**; money-path/data-safety = Coach review before prod. Worktree isolation used for parallel builds (disjoint regions → clean cherry-picks). Startup: `/ARC-team-Startup`; close-out: `/ARC-team-Closeout`. Full spec: FREDDY.md "★★ CURRENT OPERATING MODEL" + memory `feedback_subagent_lane_model_preferred`.
 
 ## Version
-**v1.23.22** (PRODUCTION) — F024 ACTIVE ECO board column (release `06f93e00`, 2026-07-14). Prior session baseline was v1.23.5 (B012 P1 lock, 2026-07-10); the 2026-07-14 session shipped v1.23.6 → v1.23.22.
+**v1.24.13** (PRODUCTION) — release `c061a06b`, 2026-07-22. Session ran v1.23.22 → v1.24.13. Prod is **ACTIVE** (Jon back, no freeze).
 
 ## Deploy State
-- **Master tip:** current HEAD (this SESSION-STATE + FREDDY.md handoff refresh) atop `1e861a3c` (F024 shipped). `master == origin/master`.
-- **Production:** https://matrix-arc.web.app serving **v1.23.22**. Working tree clean, everything pushed, no lanes running.
-- **🧳 PROD FROZEN:** Jon is away ~4 days (2026-07-14 → ~07-18) and does NOT want ARC changed before/while he's gone. **No deploys or prod changes until he returns.** (Handoff-doc edits like this file are fine — they don't touch the app.)
+- **Master tip:** `a0904296` (handoff refresh atop the v1.24.13 release). `master == origin/master`, working tree clean.
+- **Production:** https://matrix-arc.web.app serving **v1.24.13**.
+- Test channel: matrix-arc-test.web.app last at **V.038** (dashboard + B051 + Email panel — all since shipped to prod).
 
-## Shipped this session (v1.23.6 → v1.23.22), all Coach-reviewed + Jon-gated
-- **BC-reliability chain:** B021, B013-1, B013-2/3, F019.
-- **Quote:** B033, F020, F005, F021 (+ quote heading "Project Name: <name> - <customer> / PROJECT #: <cust#>"), G012.
-- **B034** sent-quote revision bump (+ the send-anchor **regression fix** v1.23.16 after Jon's live test) · **B041** `_noBumpWrite` guard (background saves don't bump a sent quote).
-- **Board:** F023 (click-header column filter), F024 (ACTIVE ECO column; (BOM) IN PROCESS now pre-PO-only + yellow), "(BOM) IN PROCESS" rename.
-- **BC item create:** B038 (auto-retry transient empty-No.) + B039 (tighten).
-- **F022** PO Received drag-n-drop upload + BC attach + View PO.
-- **G009** Test V.### env-build versioning + `deploy-test.sh` + `docs/TESTING-PROCEDURES.md`.
-- **Loose-ends:** B035, B036, B037.
+## Shipped this session (v1.23.23 → v1.24.13) — all Coach-reviewed where money-path/data-safety, Jon-gated deploys
+- **B043** — Ryan RFQ hardening (sender-confirmation + blank-supplier-email path).
+- **User To-Do Dashboard epic:** **F025** (right-side rail: role-aware status pills + timer-sorted "Needs Attention" list w/ inline RFQ rows), **F026** (8-column status split + per-status timestamps), **F027** (MANAGER role + priority pin), **F032** (role-differentiated dashboard: salesman/reviewer/designer, from Andrew's feedback), **F033** (rail persists on every nav tab + full-height divider). **F025 3b** = the Needs-Attention list + RFQ awaiting rows (closed Ryan/Noah's founding ask). Font-size bump on the tiles.
+- **F028** — admin toggle to RFQ all items ignoring Priced Dates (dual-ERP lag).
+- **Notifications:** **B045** (bell never worked — index-free listener + logging handler), **F031 #1** (per-item Clear ✕), **#3** (handled "safe to clear" note), **#4** (batch-clear button), **#2** (deep-link to the specific RFQ submission — needed a 2-bug fix: mark-read-before-guard + auto-open race). **B049** (review/all-type notifications now navigate; re-enabled dead customer_review/issue_report deep-links). **B050** (post-review bell notification, fires to designer at PO-receipt).
+- **B047/B046** — ProjectTile owner/EDITING name overflow + first-name-in-header.
+- **B048** — To-Do rail load delay: localStorage warm-cache + reactive recompute on salesperson-roster land (rail+board share the version bump, `_isMyProject` not forked).
+- **B018** (money-path) — phantom-red BC rows: `_effectivePriceDate` SSOT accessor (BC rows use `bcPoDate` for staleness) routed through red-flag + send-block count + column; fixed false Send-block + silent auto-Budgetary. + split-by-reason send-block overlay ("N block Send: pricing · M flagged for lead time"). Confirmed live on prod.
+- **F030** — dedicated MY DASHBOARD page (first nav tab): page-mode TodoRail + project rows w/ $ totals + live notifications; rail auto-suppressed on it. 3 layout rounds per Jon.
+- **F029 slice-1** — F030 📧 Email panel shows the user's relevant Outlook emails (high-importance + RFQ, via existing Graph/MSAL; read-only, zero Firestore persistence, poll not push, graceful Connect-Outlook). Coach privacy-approved.
+- **B051** — triangle/multi-line markup render fix (unit viewBox + non-scaling-stroke; SVG `points` can't use `%`).
 
-## Data operations (Claude-controlled prod tab, Jon-gated, verified)
-- **B040** — 7 sent quotes healed out of In Process (re-anchored quoteSentRev=quoteRev).
-- **B042** — 36 duplicate `arc-<hash>` empty import stubs archived to `companies/{cid}/projects_archive` (restorable, tagged `_b042KeepId`) + deleted; projects 128→92, 0 dups remain; import dedup guard fixed (v1.23.21) so no new dups.
+## In flight (as of close)
+- **🔍 Coach scope lane running: F035 + F040 (interactive markup)** — move/resize placed shapes + shape-notes-beside-shape-movable-with-leader-line. Will produce a build-ready plan + slice order (move-first likely) + a note-position add-only data model. **Capture its output into a doc next session** (or it landed at close — check `docs/`).
 
-## Parked for Jon's return (all filed; prod NOT exposed)
-- **Quick-wins batch (unstarted — Jon paused it before leaving):** Triangle-not-rendering markup bug (eng #4, quickest win), purchasing-board ECO nit (F024 follow-up), B023 (quote-summary pill overflow), G007 (leftover TEST upload bar), B030 (silent-catch log), B029, B022.
-- **Engineer Review-markup feedback** → `docs/ENGINEER-FEEDBACK-ON-REVIEWS.md`.
-- **Live-verify-later (non-blocking):** B039 (BC transient carries `No.: ''`), F022 disposable-BC PO test, B041 unlock re-test, `deploy-test.sh` run.
-- **B016-2/3 (concurrent row-merge) — DEFERRED:** unshipped + 108-commit-stale + no open data-loss (B012 lock contains it); branch `b016-23-merge` preserved for a future rebuild.
-- **Backlog:** F014-B, F007/F016, tech-review cluster (B024-B027/F017/F018), ~90 legacy `#N` items.
+## Engineer review-markup feedback — triaged + numbered (`docs/ENGINEER-FEEDBACK-TRIAGE.md`)
+**B051** ✅ shipped. Queued: **F034** (click list→highlight shape), **F035** (move/resize shapes — scoping), **F036** (edit note text + wrap — ⚠ verify pin-edit already exists vs shape-note; Jon input), **F037** (highlighter tool), **F038** (free-text markup — ⚠ Jon product call: text tool vs note variant), **F039** (Escape reverts part#/qty edit), **G014** (per-page markup group spacing). **F040** (notes beside shape + leader) filed this session.
+
+## Pending Jon (non-blocking)
+- **B051 prod-verify:** draw a triangle + multi-point line on PROD (test ribbon covered the tools on test → G015) + decide the **circle→oval on non-square pages** question (leave, or add `<ellipse>` aspect-comp follow-up).
+- **F036 / F038** clarifications (deferred; sensible defaults chosen — see triage doc).
+- **G015** — test ribbon overlaps the markup toolbar; offered to fix (z-index/auto-hide) so drawing-review is testable on test.
+
+## Backlog / parked
+- **F029** phases: A (two-way To-Do sync, `Tasks.ReadWrite`), C (email↔Project linking), D (tab-closed background) — plan `docs/F029-PLAN.md`; slice-1 email panel done. "Pinned" email rule still tabled (Graph doesn't expose it).
+- Non-blocking nits: F031 #2 (rare abnormal-data dead-click) + `_navigable` projectId consistency; B018 (`_redReasonBreakdown` #192 instrumentation drift; optional poll-hardening to sync priceDate on dateChanged); F029 slice-1 (button-handler unmount guards; dead `conversationId`).
+- Older: B016-2/3 (deferred), tech-review cluster (B024-B027/F017/F018), ~90 legacy `#N` items.
 
 ## Next-session startup
-1. Boot via `/ARC-team-Startup` (subagent-lane model; renamed 2026-07-14 from `/team-sub-start`).
-2. Prod is **v1.23.22, FROZEN until Jon confirms he's back** — do not deploy/change until then.
-3. When Jon returns: resume the **quick-wins batch** (Triangle bug first).
+1. Boot via `/ARC-team-Startup` (subagent-lane model).
+2. Prod is **v1.24.13, ACTIVE** (no freeze).
+3. Check `docs/` for the **F035/F040 interactive-markup scope** (Coach lane was finishing at close) → present plan + build (move-first).
+4. Likely-next: the markup interactive cluster (F035/F040), then F034/F037, and F036/F038 pending Jon's clarifications; G015 test-ribbon fix if Jon wants it.

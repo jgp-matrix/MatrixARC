@@ -102,7 +102,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** **v1.23.22** (`public/index.html`; release `06f93e00`, 2026-07-14 — F024 ACTIVE ECO board column). Prod FROZEN at v1.23.22 while Jon is away ~4 days (2026-07-14→~07-18) — no deploys/changes until his return. Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible). *(Prior baseline noted below said v1.23.5 — that was the 2026-07-10 state; the 2026-07-14 session shipped v1.23.6→v1.23.22, see "★ LATEST" below.)*
+- **Current version:** **v1.24.13** (`public/index.html`; release `c061a06b`, 2026-07-22). Prod ACTIVE (no freeze). The 2026-07-22 session shipped v1.23.23→v1.24.13 — the User-Dashboard/rail epic (F025/F026/F027/F032/F033), notifications (B045, F031 #1–#4, B049, B050), B048, B018 money-path fix, F030 dashboard page, F029 slice-1 (Outlook Email panel), B051 markup render, B043/B046/B047/F028. Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible). *(See "★ LATEST" below + SESSION-STATE.md for the full 2026-07-22 rundown.)*
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -337,9 +337,32 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-14)
+## Recently Active Work (as of 2026-07-22)
 
-### ★ LATEST — 2026-07-14 session (subagent-lane model; prod v1.23.5 → v1.23.22) — SHIPPED, then Jon left town (prod FROZEN)
+### ★ LATEST — 2026-07-22 session (subagent-lane model; prod v1.23.22 → v1.24.13) — big dashboard/notifications batch SHIPPED
+**Operating model = subagent-lane, worked well across a very large batch (~175 commits).** Freddy spawned Marc (build, usually worktree-isolated for parallel disjoint-region builds) + Coach (scope/review) lanes per task; flow = build→cherry-pick→test deploy→Jon eyeball→prod deploy; money-path/data-safety got a Coach review before prod. Continue this way.
+
+**Shipped to prod (v1.23.23 → v1.24.13):**
+- **B043** — Ryan RFQ send hardening (sender-confirmation + blank-supplier-email).
+- **User To-Do Dashboard epic:** F025 (right rail: role-aware pills + timer-sorted "Needs Attention" list + inline RFQ awaiting rows), F026 (8-column status split + per-status timestamps), F027 (MANAGER role + priority pin), F032 (role-differentiated: salesman/reviewer/designer — from Andrew's feedback; salesman pills gated on ACTUAL salesperson), F033 (rail persists on all tabs + full-height divider). Tile font-size bump.
+- **F028** — admin "RFQ all items ignoring Priced Dates" toggle (dual-ERP lag).
+- **Notifications:** B045 (bell never worked — index-free listener + logging handler was swallowing the composite-index error), F031 #1 (Clear ✕), #3 (handled note), #4 (batch-clear), #2 (deep-link to the specific submission — 2 pre-existing bugs fixed: unconditional mark-read-before-guard + auto-open/listener race). B049 (all-type notification nav + re-enabled dead customer_review/issue_report deep-links). B050 (post-review bell → designer at PO-receipt).
+- **B047/B046** — ProjectTile name overflow + first-name-in-header.
+- **B048** — rail load delay (localStorage warm-cache + `salesCacheVer` reactive recompute; rail+board share the bump, `_isMyProject` NOT forked).
+- **B018 (money-path)** — phantom-red BC rows: `_effectivePriceDate` SSOT accessor (BC → `bcPoDate` for staleness) routed through red-flag + send-block count + column; killed the false Send-block + silent auto-Budgetary. + split-by-reason send-block overlay. **Lesson: the red-flag read a different field (`priceDate`) than the column showed (`bcPoDate`) — a dual-CONSUMER-reads-different-SOURCE drift; the fix factored the accessor (SSOT). Shipped B018-only by revert-isolating F030 off master, deploying, then reapplying F030.**
+- **F030** — MY DASHBOARD page (first nav tab): page-mode TodoRail + project rows w/ $ totals + live notifications; rail auto-suppressed. 3 Jon layout rounds.
+- **F029 slice-1** — F030 📧 Email panel = the user's relevant Outlook emails (high-importance + RFQ) via existing Graph/MSAL; read-only, ZERO Firestore persistence, poll-not-push, graceful Connect-Outlook. Coach privacy-approved.
+- **B051** — triangle/multi-line markup render (unit viewBox + non-scaling-stroke; SVG `points` reject `%`).
+
+**In flight at close:** Coach scope lane for **F035 + F040 (interactive markup — move/resize shapes + notes-beside-shape-movable-with-leader-line)** — capture its plan doc next session.
+
+**Engineer review-markup feedback triaged → `docs/ENGINEER-FEEDBACK-TRIAGE.md`:** B051 shipped; F034/F035/F036/F037/F038/F039 + G014 queued; F040 added. F036/F038 need a Jon clarification (defaults chosen).
+
+**Pending Jon (non-blocking):** B051 prod-verify (draw triangle/line + circle→oval decision — test ribbon covered the tools, G015); F036/F038 clarifications; G015 test-ribbon fix (offered).
+
+**⚠ Startup note for the next session:** prod is **v1.24.13, ACTIVE (no freeze)**. Check `docs/` for the F035/F040 interactive-markup scope (Coach lane finishing at close) → present + build (move-first). See SESSION-STATE.md for the full current picture.
+
+### 2026-07-14 session (subagent-lane model; prod v1.23.5 → v1.23.22) — SHIPPED, then Jon left town (prod was FROZEN, since lifted)
 **Operating model this session = the subagent-lane model (this file's "★★ CURRENT OPERATING MODEL" block). It worked well end-to-end** — Freddy spawned Marc (build) + Coach (review/diagnose/scope) lanes per task, gated build→Coach-review→Jon-deploy, sole git-writer + notifier, drove the Claude-controlled prod tab for read-only diagnosis + a data heal. Continue this way.
 
 **Shipped to prod (v1.23.6 → v1.23.22), all Coach-reviewed + Jon-gated:**
