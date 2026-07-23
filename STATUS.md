@@ -5,7 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🔴 2026-07-23 · prod v1.24.16 · EMERGENCY (PRJ402119 pricing — bleed stopped)
+## Current — 🔴 2026-07-23 · prod v1.24.17 · EMERGENCY (PRJ402119 — all auto-pricing OFF, RFQ-only)
+
+> ## ✅ SHIPPED PROD v1.24.17 (release `a92b1f30`) — ALL AUTOMATED PRICING DISABLED (Jon: "only RFQs for now")
+> `AUTO_PRICING_ENABLED=false` gates BOTH pricing engines — foreground `runPricingOnPanel` (`:28399`, the "Get New Pricing"/"Refresh All" buttons + reconciliation/post-extract auto-invokes) AND background `runPricingBackground` (`:15679`, post-extract). Covers BC-pull + Codale/Royal scrapers + AI estimate. The two buttons now alert "send an RFQ" instead of running. + Codale Full Update button gated (`runFullUpdate`). **Still working:** RFQ, portal apply, manual per-row price entry, and the F050 read-only plausibility sweep (reads, never sets). **⏳ Jon prod-verify:** "Get New Pricing" alerts to RFQ; extraction produces a BOM with no auto-prices.
+> **RE-ENABLE prerequisites (queued, build-ready):** F041 primary-vendor selection (`docs/F041-PRIMARY-VENDOR-FIX.md`) + write-side plausibility gate + fixed scraper extraction. Flip `AUTO_PRICING_ENABLED`/`SCRAPER_BC_WRITEBACK_ENABLED`/`AUTO_BC_REPRICE_ENABLED` back on ONLY after those land. **BC cleanup (V00373 $0.71) + re-price the 627 rows** still pending (BC-admin + F041).
+
 
 > ## ✅ SHIPPED PROD v1.24.16 (release `24acb5bc`) — STOP-THE-BLEED ①+② (Jon-authorized)
 > **①** `SCRAPER_BC_WRITEBACK_ENABLED=false` — kills the custom(Royal)+Codale scraper→BC price write-back (the origin of the garbage $0.71 in BC). **②** `AUTO_BC_REPRICE_ENABLED=false` — disables the 5-min poll (`pollBcPricing`) + the on-open price-check (`tryCheck`), which were re-applying BC's poisoned $0.71 over salesmen's fixes (+ the B053 repeat-nag). Both reversible flags; manual "Get New Pricing"/portal/DigiKey/Mouser/supplier-import untouched. Coach safety-review ran concurrently (pure disables). **⏳ Jon prod-verify:** open a project — no auto "Accept new prices" modal; a manually-set price stays put.
