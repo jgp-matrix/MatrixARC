@@ -5,7 +5,14 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-23 · prod v1.24.14 · ACTIVE session
+## Current — 🔴 2026-07-23 · prod v1.24.14 · EMERGENCY (PRJ402119 pricing)
+
+> ## 🚨 2026-07-23 — PRJ402119 PRICING INCIDENT (money-path emergency) — investigation + F044–F047
+> **What happened:** a quote for PRJ402119 went to a customer with wrong pricing + red rows — a ~$6000 item priced at **$12**. Major financial loss. Jon's key question: **human error vs. the recent BC-write-failure bug** (correct price shown on screen but never persisted → false sense of security). That distinction drives the fix.
+> **Investigation (🏈 Coach lane RUNNING, read-only):** (A) does ARC store WHO entered/approved a row's price? (feasibility of the trace + Soft Fix) (B) the BC-write bug window — dates/symptom/fix commit + which timestamps place PRJ402119 in/out of it (C) current red-row send-block state (D) budgetary flag + role model (E) scope a full user audit trail. **Trace of who entered Line 3 Rows 4 & 54 needs LIVE data (Jon) — feasibility TBD on whether attribution is even stored.**
+> **Fixes filed (NO build until investigation + Jon priority):** **F044** Hard-Fix 1 = block Quote send if ANY red row (any reason), all send paths. **F045** Hard-Fix 2 = Budgetary checkbox gated to Manager/Admin (greyed + tooltip for others; + Firestore-rules guard). **F046** Hard-Fix 3 = full user audit trail (who-did-what across all mutation paths). **F047** Soft-Fix 1 = Priced-Item hover popup shows the User who approved the price sent to BC (depends on F046 attribution).
+> **STATUS:** money-path → Coach review + test-channel + Jon gate before ANY prod deploy. To-Do work (F035/F040 etc.) deprioritized behind this. **⏳ Awaiting Coach investigation → then Jon priority call + live-data trace.**
+
 
 > ## ✅✅✅ SHIPPED TO PROD v1.24.14 (release `a2c44601`) — To-Do pane batch
 > **F042** (NEEDS ATTENTION shows ALL projects incl. green, sorted Ship Date → Est. Prod. Done → most-untouched; footer = total count) · **G016** (top status tiles shrunk 72→52px to reclaim space) · **G017** (rail + main Project column each their own viewport-locked independent scroll pane). All Jon-verified on Test V.039→V.042, hosting-only, advisory-review clean. One shared `TodoRail` edit covers rail + MY DASHBOARD page.
