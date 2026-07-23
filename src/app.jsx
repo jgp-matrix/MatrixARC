@@ -25273,6 +25273,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const fresh=latestPanelRef.current;
         let changed=false;
         const changedIds=[];
+        // B052 (2026-07-23) — DIVERGENCE GUARD (PRJ402119 root cause). This 5-min poll used to SILENTLY
+        // overwrite unitPrice with BC's directUnitCost. During the B013 BC-write outage, a user-entered
+        // $6000 that failed to persist to BC was silently reverted here to BC's stale $12 — and shipped on
+        // a quote with no flag. Now: a large DOWNWARD BC swing is NOT auto-applied — we KEEP the current
+        // price, stamp a `bcPollDivergence` flag on the row for review, and log it durably (console.error
+        // is persisted to debugLogs). Routine changes still apply and are logged. Threshold is a named
+        // constant for tuning. Errs toward NOT silently lowering a quoted price (over-quote > under-quote).
+        const BC_POLL_DIVERGENCE_RATIO=0.5;   // flag when BC price < 50% of current row price (a >50% drop)
+        const BC_POLL_DIVERGENCE_MIN_DELTA=5; // ...and at least a $5 absolute drop (avoid tiny-price noise)
+        const divergedRows=[];
+        const appliedChanges=[];
         const newBom=(fresh.bom||[]).map(r=>{
           if(r.priceSource!=="bc"||r.isLaborRow)return r;
           const pn=(r.partNumber||"").trim();
@@ -25284,18 +25295,30 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const priceChanged=unitPrice!==null&&r.unitPrice!==unitPrice;
           const dateChanged=newPoDate!==r.bcPoDate;
           if(!priceChanged&&!dateChanged)return r;
+          // B052: large downward divergence → do NOT auto-apply; keep current price, flag for review.
+          const bigDrop=priceChanged&&r.unitPrice>0&&unitPrice<r.unitPrice*BC_POLL_DIVERGENCE_RATIO&&(r.unitPrice-unitPrice)>=BC_POLL_DIVERGENCE_MIN_DELTA;
+          if(bigDrop){
+            divergedRows.push({id:String(r.id),partNumber:pn,prevPrice:r.unitPrice,bcPrice:unitPrice});
+            // keep unitPrice/priceDate as-is; allow the harmless forward date update; record the divergence.
+            return{...r,bcPoDate:newPoDate,bcPollDivergence:{bcPrice:unitPrice,prevPrice:r.unitPrice,at:Date.now()}};
+          }
           changed=true;
           changedIds.push(String(r.id));
+          if(priceChanged)appliedChanges.push({id:String(r.id),partNumber:pn,prevPrice:r.unitPrice,bcPrice:unitPrice});
           // B016-1(b-companion, Decision 1): stamp priceDate when unitPrice changes so the
           // later last-writer-by-timestamp row-merge (B016-2) can't let a stale snapshot
-          // out-rank this fresh poll price.
-          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice,priceDate:Date.now()}:{})};
+          // out-rank this fresh poll price. B052: clear any prior divergence flag once a normal change applies.
+          return{...r,bcPoDate:newPoDate,...(priceChanged?{unitPrice,priceDate:Date.now()}:{}),...(r.bcPollDivergence?{bcPollDivergence:null}:{})};
         });
-        if(changed){
+        // B052: log always — divergences at error level (persisted to debugLogs), applied changes at log level.
+        const _projLbl=project?.bcProjectNumber||project?.name||"?";
+        if(divergedRows.length){try{console.error("[BC-POLL] divergence guard: SKIPPED applying BC price to "+divergedRows.length+" row(s) on "+_projLbl+" (kept current price, flagged for review): "+JSON.stringify(divergedRows));}catch(_){}}
+        if(appliedChanges.length){try{console.log("[BC-POLL] applied "+appliedChanges.length+" BC price update(s) on "+_projLbl+":",appliedChanges);}catch(_){}}
+        if(changed||divergedRows.length){
           const updated={...fresh,bom:newBom};
           onUpdate(updated);
           try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC price poll — no bump/unlock
-          setBcUpdatedRows(new Set(changedIds));
+          setBcUpdatedRows(new Set([...changedIds,...divergedRows.map(d=>d.id)]));
           setBcUpdateNotif(true);
           setTimeout(()=>setBcUpdatedRows(new Set()),4000);
         }
