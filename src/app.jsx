@@ -44951,23 +44951,23 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     return(
       <div key={key} onClick={onClick} title={title}
         style={{cursor:"pointer",background:bg,border:`1px solid ${col}66`,borderRadius:8,
-          padding:pageMode?"4px 9px":"6px 8px",
-          // F030 r2 (2026-07-22): pageMode tiles are only as tall as title+value needs (minHeight
-          // lets a wrapped label grow instead of clip). Standing rail keeps the fixed 72px tile.
-          ...(pageMode?{minHeight:42}:{height:72}),
+          padding:pageMode?"3px 8px":"5px 8px",
+          // G016 (2026-07-23): tiles shrunk to reclaim vertical space at the top of the pane (Jon).
+          // Rail fixed height 72→52; pageMode minHeight 42→34. Label/count fonts trimmed to match.
+          ...(pageMode?{minHeight:34}:{height:52}),
           display:"flex",flexDirection:"column",justifyContent:"space-between",alignItems:"flex-start",overflow:"hidden",transition:"transform 0.1s"}}
         onMouseEnter={e=>e.currentTarget.style.transform="translateY(-1px)"}
         onMouseLeave={e=>e.currentTarget.style.transform="translateY(0)"}>
-        <div style={{fontSize:12,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.4,lineHeight:1.15}}>{label}</div>
-        <div style={{fontSize:20,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{count}</div>
+        <div style={{fontSize:11,fontWeight:700,color:col,textTransform:"uppercase",letterSpacing:0.3,lineHeight:1.1}}>{label}</div>
+        <div style={{fontSize:17,fontWeight:800,color:col,fontFamily:"system-ui,sans-serif",lineHeight:1}}>{count}</div>
       </div>
     );
   };
-  const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
+  const _sectionHeader=txt=>(<div style={{padding:"8px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
   // F030 (2026-07-22): in pageMode, lay a section's pills out as ONE full-width row (N equal
   // columns) instead of the wrapping auto-fill grid — so the Sales Pipeline reads as a single
   // horizontal band across the widened dashboard. minmax(0,1fr) prevents grid blowout on wide labels.
-  const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:pageMode?`repeat(${children.length},minmax(0,1fr))`:"1fr 1fr 1fr",gap:6}}>{children}</div>);
+  const _grid=children=>(<div style={{padding:"4px 10px 2px",display:"grid",gridTemplateColumns:pageMode?`repeat(${children.length},minmax(0,1fr))`:"1fr 1fr 1fr",gap:5}}>{children}</div>);
   // F025 3b: compact elapsed formatter (m/h/d) — same shape as the archive formatTimeAgo pattern,
   // inlined here since that helper is scoped to another component. Shows exact time-in-status.
   const _fmtElapsed=ms=>{const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<24)return h+"h";return Math.round(h/24)+"d";};
