@@ -5,7 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🔴 2026-07-23 · prod v1.24.15 · EMERGENCY (PRJ402119 pricing)
+## Current — 🔴 2026-07-23 · prod v1.24.16 · EMERGENCY (PRJ402119 pricing — bleed stopped)
+
+> ## ✅ SHIPPED PROD v1.24.16 (release `24acb5bc`) — STOP-THE-BLEED ①+② (Jon-authorized)
+> **①** `SCRAPER_BC_WRITEBACK_ENABLED=false` — kills the custom(Royal)+Codale scraper→BC price write-back (the origin of the garbage $0.71 in BC). **②** `AUTO_BC_REPRICE_ENABLED=false` — disables the 5-min poll (`pollBcPricing`) + the on-open price-check (`tryCheck`), which were re-applying BC's poisoned $0.71 over salesmen's fixes (+ the B053 repeat-nag). Both reversible flags; manual "Get New Pricing"/portal/DigiKey/Mouser/supplier-import untouched. Coach safety-review ran concurrently (pure disables). **⏳ Jon prod-verify:** open a project — no auto "Accept new prices" modal; a manually-set price stays put.
+> **Remaining remediation:** fix scraper extraction · write-side plausibility gate · **F041 primary-vendor selection** (stop most-recent-vendor picking junk) · **bulk-clean BC** V00373 $0.71 (script — after ①, needs Jon/BC-admin gate) · re-price the 627 flagged rows · tighten B052 · ship F050 send-block. Scan-history persistence built, ready to apply.
+
 
 > ## ✅ SHIPPED PROD v1.24.15 (release `7efbfad1`) — B052 + F045 (PRJ402119 recurrence-prevention, round 1)
 > **B052** = BC poll divergence guard (the direct preventer — 5-min poll no longer silently applies a large downward BC swing; keeps price, flags `bcPollDivergence` → now renders RED via `_isBomRowFlaggedRed` + trips send-warning). **F045** = Budgetary checkbox gated to Manager/Admin (client-side; server-hoist fast-follow). Both Coach-reviewed (B052 APPROVE-WITH-NITS, nits fixed). Hosting-only.
