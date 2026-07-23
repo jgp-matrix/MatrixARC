@@ -5495,6 +5495,15 @@ function bcNormalizeMfrCode(rawMfr,uid){
   return null;
 }
 
+// B053 / PRJ402119 incident (2026-07-23) — KILL SWITCH for scraper→BC price write-back.
+// The custom (Royal Wholesale) + Codale scrapers were pushing scraped prices straight into BC
+// (PurchasePrice + Item Card Unit_Cost) with only a ">0" gate — no plausibility check. The Royal
+// scraper's "first $ on the page" extraction wrote a garbage $0.71 into BC under vendor V00373 across
+// 40 projects (627 flagged rows). This DISABLES the automatic scraper write-back until (a) the
+// extraction is fixed and (b) a write-side plausibility gate lands (remediation #2/#3). Scraped prices
+// still populate the row locally; ARC just stops poisoning BC's shared catalog. Does NOT affect the
+// manual price-confirm push, portal apply, DigiKey/Mouser, or supplier-quote-import writes.
+const SCRAPER_BC_WRITEBACK_ENABLED=false;
 async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return{ok:true};
   try{
@@ -28708,8 +28717,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             const _cr=codaleItems.find(r=>(r.partNumber||"").trim().toUpperCase()===pn);
             const origPN=_cr?.partNumber||pn;
             const _bn=_bcNo(_cr||{partNumber:origPN}); // #163: push by surrogate when the row carries one
-            bcPatchItemOData(_bn,{Unit_Cost:price}).catch(e=>console.warn("Codale BC item update failed:",origPN,e));
-            pushPromises.push(bcPushPurchasePrice(_bn,codaleVendorNo,price,Date.now()).catch(e=>{console.warn("Codale BC purchase price failed:",origPN,e);return{ok:false};}));
+            if(SCRAPER_BC_WRITEBACK_ENABLED){ // B053: scraper→BC write-back disabled (poisoned BC w/ garbage $0.71)
+              bcPatchItemOData(_bn,{Unit_Cost:price}).catch(e=>console.warn("Codale BC item update failed:",origPN,e));
+              pushPromises.push(bcPushPurchasePrice(_bn,codaleVendorNo,price,Date.now()).catch(e=>{console.warn("Codale BC purchase price failed:",origPN,e);return{ok:false};}));
+            }
           }
           try{
             await Promise.allSettled(pushPromises);
@@ -28817,8 +28828,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 if(pr?.price){
                   const numPrice=parseFloat(String(pr.price).replace(/[$,]/g,""));
                   if(!isNaN(numPrice)&&numPrice>0){
-                    bcPatchItemOData(_bcNo(r),{Unit_Cost:numPrice}).catch(e=>console.warn(scraper.name+" BC item update failed:",r.partNumber,e));
-                    pushPromises.push(bcPushPurchasePrice(_bcNo(r),scraperVendorNo,numPrice,Date.now()).catch(e=>{console.warn(scraper.name+" BC purchase price failed:",r.partNumber,e);return{ok:false};}));
+                    if(SCRAPER_BC_WRITEBACK_ENABLED){ // B053: scraper→BC write-back disabled (poisoned BC w/ garbage $0.71)
+                      bcPatchItemOData(_bcNo(r),{Unit_Cost:numPrice}).catch(e=>console.warn(scraper.name+" BC item update failed:",r.partNumber,e));
+                      pushPromises.push(bcPushPurchasePrice(_bcNo(r),scraperVendorNo,numPrice,Date.now()).catch(e=>{console.warn(scraper.name+" BC purchase price failed:",r.partNumber,e);return{ok:false};}));
+                    }
                   }
                 }
               }
