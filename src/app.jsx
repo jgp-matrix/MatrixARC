@@ -41523,7 +41523,7 @@ function PricingAuditModal({uid,onClose}){
   },[result,riskFilter,sortKey,sortDir]);
 
   return ReactDOM.createPortal(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10001,padding:16}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:1200,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <h3 style={{margin:0,color:C.text}}>Pricing Audit</h3>
@@ -41704,7 +41704,7 @@ function PlausibilitySweepModal({uid,onClose}){
   const totalBatches=prep?Math.ceil(prep.candidates.length/10):0;
 
   return ReactDOM.createPortal(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}} onClick={onClose}>
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10001,padding:16}} onClick={onClose}>
       <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:1200,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
           <h3 style={{margin:0,color:C.text}}>Price Plausibility Sweep</h3>
