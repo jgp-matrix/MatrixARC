@@ -5,9 +5,13 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-23 · prod v1.24.13 · ACTIVE session (analysis)
+## Current — 🟢 2026-07-23 · prod v1.24.13 · ACTIVE session
 
-> ## 🔍 2026-07-23 — Primary/Secondary supplier matrix (NEW, analysis) — filed F041
+> ## 🔧 2026-07-23 — To-Do pane NEEDS ATTENTION list rework (NEW) — filed F042
+> **Ask (Jon):** The NEEDS ATTENTION list shows only red/critical projects then "N on track" at the bottom. (1) Confirm "N on track" = projects not shown (non-red); if so, show ALL projects by time incl. YELLOW + GREEN (list can be long). (2) Sort should factor **Requested Ship Date** + **Est. Prod. Done date** + **how long untouched in ARC**. Refine later; this is the sort criteria for now.
+> **STATUS:** 🟩 Marc lane RUNNING — trace what "N on track" counts, current filter/sort of the list, project red/yellow/green source, and the 3 sort fields (requestedShipDate / est-prod-done via computeControlPanelLeadTime / last-touched timestamp) + rail-vs-F030-page single-component question. Scoping only, no build yet. Low-stakes UI (not money-path).
+
+> ## 🔍 2026-07-23 — Primary/Secondary supplier matrix (analysis, PARKED) — filed F041
 > **Ask (Jon):** Salesmen price BOM items from non-primary suppliers → Purchasing has to re-source. Want a Primary/Secondary supplier matrix: BOM items default to PRIMARY supplier sourcing unless Purchasing picks a secondary. Sales↔Purchasing flow still TBD (no ARC Purchasing module yet — purchasing done in the old system).
 > **STATUS:** ✅ Analysis DONE → `docs/F041-SUPPLIER-MATRIX-ANALYSIS.md`. Coach trace: NOT greenfield — a shipped manufacturer→vendor learner (`manufacturerVendorMap`) is the closest analog; BC ItemCard `Vendor_No` already read by ARC; 3 unguarded write-doors let a salesman price off-primary; SSOT predicate cluster is the natural home for `_isPrimarySupplier`. BC = single default vendor + flat catalog (no native ranked tiers). Freddy rec: **Hybrid source-of-truth + soft-gate near-term**, 4-slice order (surface→soft-gate→RFQ pre-select→hard-gate deferred to Purchasing module). **✅ Jon locked: HYBRID + SOFT-GATE** (2026-07-23). Freddy defaults assumed for granularity (per-item primary, manufacturer-learner as seed) + reconcile (extend `manufacturerVendorMap`, no parallel store). **Sales↔Purchasing handoff → (ii) leaning** (Jon: quote-time correctness + off-primary signal/export w/ context to external Purchasing; still refining exact flow). **F041 PARKED — no build until Jon confirms the flow.** Session pivoting to next fix.
 
