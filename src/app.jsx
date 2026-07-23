@@ -44913,7 +44913,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
         {_sectionHeader("Needs Attention")}
         <div style={{padding:"4px 10px 8px"}}>
           {_attn.length===0
-            ?<div style={{padding:"10px 6px",fontSize:12,color:C.green,fontWeight:600}}>✓ All caught up — nothing needs attention.</div>
+            ?<div style={{padding:"10px 6px",fontSize:13,color:C.green,fontWeight:600}}>✓ All caught up — nothing needs attention.</div>
             :_attn.map(({project,bucket,color})=>{
               const [col]=_pillTint[color];
               const elapsed=_now-_todoClockStart(project,bucket);
@@ -44927,15 +44927,15 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
                   onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
                   onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
                   <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                    <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
                       {project.bcProjectNumber||"(no #)"}{project.name?` — ${project.name}`:""}
                     </div>
-                    <div style={{fontSize:10,color:C.muted,marginTop:2}}>
+                    <div style={{fontSize:12,color:C.muted,marginTop:2}}>
                       <span style={{color:col,fontWeight:700}}>{_bucketLabels[bucket]||bucket}</span>
                       {" · "}{_fmtElapsed(elapsed)} in status
                     </div>
                     {showRfq&&(
-                      <div style={{fontSize:10,marginTop:3,color:rfqRed?C.red:C.muted,fontWeight:rfqRed?700:500}}>
+                      <div style={{fontSize:12,marginTop:3,color:rfqRed?C.red:C.muted,fontWeight:rfqRed?700:500}}>
                         📤 {rfq.sentVendorCount} RFQ{rfq.sentVendorCount===1?"":"s"} out · {rfq.awaitingVendorCount} awaiting
                         {rfq.oldestSentDate?` · oldest ${_dayAge(rfq.oldestSentDate)}d`:""}
                         {rfqRed?` · ${rfq.expiredVendorCount} overdue`:""}
@@ -44946,7 +44946,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
               );
             })}
           {_attn.length>0&&_onTrack>0&&(
-            <div style={{padding:"6px 6px 2px",fontSize:10,color:C.muted}}>{_onTrack} on track</div>
+            <div style={{padding:"6px 6px 2px",fontSize:12,color:C.muted}}>{_onTrack} on track</div>
           )}
         </div>
       </>)}
