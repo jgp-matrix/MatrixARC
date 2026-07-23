@@ -44804,11 +44804,16 @@ function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinn
 // click-routing changed: pills call onFocusBucket(kind,key) instead of the Dashboard-local board
 // setters, and App deep-links the Sales board via `pendingFocus`. Collapse state (`railOpen`) is
 // lifted to App (shared across tabs, persisted to the existing `arc_todo_rail_open` key).
-function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject,pageMode}){
+function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject,pageMode,pageSection}){
   // F030 pageMode: render the SAME sections (pills / role queues / Needs Attention) as a
   // full-width page block instead of the 380px right rail. Every data path below is reused
   // byte-identical — only the container/grid styling branches on pageMode, so the MY DASHBOARD
   // page cannot drift from the rail.
+  // F030 (2026-07-22) pageSection: lets the MY DASHBOARD page compose the same rail as two placed
+  // pieces WITHOUT forking any data logic — render this instance as only the role/pipeline PILLS
+  // (pageSection="pills", a full-width band on top) or only the NEEDS ATTENTION list
+  // (pageSection="attention", the left column beside MY PROJECTS). Undefined ⇒ render everything
+  // (the standing right-rail behavior, unchanged). Both instances recompute the SAME _sections memo.
   // Coach: this now runs app-wide (every tab render), so memoize the per-role bucket derive on
   // [projects,uid]. Pill colors still use a fresh Date.now() at render so timer staleness stays live.
   const _sections=React.useMemo(()=>{
@@ -44887,7 +44892,10 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     );
   };
   const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
-  const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:pageMode?"repeat(auto-fill,minmax(150px,1fr))":"1fr 1fr 1fr",gap:6}}>{children}</div>);
+  // F030 (2026-07-22): in pageMode, lay a section's pills out as ONE full-width row (N equal
+  // columns) instead of the wrapping auto-fill grid — so the Sales Pipeline reads as a single
+  // horizontal band across the widened dashboard. minmax(0,1fr) prevents grid blowout on wide labels.
+  const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:pageMode?`repeat(${children.length},minmax(0,1fr))`:"1fr 1fr 1fr",gap:6}}>{children}</div>);
   // F025 3b: compact elapsed formatter (m/h/d) — same shape as the archive formatTimeAgo pattern,
   // inlined here since that helper is scoped to another component. Shows exact time-in-status.
   const _fmtElapsed=ms=>{const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<24)return h+"h";return Math.round(h/24)+"d";};
@@ -44912,6 +44920,10 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // Sales Pipeline header roll-up (decision 2): count of MY sales projects still awaiting an RFQ
   // response. Reuses _rfqAwaitingSummary (SSOT) — no re-count. Only meaningful for the salesman role.
   const _rfqRollup=_roles.includes("salesman")?salesProjects.reduce((n,p)=>n+(_rfqAwaitingSummary(p).awaitingVendorCount>0?1:0),0):0;
+  // F030 (2026-07-22): pageSection gate — which visual piece this instance renders. Undefined ⇒ all
+  // (standing rail). "pills" ⇒ role queue + Sales Pipeline pills only. "attention" ⇒ Needs Attention only.
+  const _showPills=!pageSection||pageSection==="pills";
+  const _showAttn=!pageSection||pageSection==="attention";
   return(
     <aside style={pageMode
       ?{width:"100%",display:"flex",flexDirection:"column",background:"transparent"}
@@ -44925,14 +44937,14 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
         </div>
         <button onClick={()=>setRailOpen(false)} title="Hide the To-Do pane" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"2px 4px"}}>▸</button>
       </div>)}
-      {_roles.includes("reviewer")&&(<>
+      {_showPills&&_roles.includes("reviewer")&&(<>
         {_sectionHeader("Review Queue")}
         {_grid([
           _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for pre-review"),
           _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for post-review")
         ])}
       </>)}
-      {_roles.includes("designer")&&(<>
+      {_showPills&&_roles.includes("designer")&&(<>
         {_sectionHeader("Engineering")}
         {_grid([
           _pill("engineering","Engineering Design",engItems.length,null,()=>onFocusBucket("designer"),"Your Engineering Design projects"),
@@ -44940,7 +44952,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
           _pill("commissioning","Commissioning",commItems.length,null,()=>onFocusBucket("designer"),"Your Commissioning projects")
         ])}
       </>)}
-      {_roles.includes("salesman")&&(<>
+      {_showPills&&_roles.includes("salesman")&&(<>
         {_sectionHeader(`Sales Pipeline${_rfqRollup?` · ${_rfqRollup} awaiting RFQ responses`:""}`)}
         {_grid(_todoBuckets.map(([key,label])=>{
           const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
@@ -44951,7 +44963,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
           designer buckets excluded (decision 3). Rows open the project (decision 1). Scrolls within
           the aside (already overflowY:auto). Rendered only when there ARE candidates so designer-only
           users don't get an empty block. */}
-      {attnCandidates.length>0&&(<>
+      {_showAttn&&attnCandidates.length>0&&(<>
         {_sectionHeader("Needs Attention")}
         <div style={{padding:"4px 10px 8px"}}>
           {_attn.length===0
@@ -49722,59 +49734,93 @@ INSTRUCTIONS:
           scoping helpers (_isMyProject / projectStatus) — no prop-drilling. The app-level TodoRail
           is auto-suppressed on this tab via the _f030Active guard below. */}
       {navTab==="user_dashboard"&&(
-        <div style={{padding:"20px 28px",maxWidth:1400,margin:"0 auto"}}>
+        <div style={{padding:"20px 28px",maxWidth:1720,margin:"0 auto"}}>
           <div style={{marginBottom:18}}>
             <div style={{fontSize:26,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s Dashboard`:"My Dashboard"}</div>
             <div style={{fontSize:13,color:C.muted,marginTop:3}}>Your work, notifications, and active projects at a glance.</div>
           </div>
+          {/* F030 (2026-07-22) ROW 1 — Sales Pipeline / role-queue pills as a SINGLE full-width band.
+              page-mode TodoRail with pageSection="pills": renders ONLY the pills (reuses the rail's
+              _sections memo byte-identical; the single-row grid comes from _grid's pageMode branch). */}
+          <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px",marginBottom:18}}>
+            <TodoRail pageMode pageSection="pills" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
+          </div>
+          {/* ROW 2 — (Needs Attention | My Projects) side-by-side in the main area, plus the
+              notifications side panel (📧 Email scaffold above the 🔔 ARC bell list). */}
           <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
-            {/* MAIN COLUMN — pills + role queues + Needs Attention (page-mode TodoRail, reused
-                byte-identical) + project rows w/ $ totals + F029 insertion point. */}
-            <div style={{flex:"1 1 560px",minWidth:0,display:"flex",flexDirection:"column",gap:18}}>
-              <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
-                <TodoRail pageMode projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
+            <div style={{flex:"1 1 620px",minWidth:0,display:"flex",gap:18,flexWrap:"wrap"}}>
+              {/* Needs Attention (LEFT) — page-mode TodoRail pageSection="attention": renders ONLY the
+                  timer-sorted attention list, same _sections/attention derivation as the pills band above. */}
+              <div style={{flex:"1 1 300px",minWidth:0,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+                <TodoRail pageMode pageSection="attention" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
               </div>
-              {/* Project rows + $ totals (decision 3) — scoped via the _isMyProject SSOT (same
+              {/* My Projects (RIGHT) — project rows + $ totals; scoped via the _isMyProject SSOT (same
                   scope expression the rail's memo uses); $ total mirrors the buildArcContext
                   Σ qty*unitPrice pattern. NOT the heavy Dashboard kanban tile component. */}
-              {(()=>{
-                const myProjects=projects.filter(p=>_isMyProject(p,user.uid)&&(!p.transferred||p.transferredTo!==user.uid)&&!p.importedFromBC&&!p.lostAt);
-                if(!myProjects.length)return null;
-                const _projTotal=p=>(p.panels||[]).reduce((s,pan)=>(pan.bom||[]).reduce((ss,r)=>ss+(r.qty||0)*(r.unitPrice||0),0)+s,0);
-                return(
-                  <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
-                    <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:10}}>My Projects ({myProjects.length})</div>
-                    {myProjects.map(p=>{
-                      const tot=_projTotal(p);
-                      return(
-                        <div key={p.id} onClick={()=>handleOpen(p)} title={`Open ${p.bcProjectNumber||p.name||"project"}`}
-                          style={{cursor:"pointer",display:"flex",gap:10,alignItems:"center",background:"#0c0c16",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",marginBottom:6,transition:"transform 0.1s"}}
-                          onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
-                          onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.bcProjectNumber||"(no #)"}{p.name?` — ${p.name}`:""}</div>
-                            <div style={{fontSize:12,color:C.muted,marginTop:2,textTransform:"capitalize"}}>{String(projectStatus(p)||"").replace(/_/g," ")}</div>
+              <div style={{flex:"1 1 300px",minWidth:0}}>
+                {(()=>{
+                  const myProjects=projects.filter(p=>_isMyProject(p,user.uid)&&(!p.transferred||p.transferredTo!==user.uid)&&!p.importedFromBC&&!p.lostAt);
+                  if(!myProjects.length)return null;
+                  const _projTotal=p=>(p.panels||[]).reduce((s,pan)=>(pan.bom||[]).reduce((ss,r)=>ss+(r.qty||0)*(r.unitPrice||0),0)+s,0);
+                  return(
+                    <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
+                      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:10}}>My Projects ({myProjects.length})</div>
+                      {myProjects.map(p=>{
+                        const tot=_projTotal(p);
+                        return(
+                          <div key={p.id} onClick={()=>handleOpen(p)} title={`Open ${p.bcProjectNumber||p.name||"project"}`}
+                            style={{cursor:"pointer",display:"flex",gap:10,alignItems:"center",background:"#0c0c16",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",marginBottom:6,transition:"transform 0.1s"}}
+                            onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
+                            onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
+                            <div style={{flex:1,minWidth:0}}>
+                              <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.bcProjectNumber||"(no #)"}{p.name?` — ${p.name}`:""}</div>
+                              <div style={{fontSize:12,color:C.muted,marginTop:2,textTransform:"capitalize"}}>{String(projectStatus(p)||"").replace(/_/g," ")}</div>
+                            </div>
+                            <div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0}}>${tot.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
                           </div>
-                          <div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0}}>${tot.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-              {/* F029 mounts here: Outlook tasks + mail/meeting awareness */}
-            </div>
-            {/* SIDE PANEL — live notifications window (unread-only, decision 2). Reuses the bell's
-                existing onSnapshot listener + state (no new query) and the ONE shared renderNotifRow. */}
-            <div style={{flex:"0 1 360px",minWidth:300,background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",alignSelf:"stretch"}}>
-              <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>🔔 Notifications {notifications.length>0&&`(${notifications.length})`}</span>
-                {(()=>{const _sc=notifications.filter(_isNotifHandled).length;return _sc>0&&<button title="Clear all already-received notifications" onClick={e=>{e.stopPropagation();markSafeToClearNotifs();}} style={{background:"none",border:"none",color:C.green,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>✓ Clear received ({_sc})</button>;})()}
-                {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
-              <div style={{maxHeight:"72vh",overflowY:"auto"}}>
-                {notifications.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
-                {notifications.map(n=>renderNotifRow(n))}
+            </div>
+            {/* SIDE PANEL — notifications. WIDENED (basis 440 / minWidth 380) so the Email rows fit a
+                subject line + a one-line body preview. Two stacked labeled sections: 📧 Email on top,
+                🔔 ARC Notifications below. */}
+            <div style={{flex:"0 1 440px",minWidth:380,display:"flex",flexDirection:"column",gap:14,alignSelf:"stretch"}}>
+              {/* 📧 Email — F029 Outlook mount point. Email DATA is deferred (F029 not wired), so this is
+                  a STATIC scaffold: a labeled section + placeholder empty state + sample subject/preview
+                  rows sized for a two-line (bold subject + muted body preview) layout. NO Outlook/Graph
+                  calls here — the real data lands when F029 ships. */}
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+                <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>📧 Email</span>
+                  <span style={{fontSize:10,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.6,border:`1px solid ${C.border}`,borderRadius:20,padding:"2px 8px"}}>Coming soon</span>
+                </div>
+                <div style={{padding:"10px 12px"}}>
+                  <div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Outlook not connected — email notifications will appear here.</div>
+                  {[0,1].map(i=>(
+                    <div key={"email-scaffold-"+i} style={{background:"#0c0c16",border:`1px dashed ${C.border}`,borderRadius:6,padding:"9px 12px",marginBottom:6,opacity:0.55}}>
+                      <div style={{fontSize:13,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Email subject line will appear here</div>
+                      <div style={{fontSize:12,color:C.muted,marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>A one-line preview of the email body will appear here once Outlook is connected…</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* 🔔 ARC Notifications — the EXISTING live bell window (unread-only). Reuses the bell's
+                  onSnapshot listener + state (no new query) and the ONE shared renderNotifRow. Behavior
+                  unchanged — it now simply sits BELOW the Email section and is explicitly labeled. */}
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",flex:1,display:"flex",flexDirection:"column",minHeight:0}}>
+                <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                  <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>🔔 ARC Notifications {notifications.length>0&&`(${notifications.length})`}</span>
+                  {(()=>{const _sc=notifications.filter(_isNotifHandled).length;return _sc>0&&<button title="Clear all already-received notifications" onClick={e=>{e.stopPropagation();markSafeToClearNotifs();}} style={{background:"none",border:"none",color:C.green,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>✓ Clear received ({_sc})</button>;})()}
+                  {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
+                </div>
+                <div style={{maxHeight:"72vh",overflowY:"auto"}}>
+                  {notifications.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
+                  {notifications.map(n=>renderNotifRow(n))}
+                </div>
               </div>
             </div>
           </div>
