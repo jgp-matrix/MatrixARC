@@ -5510,6 +5510,12 @@ const SCRAPER_BC_WRITEBACK_ENABLED=false;
 // and drive the repeat "Accept new prices" nag. DISABLED until BC is cleaned + primary-vendor selection
 // (F041) lands. Manual "Get New Pricing", portal apply, and supplier-quote import are unaffected.
 const AUTO_BC_REPRICE_ENABLED=false;
+// B053 / PRJ402119 (2026-07-23) — MASTER KILL SWITCH for ALL automated pricing (BC pull + Codale/Royal
+// scrapers + AI estimate). Jon: pricing is untrustworthy during the incident — "only do RFQs for now."
+// Gates BOTH pricing engines (runPricingOnPanel foreground + runPricingBackground post-extract) and the
+// "Get New Pricing" / "Refresh All" buttons. RFQ, portal apply, and manual per-row price entry still work.
+// The F050 read-only plausibility sweep still uses estimatePrices (it reads, never sets a price).
+const AUTO_PRICING_ENABLED=false;
 async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return{ok:true};
   try{
@@ -15677,6 +15683,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
 // ── BACKGROUND PRICING (runs when extraction completes after user navigated away) ──
 // Uses only module-scoped functions + captured projectId/panelId. No React state dependency.
 async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNumber,panelIndex,projectName){
+  if(!AUTO_PRICING_ENABLED)return; // B053: all automated pricing disabled — RFQ only
   const bom=panelData.bom||[];
   if(!bom.length||!_apiKey)return;
   bgUpdate(_bgKey(projectId,panelId),"Background pricing…");
@@ -28397,6 +28404,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress,opts={}){
+    if(!AUTO_PRICING_ENABLED)return; // B053: all automated pricing (BC/scraper/AI) disabled — RFQ only
     const forceFresh=!!(opts&&opts.forceFresh);
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
@@ -29955,13 +29963,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <div style={{position:"relative",display:"inline-flex"}}>
                 <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Refresh pricing — skips items priced within threshold"}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>runPricingOnPanel()}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}runPricingOnPanel();}}
                   disabled={aiPricing||ownerPriorityActive}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"6px 0 0 6px"})}>
                   {aiPricing?"Refreshing…":"↻ Get New Pricing"}
                 </button>
                 <button disabled={aiPricing||ownerPriorityActive}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(await arcConfirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item.",{kind:"warning",okLabel:"Refresh All"}))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}if(await arcConfirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item.",{kind:"warning",okLabel:"Refresh All"}))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
                   title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices — ignores stale thresholds"}>▾</button>
               </div>
