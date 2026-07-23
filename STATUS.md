@@ -7,7 +7,12 @@
 
 ## Current — 🟢 2026-07-23 · prod v1.24.13 · ACTIVE session
 
-> ## 🔧 2026-07-23 — To-Do pane NEEDS ATTENTION list rework (NEW) — filed F042
+> ## 🔧 2026-07-23 — To-Do pane follow-ups (NEW) — G017 (independent scroll) + F043 (hover→highlight)
+> **G017 (Jon):** make the To-Do side pane scroll separately from the main page. Freddy trace: the STANDING right rail already IS an independent scroll pane (fixed header + `height:100vh/overflow:hidden` row + rail `overflowY:auto`, border-box) — so this is likely the **MY DASHBOARD (F030) page** (pageMode rail scrolls WITH the page by design) OR a live-only bug. **⏳ Disambiguating surface with Jon before any layout change** (regression risk to working main-column scroll).
+> **F043 (Jon):** hover a right-pane tile/row → highlight the corresponding project on the main screen (F034-family). New feature — needs main board ProjectTile ↔ rail-row shared project-id + hover state. To be scoped once surface confirmed.
+> **STATUS:** both filed; awaiting Jon surface-confirm. F042 + G016 still on Test V.040 awaiting eyeball.
+
+> ## 🔧 2026-07-23 — To-Do pane NEEDS ATTENTION list rework — filed F042
 > **Ask (Jon):** The NEEDS ATTENTION list shows only red/critical projects then "N on track" at the bottom. (1) Confirm "N on track" = projects not shown (non-red); if so, show ALL projects by time incl. YELLOW + GREEN (list can be long). (2) Sort should factor **Requested Ship Date** + **Est. Prod. Done date** + **how long untouched in ARC**. Refine later; this is the sort criteria for now.
 > **+ G016 (2026-07-23):** shrunk the top status tiles/pills to reclaim vertical space (Jon, live on test). Rail tile height 72→52, pageMode minHeight 42→34, label/count fonts trimmed (12→11 / 20→17), section-header + grid padding tightened. Cosmetic only (advisory-review clean). Affects both rail + MY DASHBOARD page (shared `_pill`/`_grid`). Shipped in **Test V.040**.
 > **STATUS:** 🚀 Deployed to **Test V.040** (base v1.24.13; F042 + G016), prod untouched, master synced `2b6f0664`. Jon ruled: sort = **Ship Date → Est. Prod. Done (stored `productionEndDate`) → most-untouched**; scope = **role-scoped set, just unhide green**; footer = total project count. One `TodoRail` edit covers rail + F030 page; build review-clean (updatedAt always epoch-ms). **⏳ Jon test-verify on matrix-arc-test.web.app** (check right rail + MY DASHBOARD attention list: greens now listed, sort order, total-count footer). Behavior note: `requestedShipDate` often blank → list effectively staleness-ordered until ship dates populate. **PROD deploy held until Jon OKs the test eyeball.**
