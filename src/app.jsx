@@ -44972,21 +44972,22 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // inlined here since that helper is scoped to another component. Shows exact time-in-status.
   const _fmtElapsed=ms=>{const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<24)return h+"h";return Math.round(h/24)+"d";};
   const _dayAge=ts=>Math.max(0,Math.round((_now-ts)/(24*36e5)));
-  // F025 3b: attention list — RENDER-time filter (decision 4: yellow+red only) + sort. _bucketTimerColor
-  // / _todoClockStart / _todoThresholdMsFor are the 3a SSOTs (NOT forked). "N on track" counts the rest.
-  const _attn=[];let _onTrack=0;
-  for(const c of attnCandidates){
-    const color=_bucketTimerColor(c.project,c.bucket,_now);
-    if(color==="yellow"||color==="red")_attn.push({...c,color});
-    else _onTrack++;
-  }
-  // Sort: normalized overdue index DESC (elapsed / this bucket's redMs — raw elapsed isn't comparable
-  // across buckets). Tie-break: raw elapsed DESC, then project number.
-  const _sortMetrics=c=>{const start=_todoClockStart(c.project,c.bucket);const elapsed=_now-start;const red=_todoThresholdMsFor(c.bucket).redMs||1;return{norm:elapsed/red,elapsed};};
+  // F042 (2026-07-23): attention list now includes ALL colors — the old yellow+red-only filter is dropped
+  // and the "N on track" hidden green-count is retired (greens are now listed). Universe is unchanged
+  // (role-scoped candidates; designer buckets still excluded — no clean time-in-status source). color is
+  // now a visual left-border tint only, NOT a sort key. _bucketTimerColor / _todoClockStart are the 3a SSOTs.
+  const _attn=attnCandidates.map(c=>({...c,color:_bucketTimerColor(c.project,c.bucket,_now)}));
+  // F042 sort (Jon 2026-07-23): Requested Ship Date ASC (soonest customer deadline first) → Est. Prod. Done
+  // (stored productionEndDate / TRAQS) ASC → most-untouched-in-ARC (updatedAt) DESC → project #. Missing
+  // dates sort last (Infinity). Keys precomputed ONCE (decorate-then-sort) so the comparator does no
+  // per-comparison date parsing. "Refine later" per Jon — this is the agreed sort criteria for now.
+  const _earliestDate=(proj,field)=>{let best=Infinity;const consider=v=>{if(v){const t=Date.parse(v);if(!isNaN(t)&&t<best)best=t;}};consider(proj[field]);for(const p of (proj.panels||[]))consider(p&&p[field]);return best;};
+  const _attnKeys=new Map(_attn.map(c=>[c,{ship:_earliestDate(c.project,"requestedShipDate"),prod:_earliestDate(c.project,"productionEndDate"),stale:_now-(c.project.updatedAt||0)}]));
   _attn.sort((a,b)=>{
-    const ka=_sortMetrics(a),kb=_sortMetrics(b);
-    if(kb.norm!==ka.norm)return kb.norm-ka.norm;
-    if(kb.elapsed!==ka.elapsed)return kb.elapsed-ka.elapsed;
+    const ka=_attnKeys.get(a),kb=_attnKeys.get(b);
+    if(ka.ship!==kb.ship)return ka.ship-kb.ship;      // soonest Requested Ship Date first
+    if(ka.prod!==kb.prod)return ka.prod-kb.prod;      // then soonest Est. Prod. Done
+    if(kb.stale!==ka.stale)return kb.stale-ka.stale;  // then most-untouched (stalest first)
     return String(a.project.bcProjectNumber||"").localeCompare(String(b.project.bcProjectNumber||""));
   });
   // Sales Pipeline header roll-up (decision 2): count of MY sales projects still awaiting an RFQ
@@ -45091,8 +45092,8 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
                 </div>
               );
             })}
-          {_attn.length>0&&_onTrack>0&&(
-            <div style={{padding:"6px 6px 2px",fontSize:12,color:C.muted}}>{_onTrack} on track</div>
+          {_attn.length>0&&(
+            <div style={{padding:"6px 6px 2px",fontSize:12,color:C.muted}}>{_attn.length} project{_attn.length===1?"":"s"}</div>
           )}
         </div>
       </>)}
