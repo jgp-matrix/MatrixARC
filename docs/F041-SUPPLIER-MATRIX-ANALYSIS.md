@@ -160,10 +160,12 @@ the already-shipped `manufacturerVendorMap` + `bcGetItemVendorNo` + the SSOT pre
    `manufacturerVendorMap`), or both? Determines how we reconcile with the existing learner.
    *Freddy default (assumed unless Jon overrides): **per-item primary is authoritative**, seeded/suggested
    by the per-manufacturer learner — matches how BC keys it and how a salesman thinks about "this part."*
-4. **Sales↔Purchasing handoff (Jon still working through the flow):** since purchasing is external today —
-   is the near-term goal purely *quote-time* correctness (salesman quotes off the primary), or does
-   Purchasing also need an ARC signal/export ("this line was sourced off-primary, here's why")? **← the one
-   genuinely open product question; no rush.**
+4. **Sales↔Purchasing handoff:** ✅ **Direction = (ii)** (Jon 2026-07-23, leaning — thinking it through
+   further before build). Near-term goal is quote-time correctness **plus** an off-primary signal: when a
+   line is legitimately sourced off-primary, ARC records *which secondary + why* and surfaces it (flag /
+   column / export) so external Purchasing sees the exception with context. (i) quote-time-only may still be
+   the first step, with the signal as a fast-follow. **Jon still refining the exact flow — PARKED, no build
+   until he confirms.**
 5. **Reconcile vs. supersede `manufacturerVendorMap`:** *Freddy default (assumed unless Jon overrides):
    **extend** the existing learner — the matrix reads/writes it as the per-manufacturer seed and adds an
    explicit per-item primary + off-primary detection on top. No parallel store.*
