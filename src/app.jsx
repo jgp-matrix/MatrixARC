@@ -38219,6 +38219,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // App-level portalFocusId prop when the modal auto-opens from a notification; cleared on
   // modal close so a later manual open doesn't re-focus a stale submission.
   const [portalFocusSub,setPortalFocusSub]=useState(null);
+  // F031 #2 fix: durable LOCAL latch for a notification-driven auto-open request. The App-level
+  // request (autoOpenPortal) is captured here the instant it arrives, so the open survives the
+  // async rfqUploads listener race — portalSubmissions is empty on mount and only populates
+  // after Firestore resolves, so the modal must open once submissions LAND, not only in the
+  // single tick the prop first flips true.
+  const [autoOpenIntent,setAutoOpenIntent]=useState(false);
   const [showPoModal,setShowPoModal]=useState(false);
   const [showPriceCheckModal,setShowPriceCheckModal]=useState(false);
   const [priceCheckDiffs,setPriceCheckDiffs]=useState(null);
@@ -38448,14 +38454,28 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     return()=>unsub();
   },[init.id,uid,projectRemoteTasks]);
 
-  // Auto-open portal modal when navigated from a notification
+  // Auto-open portal modal when navigated from a notification.
+  // F031 #2 fix (flicker/race): the OLD single effect cleared the App-level pending
+  // (onPortalOpened) in the SAME tick it tried to open. On a fresh project open the rfqUploads
+  // listener hasn't resolved yet, so portalSubmissions is empty and the open condition is false
+  // — but if the prop-clear ever raced ahead of the listener the request was lost, producing
+  // the reported "screen flickers, lands on the project, modal never opens". Split into:
+  //   (A) capture the request into a durable LOCAL latch (autoOpenIntent) + seed the focus
+  //       target the instant autoOpenPortal arrives — BEFORE the App-level pending is cleared
+  //       (which would null portalFocusId);
+  //   (B) actually open once portalSubmissions have LANDED, then consume the App-level pending.
+  // showPortalModal latches the open state (only onClose clears it); keeping the App-level
+  // pending set until the modal is shown means a transient re-render can't drop the request.
   useEffect(()=>{
-    if(autoOpenPortal&&portalSubmissions.length>0){
-      setPortalFocusSub(portalFocusId||null); // F031 #2: seed focus target before opening
+    if(autoOpenPortal){setAutoOpenIntent(true);setPortalFocusSub(portalFocusId||null);}
+  },[autoOpenPortal,portalFocusId]);
+  useEffect(()=>{
+    if(autoOpenIntent&&portalSubmissions.length>0){
       setShowPortalModal(true);
-      onPortalOpened?.();
+      setAutoOpenIntent(false);
+      onPortalOpened?.(); // consume the App-level request now that the modal is actually shown
     }
-  },[autoOpenPortal,portalSubmissions.length]);
+  },[autoOpenIntent,portalSubmissions.length]);
   const saveTimer=useRef(null);
   // DECISION(v1.19.745): Soft-block on sent quotes. Replaces the binary `quoteLocked`
   // hard-block. Once a quote has been sent (project.quoteSentAt set), the panel card +
@@ -48395,26 +48415,43 @@ function App({user}){
   },[companyId,user.uid]);
 
   function handleNotifClick(notif){
-    fbDb.doc(`users/${user.uid}/notifications/${notif.id}`).update({read:true}).catch(()=>{});
     setShowBellMenu(false);
+    // F031 #2 fix (notification vanishes on a dead click): the OLD code updated read:true
+    // UNCONDITIONALLY at the top, BEFORE the per-type `if(proj)` guards. When the target
+    // project isn't in the loaded `projects` array — archived, filtered out of the current
+    // view, owned by a teammate (team-scoped bell notifications), or not yet loaded — every
+    // nav branch silently no-op'd, yet the notification was already consumed and dropped from
+    // the live bell list (which filters read!==true). Result: the user clicked, reached
+    // nothing, AND lost the notification (Jon, test V.028). No exception was thrown — a pure
+    // logic no-op. Fix: resolve the target FIRST, mark-read ONLY when navigation actually
+    // lands, and surface a graceful message (keeping the notification) when it can't.
+    let navigated=false;
     if(notif.type==='supplier_quote'&&notif.projectId){
       const proj=projects.find(p=>p.id===notif.projectId);
       // F031 #2: also carry the submission token so the modal focuses the just-arrived one.
-      if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);setPendingPortalFocusId(notif.rfqUploadId||null);}
+      if(proj){handleOpen(proj);setPendingPortalOpen(notif.projectId);setPendingPortalFocusId(notif.rfqUploadId||null);navigated=true;}
     }else if(notif.type==='customer_review'&&notif.projectId){
       // DECISION(v1.19.781): Customer-review notifications now deep-link the same way
       // as supplier-quote notifications — opens the project AND auto-opens the
       // Customer Review Responses modal so the user lands directly on what changed.
       const proj=projects.find(p=>p.id===notif.projectId);
-      if(proj){handleOpen(proj);setPendingCustomerReviewOpen(notif.projectId);}
+      if(proj){handleOpen(proj);setPendingCustomerReviewOpen(notif.projectId);navigated=true;}
     }else if(notif.type==='issue_report'){
-      setShowDebugLogs(true);
+      setShowDebugLogs(true);navigated=true;
     }else if((notif.type==='pre_review'||notif.type==='post_review'||notif.type==='unlock_request'||notif.type==='unlock_granted')&&notif.projectId){
       // B049: review/unlock notifications land on the project (same behavior as the
       // pre-review email deep-link ?openProject=). No dedicated surface exists, so
       // opening the project is the correct target.
       const proj=projects.find(p=>p.id===notif.projectId);
-      if(proj)handleOpen(proj);
+      if(proj){handleOpen(proj);navigated=true;}
+    }
+    if(navigated){
+      // Consume the notification only once navigation has actually been initiated.
+      fbDb.doc(`users/${user.uid}/notifications/${notif.id}`).update({read:true}).catch(()=>{});
+    }else{
+      // Target couldn't be resolved — do NOT consume the notification (leave it in the bell so
+      // it isn't silently lost); tell the user why, and point at the ✕ for intentional dismissal.
+      if(typeof arcAlert==="function")arcAlert("Couldn't open that item — the project may be archived, filtered out of your current view, owned by a teammate, or still loading. The notification has been kept so you can try again (use the ✕ to dismiss it).",{kind:"warning",title:"Couldn't open project"});
     }
   }
 
