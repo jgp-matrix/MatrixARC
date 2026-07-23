@@ -45025,7 +45025,13 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   return(
     <aside style={pageMode
       ?{width:"100%",display:"flex",flexDirection:"column",background:"transparent"}
-      :{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",alignSelf:"stretch",overflowY:"auto"}}>
+      :{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",
+        /* G017 (2026-07-23): pin the standing rail to its own viewport-locked scroll pane so it scrolls
+           independently of the main column. Explicit height + minHeight:0 (instead of relying on
+           alignSelf:stretch) is what forces a nested flex scroll container to engage across browsers —
+           122px matches the row's fixed-header paddingTop so the pane fills exactly the area below the
+           toolbar+nav strip. Scoped to the 380px rail; does not touch the main content column. */
+        height:"calc(100vh - 122px)",minHeight:0,overflowY:"auto"}}>
       {/* F030: the rail's header (title + hide button) is suppressed in pageMode — the MY
           DASHBOARD page provides its own page title and there is no rail to collapse. */}
       {!pageMode&&(<div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:8}}>
