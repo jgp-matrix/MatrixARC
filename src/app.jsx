@@ -44804,7 +44804,11 @@ function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinn
 // click-routing changed: pills call onFocusBucket(kind,key) instead of the Dashboard-local board
 // setters, and App deep-links the Sales board via `pendingFocus`. Collapse state (`railOpen`) is
 // lifted to App (shared across tabs, persisted to the existing `arc_todo_rail_open` key).
-function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject}){
+function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject,pageMode}){
+  // F030 pageMode: render the SAME sections (pills / role queues / Needs Attention) as a
+  // full-width page block instead of the 380px right rail. Every data path below is reused
+  // byte-identical — only the container/grid styling branches on pageMode, so the MY DASHBOARD
+  // page cannot drift from the rail.
   // Coach: this now runs app-wide (every tab render), so memoize the per-role bucket derive on
   // [projects,uid]. Pill colors still use a fresh Date.now() at render so timer staleness stays live.
   const _sections=React.useMemo(()=>{
@@ -44854,7 +44858,8 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   },[projects,uid,salesCacheVer]);
 
   // Collapsed → thin discoverable strip (present on every tab so the rail can be reopened anywhere).
-  if(!railOpen){
+  // F030: skip the collapsed strip in pageMode — the page always shows the expanded content.
+  if(!railOpen&&!pageMode){
     return(
       <div style={{width:40,flexShrink:0,borderLeft:`1px solid ${C.border}`,background:"#080810",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:14}}>
         <button onClick={()=>setRailOpen(true)} title="Show the To-Do list"
@@ -44882,7 +44887,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     );
   };
   const _sectionHeader=txt=>(<div style={{padding:"12px 12px 0",fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>{txt}</div>);
-  const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6}}>{children}</div>);
+  const _grid=children=>(<div style={{padding:"6px 10px 4px",display:"grid",gridTemplateColumns:pageMode?"repeat(auto-fill,minmax(150px,1fr))":"1fr 1fr 1fr",gap:6}}>{children}</div>);
   // F025 3b: compact elapsed formatter (m/h/d) — same shape as the archive formatTimeAgo pattern,
   // inlined here since that helper is scoped to another component. Shows exact time-in-status.
   const _fmtElapsed=ms=>{const m=Math.round(ms/60000);if(m<60)return m+"m";const h=Math.round(m/60);if(h<24)return h+"h";return Math.round(h/24)+"d";};
@@ -44908,14 +44913,18 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // response. Reuses _rfqAwaitingSummary (SSOT) — no re-count. Only meaningful for the salesman role.
   const _rfqRollup=_roles.includes("salesman")?salesProjects.reduce((n,p)=>n+(_rfqAwaitingSummary(p).awaitingVendorCount>0?1:0),0):0;
   return(
-    <aside style={{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",alignSelf:"stretch",overflowY:"auto"}}>
-      <div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:8}}>
+    <aside style={pageMode
+      ?{width:"100%",display:"flex",flexDirection:"column",background:"transparent"}
+      :{width:380,flexShrink:0,display:"flex",flexDirection:"column",borderLeft:`1px solid ${C.border}`,background:"#080810",alignSelf:"stretch",overflowY:"auto"}}>
+      {/* F030: the rail's header (title + hide button) is suppressed in pageMode — the MY
+          DASHBOARD page provides its own page title and there is no rail to collapse. */}
+      {!pageMode&&(<div style={{padding:"16px 14px 12px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"flex-start",gap:8}}>
         <div style={{flex:1,minWidth:0}}>
           <div style={{fontSize:18,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s To-Do List`:"To-Do List"}</div>
           <div style={{fontSize:10,color:C.muted,marginTop:2}}>Your work, by attention</div>
         </div>
         <button onClick={()=>setRailOpen(false)} title="Hide the To-Do pane" style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:16,lineHeight:1,padding:"2px 4px"}}>▸</button>
-      </div>
+      </div>)}
       {_roles.includes("reviewer")&&(<>
         {_sectionHeader("Review Queue")}
         {_grid([
@@ -46745,6 +46754,7 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
 
 // ── LEFT NAV SIDEBAR ──
 const NAV_TABS=[
+  {id:"user_dashboard",label:"MY DASHBOARD",icon:"📋"}, // F030 — personal landing view (first/leftmost)
   {id:"projects",  label:"SALES",       icon:"◫"},
   {id:"purchasing",label:"PURCHASING",  icon:"⬡"},
   {id:"engineering",label:"ENGINEERING",icon:"📐"},
@@ -48594,6 +48604,38 @@ function App({user}){
     notifications.filter(_isNotifHandled).forEach(n=>fbDb.doc(`users/${user.uid}/notifications/${n.id}`).update({read:true}).catch(()=>{}));
   }
 
+  // F030: ONE shared notification-row renderer — used by BOTH the bell dropdown AND the
+  // MY DASHBOARD page's live notifications window, so the row markup + behavior can't fork.
+  // Reuses the SSOT helpers (_isNotifHandled / handleNotifClick / markNotifRead) + the SAME
+  // _navigable gate the bell used inline (B049). Read-only; the only write is the existing
+  // add-only read:true via markNotifRead / handleNotifClick.
+  const renderNotifRow=n=>{
+    const _rfqHandled=_isNotifHandled(n); // F031 #4: SSOT — same predicate the batch clear uses
+    const _navigable=n.type==='supplier_quote'?!_rfqHandled
+      :(['pre_review','post_review','customer_review','issue_report'].includes(n.type)
+        ||(['unlock_request','unlock_granted'].includes(n.type)&&!!n.projectId));
+    return(
+      <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_navigable?"pointer":"default"}}
+        onClick={()=>_navigable?handleNotifClick(n):undefined}>
+        <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
+          <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'📥':'🔔'}</span>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
+            <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
+            {n.type==='supplier_quote'&&(_rfqHandled
+              ?<span style={{fontSize:11,fontWeight:700,color:C.green,opacity:0.8}}>✓ Already received — safe to clear</span>
+              :<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>)}
+            {n.type!=='supplier_quote'&&_navigable&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>{n.type==='issue_report'?'View in Debug Logs →':'Open project →'}</span>}
+            <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
+          </div>
+          <button title="Clear this notification" onClick={e=>{e.stopPropagation();markNotifRead(n.id);}}
+            style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,lineHeight:1,padding:"0 2px",flexShrink:0,alignSelf:"flex-start"}}
+            onMouseEnter={e=>e.currentTarget.style.color="#f1f5f9"} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+        </div>
+      </div>
+    );
+  };
+
   function closeSearch(){setShowSearch(false);}
   function openProjectFromSearch(p){handleOpen(p);closeSearch();}
   const sqRowRef=useRef(null);
@@ -49546,42 +49588,9 @@ INSTRUCTIONS:
               <div style={{height:notifMenuH,minHeight:120,maxHeight:"75vh",overflowY:"auto",resize:"vertical"}}
                 onMouseUp={e=>{const h=e.currentTarget.offsetHeight;if(h&&h!==notifMenuH){setNotifMenuH(h);try{localStorage.setItem('arc_notif_menu_height',String(h));}catch(_){}}}}>
                 {notifications.length===0&&<div style={{padding:"20px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
-                {notifications.map(n=>{
-                  // F031 #3: a supplier_quote row is "handled" once its rfqUploads doc is
-                  // imported/dismissed — the submissions modal (submitted-only) would open
-                  // empty, so gate OFF the navigate and show a "safe to clear" note instead.
-                  const _rfqHandled=_isNotifHandled(n); // F031 #4: SSOT — same predicate the batch clear uses
-                  // B049: widen click-through to every deep-linkable type. supplier_quote keeps its
-                  // F031 #3/#4 "already handled" suppression exactly; other types are navigable when
-                  // they carry the id their handler needs (all have a projectId except issue_report,
-                  // which opens the Debug Logs).
-                  const _navigable=n.type==='supplier_quote'?!_rfqHandled
-                    :(['pre_review','post_review','customer_review','issue_report'].includes(n.type)
-                      ||(['unlock_request','unlock_granted'].includes(n.type)&&!!n.projectId));
-                  return(
-                  <div key={n.id} style={{padding:"10px 16px",borderBottom:`1px solid ${C.border}22`,cursor:_navigable?"pointer":"default"}}
-                    onClick={()=>_navigable?handleNotifClick(n):undefined}>
-                    <div style={{display:"flex",alignItems:"flex-start",gap:8}}>
-                      <span style={{fontSize:16,flexShrink:0,marginTop:1}}>{n.type==='supplier_quote'?'📥':'🔔'}</span>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:13,fontWeight:700,color:"#f1f5f9",marginBottom:2,lineHeight:1.3}}>{n.title||"Notification"}</div>
-                        <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.4,marginBottom:4}}>{n.body||""}</div>
-                        {n.type==='supplier_quote'&&(_rfqHandled
-                          ?<span style={{fontSize:11,fontWeight:700,color:C.green,opacity:0.8}}>✓ Already received — safe to clear</span>
-                          :<span style={{fontSize:11,fontWeight:700,color:C.accent}}>Click to Review Quote →</span>)}
-                        {/* B049: generic click affordance for the newly-navigable non-quote types. */}
-                        {n.type!=='supplier_quote'&&_navigable&&<span style={{fontSize:11,fontWeight:700,color:C.accent}}>{n.type==='issue_report'?'View in Debug Logs →':'Open project →'}</span>}
-                        <div style={{fontSize:10,color:"#94a3b8",marginTop:3}}>{n.createdAt?new Date(n.createdAt).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}):""}</div>
-                      </div>
-                      {/* F031 #1: per-notification Clear — stops row navigate, marks read (drops
-                          from the live list), keeps the dropdown open. Universal across types. */}
-                      <button title="Clear this notification" onClick={e=>{e.stopPropagation();markNotifRead(n.id);}}
-                        style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,lineHeight:1,padding:"0 2px",flexShrink:0,alignSelf:"flex-start"}}
-                        onMouseEnter={e=>e.currentTarget.style.color="#f1f5f9"} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
-                    </div>
-                  </div>
-                  );
-                })}
+                {/* F030: rows now come from the ONE shared renderNotifRow (App scope) — the bell
+                    dropdown and the MY DASHBOARD notifications window render byte-identical rows. */}
+                {notifications.map(n=>renderNotifRow(n))}
               </div>
               {/* Push notification toggle. DECISION(v1.19.762): gate on the static
                   browser-feature check (_pushSupported) instead of fbMessaging — the
@@ -49707,6 +49716,70 @@ INSTRUCTIONS:
       {navTab==="purchasing"&&!(view==="project"&&(projectOriginTab||"projects")==="purchasing")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
       {navTab==="engineering"&&!(view==="project"&&(projectOriginTab||"projects")==="engineering")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
+      {/* F030 — MY DASHBOARD: personal landing page. ARC-native, read-only. Rendered as a block
+          INSIDE App's return so it has closure access to `notifications` + all the helpers
+          (renderNotifRow / markAllNotifsRead / markSafeToClearNotifs / _isNotifHandled) and the
+          scoping helpers (_isMyProject / projectStatus) — no prop-drilling. The app-level TodoRail
+          is auto-suppressed on this tab via the _f030Active guard below. */}
+      {navTab==="user_dashboard"&&(
+        <div style={{padding:"20px 28px",maxWidth:1400,margin:"0 auto"}}>
+          <div style={{marginBottom:18}}>
+            <div style={{fontSize:26,fontWeight:800,color:C.text,letterSpacing:0.5}}>{userFirstName?`${userFirstName}'s Dashboard`:"My Dashboard"}</div>
+            <div style={{fontSize:13,color:C.muted,marginTop:3}}>Your work, notifications, and active projects at a glance.</div>
+          </div>
+          <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
+            {/* MAIN COLUMN — pills + role queues + Needs Attention (page-mode TodoRail, reused
+                byte-identical) + project rows w/ $ totals + F029 insertion point. */}
+            <div style={{flex:"1 1 560px",minWidth:0,display:"flex",flexDirection:"column",gap:18}}>
+              <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+                <TodoRail pageMode projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
+              </div>
+              {/* Project rows + $ totals (decision 3) — scoped via the _isMyProject SSOT (same
+                  scope expression the rail's memo uses); $ total mirrors the buildArcContext
+                  Σ qty*unitPrice pattern. NOT the heavy Dashboard kanban tile component. */}
+              {(()=>{
+                const myProjects=projects.filter(p=>_isMyProject(p,user.uid)&&(!p.transferred||p.transferredTo!==user.uid)&&!p.importedFromBC&&!p.lostAt);
+                if(!myProjects.length)return null;
+                const _projTotal=p=>(p.panels||[]).reduce((s,pan)=>(pan.bom||[]).reduce((ss,r)=>ss+(r.qty||0)*(r.unitPrice||0),0)+s,0);
+                return(
+                  <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
+                    <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:10}}>My Projects ({myProjects.length})</div>
+                    {myProjects.map(p=>{
+                      const tot=_projTotal(p);
+                      return(
+                        <div key={p.id} onClick={()=>handleOpen(p)} title={`Open ${p.bcProjectNumber||p.name||"project"}`}
+                          style={{cursor:"pointer",display:"flex",gap:10,alignItems:"center",background:"#0c0c16",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",marginBottom:6,transition:"transform 0.1s"}}
+                          onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
+                          onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.bcProjectNumber||"(no #)"}{p.name?` — ${p.name}`:""}</div>
+                            <div style={{fontSize:12,color:C.muted,marginTop:2,textTransform:"capitalize"}}>{String(projectStatus(p)||"").replace(/_/g," ")}</div>
+                          </div>
+                          <div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0}}>${tot.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+              {/* F029 mounts here: Outlook tasks + mail/meeting awareness */}
+            </div>
+            {/* SIDE PANEL — live notifications window (unread-only, decision 2). Reuses the bell's
+                existing onSnapshot listener + state (no new query) and the ONE shared renderNotifRow. */}
+            <div style={{flex:"0 1 360px",minWidth:300,background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",alignSelf:"stretch"}}>
+              <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>🔔 Notifications {notifications.length>0&&`(${notifications.length})`}</span>
+                {(()=>{const _sc=notifications.filter(_isNotifHandled).length;return _sc>0&&<button title="Clear all already-received notifications" onClick={e=>{e.stopPropagation();markSafeToClearNotifs();}} style={{background:"none",border:"none",color:C.green,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>✓ Clear received ({_sc})</button>;})()}
+                {notifications.length>0&&<button onClick={markAllNotifsRead} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:11,fontWeight:600,padding:0}}>Mark all read</button>}
+              </div>
+              <div style={{maxHeight:"72vh",overflowY:"auto"}}>
+                {notifications.length===0&&<div style={{padding:"24px 16px",textAlign:"center",color:"#94a3b8",fontSize:13}}>No new notifications</div>}
+                {notifications.map(n=>renderNotifRow(n))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {navTab==="projects"&&<>
       {/* BC Connection Lost popup */}
       {bcLostAlert&&(
