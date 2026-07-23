@@ -41,7 +41,13 @@ This delivers exactly Jon's ask ("price far below its AI estimate") both forward
 **Phase 3 — the SWEEP (admin report, READ-ONLY):**
 - `runPlausibilitySweep(uid,onProgress)` cloned from `runPricingAudit` skeleton (`:5663`: `loadProjects`→panels→bom). For each priceable row: on-demand `estimatePrices` (retroactive signal) + `_isPriceImplausible`; classify by magnitude of the price/estimate gap. New admin card + `PlausibilitySweepModal` beside Pricing Audit (`:42737`), modeled on `PricingAuditModal` (`:41373`). Report only, no mutations; optionally log to `pricingSyncLog`.
 
-## Open decisions for Jon
-- **D1 (Phase 0, pivotal):** reference signal — hybrid (a)+(b) [rec], on-demand-AI-only (b), or heuristic (c)? Confirms whether we accept the sweep's per-run AI-call cost.
-- **D2:** divergence threshold — flag when `unitPrice < aiEstimate × ratio`. Suggest **ratio = 0.5** (price below half the AI estimate) to start; tune from sweep results. ($12 vs ~$6000 = 0.2% → caught at any sane ratio.)
-- **D3:** send-time behavior — HARD block [rec] vs warn.
+## ✅ Decisions locked (Jon, 2026-07-23)
+- **D1 — Signal: HYBRID** — bank a durable `aiEstimate` on every row going forward (instant/free send check) + on-demand AI re-estimate for the retroactive sweep.
+- **D2 — Threshold:** flag when `unitPrice < aiEstimate × 0.5` (below half the AI estimate); tunable, refine from sweep results.
+- **D3 — Send behavior: HARD BLOCK** (joins the `findIncompleteQuoteItems` hard gate, like Tech-Review).
+
+## ✅ Build order (Jon-greenlit; sweep-first)
+1. **Phase 3 FIRST — the SWEEP** (read-only, immediate value, validates the AI signal, zero money-path mutation risk): `runPlausibilitySweep` cloned from `runPricingAudit` + on-demand `estimatePrices` + `PlausibilitySweepModal` beside Pricing Audit. Lets Jon scan all in-flight quotes for BC-bad-data prices NOW.
+2. **Phase 2 — bank `aiEstimate`** going forward (additive field; parallel estimate pass incl. BC rows).
+3. **Phase 1 — send-time `_isPriceImplausible` SSOT hard-block** (uses banked `aiEstimate`; folds in `bcPollDivergence`; for rows lacking a banked estimate, trigger an on-demand estimate at send).
+Each phase: Coach review + test + Jon gate before prod.
