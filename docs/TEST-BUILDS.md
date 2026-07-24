@@ -57,3 +57,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.052 | v1.24.16-T052 | b6c70173 | (no description) | 2026-07-23 |
 | V.053 | v1.24.17-T053 | 48b54585 | (no description) | 2026-07-23 |
 | V.054 | v1.24.34-T054 | 06b12f2c | F065 cross-Line Part# price/lead-time propagation (Coach-approved-with-nits, F1 hardened) - for Jon verify on a disposable project | 2026-07-24 |
+| V.055 | v1.24.34-T055 | fcacdcbd | F065 bug fixes B/C/A (index self-heal on open, confidence pill clear, Update-all overrides manual) + B060 flicker fix | 2026-07-24 |
