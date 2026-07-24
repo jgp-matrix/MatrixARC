@@ -30798,10 +30798,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // when editable (it's a pure action, as the old blue circle was).
                     const _bcCircle=(()=>{
                       if(row.isLaborRow||row.isContingency||!_bcToken)return null;
-                      if(row.priceSource==="bc")return null;
+                      // B058 (Jon): BC-circle visibility is driven SOLELY by BC membership, never by
+                      // whether a price exists. A part linked to BC carries a DURABLE bcNo (stamped by
+                      // commitBcItem :28295 + pricing BC-match :16116/:28965, never cleared, survives the
+                      // priceSource-based bcVerify recompute :16207/:29364) and/or bcVerify.status==="in-bc"
+                      // — those rows get NO circle. Everything else is not-in-BC and MUST keep showing a
+                      // circle even after a manual/budgetary price (applyBudgetaryPrice :28531 sets
+                      // priceSource:"manual"). The old blue gate `priceSource!=="manual"` folded price into
+                      // visibility, so typing a budgetary price wrongly hid the circle.
+                      if(row.bcNo||row.bcVerify?.status==="in-bc"||row.priceSource==="bc")return null;
                       if(row.bcVerify?.status==="not-in-bc")return "red";
                       if(row.bcVerify?.status==="fuzzy"&&!bcFuzzySuggestions[row.id])return "yellow";
-                      if(!readOnly&&row.priceSource!=="manual")return "blue";
+                      if(!readOnly)return "blue";
                       return null;
                     })();
                     const _rowEl=(()=>{
