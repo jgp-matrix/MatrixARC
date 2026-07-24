@@ -13,8 +13,9 @@
 > 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
 
 > ## ⏳ NEEDS JON (2026-07-24, while in the shop) — reply by number
-> 1. **F065 build-go?** Coach review = APPROVE-WITH-NITS (all nits folded into `docs/F065-BUILD-PLAN.md`). Ready to build on **Test** via a Marc lane (money-path → your go; then you verify on Test before prod). *Freddy rec: yes, build on Test.*
-> 2. **B058 prod-verify** (v1.24.34 is LIVE): open a project → a non-BC part → enter a manual price → the **BC circle should STAY** (it used to vanish). Confirm it holds on prod.
+> 1. ✅ **F065 build-go — RECEIVED (Jon: "Go for F065").** 🟩 Marc build lane running (builds on Test, incorporating Coach F1–F5). Freddy will validate → Coach re-review the diff → deploy to Test → then this becomes "verify F065 on Test."
+> 2. **B058 prod-verify** (v1.24.34 LIVE): open a project → non-BC part → enter a manual price → the **BC circle should STAY** (it used to vanish). Confirm on prod.
+> 3. **B060 (new, Jon):** BC-circle flickers (disappear→reappear) when changing a price on a BC-circle item. Cosmetic (end state correct); logged, diagnosis DEFERRED until the F065 build finishes editing app.jsx. No action needed from you.
 
 > ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
 > **Quote-quality safeguards:** F044 (block-send-on-red + manager override) · F046 (per-row `priceSetBy`/`priceSetAt` audit at ~35 write sites) · F047 (hover "Priced by {who} · {date} · {source}").
