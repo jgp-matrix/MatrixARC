@@ -37691,6 +37691,29 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     cascade clears quoteSentAt for new ECOs; this gate is the
                     belt-and-suspenders for any project that still has it set. */}
                 {project.quoteSentAt&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&<div style={{fontSize:11,color:"#38bdf8",textAlign:"center",fontWeight:600}}>{"✓ Quote sent Qv."+String(project.quoteSentRev||0).padStart(2,"0")+(project.quoteSentTo?" to "+project.quoteSentTo:"")+" · "+new Date(project.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"2-digit"})}</div>}
+                {/* F059 (2026-07-23): Mark Committed — a SENT quote edited after send (quoteRev>quoteSentRev)
+                    reads as IN PROCESS. When the deal is committed and you're NOT re-sending to the customer,
+                    this re-anchors quoteSentRev/quoteRevAtPrint to the current rev (→ back to Quotes Sent/locked)
+                    WITHOUT emailing — mirroring the send-anchor write (safeSave _sendAnchorWrite:true, no rev-bump),
+                    minus the send. An additive committedWithoutResend audit records the customer's TRUE rev. */}
+                {project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0)&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
+                  <div style={{marginTop:6,padding:"8px 12px",background:"#0d2018",border:"1px solid #4ade8055",borderRadius:8,display:"flex",flexDirection:"column",gap:6}}>
+                    <div style={{fontSize:11,color:"#86efac",lineHeight:1.5}}>Edited after send — your copy is Qv.{String(project.quoteRev||0).padStart(2,"0")}, the customer has Qv.{String(project.quoteSentRev||0).padStart(2,"0")}, so this shows as In Process. If the deal is committed and you're <strong>not</strong> re-sending, mark it committed to move it back to Quotes Sent.</div>
+                    <button
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
+                        const rev=project.quoteRev||0;const customerRev=project.quoteSentRev||0;
+                        if(!(await arcConfirm(`Mark this quote committed at Qv.${String(rev).padStart(2,"0")} WITHOUT re-sending to the customer? It moves back to Quotes Sent (locked). The customer still holds Qv.${String(customerRev).padStart(2,"0")} — their copy is unchanged.`,{kind:"warning",okLabel:"Mark Committed"})))return;
+                        const upd={...project,quoteRev:rev,quoteSentRev:rev,quoteRevAtPrint:rev,quoteLocked:true,committedWithoutResend:{at:Date.now(),by:uid,byName:(fbAuth.currentUser&&fbAuth.currentUser.email)||uid,customerRev,committedAtRev:rev},updatedAt:Date.now()};
+                        update(upd);
+                        try{await safeSave(uid,{...upd,_sendAnchorWrite:true});arcAlert("Quote marked committed — moved to Quotes Sent. The customer copy is unchanged.");}catch(e){arcAlert("Failed to mark committed: "+e.message);}
+                      }}
+                      disabled={ownerPriorityActive}
+                      title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Re-anchor this sent quote to its current revision without emailing the customer"}
+                      style={{background:"none",border:"1px solid #4ade8088",borderRadius:6,color:"#86efac",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"4px 10px",fontWeight:700,opacity:ownerPriorityActive?0.45:1,alignSelf:"flex-start"}}>
+                      ✓ Mark Committed (no re-send)
+                    </button>
+                  </div>
+                )}
                 {/* DECISION(v1.19.745): Sent-quote soft-block. When the quote has been sent
                     and the user hasn't ack'd in this session, show an amber warning banner
                     with a button that opens the verification modal. After ack, banner flips
