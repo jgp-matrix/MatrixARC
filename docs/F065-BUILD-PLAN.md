@@ -2,7 +2,7 @@
 
 **Author:** Marc Masdev (build-scope lane) · **Reviewed-by:** _pending Coach_ · **Date:** 2026-07-24
 **Design source:** `docs/F065-CROSS-LINE-PROPAGATION-ANALYSIS.md` (locked design)
-**Status:** BUILD-READY pending (a) Jon's 3 micro-decisions below + (b) Coach review. NO source edits made — text deliverable. Money-path.
+**Status:** Jon's micro-decisions LOCKED (see ★ DECISIONS below) → pending Coach review, then build. NO source edits made — text deliverable. Money-path.
 
 > **Freddy note:** Line refs re-verified against `src/app.jsx` @ v1.24.33 by the Marc lane. The one substantive
 > correction to the analysis doc: there are **4 trigger sites, not 3** — vendor edits flow through a separate
@@ -10,6 +10,28 @@
 > `PanelCard`, so the all-panels propagation must delegate to a new `onPropagatePart` callback in the project-scoped
 > `ProjectView` (where the proven `doApplyPortalPrices` `saveProject` write already lives). The duplicate index
 > persists **for free** inside `saveProjectPanel`'s existing whole-doc write. Open micro-decisions in §12.
+
+---
+
+## ★ DECISIONS LOCKED (Jon, 2026-07-24) — authoritative; override §5/§12 where they differ
+1. **Vendor change prompts too, default ON.** Standalone `updateVendor` (`:28595`) IS a trigger (the 4th site — wire it
+   in step 10). The prompt pre-includes the other Lines, same as price. (Jon chose max consistency over the
+   "only-with-price" recommendation.)
+2. **Qty-break: amber note, keep included.** Rows whose `qty` differs from the source show an inline amber warning but
+   remain part of "Update all" — informational, not excluded.
+3. **Granularity: simple [Update all] / [Skip] — NO per-Line checkboxes.** The modal still RENDERS the other Lines
+   (current values, `manual`-protected tags, qty amber notes) as **read-only context**, but the only actions are
+   **[Update all]** and **[Skip]**. System rules still apply inside "Update all": `priceSource:"manual"` rows are skipped
+   for price (never overwritten), `_isExcludedFromPriceCheck` rows omitted. → §5 drops `selectedRowIds`/checkboxes; §6
+   `opts.targetRowIds` = all eligible rows (no per-row selection).
+4. **(confirmed) LT from `commitBcItem` not propagated** — its LT is a later async ItemCard fetch; Marc's §12 Q4
+   recommendation accepted.
+5. **(Coach verify, not a Jon Q) `_computeQuoteHash` must not hash `crossLineDuplicates`** — the build computes the index
+   after the hash block; Coach confirms the hash input list.
+
+**Build-affecting deltas vs the body below:** §5 → [Update all]/[Skip] only, no checkboxes (Line list is read-only
+context). §4/§10 → `updateVendor` IS wired (default-ON, pre-included). §6 → drop per-row selection, propagate to all
+eligible targets. §8 qty amber note unchanged (informational).
 
 ---
 
