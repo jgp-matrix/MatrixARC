@@ -16776,7 +16776,7 @@ function _todoBucketOf(project){
   // Board status-view carve-out (mirrors groupProjects): a Won/PO'd project that is NOT in
   // active-ECO rework belongs to Production/Purchasing, not the Sales board — no To-Do bucket.
   if((project.bcPoStatus==="purchasing"||project.bcPoStatus==="Open")&&!activeEco)return null;
-  const eff=activeEco?"active_eco":computeProjectEffectiveStatus(project);
+  const eff=computeProjectEffectiveStatus(project); // F061: ECO no longer forced to "active_eco" → routes to its REAL status column (red ECO tile border retained independently via computeActiveEco). activeEco kept above only for the Won/PO carve-out.
   // TOTAL map — every status computeProjectEffectiveStatus can emit needs an explicit column, or
   // it silently ||"draft"-dumps. Folds the pipeline statuses → in_progress and both *_sent → quotes_sent.
   const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc_review:"ready_review",evc_send:"ready_send",pre_review:"pre_review",post_review:"draft",active_eco:"active_eco",extracted:"in_progress",validated:"in_progress",costed:"in_progress",quoted:"in_progress",pushed_to_bc:"in_progress",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
@@ -16809,7 +16809,7 @@ function _todoThresholdMsFor(bucket){
 // Time-in-bucket start. 3a: uses _statusClockStart for every bucket (ECO's ecoLastBomChangeAt +
 // idle overlay are LATER sub-phases — for 3a ECO falls back to the active_eco status clock). Pure.
 function _todoClockStart(project,bucket){
-  const eff=computeActiveEco(project)?"active_eco":computeProjectEffectiveStatus(project);
+  const eff=computeProjectEffectiveStatus(project); // F061: ECO uses its real status clock (no active_eco short-circuit)
   return _statusClockStart(project,eff);
 }
 // "green"|"yellow"|"red" from elapsed-in-bucket vs the bucket's thresholds. Render-time only
@@ -16948,11 +16948,12 @@ function computeProjectEffectiveStatus(project){
   // ECO carve-out in the Sales kanban routing) but their pill still shows
   // their underlying state (e.g. "evc"/READY) — confusing to the user.
   // Pulled to the top so it overrides every other state computation below.
-  // F024: route ANY active ECO (BROAD predicate — ECO_ACTIVE_STATES, matching the red
-  // ECO tiles) to the dedicated "active_eco" column so (BOM) In Process holds only pre-PO
-  // pipeline work. Uses computeActiveEco (hoisted fn declaration → in scope here), NOT the
-  // narrow draft-only check. Superseded the prior `if(_hasActiveEco)return"in_progress"`.
-  if(computeActiveEco(project))return"active_eco";
+  // F061 (2026-07-23, reverses F024): active-ECO projects are NO LONGER short-circuited to an
+  // "active_eco" status/column. They compute + route to their REAL status (RFQs, In Process,
+  // Ready, Quotes Sent, etc.) and follow the normal process. Quick recognition is preserved by
+  // the RED ECO tile border/bg, driven independently by computeActiveEco at the tile render
+  // (~:47211) — not by this status. (F024 forced them into a dedicated ACTIVE ECO column, which
+  // stranded ECO'd projects that were mid-process, e.g. already out for RFQs.)
   const isBudgetary=panels.some(pan=>(pan.pricing||{}).isBudgetary);
   const quoteSent=!!project.quoteSentAt;
   const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
@@ -45273,7 +45274,7 @@ function _priorityPinCompare(a,b){return (b.priorityPinnedAt||0)-(a.priorityPinn
 // click-routing changed: pills call onFocusBucket(kind,key) instead of the Dashboard-local board
 // setters, and App deep-links the Sales board via `pendingFocus`. Collapse state (`railOpen`) is
 // lifted to App (shared across tabs, persisted to the existing `arc_todo_rail_open` key).
-function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject,pageMode,pageSection}){
+function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen,onFocusBucket,onOpenProject,onOpenDashboard,pageMode,pageSection}){
   // F030 pageMode: render the SAME sections (pills / role queues / Needs Attention) as a
   // full-width page block instead of the 380px right rail. Every data path below is reused
   // byte-identical — only the container/grid styling branches on pageMode, so the MY DASHBOARD
@@ -45298,7 +45299,6 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
       ["ready_review","Ready To Review"],
       ["pre_review","In Pre-Review"],
       ["ready_send","Ready To Send"],
-      ["active_eco","Active ECO"],
       ["quotes_sent","Quotes Sent"]
     ];
     // ── REVIEWER scope: projects ASSIGNED TO ME for review (NOT _isMyProject) ──
@@ -45447,9 +45447,10 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     const days=Math.floor(diff/(24*36e5));
     return days<=0?"expires today":`expires in ${days}d`;
   };
-  // F060: rail HIDES the section when empty; the dashboard column (pageMode) shows an empty state
-  // so the 3-column layout stays balanced (mirrors NEEDS ATTENTION's "All caught up").
-  const _expiringBlock=(_expiring.length>0||pageMode)?(<>
+  // F060: QUOTES EXPIRING always renders its section (rail + dashboard) with an empty-state
+  // placeholder ("✓ No quotes expiring soon.") when there are none — mirrors NEEDS ATTENTION's
+  // "All caught up." The _showExpiring gate below still controls WHICH surface shows it.
+  const _expiringBlock=(<>
     {_sectionHeader(`Quotes Expiring (${_expiring.length})`)}
     <div style={{padding:"4px 10px 8px"}}>
       {_expiring.length===0
@@ -45472,7 +45473,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
         );
       })}
     </div>
-  </>):null;
+  </>);
   return(
     <aside style={pageMode
       ?{width:"100%",display:"flex",flexDirection:"column",background:"transparent"}
@@ -45514,11 +45515,18 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
           the aside (already overflowY:auto). Rendered only when there ARE candidates so designer-only
           users don't get an empty block. */}
       {_showAttn&&attnCandidates.length>0&&(<>
-        {_sectionHeader("Needs Attention")}
+        {/* F060: header count moved to the RIGHT of the title (was a bottom footer). On the rail it
+            reads "5 of 15" and links to MY DASHBOARD (onOpenDashboard); on the dashboard it's the plain total. */}
+        <div style={{padding:"8px 12px 0",display:"flex",alignItems:"baseline",justifyContent:"space-between",gap:8}}>
+          <span style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8}}>Needs Attention</span>
+          {_attn.length>0&&(pageMode
+            ?<span style={{fontSize:11,fontWeight:700,color:C.muted,flexShrink:0}}>{_attn.length}</span>
+            :<span onClick={onOpenDashboard?(e=>{e.stopPropagation();onOpenDashboard();}):undefined} title={onOpenDashboard?"See all on My Dashboard":undefined} style={{fontSize:11,fontWeight:700,color:onOpenDashboard?C.accent:C.muted,cursor:onOpenDashboard?"pointer":"default",textDecoration:onOpenDashboard?"underline":"none",flexShrink:0}}>{Math.min(5,_attn.length)} of {_attn.length}</span>)}
+        </div>
         <div style={{padding:"4px 10px 8px"}}>
           {_attn.length===0
             ?<div style={{padding:"10px 6px",fontSize:13,color:C.green,fontWeight:600}}>✓ All caught up — nothing needs attention.</div>
-            :_attn.slice(0,5).map(({project,bucket,color})=>{ // F060: cap NEEDS ATTENTION at top 5 (rail + dashboard)
+            :(pageMode?_attn:_attn.slice(0,5)).map(({project,bucket,color})=>{ // F060: rail caps at top 5 (count links to dashboard); dashboard (pageMode) shows the full list
               const [col]=_pillTint[color];
               const elapsed=_now-_todoClockStart(project,bucket);
               const rfq=_rfqAwaitingSummary(project);
@@ -45551,9 +45559,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
                 </div>
               );
             })}
-          {_attn.length>0&&(
-            <div style={{padding:"6px 6px 2px",fontSize:12,color:C.muted}}>{_attn.length>5?`Top 5 of ${_attn.length}`:`${_attn.length} project${_attn.length===1?"":"s"}`}</div>
-          )}
+          {/* F060: count moved to the section header (right side) as a link to My Dashboard — bottom footer removed. */}
         </div>
       </>)}
       {/* F060: QUOTES EXPIRING — standing rail shows it below Needs Attention; dashboard shows it as
@@ -45757,8 +45763,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // original Won state. Without this carve-out, ECO-rework projects fall
       // through into a no-man's-land (excluded from both Sales AND Production).
       // F026: 8-column Sales board — IN PRE-REVIEW sits BETWEEN Ready To Review and Ready To Send.
-      const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send","active_eco","quotes_sent"];
-      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",ready_review:"Ready To Review",pre_review:"In Pre-Review",ready_send:"Ready To Send",active_eco:"Active ECO",quotes_sent:"Quotes Sent"};
+      const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send","quotes_sent"]; // F061: ACTIVE ECO column removed — ECO projects route to their real status columns (red tile border still marks them)
+      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",ready_review:"Ready To Review",pre_review:"In Pre-Review",ready_send:"Ready To Send",quotes_sent:"Quotes Sent"};
       // F025 (3a): column routing now delegates to the SSOT _todoBucketOf (the TOTAL status→column
       // map + the active-ECO override + the PO'd carve-out all live there), so the To-Do pane pills
       // and these board columns can't drift. _todoBucketOf returns null for board-excluded (PO'd,
@@ -50483,7 +50489,7 @@ INSTRUCTIONS:
         const _projectViewOpen=view==="project"&&navTab===(projectOriginTab||"projects");
         const _f030Active=navTab==="user_dashboard"; // F030 suppression hook — no-op until F030 exists
         if(_projectViewOpen||_f030Active||showSearch)return null;
-        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>;
+        return <TodoRail projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen} onOpenDashboard={()=>{setView("dashboard");setNavTab("user_dashboard");}}/>;
       })()}
       {/* ARC AI Assistant — right slide-out panel */}
       <div ref={sqRowRef} style={{width:showSearch?420:0,flexShrink:0,transition:"width 0.3s ease",overflow:"hidden",borderLeft:showSearch?`1px solid ${C.border}`:"none",background:"#0a0a14",position:"relative"}}>
