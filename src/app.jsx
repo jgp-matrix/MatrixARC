@@ -28628,6 +28628,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return next;
     });
     const updated={...panel,bom:updatedBom};onUpdate(updated);
+    latestPanelRef.current=updated;// Coach F065 review F1: sync latest synchronously so the no-await (BC-disconnected) branch + the F065 cross-line fan-out read the EDITED row, not the pre-edit one (other triggers already do this)
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
     // Push to BC Item Card + Purchase Price
