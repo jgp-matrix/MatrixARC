@@ -5664,7 +5664,12 @@ async function scanJunkPurchasePrices(onProgress){
       r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json;odata.metadata=full"}});
     }catch(e){console.warn("scanJunkPurchasePrices fetch error:",e);break;}
     if(!r||!r.ok){console.warn("scanJunkPurchasePrices: fetch failed",r&&r.status);break;}
-    const d=await r.json();
+    // Read the body ONCE, then parse — on malformed JSON surface the raw response so we can
+    // see what BC actually returned (diagnostic for the metadata=full / editLink question).
+    let d;
+    const _raw=await r.text();
+    try{ d=JSON.parse(_raw); }
+    catch(_pe){ throw new Error(`BC returned unparseable JSON (HTTP ${r.status}) — raw response starts: ${_raw.slice(0,400)}`); }
     const rows=d.value||[];
     for(const rec of rows){
       const cost=Number(rec.Direct_Unit_Cost||0);
