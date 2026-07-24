@@ -5626,13 +5626,20 @@ async function bcFetchPurchasePrices(partNumbers,opts){
 // scanJunkPurchasePrices() is READ-ONLY; the write only fires from the modal after
 // a scan + explicit checkbox selection + arcConfirm.
 //
-// COMPOSITE-KEY NOTE: PurchasePrices is composite-keyed (Item+Vendor+Starting_Date+…).
-// The legacy bcPushPurchasePrice PATCHes a single-segment key ('ITEMNO') — a latent
-// bug we do NOT copy here. We request FULL OData metadata so each record carries its
-// own @odata.editLink + @odata.etag, and PATCH that editLink verbatim with If-Match.
-// A record with no usable editLink is EXCLUDED (never guess a key).
+// LEGACY NAV KEY NOTE (rebuilt v1.24.13+): this tenant runs legacy NAV OData
+// (/ODataV4/, #NAV.* entity types). It (a) CHOKES on `odata.metadata=full`
+// (returns unparseable JSON) and (b) exposes no usable @odata.editLink /
+// @odata.id under normal metadata. So the editLink approach is dead. We instead
+// mirror the proven FIX #182 pattern (bcPushLeadTime): request DEFAULT metadata
+// (Accept: application/json), read @odata.etag off the record, and PATCH a
+// MANUALLY-BUILT compound-key URL. PurchasePrices is composite-keyed
+// (Item_No, Vendor_No, Currency_Code, Starting_Date, Variant_Code,
+// Unit_of_Measure_Code, Minimum_Quantity). Before any write we run a READ-ONLY
+// key-format verification (GET the built key URL) — if that GET can't confirm
+// the key, the expire button stays DISABLED. We never PATCH a guessed key.
 
 // Resolve an OData editLink / id (may be relative or absolute) to an absolute URL.
+// (Still used to absolutize @odata.nextLink pagination URLs.)
 function _bcResolveEditLink(link){
   if(!link||typeof link!=="string")return null;
   if(/^https?:\/\//i.test(link))return link;
@@ -5641,9 +5648,26 @@ function _bcResolveEditLink(link){
 // A BC OData date is "unset" when missing or the 0001-01-01 sentinel.
 function _bcDateUnset(d){ return !d || /^0001-01-01/.test(String(d)); }
 
+// Build the manual NAV PurchasePrice compound-key URL for a scanned record.
+// NAV PurchasePrice PK: Item_No, Vendor_No, Currency_Code, Starting_Date,
+// Variant_Code, Unit_of_Measure_Code, Minimum_Quantity. STRING keys are
+// single-quoted (OData '' escape); Starting_Date is a bare DATE literal (NO
+// quotes, YYYY-MM-DD); Minimum_Quantity is a bare NUMBER (no quotes). If the
+// exact key shape differs on this tenant, verifyJunkKeyFormat's read-only GET
+// catches it before any write. baseUrl = `${BC_ODATA_BASE}/${ppPage}`.
+function _bcPpKeyUrl(baseUrl,rec){
+  const esc=s=>encodeURIComponent(String(s==null?"":s).replace(/'/g,"''"));
+  const sd=(rec.startingDate&&!_bcDateUnset(rec.startingDate))?rec.startingDate:"0001-01-01";
+  return `${baseUrl}(Item_No='${esc(rec.itemNo)}',Vendor_No='${esc(rec.vendorNo)}',Currency_Code='${esc(rec.currencyCode)}',Starting_Date=${sd},Variant_Code='${esc(rec.variantCode)}',Unit_of_Measure_Code='${esc(rec.uom)}',Minimum_Quantity=${Number(rec.minQty)||0})`;
+}
+
 // READ-ONLY scan for low-cost PurchasePrice records that look like scraper junk.
+// Uses DEFAULT OData metadata (Accept: application/json) — legacy NAV OData on this
+// tenant returns unparseable JSON under odata.metadata=full. Captures the full NAV
+// compound key per record + builds a manual key URL (record.keyUrl) for the later
+// PATCH, then runs a read-only key-format verification before exposing the result.
 async function scanJunkPurchasePrices(onProgress){
-  const empty={groups:[],totalRecords:0,notPatchableCount:0,cappedAtLimit:false};
+  const empty={groups:[],totalRecords:0,notPatchableCount:0,cappedAtLimit:false,keyVerified:null,keyVerifyDetail:""};
   if(!_bcToken){console.warn("scanJunkPurchasePrices: no BC token");return empty;}
   const allPages=await bcDiscoverODataPages();
   const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
@@ -5654,18 +5678,19 @@ async function scanJunkPurchasePrices(onProgress){
   const raw=[];
   let notPatchableCount=0;
   let cappedAtLimit=false;
-  // First page: low-cost filter + full metadata so each entity carries editLink/etag.
-  let url=`${baseUrl}?$filter=${encodeURIComponent("Direct_Unit_Cost le 25")}&$select=Item_No,Vendor_No,Direct_Unit_Cost,Starting_Date,Ending_Date,Unit_of_Measure_Code`;
+  // First page: low-cost filter + DEFAULT metadata + the full NAV compound key so we can
+  // build a manual key URL per record (legacy NAV has no usable editLink/id).
+  let url=`${baseUrl}?$filter=${encodeURIComponent("Direct_Unit_Cost le 25")}&$select=Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date`;
   let pageGuard=0;
   while(url){
     if(pageGuard++>200){console.warn("scanJunkPurchasePrices: page guard tripped");break;}
     let r;
     try{
-      r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json;odata.metadata=full"}});
+      r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     }catch(e){console.warn("scanJunkPurchasePrices fetch error:",e);break;}
     if(!r||!r.ok){console.warn("scanJunkPurchasePrices: fetch failed",r&&r.status);break;}
     // Read the body ONCE, then parse — on malformed JSON surface the raw response so we can
-    // see what BC actually returned (diagnostic for the metadata=full / editLink question).
+    // see what BC actually returned (diagnostic — this is what caught the NAV-metadata issue).
     let d;
     const _raw=await r.text();
     try{ d=JSON.parse(_raw); }
@@ -5676,18 +5701,20 @@ async function scanJunkPurchasePrices(onProgress){
       const endingRaw=rec.Ending_Date;
       // Skip records already expired (Ending_Date is a real PAST date — nothing to do).
       if(!_bcDateUnset(endingRaw)&&String(endingRaw).slice(0,10)<todayStr)continue;
-      const editLink=_bcResolveEditLink(rec["@odata.editLink"]||rec["@odata.id"]);
-      if(!editLink){notPatchableCount++;continue;}
-      raw.push({
+      const item={
         itemNo:rec.Item_No||"",
         vendorNo:rec.Vendor_No||"",
-        cost,
+        currencyCode:rec.Currency_Code||"",
         startingDate:rec.Starting_Date?String(rec.Starting_Date).slice(0,10):"",
-        endingDate:_bcDateUnset(endingRaw)?"":String(endingRaw).slice(0,10),
+        variantCode:rec.Variant_Code||"",
         uom:rec.Unit_of_Measure_Code||"",
-        editLink,
+        minQty:Number(rec.Minimum_Quantity||0),
+        cost,
+        endingDate:_bcDateUnset(endingRaw)?"":String(endingRaw).slice(0,10),
         etag:rec["@odata.etag"]||"",
-      });
+      };
+      item.keyUrl=_bcPpKeyUrl(baseUrl,item);
+      raw.push(item);
     }
     if(onProgress)try{onProgress({fetched:raw.length,notPatchable:notPatchableCount});}catch(e){}
     if(raw.length>=HARD_CAP){cappedAtLimit=true;console.warn(`scanJunkPurchasePrices: hard-capped at ${HARD_CAP} records`);break;}
@@ -5718,12 +5745,46 @@ async function scanJunkPurchasePrices(onProgress){
   }
   // Sort suspects first, then by distinct-part count desc.
   groups.sort((a,b)=>(b.isSuspect-a.isSuspect)||(b.distinctParts-a.distinctParts)||(a.cost-b.cost));
-  return {groups,totalRecords:raw.length,notPatchableCount,cappedAtLimit};
+  // READ-ONLY key verification — GET the first candidate's built key URL. If BC can't
+  // confirm the key resolves to that exact record, the modal DISABLES the expire button.
+  let keyVerified=null,keyVerifyDetail="";
+  const sample=(groups[0]&&groups[0].records[0])||raw[0]||null;
+  if(sample){
+    const v=await verifyJunkKeyFormat(sample);
+    keyVerified=!!v.ok;
+    keyVerifyDetail=v.ok?"":`HTTP ${v.status||0}${v.detail?" — "+v.detail:""}`;
+  }
+  return {groups,totalRecords:raw.length,notPatchableCount,cappedAtLimit,keyVerified,keyVerifyDetail};
+}
+
+// READ-ONLY: verify the manually-built NAV compound key resolves to the exact record.
+// GETs sampleRecord.keyUrl with default metadata. Returns {ok:true} on HTTP 200 whose
+// Item_No matches; otherwise {ok:false,status,detail}. Gates the expire path — we do NOT
+// PATCH a key shape we could not confirm with a read first.
+async function verifyJunkKeyFormat(sampleRecord){
+  if(!sampleRecord||!sampleRecord.keyUrl)return{ok:false,status:0,detail:"no sample record / keyUrl"};
+  if(!_bcToken)return{ok:false,status:0,detail:"no BC token"};
+  try{
+    const r=await bcGatedFetch(sampleRecord.keyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(!r)return{ok:false,status:0,detail:"no response"};
+    const raw=await r.text();
+    if(!r.ok)return{ok:false,status:r.status,detail:`GET failed: ${raw.slice(0,200)}`};
+    let d;
+    try{ d=JSON.parse(raw); }
+    catch(_pe){ return{ok:false,status:r.status,detail:`unparseable JSON: ${raw.slice(0,200)}`}; }
+    // A single-key GET returns the entity directly (Item_No on the root, not d.value[]).
+    const got=String((d&&d.Item_No)||"");
+    if(got&&got===String(sampleRecord.itemNo||""))return{ok:true,status:r.status};
+    return{ok:false,status:r.status,detail:`Item_No mismatch (got '${got}', expected '${sampleRecord.itemNo}')`};
+  }catch(e){return{ok:false,status:0,detail:e.message||String(e)};}
 }
 
 // THE WRITE — expire selected junk PurchasePrice records by setting Ending_Date.
-// PATCHes each record's own scanned @odata.editLink with If-Match etag. Sequential-ish
-// (concurrency ≤ 3) to be gentle on BC. Best-effort audit to a NEW additive collection.
+// PATCHes each record's manually-built NAV compound-key URL (record.keyUrl) with
+// If-Match etag (mirrors FIX #182). Concurrency ≤ 3. Best-effort audit to a NEW
+// additive collection. M2: Ending_Date is clamped up to the record's Starting_Date
+// when the chosen date is earlier (BC rejects Ending < Starting with a 400). M3: a
+// {_testEnvBlocked} fake-200 from the Test host is NOT counted as a real success.
 async function expireJunkPurchasePrices(records,endingDateISO,onProgress){
   const results=[];
   const total=records.length;
@@ -5732,27 +5793,39 @@ async function expireJunkPurchasePrices(records,endingDateISO,onProgress){
   let done=0;
   const CONCURRENCY=3;
   async function patchOne(rec){
-    let out={itemNo:rec.itemNo,vendorNo:rec.vendorNo,ok:false,status:0,error:""};
+    let out={itemNo:rec.itemNo,vendorNo:rec.vendorNo,ok:false,status:0,error:"",clamped:false,effectiveDate:endingDateISO};
     try{
-      if(!rec.editLink){out.error="no editLink (excluded)";return out;}
-      const r=await bcGatedFetch(rec.editLink,{
+      if(!rec.keyUrl){out.error="no keyUrl (excluded)";return out;}
+      // M2: BC rejects Ending_Date < Starting_Date (400). Clamp up to Starting_Date.
+      let eff=endingDateISO;
+      if(rec.startingDate&&!_bcDateUnset(rec.startingDate)&&String(eff)<String(rec.startingDate)){
+        eff=rec.startingDate;out.clamped=true;
+      }
+      out.effectiveDate=eff;
+      const r=await bcGatedFetch(rec.keyUrl,{
         method:"PATCH",
-        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":rec.etag||"*"},
-        body:JSON.stringify({Ending_Date:endingDateISO}),
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":rec.etag||"*","Accept":"application/json"},
+        body:JSON.stringify({Ending_Date:eff}),
       });
       out.status=r?r.status:0;
+      const bodyTxt=r?await r.text().catch(()=>""):"";
+      // M3: Test host fake-200s non-GET BC writes with {"_testEnvBlocked":true}. That is a
+      // phantom success — treat the record as NOT written.
+      if(r&&r.ok&&/_testEnvBlocked/.test(bodyTxt)){
+        out.ok=false;out.error="Test environment — BC write suppressed (no real write)";return out;
+      }
       if(r&&r.ok){
         out.ok=true;
         // Best-effort audit — never block the PATCH loop on audit failure.
         if(cid){
           fbDb.collection(`companies/${cid}/bcPurchasePriceExpiries`).add({
             itemNo:rec.itemNo,vendorNo:rec.vendorNo,cost:rec.cost,
-            oldEndingDate:rec.endingDate||"",newEndingDate:endingDateISO,
+            oldEndingDate:rec.endingDate||"",newEndingDate:eff,clamped:out.clamped,
             at:Date.now(),by:_appCtx.uid||"",runId,
           }).catch(e=>console.warn("bcPurchasePriceExpiries audit failed:",e&&e.message));
         }
       }else{
-        out.error=r?`PATCH ${r.status} ${await r.text().then(t=>t.slice(0,160)).catch(()=>"")}`:"no response";
+        out.error=r?`PATCH ${r.status} ${bodyTxt.slice(0,160)}`:"no response";
       }
     }catch(e){out.error=e.message||String(e);}
     return out;
@@ -41731,6 +41804,7 @@ function ExpireJunkPricesModal({onClose}){
   const [scanError,setScanError]=useState("");
   const [scanProg,setScanProg]=useState(null);
   const [checked,setChecked]=useState({});   // { costKey: bool }
+  const [expanded,setExpanded]=useState({});  // { costKey: bool } — M1 per-part reveal
   const [endingDate,setEndingDate]=useState(new Date(Date.now()-86400000).toISOString().slice(0,10)); // yesterday
   const [running,setRunning]=useState(false);
   const [runProg,setRunProg]=useState(null);  // {done,total}
@@ -41765,9 +41839,13 @@ function ExpireJunkPricesModal({onClose}){
     return recs;
   },[scan,checked]);
   const anyChecked=selectedRecords.length>0;
+  // Gate the write: key format must be verified read-only, and never on the Test host
+  // (M3 — the Test host fake-200s writes → phantom success + prod-Firestore pollution).
+  const keyOk=!!(scan&&scan.keyVerified);
+  const canExpire=anyChecked&&!running&&keyOk&&!IS_TEST_ENV;
 
   async function doExpire(){
-    if(!anyChecked)return;
+    if(!canExpire)return;
     const n=selectedRecords.length;
     const ok=await arcConfirm(`Expire ${n} BC PurchasePrice record${n===1?"":"s"} by setting Ending_Date = ${endingDate}?\n\nThis writes to PRODUCTION Business Central. Records are expired, not deleted.`,{kind:"warning",destructive:true,okLabel:`Expire ${n} records`});
     if(!ok)return;
@@ -41785,12 +41863,43 @@ function ExpireJunkPricesModal({onClose}){
 
   function GroupRow({g,disabled}){
     const k=costKey(g);
+    const open=!!expanded[k];
+    const setOpen=fn=>setExpanded(p=>({...p,[k]:typeof fn==="function"?fn(!!p[k]):fn}));
     return(
-      <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderBottom:`1px solid ${C.border}`,opacity:disabled?0.6:1}}>
-        <input type="checkbox" checked={!!checked[k]} disabled={disabled||running} onChange={e=>setChecked(p=>({...p,[k]:e.target.checked}))} style={{width:16,height:16,cursor:disabled?"default":"pointer"}}/>
-        <div style={{fontFamily:"Consolas,monospace",fontWeight:700,color:C.text,minWidth:80}}>${g.cost.toFixed(2)}</div>
-        <div style={{fontSize:12,color:C.muted}}>{g.recordCount} record{g.recordCount===1?"":"s"} · {g.distinctParts} distinct part{g.distinctParts===1?"":"s"}</div>
-        {g.preselected&&<span style={{fontSize:10,fontWeight:700,color:"#fca5a5",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:4,padding:"2px 6px"}}>KNOWN JUNK $0.71</span>}
+      <div style={{borderBottom:`1px solid ${C.border}`,opacity:disabled?0.6:1}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px"}}>
+          <input type="checkbox" checked={!!checked[k]} disabled={disabled||running} onChange={e=>setChecked(p=>({...p,[k]:e.target.checked}))} style={{width:16,height:16,cursor:disabled?"default":"pointer"}}/>
+          <div style={{fontFamily:"Consolas,monospace",fontWeight:700,color:C.text,minWidth:80}}>${g.cost.toFixed(2)}</div>
+          <div style={{fontSize:12,color:C.muted}}>{g.recordCount} record{g.recordCount===1?"":"s"} · {g.distinctParts} distinct part{g.distinctParts===1?"":"s"}</div>
+          {g.preselected&&<span style={{fontSize:10,fontWeight:700,color:"#fca5a5",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:4,padding:"2px 6px"}}>KNOWN JUNK $0.71</span>}
+          <div style={{flex:1}}/>
+          {/* M1: per-part visibility — eyeball the exact records before checking a group. */}
+          <button onClick={()=>setOpen(o=>!o)} style={{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"3px 10px",fontSize:11,cursor:"pointer"}}>{open?"Hide":"Show"} {g.recordCount} record{g.recordCount===1?"":"s"}</button>
+        </div>
+        {open&&(
+          <div style={{maxHeight:220,overflow:"auto",background:"#0a0a16",borderTop:`1px solid ${C.border}`}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"Consolas,monospace"}}>
+              <thead>
+                <tr style={{color:C.sub,textAlign:"left"}}>
+                  <th style={{padding:"4px 10px"}}>Item_No</th>
+                  <th style={{padding:"4px 10px"}}>Vendor_No</th>
+                  <th style={{padding:"4px 10px"}}>Starting_Date</th>
+                  <th style={{padding:"4px 10px"}}>Ending_Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.records.map((rec,i)=>(
+                  <tr key={i} style={{color:C.text,borderTop:`1px solid ${C.border}`}}>
+                    <td style={{padding:"3px 10px"}}>{rec.itemNo}</td>
+                    <td style={{padding:"3px 10px"}}>{rec.vendorNo}</td>
+                    <td style={{padding:"3px 10px"}}>{rec.startingDate||"—"}</td>
+                    <td style={{padding:"3px 10px",color:rec.endingDate?C.text:C.muted}}>{rec.endingDate||"(none)"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }
@@ -41806,6 +41915,11 @@ function ExpireJunkPricesModal({onClose}){
         <div style={{padding:"10px 14px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontSize:12,lineHeight:1.5,marginBottom:14}}>
           <strong>⚠ Writes to PRODUCTION Business Central.</strong> The Test environment fakes BC writes — run this on prod only. Records are <strong>expired</strong> (Ending_Date set), never deleted.
         </div>
+        {IS_TEST_ENV&&(
+          <div style={{padding:"10px 14px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:12,lineHeight:1.5,marginBottom:14,fontWeight:700}}>
+            🧪 TEST ENVIRONMENT — expire is DISABLED here. The Test host fake-200s BC writes (phantom "success" + pollutes prod Firestore). Scan is read-only and safe; run the expire on production only.
+          </div>
+        )}
         <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
           Scans BC PurchasePrice records at or below $25 and groups them by exact cost. A cost shared across
           many distinct parts is a likely scraper constant (e.g. the $0.71 / V00373 PRJ402119 incident). Review
@@ -41833,9 +41947,16 @@ function ExpireJunkPricesModal({onClose}){
           <div style={{flex:1,overflow:"auto"}}>
             <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,marginBottom:12}}>
               <div style={{padding:"4px 10px",color:C.muted}}>{scan.totalRecords} candidate records · {suspectGroups.length} suspect cost group{suspectGroups.length===1?"":"s"}</div>
-              {scan.notPatchableCount>0&&<div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>{scan.notPatchableCount} not patchable (no editLink) — excluded</div>}
+              {scan.notPatchableCount>0&&<div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>{scan.notPatchableCount} not patchable (no key) — excluded</div>}
               {scan.cappedAtLimit&&<div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>⚠ Capped at scan limit — re-run after this pass to catch the rest</div>}
+              {keyOk&&<div style={{padding:"4px 10px",background:"#0d2a18",border:"1px solid #22c55e88",borderRadius:6,color:"#86efac",fontWeight:700}}>✓ Key format verified (read-only)</div>}
             </div>
+            {/* Key verification failed — DISABLE expire; never PATCH a key we couldn't confirm. */}
+            {scan.keyVerified===false&&(
+              <div style={{padding:"12px 16px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:13,marginBottom:14}}>
+                <strong>⚠ Key-format verification failed — expire is disabled.</strong> The read-only GET of the built NAV compound-key URL did not confirm the record{scan.keyVerifyDetail?` (${scan.keyVerifyDetail})`:""}. The NAV PurchasePrice key on this tenant may differ from the assumed 7-part key. No PATCH will be attempted until this resolves.
+              </div>
+            )}
 
             {suspectGroups.length===0&&(
               <div style={{padding:"20px",textAlign:"center",color:C.muted,fontSize:13}}>No suspect scraper-constant cost groups found.</div>
@@ -41864,10 +41985,12 @@ function ExpireJunkPricesModal({onClose}){
               </div>
               <div style={{fontSize:12,color:anyChecked?C.text:C.muted}}>
                 {anyChecked?`${selectedRecords.length} record${selectedRecords.length===1?"":"s"} selected`:"No groups checked"}
+                {anyChecked&&!keyOk&&<span style={{color:"#fca5a5",marginLeft:8}}>· key not verified</span>}
+                {anyChecked&&IS_TEST_ENV&&<span style={{color:"#fca5a5",marginLeft:8}}>· disabled on Test</span>}
               </div>
               <div style={{flex:1}}/>
-              <button onClick={doExpire} disabled={!anyChecked||running}
-                style={{background:anyChecked&&!running?"#dc2626":C.border,color:anyChecked&&!running?"#fff":C.muted,border:"none",borderRadius:8,padding:"10px 22px",fontSize:14,fontWeight:700,cursor:anyChecked&&!running?"pointer":"default"}}>
+              <button onClick={doExpire} disabled={!canExpire}
+                style={{background:canExpire?"#dc2626":C.border,color:canExpire?"#fff":C.muted,border:"none",borderRadius:8,padding:"10px 22px",fontSize:14,fontWeight:700,cursor:canExpire?"pointer":"default"}}>
                 {running?"Expiring…":`Expire ${selectedRecords.length} selected record${selectedRecords.length===1?"":"s"}`}
               </button>
             </div>
@@ -41888,6 +42011,11 @@ function ExpireJunkPricesModal({onClose}){
             {runResult&&(
               <div style={{marginTop:14,padding:"12px 16px",background:runResult.failed>0?"#3a1f00":"#0d2a18",border:`1px solid ${runResult.failed>0?"#f59e0baa":"#22c55e88"}`,borderRadius:6,fontSize:13}}>
                 <div style={{fontWeight:700,color:runResult.failed>0?"#fcd34d":"#86efac"}}>Done — {runResult.succeeded} expired, {runResult.failed} failed.</div>
+                {runResult.results.filter(r=>r.ok&&r.clamped).length>0&&(
+                  <div style={{marginTop:6,color:"#fcd34d",fontSize:12}}>
+                    {runResult.results.filter(r=>r.ok&&r.clamped).length} record{runResult.results.filter(r=>r.ok&&r.clamped).length===1?" was":"s were"} clamped to their Starting_Date (chosen Ending_Date was earlier): {runResult.results.filter(r=>r.ok&&r.clamped).map(r=>`${r.itemNo}/${r.vendorNo}→${r.effectiveDate}`).join(", ")}
+                  </div>
+                )}
                 {runResult.failed>0&&(
                   <div style={{marginTop:6,color:"#fca5a5",fontSize:12}}>
                     Failed items: {runResult.results.filter(r=>!r.ok).map(r=>`${r.itemNo}/${r.vendorNo} (${r.status||r.error})`).join(", ")}
