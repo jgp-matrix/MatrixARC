@@ -2202,6 +2202,15 @@ function isManager(){return hasPermission("manager");}
 // section). No schema change — reuses _appCtx.permissions (member doc), add-only flag.
 function isDesigner(){return hasPermission("designer");}
 
+// F046: per-row price-setter stamp. Returns {priceSetBy, priceSetAt} — the current
+// user (email preferred, uid fallback) + a Date.now() timestamp. Spread into a BOM
+// row update at EVERY site where a REAL unitPrice value is written (BC/portal/scraper/
+// AI/manual/learning-DB/ECO). Additive fields — never removes/replaces existing
+// pricing fields (unitPrice/priceSource/priceDate untouched). Module-level so it is in
+// scope for both top-level pricing functions (runPricingBackground, learning-DB apply)
+// and in-component handlers. Consumed by F047 (hover "Priced by … · date · source").
+function _priceStamp(){return{priceSetBy:(fbAuth.currentUser&&fbAuth.currentUser.email)||_appCtx.uid||'',priceSetAt:Date.now()};}
+
 // ── TOOLTIPS ──
 let _tooltipsEnabled=true; // default; loaded from Firestore after auth
 function setTooltipsEnabled(v){
@@ -5202,7 +5211,7 @@ async function _bcReVerifyNotInBc(bom){
     if(item){
       updates[String(row.id)]={
         bcVerify:{status:"in-bc",at:Date.now(),reVerified:true},
-        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||""}:{}),
+        ...(item.unitCost!=null&&item.unitCost>0?{priceSource:"bc",unitPrice:item.unitCost,bcVendorNo:item.vendorNo||row.bcVendorNo||"",..._priceStamp()}:{}),
         ...(row.restoreSkipped?{restoreSkipped:null}:{})
       };
     }
@@ -5217,7 +5226,7 @@ async function _bcReVerifyNotInBc(bom){
         const pn=r?(r.partNumber||"").trim():null;
         const pp=pn?ppMap.get(pn):null;
         if(pp&&pp.startingDate&&pp.directUnitCost>0){
-          updates[k]={...updates[k],unitPrice:pp.directUnitCost,priceDate:pp.startingDate,bcPoDate:pp.startingDate};
+          updates[k]={...updates[k],unitPrice:pp.directUnitCost,priceDate:pp.startingDate,bcPoDate:pp.startingDate,..._priceStamp()};
         }
       }
     }catch(e){console.warn("[BC RE-VERIFY] PurchasePrices fetch failed:",e.message);}
@@ -11786,7 +11795,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
           heldBackAlternates.push({rowId:r.id,from:pn,to:alt.replacement.partNumber,toDesc:alt.replacement.description||""});
         }else{
           appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
-          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high",...(alt.replacement.unitCost!=null?_priceStamp():{})};delete _altRow._confDowngradeReason;return _altRow;
         }
       }
       // v1.19.977: log when an alternate exists for this PN but isn't set to
@@ -11819,7 +11828,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
       const match=userDescCrosses.find(c=>_descCrossNorm(c.description)===normDesc);
       if(match&&match.replacement?.partNumber){
         appliedLog.push({rowId:r.id,kind:"descriptionCross",from:`(no PN) "${r.description}"`,to:match.replacement.partNumber,reason:"auto-fill from description cross DB"});
-        return{...r,partNumber:match.replacement.partNumber,manufacturer:match.replacement.manufacturer||r.manufacturer,unitPrice:match.replacement.unitCost??r.unitPrice,priceSource:"bc",isDescriptionCross:true,descriptionCrossFrom:r.description,confidence:"high"};
+        return{...r,partNumber:match.replacement.partNumber,manufacturer:match.replacement.manufacturer||r.manufacturer,unitPrice:match.replacement.unitCost??r.unitPrice,priceSource:"bc",isDescriptionCross:true,descriptionCrossFrom:r.description,confidence:"high",...(match.replacement.unitCost!=null?_priceStamp():{})};
       }
     }
     return r;
@@ -11878,7 +11887,7 @@ function appendDefaultBomItems(bom){
       if(_laborPns.has((tpl.partNumber||"").trim()))continue;
       const desc=(tpl.description||"").trim().toLowerCase();
       if(desc&&lower.has(desc)){console.log("APPEND DEFAULTS: skipped (duplicate):",tpl.description);continue;}
-      items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,priceDate:Date.now(),autoLoaded:true});
+      items.push({id:Date.now()+Math.random(),qty:tpl.qty||1,partNumber:tpl.partNumber||"",description:tpl.description||"",manufacturer:tpl.manufacturer||"",notes:"",unitPrice:tpl.unitPrice||0,priceSource:tpl.priceSource||null,priceDate:Date.now(),autoLoaded:true,...(+tpl.unitPrice>0?_priceStamp():{})});
       console.log("APPEND DEFAULTS: adding:",tpl.description,"$"+tpl.unitPrice);
     }
   }
@@ -11886,7 +11895,7 @@ function appendDefaultBomItems(bom){
   for(const ci of CONTINGENCY_ITEMS){
     if(pnSet.has(ci.partNumber.toUpperCase()))continue;
     if(lower.has(ci.description.toLowerCase()))continue;
-    items.push({id:Date.now()+Math.random(),qty:1,partNumber:ci.partNumber,description:ci.description,manufacturer:"Matrix Systems",notes:"",unitPrice:ci.getPrice(),priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now(),bcVendorName:"Matrix Systems",autoLoaded:true,isContingency:true});
+    items.push({id:Date.now()+Math.random(),qty:1,partNumber:ci.partNumber,description:ci.description,manufacturer:"Matrix Systems",notes:"",unitPrice:ci.getPrice(),priceSource:"bc",priceDate:Date.now(),bcPoDate:Date.now(),bcVendorName:"Matrix Systems",autoLoaded:true,isContingency:true,..._priceStamp()});
     console.log("APPEND DEFAULTS: adding contingency:",ci.partNumber,"$"+ci.getPrice());
   }
   console.log("APPEND DEFAULTS: appended",items.length,"defaults. BOM total:",bom.length+items.length);
@@ -16101,7 +16110,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
             if(matchedBcNo&&matchedBcNo!==(r.bcNo||''))bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.bcNo||r.partNumber,to:matchedBcNo,reason:"BC match → bcNo"});
             return{...r,
               ...(matchedBcNo?{bcNo:matchedBcNo}:{}),
-              ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
+              ...(hasPrice?{unitPrice:bcMap[key].unitPrice,..._priceStamp()}:{}),
               priceSource:"bc",
               ...(hasPrice&&hasPpDate?{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}:{}),
               bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
@@ -16153,7 +16162,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
       const aiPrices=await estimatePrices(unpricedBom);
       updatedBom=updatedBom.map(r=>{
         const ap=aiPrices[String(r.id)];
-        if(ap&&ap.unitPrice>0)return{...r,unitPrice:ap.unitPrice,priceSource:"ai",priceDate:Date.now(),aiBasis:ap.basis||"",aiSources:ap.sources||[]};
+        if(ap&&ap.unitPrice>0)return{...r,unitPrice:ap.unitPrice,priceSource:"ai",priceDate:Date.now(),aiBasis:ap.basis||"",aiSources:ap.sources||[],..._priceStamp()};
         return r;
       });
       console.log(`[BG PRICING] AI: ${Object.values(aiPrices).filter(p=>p&&p.unitPrice>0).length}/${unpricedBom.length} priced`);
@@ -18190,6 +18199,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
       unitPrice:op==="remove"?+(baseRow?.unitPrice||0):(formPrice!==""?+formPrice:(baseRow?.unitPrice??null)),
       priceSource:op==="remove"?(baseRow?.priceSource||"manual"):(formPrice!==""?"manual":(baseRow?.priceSource||null)),
       priceDate:Date.now(),
+      ..._priceStamp(),
       notes:"",
       createdAt:Date.now(),
       createdBy:uid,
@@ -18506,6 +18516,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           unitPrice:d.extracted.unitPrice!=null?+d.extracted.unitPrice:null,
           priceSource:d.extracted.unitPrice!=null?"manual":null,
           priceDate:Date.now(),
+          ...(d.extracted.unitPrice!=null?_priceStamp():{}),
           notes:"",
           createdAt:Date.now(),
           createdBy:uid,
@@ -18529,6 +18540,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           unitPrice:d.extracted.unitPrice!=null?+d.extracted.unitPrice:(d.baseRow.unitPrice??null),
           priceSource:d.extracted.unitPrice!=null?"manual":(d.baseRow.priceSource||null),
           priceDate:Date.now(),
+          ...(d.extracted.unitPrice!=null?_priceStamp():(d.baseRow.priceSetBy?{priceSetBy:d.baseRow.priceSetBy,priceSetAt:d.baseRow.priceSetAt??null}:{})),
           notes:`Drawing revised qty ${d.baseQty} → ${d.extracted.qty}`,
           createdAt:Date.now(),
           createdBy:uid,
@@ -18550,6 +18562,7 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           unitPrice:d.baseRow.unitPrice??null,
           priceSource:d.baseRow.priceSource||"manual",
           priceDate:Date.now(),
+          ...(d.baseRow.priceSetBy?{priceSetBy:d.baseRow.priceSetBy,priceSetAt:d.baseRow.priceSetAt??null}:{}),
           notes:"Removed per revised drawing",
           createdAt:Date.now(),
           createdBy:uid,
@@ -25605,7 +25618,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // DECISION(v1.20.110, C5 guard): Hold back auto-cross on panel mount when manualVerifyRequired
           if(_mvr){heldAlt++;return r;}
           changed=true;appliedAlt++;
-          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high"};delete _altRow._confDowngradeReason;return _altRow;
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high",...(alt.replacement.unitCost!=null?_priceStamp():{})};delete _altRow._confDowngradeReason;return _altRow;
         }
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn)||c.badPN===pn.slice(0,20)||normPN(c.badPN)===normPN(pn.slice(0,20)));
         if(corr){
@@ -27715,6 +27728,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       unitPrice:base.unitPrice??null,
       priceSource:base.priceSource||undefined,
       priceDate:base.priceDate??null,
+      // F046: carry the base row's price-setter attribution onto the inherited ECO delta row.
+      priceSetBy:base.priceSetBy||undefined,
+      priceSetAt:base.priceSetAt??null,
       bcPoDate:base.bcPoDate??null,
       bcVendorName:base.bcVendorName||"",
       bcVendorNo:base.bcVendorNo||"",
@@ -27895,7 +27911,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // Edit reverts the field back to base — clear the ECO override by
           // restoring the base value (so the field re-aligns with base).
           const updates={...existing};
-          if(field==="unitPrice")updates[field]=base.unitPrice??null;
+          if(field==="unitPrice"){updates[field]=base.unitPrice??null;Object.assign(updates,_priceStamp());}
           else updates[field]=base[field]||"";
           // If after this revert the modify row has no effective changes, drop it
           const hasQtyDelta=Number(updates.qty)!==0;
@@ -27910,7 +27926,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             _flashRowId=existing.id;
           }
         }else{
-          bom=bom.map(r=>r.id===existing.id?{...r,[field]:newVal}:r);
+          bom=bom.map(r=>r.id===existing.id?{...r,[field]:newVal,...(field==="unitPrice"?_priceStamp():{})}:r);
           _flashRowId=existing.id;
         }
       }else if(!sameAsBase){
@@ -27930,6 +27946,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           ..._inheritPricingFromBase(base),
           notes:"",
           [field]:newVal,
+          ...(field==="unitPrice"?_priceStamp():{}),
           ecoOriginal:{
             qty:base.qty,
             unitPrice:base.unitPrice,
@@ -27988,6 +28005,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(r.id!==id)return r;
       _oldVal=r[field];
       const next={...r,[field]:val};
+      // F046: a direct unitPrice edit (e.g. on an ECO-tagged row that bypasses the
+      // updatePrice confirm-popup) stamps the price-setter. Only when a real value is set.
+      if(field==="unitPrice"&&val!=null&&val!==""&&!isNaN(+val))Object.assign(next,_priceStamp());
       if(field==="qty"&&r.suspectQty){delete next.suspectQty;delete next.suspectQtyReason;}
       if(field==="partNumber"){next.confidence="high";delete next._confDowngradeReason;delete next.restoreSkipped;}
       // DECISION(v1.19.687): Manual edit of leadTimeDays — stamp source, timestamp, clear estimate flag.
@@ -28263,7 +28283,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         ...(bcFullPN&&_vinResolved?{partNumber:bcFullPN}:{}),
         priceSource:"bc",
         bcVerify:{status:"in-bc",at:Date.now()},
-        ...(finalPrice!=null?{unitPrice:finalPrice}:{}),
+        ...(finalPrice!=null?{unitPrice:finalPrice,..._priceStamp()}:{}),
         ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{}),
         confidence:"high",
       };
@@ -28443,7 +28463,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // Clearing price — no popup needed
       const updatedBom=(panel.bom||[]).map(r=>{
         if(r.id!==id)return r;
-        const next={...r,unitPrice:null,priceSource:null,priceDate:null};
+        const next={...r,unitPrice:null,priceSource:null,priceDate:null,priceSetBy:null,priceSetAt:null};
         const _ecoTag=_ecoTagForEdit(r);
         if(_ecoTag)Object.assign(next,_ecoTag);
         return next;
@@ -28466,7 +28486,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(CONTINGENCY_PNS.has(pn.toUpperCase())||/^job.?buyoff$/i.test(pn)||/^crat(e|ing)$/i.test((row?.description||"").trim())){
       const updatedBom=(panel.bom||[]).map(r=>{
         if(r.id!==id)return r;
-        const next={...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now()};
+        const next={...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now(),..._priceStamp()};
         const _ecoTag=_ecoTagForEdit(r);
         if(_ecoTag)Object.assign(next,_ecoTag);
         return next;
@@ -28495,7 +28515,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Budgetary: update BOM only, no BC push, no priceDate (show as dashed/unpriced)
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"manual",priceDate:null};
+      const next={...r,unitPrice:price,priceSource:"manual",priceDate:null,..._priceStamp()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -28517,7 +28537,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // price that's been pushed to BC.
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now}};
+      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now},..._priceStamp()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -28930,7 +28950,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               if(matchedBcNo&&matchedBcNo!==(r.bcNo||''))bcPnSubstitutions.push({stage:"bcPricing",rowId:r.id,from:r.bcNo||r.partNumber,to:matchedBcNo,reason:"BC match → bcNo"});
               return{...r,
                 ...(matchedBcNo?{bcNo:matchedBcNo}:{}),
-                ...(hasPrice?{unitPrice:bcMap[key].unitPrice}:{}),
+                ...(hasPrice?{unitPrice:bcMap[key].unitPrice,..._priceStamp()}:{}),
                 priceSource:"bc",
                 ...(hasActiveRfq||!hasPrice||!hasPpDate?{}:{priceDate:bcMap[key].bcPoDate,bcPoDate:bcMap[key].bcPoDate}),
                 bcVendorName:bcMap[key].bcVendorName||r.bcVendorName||"",
@@ -29054,7 +29074,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const pn=(r.partNumber||"").trim().toUpperCase();
           if(codaleMap[pn]){
             codaleCount++;codalePns.add((r.partNumber||"").trim());
-            const updates={unitPrice:codaleMap[pn].price,priceSource:"bc"};
+            const updates={unitPrice:codaleMap[pn].price,priceSource:"bc",..._priceStamp()};
             // DECISION(v1.19.690): Parse Codale leadTime ("14 days" / "2 weeks" / "14d" / "21").
             if(codaleMap[pn].leadTime&&r.leadTimeSource!=="supplier"){
               const ltStr=String(codaleMap[pn].leadTime).trim();
@@ -29167,7 +29187,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               if(!isNaN(numPrice)&&numPrice>0){
                 scraperCount++;
                 scrapedPns.add((r.partNumber||"").trim());
-                updates={unitPrice:numPrice,priceSource:"bc"};
+                updates={unitPrice:numPrice,priceSource:"bc",..._priceStamp()};
               }
             }
             // DECISION(v1.19.690): Scraper returns leadTime field via extract-step.
@@ -29259,7 +29279,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               // DECISION(v1.19.641): AI estimates don't get priceDate — the BC Purchase Card
               // is the sole source of priceDate per the user's rule. AI-priced rows show the
               // ARC AI pill but no Priced Date. They'll retry on the next pricing run.
-              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,aiSources:ai.sources||[],aiBasis:ai.basis||""};
+              return{...r,unitPrice:ai.unitPrice,priceSource:ai.unitPrice!=null?"ai":r.priceSource||null,aiSources:ai.sources||[],aiBasis:ai.basis||"",...(ai.unitPrice!=null?_priceStamp():{})};
             }
             return r;
           });
@@ -31208,7 +31228,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
                       const d=_effectivePriceDate(row); // B018: single source shared with the red-flag + send gate
                       const vendor=row.bcVendorName||(row.priceSource==="manual"?"Manual Entry":null);
-                      setPriceTooltip({x:e.clientX,y:e.clientY,vendor,date:d,price:row.unitPrice,source:row.priceSource});
+                      setPriceTooltip({x:e.clientX,y:e.clientY,vendor,date:d,price:row.unitPrice,source:row.priceSource,priceSetBy:row.priceSetBy,priceSetAt:row.priceSetAt});
                     }:undefined}
                     onMouseMove={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
                       setPriceTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev);
@@ -32055,6 +32075,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               Source: {priceTooltip.source==="bc"?"BC (Approved)":priceTooltip.source==="manual"?"Manual Entry":priceTooltip.source==="ai"?"ARC AI Estimated":priceTooltip.source}
             </div>
           )}
+          {/* F047: per-row price-setter attribution (from F046 stamp). Graceful for pre-F046
+             rows — priceSetBy absent → "not recorded" (never "undefined"). */}
+          <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#94a3b8"}}>
+            {(()=>{
+              const who=priceTooltip.priceSetBy;
+              const whoLabel=who?((typeof who==="string"&&who.length>26)?who.slice(0,24)+"…":who):"not recorded";
+              const whenStr=priceTooltip.priceSetAt?new Date(priceTooltip.priceSetAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}):null;
+              const srcStr=priceTooltip.source?(priceTooltip.source==="bc"?"BC":priceTooltip.source==="manual"?"manual":priceTooltip.source==="ai"?"AI":priceTooltip.source):null;
+              return <span><span style={{textTransform:"uppercase",letterSpacing:0.5,color:"#64748b"}}>Priced by </span><span style={{color:"#cbd5e1"}}>{whoLabel}</span>{whenStr?<span style={{color:"#94a3b8"}}>{" · "+whenStr}</span>:null}{srcStr?<span style={{color:"#94a3b8"}}>{" · "+srcStr}</span>:null}</span>;
+            })()}
+          </div>
         </div>,document.body
       )}
       {aiSourceTooltip&&ReactDOM.createPortal(
@@ -32341,6 +32372,7 @@ Use realistic part numbers (Allen-Bradley, Phoenix Contact, Schneider, etc.) whe
           manufacturer:r.manufacturer||'',
           unitPrice:r.unitPrice||null,
           priceSource:r.unitPrice?'ai':null,priceDate:Date.now(),
+          ...(r.unitPrice?_priceStamp():{}),
           cpdCategory:r.category||'Other',
           cpdGenerated:true
         }));
@@ -33685,6 +33717,7 @@ ${fullText.slice(0,8000)}`;
             priceDate:now,
             bcPoDate:now,
             bcVendorName:vendorName,
+            ...(i.price>0?_priceStamp():{}),
             ...(i.leadTimeDays>0?{leadTimeDays:+i.leadTimeDays,leadTimeSource:"supplier",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{}),
             ...(i.supplierStockQty!=null?{leadTimeStock:{qty:+i.supplierStockQty,source:i.supplierStockSource||"Supplier",asOf:now}}:{})
           }));
@@ -34792,47 +34825,37 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   const _hasTechReviewBlock=incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
   const _trLineCount=incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
   const _pricingIssueCount=incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
+  // F044: Send is blocked when ANY BOM row is flagged red (qty=0 / $0 / no-priceDate /
+  // stale / no-firm-LT / bcPollDivergence — the _isBomRowFlaggedRed SSOT via anyRedRow).
+  // Non-managers → HARD block (disabled buttons + early return). Managers/admins → an
+  // escape hatch: a deliberate destructive arcConfirm ("send anyway? (manager override)")
+  // in place of the block (Jon 2026-07-23). No auto-Budgetary flip, no separate override
+  // button — just the manager-gated force-send confirm. `sendBlocked` stays red-agnostic
+  // (incomplete/owner-priority only); the red gate rides alongside so managers keep enabled
+  // buttons and hit the confirm, while non-managers get disabled buttons.
+  const _anyRed=anyRedRow(project);
+  const _redCount=_anyRed?_countRedRows(project):0;
+  const _isMgr=isManager();
+  const _redHardBlocks=_anyRed&&!_isMgr; // non-managers: red disables Send
   const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
   async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
     const m=modalData;
+    // Incomplete-items / owner-priority hard block applies to everyone (managers included —
+    // the F044 override is red-row-only, never for missing pricing/verification/tech-review).
     if(sendBlocked){
       arcAlert(formatIncompleteQuoteAlert(incompleteItems));
       return;
     }
-    // DECISION(v1.19.740; #192 widened 2026-07-01): red-row warning + auto-budgetary flip. If any
-    // BOM row is RED (incomplete pricing OR non-firm lead time — _isBomRowFlaggedRed), the quote
-    // isn't firm — force it into Budgetary mode (with an ARC-set sentinel) before the PDF is
-    // generated so the BUDGETARY banner renders. One confirm dialog lets the user cancel and fix.
-    // DECISION(v1.19.1028): Admin override — admins can bypass the auto-budgetary flip and send as
-    // FIRM despite red rows. Two-step confirm: first dialog offers Budgetary or Cancel; if admin
-    // cancels, second dialog offers "Override (Send as Firm)".
-    const redCount=_countRedRows(project);
-    if(redCount>0){
-      const proceed=await arcConfirm(
-        `This quote contains ${redCount} item${redCount>1?"s":""} with incomplete pricing or lead time data.\n\n`+
-        "Sending will mark the quote as BUDGETARY until those items are resolved (firm price + lead time).\n\n"+
-        "OK to continue, or Cancel to review the red rows first.",
-        {kind:"warning",okLabel:"Continue (Budgetary)"}
-      );
-      if(!proceed){
-        if(isAdmin()){
-          const override=await arcConfirm(
-            `Admin Override: Send as FIRM despite ${redCount} incomplete item${redCount>1?"s":""}?\n\n`+
-            "This bypasses the budgetary safeguard. The quote will NOT be marked Budgetary.",
-            {kind:"warning",okLabel:"Override (Send as Firm)",destructive:true}
-          );
-          if(!override)return;
-          // Skip budgetary marking — proceed as firm
-        }else{return;}
-      }else{
-        const{updatedProject,changed}=_markProjectBudgetaryForRedRows(project);
-        if(changed){
-          onUpdate(updatedProject);
-          try{await safeSave(uid,updatedProject);}catch(e){console.warn("[BUDGETARY AUTO] save failed:",e);}
-        }
+    // F044 red-row gate: non-managers hard-blocked; managers get a deliberate override confirm.
+    if(_anyRed){
+      if(!_isMgr){
+        arcAlert(`${_redCount} row${_redCount>1?"s are":" is"} flagged red (incomplete pricing, stale price, or non-firm lead time). Resolve or RFQ ${_redCount>1?"them":"it"} before sending.\n\nUse 🖨 Just Print for a hard copy without sending.`);
+        return;
       }
+      const _ok=await arcConfirm(`⚠ ${_redCount} row${_redCount>1?"s are":" is"} flagged red (incomplete pricing / stale price / non-firm lead time). Send anyway? (manager override)`,{kind:"warning",destructive:true});
+      if(!_ok)return;
     }
     if((sendMode==="new"||sendMode==="sales")&&!m.to.trim()){arcAlert("Enter a recipient email.");return;}
     if(sendMode==="reply"&&!selectedThread){arcAlert("Select an email thread to reply to.");return;}
@@ -35179,17 +35202,17 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
-          <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked}
-            title={sendBlocked?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send the Quote PDF only"}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked)?0.4:1,cursor:sendBlocked?"not-allowed":undefined})}>
-            {sending?"Sending…":sendBlocked?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
+          <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked||_redHardBlocks}
+            title={sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF only"}
+            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
+            {sending?"Sending…":(sendBlocked||_redHardBlocks)?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
           {/* DECISION(v1.19.931): Send w/BOM — same flow but also attaches the
               BOM Report PDF (spreadsheet-style listing of every panel's BOM
               with ARC Item # / Ref Dwg # / Qty / Description / MFR). */}
-          <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked}
-            title={sendBlocked?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked)?0.4:1,cursor:sendBlocked?"not-allowed":undefined})}>
+          <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked||_redHardBlocks}
+            title={sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
+            style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
             {sending?"Sending…":"✉ Send w/BOM"}
           </button>
         </div>
@@ -38962,7 +38985,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(!d)return r;
         // clear any prior dismissal since we're now accepting the update
         const{bcPriceCheckDismissed,...rest}=r;
-        return{...rest,unitPrice:d.bcPrice,priceDate:d.bcDate,bcPoDate:d.bcDate,priceSource:'bc'};
+        return{...rest,unitPrice:d.bcPrice,priceDate:d.bcDate,bcPoDate:d.bcDate,priceSource:'bc',..._priceStamp()};
       })};
     });
     const updatedProj={...projectRef.current,panels:updatedPanels};
@@ -40200,7 +40223,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             priceSource:"bc",
             priceDate:now,
             bcPoDate:now,
-            bcVendorName:submission.vendorName||""
+            bcVendorName:submission.vendorName||"",
+            ...(si.unitPrice>0?_priceStamp():{})
           };
         });
         const updatedPanels=(projectRef.current.panels||[]).map(p=>{
@@ -40477,7 +40501,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               ?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}
               :row;
           }
-          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName,...ltPatch};
+          return{...row,unitPrice:hit.price,priceSource:'bc',priceDate:now,bcPoDate:now,bcVendorName:submission.vendorName||row.bcVendorName,..._priceStamp(),...ltPatch};
         }
         return Object.keys(ltPatch).length?{...row,...ltPatch,bcVendorName:submission.vendorName||row.bcVendorName}:row;
       })
@@ -40947,6 +40971,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       // DECISION(v1.19.663): Guard on incomplete BOM rows.
                       const incomplete=findIncompleteQuoteItems(project);
                       if(incomplete.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
+                      // F044: red-row Send gate (parity with QuoteSendModal.handleSend). Non-managers
+                      // → hard block; managers/admins → deliberate override confirm (Jon 2026-07-23).
+                      if(anyRedRow(project)){
+                        const _rc=_countRedRows(project);
+                        if(!isManager()){arcAlert(`${_rc} row${_rc>1?"s are":" is"} flagged red (incomplete pricing, stale price, or non-firm lead time). Resolve or RFQ ${_rc>1?"them":"it"} before sending.\n\nUse 🖨 Just Print for a hard copy without sending.`);return;}
+                        const _ok=await arcConfirm(`⚠ ${_rc} row${_rc>1?"s are":" is"} flagged red (incomplete pricing / stale price / non-firm lead time). Send anyway? (manager override)`,{kind:"warning",destructive:true});
+                        if(!_ok)return;
+                      }
                       if(!m.to.trim()){arcAlert("Enter a recipient email.");return;}
                       // DECISION(v1.19.667): Email regex validation — same as QuoteSendModal.
                       {
@@ -41048,7 +41080,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     return{...r,bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
                   }
                   applied++;
-                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
+                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo,..._priceStamp()};
                 }
                 return r;
               });
@@ -41206,7 +41238,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                               // Close review, add placeholder to BOM — strip MFR prefix
                               const pn=stripMfrPrefix(si.supplierPartNumber||si.partNumber||"");
                               const newId=Date.now()+Math.random();
-                              const newRow={id:newId,qty:si.qty||1,partNumber:pn.trim().toUpperCase(),description:si.description||"",manufacturer:"",notes:"",unitPrice:si.unitPrice||0};
+                              const newRow={id:newId,qty:si.qty||1,partNumber:pn.trim().toUpperCase(),description:si.description||"",manufacturer:"",notes:"",unitPrice:si.unitPrice||0,...(si.unitPrice>0?_priceStamp():{})};
                               const panel=(projectRef.current.panels||[])[0];
                               if(panel){
                                 const bom=[...(panel.bom||[])];
@@ -41465,6 +41497,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 patch.priceSource="bc";
                 patch.priceDate=now;
                 patch.bcPoDate=now;
+                Object.assign(patch,_priceStamp());
                 if(vendorName)patch.bcVendorName=vendorName;
               }
               if(u.leadTimeDays!=null&&u.leadTimeDays>0){
