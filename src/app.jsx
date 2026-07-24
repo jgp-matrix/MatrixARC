@@ -28615,14 +28615,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const vendorName=priceConfirmVendor.trim();
     // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
     const now=Date.now();
-    // DECISION(v1.19.1026): Set priceSource:"bc" immediately. The v1.19.905 concern
-    // about the PP poll overwriting the typed value is no longer valid — we push the
-    // price to BC below, so BC's price matches. With priceSource:"manual" the row
-    // showed an "M" pill and was excluded from RFQs, which is wrong for a confirmed
-    // price that's been pushed to BC.
+    // B060 (promote-on-success): stamp the typed price as "manual" FIRST — do NOT claim
+    // priceSource:"bc" / bcVerify:"in-bc" up front. The BC circle is membership-driven
+    // (post-B058), so an up-front "in-bc" claim is factually wrong for a not-in-BC row: the
+    // old optimistic-then-revert wrote "bc"/"in-bc", then reverted to "manual" when the push
+    // failed, and that intermediate render showed as a disappear→reappear circle flicker.
+    // We now PROMOTE to "bc" only after the BC push actually succeeds (see below). A failed
+    // or no-token push simply leaves the row "manual" — correct for an item that isn't in BC.
+    // MONEY-PATH NOTE: during the ~1-2s BC push window the row reads priceSource:"manual"
+    // (manual styling, RFQ-eligible) until the push confirms and promotes it to "bc". This is
+    // the intended behavior change — it replaces the wrong transient "in-bc", not real data.
+    // The no-_bcToken / no-push branch now also leaves the row "manual" (the old code stamped
+    // "bc" even when no push was attempted); for a not-in-BC item that is the correct state.
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now},..._priceStamp()};
+      const next={...r,unitPrice:price,priceSource:"manual",priceDate:now,bcPoDate:null,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"manual",at:now},..._priceStamp()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
@@ -28653,20 +28660,25 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           }
         }catch(e){console.warn("BC purchase price push failed:",partNumber,e);}
       }
-      // If both BC pushes failed, revert to "manual" so the PP poll doesn't
-      // overwrite the user's typed value with BC's stale price.
-      if(!bcPushOk){
+      // B060: PROMOTE to "bc" ONLY on a confirmed BC push. This is the single point where the
+      // membership-driven BC circle legitimately clears — the item is now confirmed in BC, and
+      // BC's price matches the typed value so the PP poll won't overwrite it. On failure we do
+      // NOTHING: the row stays "manual" (set in the initial write) — no revert, no second
+      // onUpdate → no re-render → no flicker.
+      if(bcPushOk){
         const lp=latestPanelRef.current;
-        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,bcPoDate:null,bcVerify:{status:"manual",at:now}}:r);
-        const reverted={...lp,bom:revertBom};
-        latestPanelRef.current=reverted;onUpdate(reverted);
-        try{onSaveImmediate(reverted);}catch(e){console.warn("BC push revert save failed:",e);}
-        console.warn("BC push failed — reverted priceSource to manual for",partNumber);
+        const promoteBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"bc",priceDate:now,bcPoDate:now,bcVerify:{status:"in-bc",at:Date.now()}}:r);
+        const promoted={...lp,bom:promoteBom};
+        latestPanelRef.current=promoted;onUpdate(promoted);
+        try{onSaveImmediate(promoted);}catch(e){console.warn("BC push promote save failed:",e);}
+        console.log("BC push OK — promoted priceSource to bc for",partNumber);
       }
     }
-    // F065 (F1): fan-out fires AFTER the BC push resolves, reading the source row's FINAL state
-    // from latestPanelRef — so if the push failed and the source reverted to "manual", the
-    // targets inherit "manual" too (never a stale hardcoded "bc" that pollBcPricing could revert).
+    // F065 (F1): fan-out fires AFTER the BC push resolves, reading the source row's FINAL,
+    // SETTLED state from latestPanelRef — which under B060 promote-on-success is "bc" (push
+    // succeeded and the row was promoted above) or "manual" (push failed / no token, row left
+    // untouched). Targets inherit whichever it actually is, never a stale hardcoded "bc" that
+    // pollBcPricing could later revert.
     const _srcFinal=(latestPanelRef.current.bom||[]).find(r=>r.id===id);
     if(_srcFinal&&_srcFinal.unitPrice!=null){
       _maybePromptCrossLine(id,_srcFinal.partNumber,{price:_srcFinal.unitPrice,priceSource:_srcFinal.priceSource,priceDate:_srcFinal.priceDate,bcPoDate:_srcFinal.bcPoDate},"price",_srcFinal.qty);
