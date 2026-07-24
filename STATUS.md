@@ -27,6 +27,9 @@
 > **Pricing re-enable prereqs** — F041 edges + write-side plausibility gate + scraper extraction fix; flip the 3 kill-switches back ON only after these land.
 > **Parked (low priority):** B053 (on-open auto-check repeat-nag) · B054 (bad learned vendor "ROYAL - SALT LAKE CITY" in `manufacturerVendorMap`).
 
+> ## 🔬 2026-07-24 — F065 cross-Line Part# price/lead-time propagation (ANALYSIS COMPLETE, design LOCKED) — motivated by PRJ402142
+> **Ask (Jon):** same Part# appears on multiple Lines/BOMs in one job; when it's priced/changed/lead-timed on one Line, propagate to the matching Part#s on the other Lines (active project only). **Coach trace (read-only):** the all-panels propagation mechanism ALREADY exists (`doApplyPortalPrices :40479` / scraper apply `:41085` fan a `normPart`-matched map across panels + one `saveProject`); single-row handlers are the only gap. Biggest risk = clobbering a legit per-Line difference (per-Line vendor / manual override / qty-break) → `priceSource:"manual"` already treated as sacred (skip). **✅ Jon locked the reframed design:** poll project for duplicate Part#s → store `crossLineDuplicates` on the project doc (recompute on BOM-save + project-open) → on any price/change/lead-time edit of a known duplicate, **PROMPT** to update the other Lines (prompt-for-ALL edit types, incl. lead-time). Full doc → `docs/F065-CROSS-LINE-PROPAGATION-ANALYSIS.md`. **STATUS:** build-ready, money-path → awaiting Jon go to start a Marc build-scope lane (→ Coach review → Test → verify). NOT yet a TODO.md build item.
+
 ---
 
 > ## 🗄️ 2026-07-23 — PRJ402119 emergency working-thread (superseded / contained — archived from Current) — prod v1.24.17
