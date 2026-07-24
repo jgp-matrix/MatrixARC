@@ -5525,6 +5525,10 @@ const AUTO_BC_REPRICE_ENABLED=false;
 // "Get New Pricing" / "Refresh All" buttons. RFQ, portal apply, and manual per-row price entry still work.
 // The F050 read-only plausibility sweep still uses estimatePrices (it reads, never sets a price).
 const AUTO_PRICING_ENABLED=false;
+// G019 — Engineering Questions feature hidden until developed out; flip to true to restore intact.
+// DISPLAY-ONLY flag: extraction still populates panel.engineeringQuestions, saves still persist it,
+// mergeEngineeringQuestions is unchanged. This only gates the UI surfaces so the feature is fully reversible.
+const QUESTIONS_ENABLED=false;
 // B057 (2026-07-23) — REBUILT. Push a new PurchasePrice so BC ends up with exactly ONE
 // active record for this item+vendor+UoM: the newest. Two defects were fixed:
 //   (a) the old PATCH used a SINGLE-segment key `PurchasePrices('ITEMNO')` on a COMPOSITE-keyed
@@ -21996,7 +22000,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
                   match the QUOTE SUMMARY pill and pair visually with the
                   Drawing-version "Dv.NN" pill on each panel. */}
               <div style={{textAlign:"right",fontSize:13,fontWeight:700,color:((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0)))?"#f59e0b":"#64748b",letterSpacing:0.3}}>Qv.{String(project.quoteRev||0).padStart(2,'0')}{((project.quoteRev||0)>(project.quoteRevAtPrint||0)||(project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0)))?" — unsent":""}</div>
-              {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
+              {(()=>{const hasEq=QUESTIONS_ENABLED&&(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-qmeta">{q.date||today}<br/>Page 1 of {totalPages}</div>;})()}
             </div>
           </div>
 
@@ -22517,7 +22521,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
         </div>
 
         {/* ═══ QUESTIONS FOR CUSTOMER (if any on_quote) ═══ */}
-        {(()=>{const onQ=(project.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="on_quote"));
+        {(()=>{const onQ=QUESTIONS_ENABLED?(project.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="on_quote")):[];
           return onQ.length>0?React.createElement("div",{className:"qd-page"},
             React.createElement("div",{className:"qd-header-cont"},
               React.createElement("div",{className:"qd-hc-name"},"Matrix Systems"),
@@ -22552,7 +22556,7 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
         <div className="qd-page">
           <div className="qd-header-cont">
             <div className="qd-hc-name">Matrix Systems</div>
-            {(()=>{const hasEq=(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-hc-right">{q.date||today}<br/>Page {totalPages} of {totalPages}</div>;})()}
+            {(()=>{const hasEq=QUESTIONS_ENABLED&&(project.panels||[]).some(p=>(p.engineeringQuestions||[]).some(eq=>eq.status==="on_quote"));const totalPages=1+(hasEq?1:0)+1;return <div className="qd-hc-right">{q.date||today}<br/>Page {totalPages} of {totalPages}</div>;})()}
           </div>
 
           <div className="qd-tc">
@@ -29836,7 +29840,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           )}
           {pages.length>0&&<button onClick={()=>setShowDrawingReview(true)} style={{background:"none",border:"1px solid #a78bfa88",color:"#a78bfa",cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📐 Review Drawings</button>}
           {(()=>{const eqOpen=(panel.engineeringQuestions||[]).filter(q=>q.status==="open").length;const eqTotal=(panel.engineeringQuestions||[]).length;
-            return eqTotal>0?React.createElement("button",{onClick:()=>setShowEqModal(true),
+            return (QUESTIONS_ENABLED&&eqTotal>0)?React.createElement("button",{onClick:()=>setShowEqModal(true),
               style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
           {/* DECISION(v1.19.336): Main upload button is disabled when green (current upload exists) to prevent
@@ -31394,7 +31398,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           onNotesChange={undefined}
         />
       )}
-      {showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
+      {QUESTIONS_ENABLED&&showEqModal&&React.createElement(EngineeringQuestionsModal,{panel,uid,onUpdate,onSave:onSaveImmediate,onClose:()=>setShowEqModal(false),memberMap:null})}
       {/* DECISION(v1.19.969): BOM Verification Review modal. Lists rows that the AI
           flagged as low-confidence or placeholder (couldn't extract cleanly). User can
           jump to each one in the BOM table and fix manually. */}
@@ -37670,7 +37674,10 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                           style={{background:chipBg,border:`1px solid ${chipColor}44`,borderRadius:10,color:chipColor,padding:"2px 8px",fontSize:11,fontWeight:700,cursor:"pointer",flexShrink:0,fontVariantNumeric:"tabular-nums",fontFamily:"inherit"}}>
                           {cplt.noDataWarning&&!cpltOverride?"—":`${effectiveDays}d`}
                         </button>
-                        {(()=>{const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
+                        {(()=>{
+                          // G019: when Engineering Questions UI is hidden, render a plain, non-clickable status badge (no "N ?" pill, no eq-modal onClick).
+                          if(!QUESTIONS_ENABLED)return React.createElement("span",{style:{flexShrink:1,minWidth:0,overflow:"hidden",display:"flex"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));
+                          const openEqs=(p.engineeringQuestions||[]).filter(q=>q.status==="open").length;
                           if(openEqs>0)return React.createElement("button",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{background:"none",border:"1px solid #fde04766",borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",cursor:"pointer",color:"#fde047",animation:"pulseYellow 2s ease-in-out infinite"}},openEqs+" ?");
                           return React.createElement("span",{onClick:e=>{e.stopPropagation();setEqModalPanelId(p.id);},style:{cursor:"pointer",flexShrink:1,minWidth:0,overflow:"hidden",display:"flex"}},React.createElement(Badge,{status:computeProjectEffectiveStatus(project)}));})()}
                         {ppr.isBudgetary&&<span style={{fontSize:9,fontWeight:700,color:"#f59e0b",background:"#3a1f00",borderRadius:4,padding:"1px 5px",flexShrink:0}}>BUDGETARY</span>}
@@ -38165,7 +38172,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
         </div>
       </div>
     )}
-    {eqModalPanelId&&(()=>{const ep=(project.panels||[]).find(p=>p.id===eqModalPanelId);return ep?React.createElement(EngineeringQuestionsModal,{panel:ep,uid,
+    {QUESTIONS_ENABLED&&eqModalPanelId&&(()=>{const ep=(project.panels||[]).find(p=>p.id===eqModalPanelId);return ep?React.createElement(EngineeringQuestionsModal,{panel:ep,uid,
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
@@ -40063,7 +40070,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
     // Check 3: Open engineering questions
     const openEqs=(projectRef.current.panels||[]).flatMap(p=>(p.engineeringQuestions||[]).filter(q=>q.status==="open"));
-    if(openEqs.length>0){
+    if(QUESTIONS_ENABLED&&openEqs.length>0){
       issues.push({type:"eqs",label:`${openEqs.length} Engineering Question${openEqs.length>1?"s":""}`,detail:"Open questions not yet answered or skipped",checked:true,items:openEqs});
     }
 
@@ -41396,7 +41403,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               </div>
             </div>
           ,document.body)}
-          {eqWarnOpen&&ReactDOM.createPortal(
+          {QUESTIONS_ENABLED&&eqWarnOpen&&ReactDOM.createPortal(
             React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center",padding:16}},
               React.createElement("div",{style:{background:"#0d0d1a",border:"1px solid #f59e0b",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:520,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}},
                 React.createElement("div",{style:{display:"flex",alignItems:"center",gap:10,marginBottom:8}},
@@ -51263,7 +51270,7 @@ const SALES_TOUR_STEPS=[
    target:null},
 
   {phase:'Sales Walkthrough',title:'You\'re Ready 🎉',
-   body:'That\'s the sales workflow. A few tips:\n\n• Use the Ask ARC search (💬 in the header) to find quotes by any field\n• Questions from engineering appear as pulsing yellow badges — click to respond\n• If the customer asks for changes, unlock the quote, edit, and re-send — the rev auto-bumps\n\nFor the full engineering walkthrough (extraction, RFQs, etc.), use the "📋 Full Training" option in the gear menu.',
+   body:'That\'s the sales workflow. A few tips:\n\n• Use the Ask ARC search (💬 in the header) to find quotes by any field\n'+(QUESTIONS_ENABLED?'• Questions from engineering appear as pulsing yellow badges — click to respond\n':'')+'• If the customer asks for changes, unlock the quote, edit, and re-send — the rev auto-bumps\n\nFor the full engineering walkthrough (extraction, RFQs, etc.), use the "📋 Full Training" option in the gear menu.',
    target:null},
 ];
 
