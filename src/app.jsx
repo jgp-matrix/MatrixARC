@@ -39253,6 +39253,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         didInitialFirestoreSyncRef.current=true;
         // Always refresh to Firestore's truth on mount, regardless of updatedBy.
         const migrated=migrateProject({...remote,id:init.id});
+        migrated.crossLineDuplicates=buildCrossLineDuplicates(migrated.panels);// F065 Bug B: rebuild the cross-line gate from live panels on the mount snapshot — a pre-F065 server doc carries no crossLineDuplicates and would otherwise clobber the open-hook's index with undefined (→ no prompt until a panel save rebuilt it). Derived + self-healing on every open.
         projectRef.current=migrated;
         setProject(migrated);
         // gap #4 #2b PRE-TICK GUARD (authoritative fresh value): if the server load shows a VALID
@@ -39266,6 +39267,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(remote.updatedBy&&remote.updatedBy!==uid){
         // Always soft-apply: migrate remote data into local state (no page reload).
         const migrated=migrateProject({...remote,id:init.id});
+        migrated.crossLineDuplicates=buildCrossLineDuplicates(migrated.panels);// F065 Bug B: keep the cross-line gate fresh on concurrent remote applies too (same self-heal as the mount branch)
         projectRef.current=migrated;
         setProject(migrated);
         console.log('[CONCURRENT] Soft-applied remote update from',remote.updatedBy);
@@ -39913,6 +39915,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           rowPatch.priceDate=patch.priceDate??now;
           if(ps!=="manual")rowPatch.bcPoDate=patch.bcPoDate??now; // so bc rows don't re-flag red
           Object.assign(rowPatch,_priceStamp());                  // F046: user-confirmed → stamp setter
+          // F065 Bug C: a propagated BC price confirms the identical part# on this target row too —
+          // mirror commitBcItem (confidence:"high" + drop _confDowngradeReason + bcVerify in-bc) so the
+          // confidence "C" pill clears on the propagated rows, not just the source. Gated to bc (a manual
+          // price never promotes confidence on its own row, so propagation shouldn't either).
+          if(ps==="bc"){
+            rowPatch.confidence="high";
+            rowPatch._confDowngradeReason=undefined; // stripped on save (mirrors commitBcItem's delete)
+            rowPatch.bcVerify={status:"in-bc",at:now};
+          }
         }
         // LEAD TIME — applied even to manual-price rows (LT is not price).
         if(hasLt){
