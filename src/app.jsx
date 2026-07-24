@@ -29389,7 +29389,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:panelCollapsed?C.accent:C.sub,borderRadius:6,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,letterSpacing:0.3}}>
             {panelCollapsed?"▶ Expand":"▼ Collapse"}
           </button>
-          <Badge status={computeProjectEffectiveStatus({panels:[panel]})}/>
+          {/* F058 (2026-07-23): line-card status pill removed. It used a single-panel projection
+             {panels:[panel]} that DROPS project-level quoteSentAt/quoteRev/quoteSentRev, so post-send
+             it showed pre-send readiness (READY TO SEND/RFQS) on an already-sent quote — contradicting
+             the QUOTE SUMMARY pane (computeProjectEffectiveStatus(project), :37309 = truth). Per Jon:
+             rely on the QUOTE SUMMARY for status; the line card no longer shows a status pill. */}
           {!readOnly&&<button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Delete this panel"}
             onClick={ownerPriorityActive?_fireOwnerPriorityAlert:onDelete}
             disabled={ownerPriorityActive}
@@ -30781,7 +30785,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                            by the Unit $ VALUE styling (ai||manual → grey+italic; bc → white). The actionable ⚠ bcSyncError pill STAYS. */}
                         {bcSyncErrors[row.id]&&(()=>{const ef=bcSyncErrors[row.id];function parsePillErr(e){if(!e)return"Sync error";if(/must select an existing item/i.test(e))return"Not in BC";if(/Posting Group/i.test(e))return"BC setup";if(/429|Too Many/i.test(e))return"Rate limit";return"BC error";}return(<button title={parsePillErr(ef.error)+"\nClick to fix in Item Browser"} onClick={()=>{setBcBrowserTarget(row.id);setBcBrowserQuery(row.partNumber||"");setBcBrowserOpen(true);}} style={{background:C.red,color:"#fff",border:"none",borderRadius:8,padding:"1px 6px",fontSize:11,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>⚠ {parsePillErr(ef.error)}</button>);})()}
                         <div style={{display:"inline-flex",alignItems:"center",gap:0,marginLeft:"auto"}}>
-                        {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:row.customerSupplied?<span title="Customer Supplied — no cost to us (price stored as $0)" style={{color:C.muted,fontSize:13,fontWeight:700,minWidth:70,textAlign:"right"}}>CS</span>:<>
+                        {row.isLaborRow?<span style={{color:C.muted,fontSize:13,minWidth:70,textAlign:"right"}}>— auto</span>:(row.customerSupplied||(+row.unitPrice===0&&_vendorMatchesCustomer(row.bcVendorNo,row.bcVendorName,project.bcCustomerNumber,project.bcCustomerName)))?<span title="Customer Supplied (or vendor is the customer) — no cost to us; price stored as $0" style={{color:C.muted,fontSize:13,fontWeight:700,minWidth:70,textAlign:"right"}}>CS</span>:<>
                         <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
                         <input type="text" inputMode="decimal" readOnly={readOnly}
                           defaultValue={row.unitPrice!=null?parseFloat(row.unitPrice).toFixed(2):""}
@@ -30798,7 +30802,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       </div>
                     </td>
                     <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
-                      {row.customerSupplied?"CS":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
+                      {(row.customerSupplied||(+row.unitPrice===0&&_vendorMatchesCustomer(row.bcVendorNo,row.bcVendorName,project.bcCustomerNumber,project.bcCustomerName)))?"CS":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
                     </td>
                     {/* DECISION(v1.19.687/725): Lead column — floating hover tooltip with
                        source + age + supplier stock snapshot (when captured from quote).
