@@ -5565,13 +5565,19 @@ async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
 
 // Batch-fetch Purchase Prices from BC for a list of part numbers
 // Returns Map<partNumber, {vendorNo, directUnitCost, startingDate, uom}>
-async function bcFetchPurchasePrices(partNumbers){
+async function bcFetchPurchasePrices(partNumbers,opts){
   if(!_bcToken||!partNumbers.length)return new Map();
+  const preferredVendors=(opts&&opts.preferredVendors)||null;
   const allPages=await bcDiscoverODataPages();
   const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
   if(!ppPage){console.warn("bcFetchPurchasePrices: no PurchasePrices OData page");return new Map();}
   const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
-  const results=new Map();
+  // F041 (2026-07-23): ingest ALL vendor records per part (no cross-vendor dedup during fetch), then
+  // SELECT — prefer the item's PRIMARY/default vendor's price when opts.preferredVendors supplies it AND
+  // that vendor has a record; else fall back to newest-Starting_Date-across-all-vendors (legacy). WHY: a
+  // junk vendor record (V00373 @ $0.71, recent date) used to BEAT the correct primary (V00040 @ $1,632)
+  // purely on recency — the PRJ402119 wrong-price incident. Callers passing no opts get legacy behavior.
+  const byPart=new Map(); // partNumber -> Array<{vendorNo,directUnitCost,startingDate,uom}>
   // Batch 30 items per request to stay within URL length limits
   const BATCH=30;
   for(let i=0;i<partNumbers.length;i+=BATCH){
@@ -5587,15 +5593,28 @@ async function bcFetchPurchasePrices(partNumbers){
       (d.value||[]).forEach(rec=>{
         const pn=rec.Item_No||'';
         const sd=rec.Starting_Date?new Date(rec.Starting_Date).getTime():0;
-        const existing=results.get(pn);
-        // Keep the record with the most recent Starting_Date
-        if(!existing||sd>(existing.startingDate||0)){
-          results.set(pn,{vendorNo:rec.Vendor_No||'',directUnitCost:rec.Direct_Unit_Cost||0,startingDate:sd||null,uom:rec.Unit_of_Measure_Code||''});
-        }
+        const entry={vendorNo:rec.Vendor_No||'',directUnitCost:rec.Direct_Unit_Cost||0,startingDate:sd||null,uom:rec.Unit_of_Measure_Code||''};
+        if(!byPart.has(pn))byPart.set(pn,[]);
+        byPart.get(pn).push(entry);
       });
     }catch(e){console.warn("bcFetchPurchasePrices batch error:",e);}
   }
-  console.log("[BC] Fetched Purchase Prices for",results.size,"of",partNumbers.length,"items");
+  const results=new Map();
+  for(const [pn,recs] of byPart){
+    // Legacy: newest Starting_Date across all vendors.
+    let newest=null;
+    for(const rec of recs){if(!newest||(rec.startingDate||0)>(newest.startingDate||0))newest=rec;}
+    // F041: newest among the PREFERRED (primary/default) vendor's own records, if any.
+    let chosen=newest;
+    const pv=preferredVendors&&preferredVendors.get(pn);
+    if(pv){
+      let primary=null;
+      for(const rec of recs){if(rec.vendorNo===pv&&(!primary||(rec.startingDate||0)>(primary.startingDate||0)))primary=rec;}
+      if(primary)chosen=primary; // else keep newest — primary vendor has no PP record for this part
+    }
+    if(chosen)results.set(pn,chosen);
+  }
+  console.log("[BC] Fetched Purchase Prices for",results.size,"of",partNumbers.length,"items"+(preferredVendors?" (primary-vendor preferred)":""));
   return results;
 }
 
@@ -15746,8 +15765,11 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
         const allBcMatchedIds=Object.keys(bcMap);
         if(allBcMatchedIds.length>0){
           const partNums=[...new Set(allBcMatchedIds.map(k=>bcMap[k].bcNumber).filter(Boolean))];
+          // F041: prefer the item's PRIMARY/default vendor's PurchasePrice over newest-across-vendors.
+          const _preferredVendors=new Map();
+          for(const _k of allBcMatchedIds){const _pn=bcMap[_k].bcNumber,_vn=bcMap[_k].bcVendorNo;if(_pn&&_vn&&!_preferredVendors.has(_pn))_preferredVendors.set(_pn,_vn);}
           try{
-            const ppMap=await bcFetchPurchasePrices(partNums);
+            const ppMap=await bcFetchPurchasePrices(partNums,{preferredVendors:_preferredVendors});
             for(const k of allBcMatchedIds){
               const pn=bcMap[k].bcNumber;
               const pp=pn?ppMap.get(pn):null;
@@ -28543,8 +28565,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const allBcMatchedIds=Object.keys(bcMap);
           if(allBcMatchedIds.length>0){
             const partNums=[...new Set(allBcMatchedIds.map(k=>bcMap[k].bcNumber).filter(Boolean))];
+            // F041: prefer the item's PRIMARY/default vendor's PurchasePrice over newest-across-vendors.
+            const _preferredVendors=new Map();
+            for(const _k of allBcMatchedIds){const _pn=bcMap[_k].bcNumber,_vn=bcMap[_k].bcVendorNo;if(_pn&&_vn&&!_preferredVendors.has(_pn))_preferredVendors.set(_pn,_vn);}
             try{
-              const ppMap=await bcFetchPurchasePrices(partNums);
+              const ppMap=await bcFetchPurchasePrices(partNums,{preferredVendors:_preferredVendors});
               for(const k of allBcMatchedIds){
                 const pn=bcMap[k].bcNumber;
                 const pp=pn?ppMap.get(pn):null;
