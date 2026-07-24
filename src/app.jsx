@@ -35147,7 +35147,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -37700,13 +37700,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   <div style={{marginTop:6,padding:"8px 12px",background:"#0d2018",border:"1px solid #4ade8055",borderRadius:8,display:"flex",flexDirection:"column",gap:6}}>
                     <div style={{fontSize:11,color:"#86efac",lineHeight:1.5}}>Edited after send — your copy is Qv.{String(project.quoteRev||0).padStart(2,"0")}, the customer has Qv.{String(project.quoteSentRev||0).padStart(2,"0")}, so this shows as In Process. If the deal is committed and you're <strong>not</strong> re-sending, mark it committed to move it back to Quotes Sent.</div>
                     <button
-                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
-                        const rev=project.quoteRev||0;const customerRev=project.quoteSentRev||0;
-                        if(!(await arcConfirm(`Mark this quote committed at Qv.${String(rev).padStart(2,"0")} WITHOUT re-sending to the customer? It moves back to Quotes Sent (locked). The customer still holds Qv.${String(customerRev).padStart(2,"0")} — their copy is unchanged.`,{kind:"warning",okLabel:"Mark Committed"})))return;
-                        const upd={...project,quoteRev:rev,quoteSentRev:rev,quoteRevAtPrint:rev,quoteLocked:true,committedWithoutResend:{at:Date.now(),by:uid,byName:(fbAuth.currentUser&&fbAuth.currentUser.email)||uid,customerRev,committedAtRev:rev},updatedAt:Date.now()};
-                        update(upd);
-                        try{await safeSave(uid,{...upd,_sendAnchorWrite:true});arcAlert("Quote marked committed — moved to Quotes Sent. The customer copy is unchanged.");}catch(e){arcAlert("Failed to mark committed: "+e.message);}
-                      }}
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>onMarkCommitted&&onMarkCommitted()}
                       disabled={ownerPriorityActive}
                       title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Re-anchor this sent quote to its current revision without emailing the customer"}
                       style={{background:"none",border:"1px solid #4ade8088",borderRadius:6,color:"#86efac",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"4px 10px",fontWeight:700,opacity:ownerPriorityActive?0.45:1,alignSelf:"flex-start"}}>
@@ -40571,6 +40565,16 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             onOpenSupplierQuote={(bom,panelId)=>{if(portalSubmissions.length>0){setShowPortalModal(true);}else{setSqPanelBom(bom);setSqPanelId(panelId||null);setShowSqModal(true);}}}
             pendingRfqUploads={pendingRfqUploads}
             onPoReceived={()=>setShowPoModal(true)}
+            onMarkCommitted={async()=>{
+              // F059: re-anchor a sent+diverged quote to its current rev WITHOUT emailing — mirrors the
+              // send-anchor no-bump write (safeSave _sendAnchorWrite:true), minus the send. Moves it back
+              // to Quotes Sent (locked). committedWithoutResend preserves the customer's TRUE rev.
+              const rev=project.quoteRev||0;const customerRev=project.quoteSentRev||0;
+              if(!(await arcConfirm(`Mark this quote committed at Qv.${String(rev).padStart(2,"0")} WITHOUT re-sending to the customer? It moves back to Quotes Sent (locked). The customer still holds Qv.${String(customerRev).padStart(2,"0")} — their copy is unchanged.`,{kind:"warning",okLabel:"Mark Committed"})))return;
+              const upd={...project,quoteRev:rev,quoteSentRev:rev,quoteRevAtPrint:rev,quoteLocked:true,committedWithoutResend:{at:Date.now(),by:uid,byName:(fbAuth.currentUser&&fbAuth.currentUser.email)||uid,customerRev,committedAtRev:rev},updatedAt:Date.now()};
+              update(upd);
+              try{await safeSave(uid,{...upd,_sendAnchorWrite:true});arcAlert("Quote marked committed — moved to Quotes Sent. The customer copy is unchanged.");}catch(e){arcAlert("Failed to mark committed: "+e.message);}
+            }}
             onMarkLost={()=>{
               const upd={...project,lostAt:Date.now(),lostBy:uid,updatedAt:Date.now()};
               update(upd);safeSave(uid,upd);
