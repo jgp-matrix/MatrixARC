@@ -515,6 +515,16 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      // F051j (2026-07-23): Expire-Junk-BC-Prices audit — append-only log of PurchasePrice
+      // Ending_Date expiries from the admin cleanup tool (the $0.71/V00373 PRJ402119 incident).
+      // Admins create their own entries (audit field `by`); members read; immutable. Without this
+      // the .add() was default-denied + swallowed → a prod-BC write with no surviving audit (Coach B2).
+      match /bcPurchasePriceExpiries/{expiryId} {
+        allow read: if isMember();
+        allow create: if isAdminMember() && request.resource.data.by == request.auth.uid;
+        allow update, delete: if false;
+      }
+
       // DECISION(v1.19.411): Config write access — admins can write all config,
       // edit-role users can write defaultBomItems and laborRates (needed for daily workflow).
       // DECISION(v1.19.963, security audit H-3): API keys and BC environment are now

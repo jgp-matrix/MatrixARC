@@ -5618,6 +5618,153 @@ async function bcFetchPurchasePrices(partNumbers,opts){
   return results;
 }
 
+// ── F051j — Expire Junk BC Prices (admin cleanup) ──────────────────────────
+// The Royal/V00373 scraper wrote a garbage FIXED cost (notably $0.71) into BC
+// PurchasePrice records across many parts (the PRJ402119 incident). V00373 is a
+// VALID vendor, so this tool targets bad PRICE VALUES, never a vendor. Records are
+// EXPIRED (Ending_Date set), never deleted (data-retention rule). Preview-first:
+// scanJunkPurchasePrices() is READ-ONLY; the write only fires from the modal after
+// a scan + explicit checkbox selection + arcConfirm.
+//
+// COMPOSITE-KEY NOTE: PurchasePrices is composite-keyed (Item+Vendor+Starting_Date+…).
+// The legacy bcPushPurchasePrice PATCHes a single-segment key ('ITEMNO') — a latent
+// bug we do NOT copy here. We request FULL OData metadata so each record carries its
+// own @odata.editLink + @odata.etag, and PATCH that editLink verbatim with If-Match.
+// A record with no usable editLink is EXCLUDED (never guess a key).
+
+// Resolve an OData editLink / id (may be relative or absolute) to an absolute URL.
+function _bcResolveEditLink(link){
+  if(!link||typeof link!=="string")return null;
+  if(/^https?:\/\//i.test(link))return link;
+  return `${BC_ODATA_BASE}/${link.replace(/^\/+/,"")}`;
+}
+// A BC OData date is "unset" when missing or the 0001-01-01 sentinel.
+function _bcDateUnset(d){ return !d || /^0001-01-01/.test(String(d)); }
+
+// READ-ONLY scan for low-cost PurchasePrice records that look like scraper junk.
+async function scanJunkPurchasePrices(onProgress){
+  const empty={groups:[],totalRecords:0,notPatchableCount:0,cappedAtLimit:false};
+  if(!_bcToken){console.warn("scanJunkPurchasePrices: no BC token");return empty;}
+  const allPages=await bcDiscoverODataPages();
+  const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
+  if(!ppPage){console.warn("scanJunkPurchasePrices: no PurchasePrices OData page");return empty;}
+  const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
+  const HARD_CAP=5000;
+  const todayStr=new Date().toISOString().slice(0,10);
+  const raw=[];
+  let notPatchableCount=0;
+  let cappedAtLimit=false;
+  // First page: low-cost filter + full metadata so each entity carries editLink/etag.
+  let url=`${baseUrl}?$filter=${encodeURIComponent("Direct_Unit_Cost le 25")}&$select=Item_No,Vendor_No,Direct_Unit_Cost,Starting_Date,Ending_Date,Unit_of_Measure_Code`;
+  let pageGuard=0;
+  while(url){
+    if(pageGuard++>200){console.warn("scanJunkPurchasePrices: page guard tripped");break;}
+    let r;
+    try{
+      r=await bcGatedFetch(url,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json;odata.metadata=full"}});
+    }catch(e){console.warn("scanJunkPurchasePrices fetch error:",e);break;}
+    if(!r||!r.ok){console.warn("scanJunkPurchasePrices: fetch failed",r&&r.status);break;}
+    const d=await r.json();
+    const rows=d.value||[];
+    for(const rec of rows){
+      const cost=Number(rec.Direct_Unit_Cost||0);
+      const endingRaw=rec.Ending_Date;
+      // Skip records already expired (Ending_Date is a real PAST date — nothing to do).
+      if(!_bcDateUnset(endingRaw)&&String(endingRaw).slice(0,10)<todayStr)continue;
+      const editLink=_bcResolveEditLink(rec["@odata.editLink"]||rec["@odata.id"]);
+      if(!editLink){notPatchableCount++;continue;}
+      raw.push({
+        itemNo:rec.Item_No||"",
+        vendorNo:rec.Vendor_No||"",
+        cost,
+        startingDate:rec.Starting_Date?String(rec.Starting_Date).slice(0,10):"",
+        endingDate:_bcDateUnset(endingRaw)?"":String(endingRaw).slice(0,10),
+        uom:rec.Unit_of_Measure_Code||"",
+        editLink,
+        etag:rec["@odata.etag"]||"",
+      });
+    }
+    if(onProgress)try{onProgress({fetched:raw.length,notPatchable:notPatchableCount});}catch(e){}
+    if(raw.length>=HARD_CAP){cappedAtLimit=true;console.warn(`scanJunkPurchasePrices: hard-capped at ${HARD_CAP} records`);break;}
+    url=d["@odata.nextLink"]||null;
+    if(url&&!/^https?:\/\//i.test(url))url=_bcResolveEditLink(url);
+  }
+  // Group by EXACT Direct_Unit_Cost value.
+  const byCost=new Map(); // costKey(string) -> {cost, records:[]}
+  for(const rec of raw){
+    const k=rec.cost.toFixed(2);
+    if(!byCost.has(k))byCost.set(k,{cost:rec.cost,records:[]});
+    byCost.get(k).records.push(rec);
+  }
+  const SUSPECT_DISTINCT_PARTS=8;
+  const groups=[];
+  for(const {cost,records} of byCost.values()){
+    const distinctParts=new Set(records.map(r=>r.itemNo)).size;
+    const isAlways071=Math.abs(cost-0.71)<0.005;
+    const isSuspect=isAlways071||distinctParts>=SUSPECT_DISTINCT_PARTS;
+    groups.push({
+      cost,
+      recordCount:records.length,
+      distinctParts,
+      isSuspect,
+      preselected:isAlways071,
+      records,
+    });
+  }
+  // Sort suspects first, then by distinct-part count desc.
+  groups.sort((a,b)=>(b.isSuspect-a.isSuspect)||(b.distinctParts-a.distinctParts)||(a.cost-b.cost));
+  return {groups,totalRecords:raw.length,notPatchableCount,cappedAtLimit};
+}
+
+// THE WRITE — expire selected junk PurchasePrice records by setting Ending_Date.
+// PATCHes each record's own scanned @odata.editLink with If-Match etag. Sequential-ish
+// (concurrency ≤ 3) to be gentle on BC. Best-effort audit to a NEW additive collection.
+async function expireJunkPurchasePrices(records,endingDateISO,onProgress){
+  const results=[];
+  const total=records.length;
+  const runId=`exp-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const cid=_appCtx.companyId;
+  let done=0;
+  const CONCURRENCY=3;
+  async function patchOne(rec){
+    let out={itemNo:rec.itemNo,vendorNo:rec.vendorNo,ok:false,status:0,error:""};
+    try{
+      if(!rec.editLink){out.error="no editLink (excluded)";return out;}
+      const r=await bcGatedFetch(rec.editLink,{
+        method:"PATCH",
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":rec.etag||"*"},
+        body:JSON.stringify({Ending_Date:endingDateISO}),
+      });
+      out.status=r?r.status:0;
+      if(r&&r.ok){
+        out.ok=true;
+        // Best-effort audit — never block the PATCH loop on audit failure.
+        if(cid){
+          fbDb.collection(`companies/${cid}/bcPurchasePriceExpiries`).add({
+            itemNo:rec.itemNo,vendorNo:rec.vendorNo,cost:rec.cost,
+            oldEndingDate:rec.endingDate||"",newEndingDate:endingDateISO,
+            at:Date.now(),by:_appCtx.uid||"",runId,
+          }).catch(e=>console.warn("bcPurchasePriceExpiries audit failed:",e&&e.message));
+        }
+      }else{
+        out.error=r?`PATCH ${r.status} ${await r.text().then(t=>t.slice(0,160)).catch(()=>"")}`:"no response";
+      }
+    }catch(e){out.error=e.message||String(e);}
+    return out;
+  }
+  // Chunked concurrency ≤ 3.
+  for(let i=0;i<records.length;i+=CONCURRENCY){
+    const chunk=records.slice(i,i+CONCURRENCY);
+    const chunkResults=await Promise.all(chunk.map(patchOne));
+    for(const cr of chunkResults){results.push(cr);done++;}
+    if(onProgress)try{onProgress(done,total);}catch(e){}
+  }
+  const succeeded=results.filter(r=>r.ok).length;
+  const failed=results.length-succeeded;
+  console.log(`[F051j] expireJunkPurchasePrices: ${succeeded} ok / ${failed} failed (runId ${runId})`);
+  return {succeeded,failed,results,runId};
+}
+
 // DECISION(v1.20.37, Milestone C Cost Source Hotfix Phase 1): Batch-fetch Purchase Prices
 // from BC, keyed by partNumber:vendorNo. Returns ALL vendor records per part (no dedup
 // across vendors). Used by drift detection where the comparison target is the specific
@@ -41568,6 +41715,190 @@ function MouserTestPanel({uid}){
 // cost. Surfaces rows that drifted (ARC has a price BC no longer agrees with).
 // Read-only — fixes happen through the normal Sync BC / Get New Pricing flows on
 // the project page; this tool just tells you which projects need attention.
+// F051j — Expire Junk BC Prices. Admin-only cleanup for scraper-poisoned PurchasePrice
+// records (the $0.71 / V00373 PRJ402119 incident). Preview-first: a READ-ONLY scan must
+// complete + ≥1 group be checked before any write is reachable; the write EXPIRES records
+// (sets Ending_Date), never deletes. Writes to PRODUCTION BC — z-index 10001 to sit above
+// the API Setup modal.
+function ExpireJunkPricesModal({onClose}){
+  const [scanning,setScanning]=useState(false);
+  const [scan,setScan]=useState(null);       // scanJunkPurchasePrices() result
+  const [scanError,setScanError]=useState("");
+  const [scanProg,setScanProg]=useState(null);
+  const [checked,setChecked]=useState({});   // { costKey: bool }
+  const [endingDate,setEndingDate]=useState(new Date(Date.now()-86400000).toISOString().slice(0,10)); // yesterday
+  const [running,setRunning]=useState(false);
+  const [runProg,setRunProg]=useState(null);  // {done,total}
+  const [runResult,setRunResult]=useState(null);
+  const [runError,setRunError]=useState("");
+
+  const costKey=g=>g.cost.toFixed(2);
+
+  async function doScan(){
+    setScanning(true);setScanError("");setScan(null);setRunResult(null);setScanProg({fetched:0});
+    try{
+      const r=await scanJunkPurchasePrices(p=>setScanProg(p));
+      setScan(r);
+      // Pre-check the pre-selected ($0.71) groups.
+      const init={};
+      (r.groups||[]).forEach(g=>{ if(g.preselected)init[costKey(g)]=true; });
+      setChecked(init);
+    }catch(e){
+      console.error("[F051j] scan failed:",e);
+      setScanError(e.message||"Scan failed");
+    }finally{
+      setScanning(false);setScanProg(null);
+    }
+  }
+
+  const suspectGroups=(scan&&scan.groups||[]).filter(g=>g.isSuspect);
+  const otherGroups=(scan&&scan.groups||[]).filter(g=>!g.isSuspect);
+  const selectedRecords=React.useMemo(()=>{
+    if(!scan)return[];
+    let recs=[];
+    (scan.groups||[]).forEach(g=>{ if(checked[costKey(g)])recs=recs.concat(g.records); });
+    return recs;
+  },[scan,checked]);
+  const anyChecked=selectedRecords.length>0;
+
+  async function doExpire(){
+    if(!anyChecked)return;
+    const n=selectedRecords.length;
+    const ok=await arcConfirm(`Expire ${n} BC PurchasePrice record${n===1?"":"s"} by setting Ending_Date = ${endingDate}?\n\nThis writes to PRODUCTION Business Central. Records are expired, not deleted.`,{kind:"warning",destructive:true,okLabel:`Expire ${n} records`});
+    if(!ok)return;
+    setRunning(true);setRunError("");setRunResult(null);setRunProg({done:0,total:n});
+    try{
+      const r=await expireJunkPurchasePrices(selectedRecords,endingDate,(done,total)=>setRunProg({done,total}));
+      setRunResult(r);
+    }catch(e){
+      console.error("[F051j] expire failed:",e);
+      setRunError(e.message||"Expire failed");
+    }finally{
+      setRunning(false);
+    }
+  }
+
+  function GroupRow({g,disabled}){
+    const k=costKey(g);
+    return(
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 10px",borderBottom:`1px solid ${C.border}`,opacity:disabled?0.6:1}}>
+        <input type="checkbox" checked={!!checked[k]} disabled={disabled||running} onChange={e=>setChecked(p=>({...p,[k]:e.target.checked}))} style={{width:16,height:16,cursor:disabled?"default":"pointer"}}/>
+        <div style={{fontFamily:"Consolas,monospace",fontWeight:700,color:C.text,minWidth:80}}>${g.cost.toFixed(2)}</div>
+        <div style={{fontSize:12,color:C.muted}}>{g.recordCount} record{g.recordCount===1?"":"s"} · {g.distinctParts} distinct part{g.distinctParts===1?"":"s"}</div>
+        {g.preselected&&<span style={{fontSize:10,fontWeight:700,color:"#fca5a5",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:4,padding:"2px 6px"}}>KNOWN JUNK $0.71</span>}
+      </div>
+    );
+  }
+
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:10001,padding:16}} onClick={onClose}>
+      <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:900,maxHeight:"90vh",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+          <h3 style={{margin:0,color:C.text}}>🧹 Expire Junk BC Prices</h3>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,padding:"2px 8px"}}>✕</button>
+        </div>
+        {/* PROD write warning banner */}
+        <div style={{padding:"10px 14px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontSize:12,lineHeight:1.5,marginBottom:14}}>
+          <strong>⚠ Writes to PRODUCTION Business Central.</strong> The Test environment fakes BC writes — run this on prod only. Records are <strong>expired</strong> (Ending_Date set), never deleted.
+        </div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.6}}>
+          Scans BC PurchasePrice records at or below $25 and groups them by exact cost. A cost shared across
+          many distinct parts is a likely scraper constant (e.g. the $0.71 / V00373 PRJ402119 incident). Review
+          the suspect groups, check the ones to clean, and expire them as of the chosen date. Read-only until you
+          choose to expire.
+        </div>
+
+        {!scan&&!scanning&&!scanError&&(
+          <button onClick={doScan} style={{background:"#0891b2",color:"#fff",border:"none",borderRadius:8,padding:"10px 24px",fontSize:14,fontWeight:600,cursor:"pointer",alignSelf:"flex-start"}}>Scan BC</button>
+        )}
+        {scanning&&(
+          <div style={{padding:"16px 0",color:C.muted,fontSize:13}}>
+            <div style={{fontWeight:700,color:C.accent,marginBottom:6}}>Scanning BC (read-only)…</div>
+            <div>{scanProg?`${scanProg.fetched} low-cost records fetched`:"Working…"}</div>
+          </div>
+        )}
+        {scanError&&(
+          <div style={{padding:"12px 16px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:13}}>
+            <strong>Scan failed:</strong> {scanError}
+            <div style={{marginTop:8}}><button onClick={doScan} style={{background:C.border,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 14px",fontSize:12,cursor:"pointer"}}>Retry</button></div>
+          </div>
+        )}
+
+        {scan&&(
+          <div style={{flex:1,overflow:"auto"}}>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,marginBottom:12}}>
+              <div style={{padding:"4px 10px",color:C.muted}}>{scan.totalRecords} candidate records · {suspectGroups.length} suspect cost group{suspectGroups.length===1?"":"s"}</div>
+              {scan.notPatchableCount>0&&<div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>{scan.notPatchableCount} not patchable (no editLink) — excluded</div>}
+              {scan.cappedAtLimit&&<div style={{padding:"4px 10px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontWeight:700}}>⚠ Capped at scan limit — re-run after this pass to catch the rest</div>}
+            </div>
+
+            {suspectGroups.length===0&&(
+              <div style={{padding:"20px",textAlign:"center",color:C.muted,fontSize:13}}>No suspect scraper-constant cost groups found.</div>
+            )}
+            {suspectGroups.length>0&&(
+              <div style={{border:`1px solid ${C.border}`,borderRadius:6,marginBottom:14}}>
+                <div style={{padding:"8px 10px",fontSize:11,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,color:C.sub,borderBottom:`1px solid ${C.border}`}}>Suspect cost groups — review &amp; check to expire</div>
+                {suspectGroups.map(g=><GroupRow key={costKey(g)} g={g}/>)}
+              </div>
+            )}
+
+            {otherGroups.length>0&&(
+              <details style={{marginBottom:14}}>
+                <summary style={{cursor:"pointer",fontSize:12,color:C.muted}}>{otherGroups.length} other low-cost value{otherGroups.length===1?"":"s"} — likely legitimate distinct parts (click to review)</summary>
+                <div style={{border:`1px solid ${C.border}`,borderRadius:6,marginTop:8}}>
+                  {otherGroups.map(g=><GroupRow key={costKey(g)} g={g}/>)}
+                </div>
+              </details>
+            )}
+
+            {/* Expire controls */}
+            <div style={{display:"flex",alignItems:"flex-end",gap:14,flexWrap:"wrap",marginTop:8,paddingTop:14,borderTop:`1px solid ${C.border}`}}>
+              <div>
+                <label style={{fontSize:11,color:C.sub,display:"block",marginBottom:3}}>Ending Date (expire as of)</label>
+                <input type="date" value={endingDate} disabled={running} onChange={e=>setEndingDate(e.target.value)} style={{background:"#0a0a16",color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 8px",fontSize:13}}/>
+              </div>
+              <div style={{fontSize:12,color:anyChecked?C.text:C.muted}}>
+                {anyChecked?`${selectedRecords.length} record${selectedRecords.length===1?"":"s"} selected`:"No groups checked"}
+              </div>
+              <div style={{flex:1}}/>
+              <button onClick={doExpire} disabled={!anyChecked||running}
+                style={{background:anyChecked&&!running?"#dc2626":C.border,color:anyChecked&&!running?"#fff":C.muted,border:"none",borderRadius:8,padding:"10px 22px",fontSize:14,fontWeight:700,cursor:anyChecked&&!running?"pointer":"default"}}>
+                {running?"Expiring…":`Expire ${selectedRecords.length} selected record${selectedRecords.length===1?"":"s"}`}
+              </button>
+            </div>
+
+            {running&&runProg&&(
+              <div style={{marginTop:14}}>
+                <div style={{fontSize:12,color:C.muted,marginBottom:6}}>Expiring {runProg.done} / {runProg.total}…</div>
+                <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden"}}>
+                  <div style={{width:`${runProg.total?Math.round((runProg.done/runProg.total)*100):0}%`,height:"100%",background:"#dc2626",transition:"width 0.2s"}}/>
+                </div>
+              </div>
+            )}
+            {runError&&(
+              <div style={{marginTop:14,padding:"12px 16px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:13}}>
+                <strong>Expire failed:</strong> {runError}
+              </div>
+            )}
+            {runResult&&(
+              <div style={{marginTop:14,padding:"12px 16px",background:runResult.failed>0?"#3a1f00":"#0d2a18",border:`1px solid ${runResult.failed>0?"#f59e0baa":"#22c55e88"}`,borderRadius:6,fontSize:13}}>
+                <div style={{fontWeight:700,color:runResult.failed>0?"#fcd34d":"#86efac"}}>Done — {runResult.succeeded} expired, {runResult.failed} failed.</div>
+                {runResult.failed>0&&(
+                  <div style={{marginTop:6,color:"#fca5a5",fontSize:12}}>
+                    Failed items: {runResult.results.filter(r=>!r.ok).map(r=>`${r.itemNo}/${r.vendorNo} (${r.status||r.error})`).join(", ")}
+                  </div>
+                )}
+                <div style={{marginTop:8}}><button onClick={doScan} style={{background:C.border,color:C.text,border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 14px",fontSize:12,cursor:"pointer"}}>Re-scan</button></div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function PricingAuditModal({uid,onClose}){
   const [running,setRunning]=useState(false);
   const [progress,setProgress]=useState(null);
@@ -42576,6 +42907,7 @@ function APISetupModal({uid,onClose}){
   const [showPricingReports,setShowPricingReports]=useState(false);
   const [showPricingAudit,setShowPricingAudit]=useState(false);
   const [showPlausibilitySweep,setShowPlausibilitySweep]=useState(false);
+  const [showExpireJunkPrices,setShowExpireJunkPrices]=useState(false); // F051j
   // Custom scraper configs — stored at company level in Firestore
   const [customScrapers,setCustomScrapers]=useState([]);
   const [scrapersLoading,setScrapersLoading]=useState(true);
@@ -43134,6 +43466,19 @@ function APISetupModal({uid,onClose}){
           <button onClick={()=>setShowPlausibilitySweep(true)} style={{background:"#0891b2",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>Run Plausibility Sweep</button>
         </div>
         {showPlausibilitySweep&&<PlausibilitySweepModal uid={uid} onClose={()=>setShowPlausibilitySweep(false)}/>}
+
+        {/* F051j — Expire Junk BC Prices. Admin-only cleanup for scraper-poisoned
+            PurchasePrice records (the $0.71 / V00373 PRJ402119 incident). Preview-first:
+            the modal scans read-only, then expires (sets Ending_Date) only checked groups
+            after arcConfirm. Writes to PRODUCTION BC. */}
+        {isAdmin()&&(<>
+          <div style={{marginTop:24,marginBottom:20,background:"#0a0a12",border:`1px solid #ef444455`,borderRadius:8,padding:"12px 14px"}}>
+            <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>Expire Junk BC Prices <span style={{color:"#fca5a5",fontWeight:700}}>· admin · prod write</span></div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Scan BC for scraper-poisoned low-cost PurchasePrice records (e.g. the $0.71 / V00373 incident) and expire them — sets Ending_Date, never deletes. Read-only scan first; you review &amp; check which cost groups to clean.</div>
+            <button onClick={()=>setShowExpireJunkPrices(true)} style={{background:"#dc2626",color:"#fff",border:"none",borderRadius:6,padding:"7px 18px",fontSize:12,fontWeight:600,cursor:"pointer"}}>🧹 Expire Junk BC Prices</button>
+          </div>
+          {showExpireJunkPrices&&<ExpireJunkPricesModal onClose={()=>setShowExpireJunkPrices(false)}/>}
+        </>)}
 
         <div style={{marginTop:24,textAlign:"center"}}>
           <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
