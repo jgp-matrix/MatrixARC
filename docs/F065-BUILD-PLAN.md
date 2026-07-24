@@ -2,7 +2,7 @@
 
 **Author:** Marc Masdev (build-scope lane) · **Reviewed-by:** _pending Coach_ · **Date:** 2026-07-24
 **Design source:** `docs/F065-CROSS-LINE-PROPAGATION-ANALYSIS.md` (locked design)
-**Status:** Jon's micro-decisions LOCKED (see ★ DECISIONS below) → pending Coach review, then build. NO source edits made — text deliverable. Money-path.
+**Status:** Jon's decisions LOCKED + **Coach review DONE — APPROVE-WITH-NITS** (see ★ COACH REVIEW below) → build-ready; the build MUST incorporate F1–F5 + the `capturedProjectId` caveat. Pending Jon build-go. NO source edits made — text deliverable. Money-path.
 
 > **Freddy note:** Line refs re-verified against `src/app.jsx` @ v1.24.33 by the Marc lane. The one substantive
 > correction to the analysis doc: there are **4 trigger sites, not 3** — vendor edits flow through a separate
@@ -32,6 +32,51 @@
 **Build-affecting deltas vs the body below:** §5 → [Update all]/[Skip] only, no checkboxes (Line list is read-only
 context). §4/§10 → `updateVendor` IS wired (default-ON, pre-included). §6 → drop per-row selection, propagate to all
 eligible targets. §8 qty amber note unchanged (informational).
+
+---
+
+## ★ COACH REVIEW (Sam Wize, 2026-07-24) — VERDICT: APPROVE-WITH-NITS — build MUST incorporate these
+No hard blocker. Architecturally sound, mirrors the proven `doApplyPortalPrices` money-path precedent, data-safe on
+every retention/hash/backward-compat axis. **Re-anchor all line refs by SYMBOL, not number — the plan's refs drift ~8
+lines low** (e.g. `normPart` is `:51759` not :51751; `partMatch` `:51933`). Required build changes:
+
+- **F1 (MEDIUM, money-path) — don't fan out a `bc` price before its BC push confirms.** In `applyConfirmedPrice`
+  (`:28558-28593`) the plan fires the prompt *before* `await bcPatchItemOData` and §6 hardcodes `priceSource:"bc"`. If
+  the BC push then FAILS, the source row reverts to `"manual"` (`:28587`) but propagated targets stay `"bc"` →
+  poll-eligible while BC holds the OLD price → `pollBcPricing` can silently revert the other Lines (the PRJ402119 shape).
+  **Fix:** derive the propagated `priceSource` from the source row's FINAL state (read `latestPanelRef.current` at
+  propagation time), OR fire the fan-out only AFTER `bcPushOk` is known.
+- **F2 (MEDIUM, money-path display) — render the modal from LIVE state, not cached index scalars.** The index scalars
+  (`unitPrice/priceDate/leadTimeDays/priceSource/qty`) go stale between rebuilds (`doApplyPortalPrices`, `pollBcPricing`,
+  the F1 revert, send/status writes all skip the rebuild). The *write* stays safe (§6 re-matches live), but the current
+  values / `manual`-protected tags / qty-amber a user reads while approving could be wrong. **Fix:** use the index only
+  as the GATE (its rowId list); render current values + manual tags + qty notes LIVE from `projectRef.current.panels` by
+  rowId at modal-open.
+- **F3 (LOW) — reconcile §5/§6 body with the LOCKED decision.** §5 body still describes per-Line checkboxes /
+  `[Update selected]` / `selectedRowIds`; the ★DECISIONS #3 override wins → `targetRowIds = all eligible`, no checkbox
+  state wired. Fix the body text so a builder doesn't copy the stale version.
+- **F4 (LOW) — sent-quote warning is MANDATORY, not optional.** Propagating to a sent quote bumps `quoteRev` + clears
+  `quoteLocked` → demotes to In-Process (existing correct behavior, F065 doesn't worsen it). But since a fan-out touches
+  Lines the user isn't looking at, the `project.quoteSentAt` modal warning ("this will revise the sent quote") must be
+  non-optional.
+- **F5 (NIT) — `commitBcItem` vendor may be blank at the fire point.** `bcVendorName` arrives via an async lookup
+  (`:28316`) AFTER the `:28391` save where the trigger fires. So a vendor fan-out from `commitBcItem` can carry an empty
+  name. **Fix:** skip vendor in the `commitBcItem` trigger (propagate price only there), or fire vendor propagation from
+  the async completion.
+- **CAVEAT (must-do) — `capturedProjectId` must be captured at EDIT/prompt-open time** and threaded through modal state.
+  If re-derived from `projectRef.current` inside `propagatePartAcrossPanels`, the identity guard is a vacuous tautology.
+  The human-time gap between edit and [Update all] is exactly why the guard matters.
+
+**Coach confirmed-SAFE (verified live):** quote-hash cannot be perturbed by a new top-level field (`_computeQuoteHash`
+`:9662-9715` is a whitelist; index built strictly after) · manual carve-out correctly replicated (price-only skip,
+LT/vendor still applied `:40522-40526`) · single `saveProject` matches precedent + preserves all retention guards ·
+red-rule is render-time (`_isBomRowFlaggedRed` `:16825`, no persisted flag) · backward-compat no-NPE (all `?.`, lazy
+build) · **trigger enumeration holds — NO 5th site missed** (independently swept every `priceSource`/`leadTimeSource`/
+`bcVendorName` single-row writer; `updatePrice` contingency branch `:28499` writes only rows the index already excludes)
+· vendor default-ON is data-safe (writes only a label + one shared BC Item Card push).
+
+**Bottom line (Coach):** green money-path build once F1+F2 are handled, §5 text reconciled, and `capturedProjectId` is
+edit-time-captured.
 
 ---
 
