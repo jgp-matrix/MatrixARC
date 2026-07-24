@@ -16865,6 +16865,25 @@ function _landSalespersonCache(){
 function _isMyProject(p,uid){
   return p.createdBy===uid||p.bcSalespersonCode===_mySalespersonCode();
 }
+// F060 (2026-07-23): customer-facing SELL total for a project — mirrors the Quote Summary
+// "PROJECT TOTAL" BASE roll-up (Σ base panel sell × lineQty + service-card totals). DISPLAY-ONLY,
+// pure/read-only (no writes, no new fields). Shared by the To-Do rail + MY DASHBOARD.
+function _projectSellTotal(p){
+  if(!p)return 0;
+  const panels=(p.panels||[]).reduce((s,pan)=>s+computeBasePanelSellPrice(pan)*(pan.lineQty??pan.qty??1),0);
+  const services=(p.serviceCards||[]).reduce((s,sc)=>s+computeServiceCardTotal(sc),0);
+  return panels+services;
+}
+// F060: SENT quotes within ~7 days of expiry (INCLUDING already-expired — most urgent), soonest/
+// most-overdue first, top 5. Scope: mine (_isMyProject), quoteSentAt set, not lost, NOT PO'd, and
+// quoteExpiresAt set. Pure/read-only. Shared by the standing To-Do rail + the MY DASHBOARD page.
+function _quotesExpiring(projects,uid,now){
+  const _now=now||Date.now();
+  return (projects||[])
+    .filter(p=>_isMyProject(p,uid)&&p.quoteSentAt&&!p.lostAt&&!(p.bcPoStatus==="purchasing"||p.bcPoStatus==="Open")&&p.quoteExpiresAt&&(p.quoteExpiresAt-_now)<=7*86400000)
+    .sort((a,b)=>a.quoteExpiresAt-b.quoteExpiresAt)
+    .slice(0,5);
+}
 // F032: ACTUAL-salesperson test — true iff the user resolves to a BC salesperson code (the
 // SAME email↔cache match _isMyProject uses, via _mySalespersonCode). Merely CREATING a project
 // (createdBy) does NOT make you a salesperson — this is the item-2 fix so a reviewer/designer
@@ -35013,7 +35032,10 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
             style={{background:"#1a1a2a",border:`1px solid ${C.border}`,color:collapsed?C.accent:C.sub,borderRadius:6,padding:"4px 10px",fontSize:12,fontWeight:700,cursor:"pointer",flexShrink:0,letterSpacing:0.3}}>
             {collapsed?"▶ Expand":"▼ Collapse"}
           </button>
-          <Badge status={card.status||"draft"}/>
+          {/* F060 (2026-07-23) — F058 sibling: service-card LINE-ITEM status pill removed. Same rationale
+             as the panel line-card pill (F058, :29411): rely on the QUOTE SUMMARY pane for status; the
+             service-card line item no longer shows a status pill. (The QUOTE SUMMARY service-card Badge
+             at :37279, keyed on sc.status, is intentionally kept.) */}
           {!readOnly&&<button onClick={e=>{e.stopPropagation();onDelete&&onDelete();}}
             title="Delete this Quote Line"
             style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:15,padding:"2px 6px",borderRadius:4}}
@@ -45295,7 +45317,10 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     // The attention filter (yellow/red) + sort run at RENDER with a fresh _now, not here — this
     // memo only fixes the candidate set (deps [projects,uid,salesCacheVer]).
     const attnCandidates=[];
-    if(_roles.includes("salesman"))for(const p of salesProjects){const b=_todoBucketOf(p);if(b)attnCandidates.push({project:p,bucket:b});}
+    // F060: exclude the quotes_sent bucket from NEEDS ATTENTION — sent-but-clean quotes are not an
+    // action item here; they surface in the dedicated QUOTES EXPIRING list instead. Filtered at the
+    // candidate source so the count + render agree (no drift).
+    if(_roles.includes("salesman"))for(const p of salesProjects){const b=_todoBucketOf(p);if(b&&b!=="quotes_sent")attnCandidates.push({project:p,bucket:b});}
     if(_roles.includes("reviewer")){
       for(const p of preRevItems)attnCandidates.push({project:p,bucket:"pre_review"});
       for(const p of postRevItems)attnCandidates.push({project:p,bucket:"post_review"});
@@ -45383,6 +45408,9 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // (standing rail). "pills" ⇒ role queue + Sales Pipeline pills only. "attention" ⇒ Needs Attention only.
   const _showPills=!pageSection||pageSection==="pills";
   const _showAttn=!pageSection||pageSection==="attention";
+  // F060: QUOTES EXPIRING gate — shown in the standing rail (below Needs Attention) AND as its own
+  // dashboard column via pageSection="expiring". Same factored block in both (no data-logic fork).
+  const _showExpiring=!pageSection||pageSection==="expiring";
   // F030 r2 (2026-07-22): factor each role's pill group into a reusable fragment (same _sections/
   // bucket derivation — NO data-logic fork) so pageMode can arrange Review Quote | Engineering
   // side-by-side while the standing rail keeps them stacked. null when the role isn't present.
@@ -45407,6 +45435,43 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
       const items=salesProjects.filter(p=>_todoBucketOf(p)===key);
       return _pill(key,label,items.length,_pillColorForBucket(items,key,_now),()=>onFocusBucket("salesman",key),`Show your ${label} projects`);
     }))}
+  </>):null;
+  // F060: QUOTES EXPIRING list — SENT quotes ≤7d from expiry (incl. already-expired, most urgent
+  // first), top 5. Reuses the attention-row styling. Rows open the project. The $ SELL total is
+  // shown only in pageMode (dashboard) so it doesn't crowd the 380px standing rail. Hidden entirely
+  // when there are no expiring quotes (mirrors how NEEDS ATTENTION hides when empty).
+  const _expiring=_showExpiring?_quotesExpiring(projects,uid,_now):[];
+  const _expiryLabel=exp=>{
+    const diff=exp-_now;
+    if(diff<0)return"EXPIRED";
+    const days=Math.floor(diff/(24*36e5));
+    return days<=0?"expires today":`expires in ${days}d`;
+  };
+  // F060: rail HIDES the section when empty; the dashboard column (pageMode) shows an empty state
+  // so the 3-column layout stays balanced (mirrors NEEDS ATTENTION's "All caught up").
+  const _expiringBlock=(_expiring.length>0||pageMode)?(<>
+    {_sectionHeader(`Quotes Expiring (${_expiring.length})`)}
+    <div style={{padding:"4px 10px 8px"}}>
+      {_expiring.length===0
+        ?<div style={{padding:"10px 6px",fontSize:13,color:C.green,fontWeight:600}}>✓ No quotes expiring soon.</div>
+        :_expiring.map(p=>{
+        const expired=(p.quoteExpiresAt-_now)<0;
+        const col=expired?C.red:C.yellow;
+        return(
+          <div key={p.id+":exp"} onClick={()=>onOpenProject&&onOpenProject(p)}
+            title={`Open ${p.bcProjectNumber||p.name||"project"}`}
+            style={{cursor:"pointer",display:"flex",gap:8,alignItems:"center",background:"#0c0c16",border:`1px solid ${C.border}`,borderLeft:`3px solid ${col}`,borderRadius:6,padding:"7px 9px",marginBottom:5,transition:"transform 0.1s"}}
+            onMouseEnter={e=>{e.currentTarget.style.transform="translateX(1px)";_hlBoardTile(p.id,true);}}
+            onMouseLeave={e=>{e.currentTarget.style.transform="translateX(0)";_hlBoardTile(p.id,false);}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.bcProjectNumber||"(no #)"}{p.name?` — ${p.name}`:""}</div>
+              <div style={{fontSize:12,marginTop:2,color:col,fontWeight:700}}>{_expiryLabel(p.quoteExpiresAt)}</div>
+            </div>
+            {pageMode&&<div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0}}>${_projectSellTotal(p).toLocaleString(undefined,{maximumFractionDigits:0})}</div>}
+          </div>
+        );
+      })}
+    </div>
   </>):null;
   return(
     <aside style={pageMode
@@ -45453,7 +45518,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
         <div style={{padding:"4px 10px 8px"}}>
           {_attn.length===0
             ?<div style={{padding:"10px 6px",fontSize:13,color:C.green,fontWeight:600}}>✓ All caught up — nothing needs attention.</div>
-            :_attn.map(({project,bucket,color})=>{
+            :_attn.slice(0,5).map(({project,bucket,color})=>{ // F060: cap NEEDS ATTENTION at top 5 (rail + dashboard)
               const [col]=_pillTint[color];
               const elapsed=_now-_todoClockStart(project,bucket);
               const rfq=_rfqAwaitingSummary(project);
@@ -45481,14 +45546,19 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
                       </div>
                     )}
                   </div>
+                  {/* F060: SELL total on the right — pageMode (dashboard) only, so it doesn't crowd the 380px standing rail. */}
+                  {pageMode&&<div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0,alignSelf:"center"}}>${_projectSellTotal(project).toLocaleString(undefined,{maximumFractionDigits:0})}</div>}
                 </div>
               );
             })}
           {_attn.length>0&&(
-            <div style={{padding:"6px 6px 2px",fontSize:12,color:C.muted}}>{_attn.length} project{_attn.length===1?"":"s"}</div>
+            <div style={{padding:"6px 6px 2px",fontSize:12,color:C.muted}}>{_attn.length>5?`Top 5 of ${_attn.length}`:`${_attn.length} project${_attn.length===1?"":"s"}`}</div>
           )}
         </div>
       </>)}
+      {/* F060: QUOTES EXPIRING — standing rail shows it below Needs Attention; dashboard shows it as
+          its own column (pageSection="expiring"). Null when no quotes are expiring (hides the section). */}
+      {_showExpiring&&_expiringBlock}
     </aside>
   );
 }
@@ -50288,104 +50358,26 @@ INSTRUCTIONS:
           <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px",marginBottom:18}}>
             <TodoRail pageMode pageSection="pills" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
           </div>
-          {/* ROW 2 — F030 r3: three reflowing columns, left→right:
-              [Needs Attention | My Projects] · [📧 Email window] · [🔔 ARC bell — skinny far-right]. */}
+          {/* ROW 2 — F060 (2026-07-23): three EQUAL-width columns (flex:1 1 0), left→right:
+              NEEDS ATTENTION | QUOTES EXPIRING | ARC NOTIFICATIONS. The old 📧 Email column and the
+              MY PROJECTS list were removed here; the outlook* state/handlers remain defined elsewhere
+              for reuse. Each column is a page-mode TodoRail slice or the existing bell window. */}
           <div style={{display:"flex",gap:20,alignItems:"flex-start",flexWrap:"wrap"}}>
-            <div style={{flex:"0 1 740px",minWidth:0,display:"flex",gap:18,flexWrap:"wrap"}}>
-              {/* Needs Attention (LEFT) — page-mode TodoRail pageSection="attention": renders ONLY the
-                  timer-sorted attention list, same _sections/attention derivation as the pills band above. */}
-              <div style={{flex:"1 1 345px",minWidth:0,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
-                <TodoRail pageMode pageSection="attention" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
-              </div>
-              {/* My Projects (RIGHT) — project rows + $ totals; scoped via the _isMyProject SSOT (same
-                  scope expression the rail's memo uses); $ total mirrors the buildArcContext
-                  Σ qty*unitPrice pattern. NOT the heavy Dashboard kanban tile component. */}
-              <div style={{flex:"1 1 345px",minWidth:0}}>
-                {(()=>{
-                  const myProjects=projects.filter(p=>_isMyProject(p,user.uid)&&(!p.transferred||p.transferredTo!==user.uid)&&!p.importedFromBC&&!p.lostAt);
-                  if(!myProjects.length)return null;
-                  const _projTotal=p=>(p.panels||[]).reduce((s,pan)=>(pan.bom||[]).reduce((ss,r)=>ss+(r.qty||0)*(r.unitPrice||0),0)+s,0);
-                  return(
-                    <div style={{background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 16px"}}>
-                      <div style={{fontSize:11,fontWeight:800,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:10}}>My Projects ({myProjects.length})</div>
-                      {myProjects.map(p=>{
-                        const tot=_projTotal(p);
-                        return(
-                          <div key={p.id} onClick={()=>handleOpen(p)} title={`Open ${p.bcProjectNumber||p.name||"project"}`}
-                            style={{cursor:"pointer",display:"flex",gap:10,alignItems:"center",background:"#0c0c16",border:`1px solid ${C.border}`,borderRadius:8,padding:"9px 12px",marginBottom:6,transition:"transform 0.1s"}}
-                            onMouseEnter={e=>e.currentTarget.style.transform="translateX(1px)"}
-                            onMouseLeave={e=>e.currentTarget.style.transform="translateX(0)"}>
-                            <div style={{flex:1,minWidth:0}}>
-                              <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.bcProjectNumber||"(no #)"}{p.name?` — ${p.name}`:""}</div>
-                              <div style={{fontSize:12,color:C.muted,marginTop:2,textTransform:"capitalize"}}>{String(projectStatus(p)||"").replace(/_/g," ")}</div>
-                            </div>
-                            <div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0}}>${tot.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  );
-                })()}
-              </div>
+            {/* NEEDS ATTENTION (col 1) — pageSection="attention": timer-sorted list (top 5) with the
+                pageMode $ SELL total on each row. Same _sections/attention derivation as the pills band. */}
+            <div style={{flex:"1 1 0",minWidth:300,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+              <TodoRail pageMode pageSection="attention" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
             </div>
-            {/* 📧 EMAIL COLUMN — F030 r3 (2026-07-22): the Email window is now its OWN Row-2 column
-                (no longer stacked with the bell). It sits between the pipelines and the skinny bell
-                column at a comfortable width for subject + one-line preview. */}
-            <div style={{flex:"1 1 380px",minWidth:320,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
-              {/* 📧 Email — F029 slice-1 (2026-07-22): live Outlook panel showing the user's relevant
-                  emails (high-importance + RFQ) via the existing Graph/MSAL stack. READ-ONLY + ephemeral
-                  (state only, nothing persisted). States: checking / loading / disconnected (Connect
-                  Outlook) / connected (row list) / error. On-load + 5-min visible-tab poll + manual ↻. */}
-              {(()=>{
-                const _mailAgo=ts=>{
-                  if(!ts)return"";
-                  const m=Math.max(0,Math.round((Date.now()-ts)/60000));
-                  if(m<1)return"just now";
-                  if(m<60)return`${m}m ago`;
-                  const h=Math.round(m/60);return h<24?`${h}h ago`:`${Math.round(h/24)}d ago`;
-                };
-                return(
-                <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-                  <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
-                    <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>📧 Email</span>
-                    {outlookMailStatus==="connected"&&outlookMailFetchedAt&&<span style={{fontSize:10,color:C.muted}}>updated {_mailAgo(outlookMailFetchedAt)}</span>}
-                    {(outlookMailStatus==="connected"||outlookMailStatus==="error")&&(
-                      <button title="Refresh email" onClick={refreshOutlookMail} style={{background:"none",border:"none",color:C.accent,cursor:"pointer",fontSize:15,fontWeight:700,padding:0,lineHeight:1}}>↻</button>
-                    )}
-                  </div>
-                  <div style={{padding:"10px 12px"}}>
-                    {outlookMailStatus==="checking"&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Checking Outlook…</div>}
-                    {outlookMailStatus==="loading"&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Connecting to Outlook…</div>}
-                    {outlookMailStatus==="disconnected"&&(
-                      <div style={{padding:"8px 4px 12px"}}>
-                        <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.5}}>Connect Outlook to see your high-importance and RFQ emails here.</div>
-                        <button onClick={connectOutlook} style={{background:C.accent,color:"#fff",border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Connect Outlook</button>
-                      </div>
-                    )}
-                    {outlookMailStatus==="error"&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>Couldn't load email — try ↻ refresh.</div>}
-                    {outlookMailStatus==="connected"&&outlookEmails.length===0&&<div style={{padding:"2px 4px 10px",fontSize:12,color:C.muted,fontStyle:"italic"}}>No relevant emails.</div>}
-                    {outlookMailStatus==="connected"&&outlookEmails.map(m=>{
-                      const isHigh=m.importance==="high";
-                      return(
-                        <div key={m.id} onClick={()=>{if(m.webLink)window.open(m.webLink,"_blank","noopener");}} title={m.subject}
-                          style={{cursor:m.webLink?"pointer":"default",background:"#0c0c16",border:`1px solid ${C.border}`,borderRadius:6,padding:"9px 12px",marginBottom:6}}>
-                          <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                            <span style={{fontSize:13,fontWeight:m.isRead?700:800,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",flex:1}}>{!m.isRead&&<span style={{color:C.accent,marginRight:4}}>●</span>}{m.subject}</span>
-                            <span style={{flexShrink:0,fontSize:9,fontWeight:800,textTransform:"uppercase",letterSpacing:0.5,borderRadius:10,padding:"1px 7px",color:isHigh?"#fca5a5":"#93c5fd",background:isHigh?"#3f1d1d":"#1e293b"}}>{isHigh?"High":"RFQ"}</span>
-                          </div>
-                          <div style={{fontSize:12,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.from} · {m.preview}</div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-                );
-              })()}
+            {/* QUOTES EXPIRING (col 2) — pageSection="expiring": SENT quotes ≤7d from expiry (incl.
+                already-expired, most urgent first), top 5, each row showing an expiry indicator + the
+                $ SELL total (_projectSellTotal). Same factored block as the standing rail (no fork). */}
+            <div style={{flex:"1 1 0",minWidth:300,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+              <TodoRail pageMode pageSection="expiring" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
             </div>
-            {/* 🔔 ARC NOTIFICATIONS COLUMN — the EXISTING live bell window (unread-only), now split into
-                its OWN SKINNY far-right Row-2 column. Reuses the bell's onSnapshot listener + state (no new
-                query) and the ONE shared renderNotifRow. Behavior unchanged — only position/width changed. */}
-            <div style={{flex:"0 0 260px",minWidth:220,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
+            {/* 🔔 ARC NOTIFICATIONS COLUMN (col 3) — the EXISTING live bell window (unread-only). F060:
+                promoted from the skinny far-right column to an EQUAL third column (flex:1 1 0). Reuses
+                the bell's onSnapshot listener + state (no new query) and the ONE shared renderNotifRow. */}
+            <div style={{flex:"1 1 0",minWidth:300,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
               <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",flex:1,display:"flex",flexDirection:"column",minHeight:0}}>
                 <div style={{padding:"12px 16px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
                   <span style={{fontSize:13,fontWeight:800,color:C.text,letterSpacing:0.3,flex:1}}>🔔 ARC Notifications {notifications.length>0&&`(${notifications.length})`}</span>
