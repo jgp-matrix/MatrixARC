@@ -45295,7 +45295,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     const _todoBuckets=[
       ["draft","Draft"],
       ["in_progress","(BOM) In Process"],
-      ["process_rfq","Pending RFQs"],
+      ["process_rfq","RFQs to Send"],
       ["ready_review","Ready To Review"],
       ["pre_review","In Pre-Review"],
       ["ready_send","Ready To Send"],
