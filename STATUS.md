@@ -15,7 +15,7 @@
 > ## ⏳ NEEDS JON (2026-07-24, while in the shop) — reply by number
 > 1. ✅ **F065 build-go — RECEIVED (Jon: "Go for F065").** 🟩 Marc build lane running (builds on Test, incorporating Coach F1–F5). Freddy will validate → Coach re-review the diff → deploy to Test → then this becomes "verify F065 on Test."
 > 2. **B058 prod-verify** (v1.24.34 LIVE): open a project → non-BC part → enter a manual price → the **BC circle should STAY** (it used to vanish). Confirm on prod.
-> 3. **B060 (new, Jon):** BC-circle flickers (disappear→reappear) when changing a price on a BC-circle item. Cosmetic (end state correct); logged, diagnosis DEFERRED until the F065 build finishes editing app.jsx. No action needed from you.
+> 3. **B060 fix-or-leave?** ✅ DIAGNOSED (`docs/B060-BC-CIRCLE-FLICKER-DIAGNOSIS.md`): the flicker is `applyConfirmedPrice`'s optimistic-then-revert — "✓ Confirm & Push to BC" marks the row `bc`/`in-bc` (circle hides), the BC push FAILS for a not-in-BC row, then reverts to `manual` (circle returns). B058 confirmed NOT the cause (it made a pre-existing transient visible). Clean fix exists (promote-on-success) but it shifts `priceSource` during the ~1-2s push window (RFQ-eligibility/styling = money-path) → your call: **fix (via Coach review + a test-push)** or **leave** (LOW sev, end state already correct). *Freddy rec: fix it — the intermediate `in-bc` is factually wrong data, worth removing; low risk via review.*
 
 > ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
 > **Quote-quality safeguards:** F044 (block-send-on-red + manager override) · F046 (per-row `priceSetBy`/`priceSetAt` audit at ~35 write sites) · F047 (hover "Priced by {who} · {date} · {source}").
