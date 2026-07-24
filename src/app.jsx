@@ -17207,6 +17207,15 @@ function _quotesExpiring(projects,uid,now){
     .sort((a,b)=>a.quoteExpiresAt-b.quoteExpiresAt)
     .slice(0,5);
 }
+// F063 (2026-07-23): the user's SENT quotes — mine (_isMyProject) AND in the quotes_sent bucket
+// (_todoBucketOf === SSOT for firm/budgetary sent, NOT diverged into a PO, NOT lost). Most-recently-
+// sent first (quoteSentAt desc). Pure/read-only. Powers the MY DASHBOARD "Quotes Sent" column
+// (TodoRail pageSection="sent"); NOT capped (unlike _quotesExpiring's top-5) — it's a full column list.
+function _quotesSent(projects,uid){
+  return (projects||[])
+    .filter(p=>_isMyProject(p,uid)&&_todoBucketOf(p)==="quotes_sent")
+    .sort((a,b)=>(b.quoteSentAt||0)-(a.quoteSentAt||0));
+}
 // F032: ACTUAL-salesperson test — true iff the user resolves to a BC salesperson code (the
 // SAME email↔cache match _isMyProject uses, via _mySalespersonCode). Merely CREATING a project
 // (createdBy) does NOT make you a salesperson — this is the item-2 fix so a reviewer/designer
@@ -46048,6 +46057,9 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   // F060: QUOTES EXPIRING gate — shown in the standing rail (below Needs Attention) AND as its own
   // dashboard column via pageSection="expiring". Same factored block in both (no data-logic fork).
   const _showExpiring=!pageSection||pageSection==="expiring";
+  // F063: QUOTES SENT gate — MY DASHBOARD column ONLY (pageSection==="sent"). Deliberately NOT
+  // shown in the standing rail (unlike _showExpiring, which also renders when pageSection is undefined).
+  const _showSent=pageSection==="sent";
   // F030 r2 (2026-07-22): factor each role's pill group into a reusable fragment (same _sections/
   // bucket derivation — NO data-logic fork) so pageMode can arrange Review Quote | Engineering
   // side-by-side while the standing rail keeps them stacked. null when the role isn't present.
@@ -46109,6 +46121,31 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
           </div>
         );
       })}
+    </div>
+  </>);
+  // F063: QUOTES SENT list — the user's SENT quotes (_quotesSent, quotes_sent bucket, most-recently-
+  // sent first). MY DASHBOARD column only (pageSection="sent"). Mirrors the QUOTES EXPIRING block:
+  // rows open the project + hover-highlight the board tile; each shows a "sent {date}" indicator and
+  // the $ SELL total (pageMode). Blue left-border matches the Quotes Sent column color (#38bdf8).
+  const _sent=_showSent?_quotesSent(projects,uid):[];
+  const _sentBlock=(<>
+    {_sectionHeader(`Quotes Sent (${_sent.length})`)}
+    <div style={{padding:"4px 10px 8px"}}>
+      {_sent.length===0
+        ?<div style={{padding:"10px 6px",fontSize:13,color:C.green,fontWeight:600}}>✓ No sent quotes.</div>
+        :_sent.map(p=>(
+          <div key={p.id+":sent"} onClick={()=>onOpenProject&&onOpenProject(p)}
+            title={`Open ${p.bcProjectNumber||p.name||"project"}`}
+            style={{cursor:"pointer",display:"flex",gap:8,alignItems:"center",background:"#0c0c16",border:`1px solid ${C.border}`,borderLeft:"3px solid #38bdf8",borderRadius:6,padding:"7px 9px",marginBottom:5,transition:"transform 0.1s"}}
+            onMouseEnter={e=>{e.currentTarget.style.transform="translateX(1px)";_hlBoardTile(p.id,true);}}
+            onMouseLeave={e=>{e.currentTarget.style.transform="translateX(0)";_hlBoardTile(p.id,false);}}>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:14,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{p.bcProjectNumber||"(no #)"}{p.name?` — ${p.name}`:""}</div>
+              <div style={{fontSize:12,marginTop:2,color:C.sub,fontWeight:600}}>{p.quoteSentAt?`sent ${new Date(p.quoteSentAt).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}`:"sent"}</div>
+            </div>
+            {pageMode&&<div style={{fontSize:15,fontWeight:800,color:C.accent,fontFamily:"system-ui,sans-serif",flexShrink:0}}>${_projectSellTotal(p).toLocaleString(undefined,{maximumFractionDigits:0})}</div>}
+          </div>
+        ))}
     </div>
   </>);
   return(
@@ -46202,6 +46239,8 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
       {/* F060: QUOTES EXPIRING — standing rail shows it below Needs Attention; dashboard shows it as
           its own column (pageSection="expiring"). Null when no quotes are expiring (hides the section). */}
       {_showExpiring&&_expiringBlock}
+      {/* F063: QUOTES SENT — MY DASHBOARD column only (pageSection="sent"); never in the standing rail. */}
+      {_showSent&&_sentBlock}
     </aside>
   );
 }
@@ -46214,6 +46253,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
   const [projectSearch,setProjectSearch]=useState("");
   const [dragProjectId,setDragProjectId]=useState(null);
   const [dropTarget,setDropTarget]=useState(null);
+  // F063 (2026-07-23): SHOW SENT toggle. The QUOTES SENT column is OFF the DEFAULT Sales status board
+  // (its projects are never lost — they still surface on the MY DASHBOARD "Quotes Sent" column). Default
+  // hidden; the header button (status view only) appends "quotes_sent" to the board's column order when on.
+  const [showSentColumn,setShowSentColumn]=useState(false);
   // F023: click a board column header to focus the view to ONLY that status/column.
   // null = show all columns (normal kanban); else = the focused column's KEY (not label).
   // View-only local UI state — no Firestore read/write, no status mutation.
@@ -46400,7 +46443,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // original Won state. Without this carve-out, ECO-rework projects fall
       // through into a no-man's-land (excluded from both Sales AND Production).
       // F026: 8-column Sales board — IN PRE-REVIEW sits BETWEEN Ready To Review and Ready To Send.
-      const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send","quotes_sent"]; // F061: ACTIVE ECO column removed — ECO projects route to their real status columns (red tile border still marks them)
+      const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send"]; // F063: quotes_sent OFF the default board (SHOW SENT toggle re-appends it — see below); F061: ACTIVE ECO column removed — ECO projects route to their real status columns (red tile border still marks them)
+      if(showSentColumn)order.push("quotes_sent"); // F063: SHOW SENT — append the QUOTES SENT column only while the header toggle is on (labels entry retained below either way)
       const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",ready_review:"Ready To Review",pre_review:"In Pre-Review",ready_send:"Ready To Send",quotes_sent:"Quotes Sent"};
       // F025 (3a): column routing now delegates to the SSOT _todoBucketOf (the TOTAL status→column
       // map + the active-ECO override + the PO'd carve-out all live there), so the To-Do pane pills
@@ -46413,7 +46457,12 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         if(!map[col])map[col]=[];
         map[col].push(p);
       });
-      return order.map(k=>({key:k,label:labels[k],items:map[k]||[]}));
+      // F064 (2026-07-23): within EACH status column, projects with an ACTIVE ECO (computeActiveEco
+      // truthy — the red-border ones that per F061 route to their real status column) pin to the TOP.
+      // Active-ECO-first is the PRIMARY key; ties return 0 so Array.sort's stability preserves the
+      // existing within-column order (F027 left the board's secondary order as the natural list order —
+      // priority-pin ordering lives only in the To-Do pane, not the board). .slice() avoids mutating map[k].
+      return order.map(k=>({key:k,label:labels[k],items:(map[k]||[]).slice().sort((a,b)=>((computeActiveEco(b)?1:0)-(computeActiveEco(a)?1:0)))}));
     }
     if(groupBy==="budgetary"){
       return [{label:"Budgetary Quotes",items:list.filter(p=>(p.panels||[]).some(pan=>(pan.pricing||{}).isBudgetary))}];
@@ -46518,6 +46567,13 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
             My Projects
           </button>
         </div>
+        {/* F063 (2026-07-23): SHOW SENT — toggles the QUOTES SENT column on the Sales status board
+            (off by default). Status view only. Blue active state matches the Quotes Sent column color. */}
+        {groupBy==="status"&&<div style={{marginLeft:8,borderLeft:`1px solid ${C.border}`,paddingLeft:8}}>
+          <button onClick={()=>setShowSentColumn(v=>!v)} title={showSentColumn?"Hide the Quotes Sent column":"Show the Quotes Sent column"} style={{background:showSentColumn?"#0c2233":"#383850",color:showSentColumn?"#38bdf8":C.muted,border:showSentColumn?"1.5px solid #38bdf8":"1.5px solid #7a7a9a",borderRadius:8,padding:"8px 20px",fontSize:14,cursor:"pointer",fontWeight:600,transition:"all 0.15s"}}>
+            {showSentColumn?"HIDE SENT":"SHOW SENT"}
+          </button>
+        </div>}
       </div>}
 
       {loading&&!bootError&&(
@@ -51040,7 +51096,13 @@ INSTRUCTIONS:
             <div style={{flex:"1 1 0",minWidth:300,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
               <TodoRail pageMode pageSection="expiring" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
             </div>
-            {/* 🔔 ARC NOTIFICATIONS COLUMN (col 3) — the EXISTING live bell window (unread-only). F060:
+            {/* QUOTES SENT (col 3) — F063 (2026-07-23): pageSection="sent": the user's SENT quotes
+                (quotes_sent bucket, most-recently-sent first) with a "sent {date}" indicator + $ SELL
+                total. Mirrors the QUOTES EXPIRING column exactly; sits between EXPIRING and NOTIFICATIONS. */}
+            <div style={{flex:"1 1 0",minWidth:300,background:"#080810",border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden",padding:"4px 0 8px"}}>
+              <TodoRail pageMode pageSection="sent" projects={projects} uid={user.uid} userFirstName={userFirstName} salesCacheVer={salesCacheVer} railOpen={railOpen} setRailOpen={setRailOpen} onFocusBucket={handleRailFocus} onOpenProject={handleOpen}/>
+            </div>
+            {/* 🔔 ARC NOTIFICATIONS COLUMN (col 4) — the EXISTING live bell window (unread-only). F060:
                 promoted from the skinny far-right column to an EQUAL third column (flex:1 1 0). Reuses
                 the bell's onSnapshot listener + state (no new query) and the ONE shared renderNotifRow. */}
             <div style={{flex:"1 1 0",minWidth:300,display:"flex",flexDirection:"column",alignSelf:"stretch"}}>
