@@ -5802,9 +5802,21 @@ async function expireJunkPurchasePrices(records,endingDateISO,onProgress){
         eff=rec.startingDate;out.clamped=true;
       }
       out.effectiveDate=eff;
+      // 409 fix: the NAV list-scan carries no usable etag and BC rejects If-Match:"*" (→ 409 on all).
+      // Fetch a FRESH etag with a single-record GET immediately before the PATCH (BC returns it in the
+      // body @odata.etag or the ETag response header), then PATCH with that concrete etag.
+      let freshEtag=rec.etag||"";
+      try{
+        const gr=await bcGatedFetch(rec.keyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+        if(gr&&gr.ok){
+          const _hEtag=(gr.headers&&gr.headers.get)?gr.headers.get("ETag"):null;
+          let _gb=null;try{_gb=JSON.parse(await gr.text());}catch(_){}
+          freshEtag=(_gb&&_gb["@odata.etag"])||_hEtag||freshEtag;
+        }
+      }catch(_ge){}
       const r=await bcGatedFetch(rec.keyUrl,{
         method:"PATCH",
-        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":rec.etag||"*","Accept":"application/json"},
+        headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":freshEtag||"*","Accept":"application/json"},
         body:JSON.stringify({Ending_Date:eff}),
       });
       out.status=r?r.status:0;
@@ -41847,7 +41859,7 @@ function ExpireJunkPricesModal({onClose}){
   async function doExpire(){
     if(!canExpire)return;
     const n=selectedRecords.length;
-    const ok=await arcConfirm(`Expire ${n} BC PurchasePrice record${n===1?"":"s"} by setting Ending_Date = ${endingDate}?\n\nThis writes to PRODUCTION Business Central. Records are expired, not deleted.`,{kind:"warning",destructive:true,okLabel:`Expire ${n} records`});
+    const ok=await arcConfirm(`Expire ${n} BC PurchasePrice record${n===1?"":"s"} by setting Ending_Date = ${endingDate}?\n\nThis writes to the connected Business Central database. Records are expired, not deleted.`,{kind:"warning",destructive:true,okLabel:`Expire ${n} records`});
     if(!ok)return;
     setRunning(true);setRunError("");setRunResult(null);setRunProg({done:0,total:n});
     try{
@@ -41913,7 +41925,7 @@ function ExpireJunkPricesModal({onClose}){
         </div>
         {/* PROD write warning banner */}
         <div style={{padding:"10px 14px",background:"#3a1f00",border:"1px solid #f59e0baa",borderRadius:6,color:"#fcd34d",fontSize:12,lineHeight:1.5,marginBottom:14}}>
-          <strong>⚠ Writes to PRODUCTION Business Central.</strong> The Test environment fakes BC writes — run this on prod only. Records are <strong>expired</strong> (Ending_Date set), never deleted.
+          <strong>⚠ Writes to the CONNECTED Business Central database</strong> — whichever BC environment ARC is currently linked to (check the BC pill). Records are <strong>expired</strong> (Ending_Date set), never deleted. The ARC <strong>Test host</strong> fakes BC writes, so run this from a host with a live BC connection.
         </div>
         {IS_TEST_ENV&&(
           <div style={{padding:"10px 14px",background:"#3a0a0a",border:"1px solid #ef4444aa",borderRadius:6,color:"#fca5a5",fontSize:12,lineHeight:1.5,marginBottom:14,fontWeight:700}}>
@@ -42018,6 +42030,7 @@ function ExpireJunkPricesModal({onClose}){
                 )}
                 {runResult.failed>0&&(
                   <div style={{marginTop:6,color:"#fca5a5",fontSize:12}}>
+                    <div style={{fontWeight:700,marginBottom:3}}>First failure detail: {(runResult.results.find(r=>!r.ok)||{}).error||"—"}</div>
                     Failed items: {runResult.results.filter(r=>!r.ok).map(r=>`${r.itemNo}/${r.vendorNo} (${r.status||r.error})`).join(", ")}
                   </div>
                 )}
