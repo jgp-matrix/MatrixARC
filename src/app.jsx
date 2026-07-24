@@ -32370,7 +32370,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             )}
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16,maxHeight:260,overflowY:"auto"}}>
               {crossLinePrompt.otherRows.map((r,i)=>{
-                const isManualProtected=crossLinePrompt.kind==="price"&&r.priceSource==="manual";
+                const isManualOverride=crossLinePrompt.kind==="price"&&r.priceSource==="manual";
                 const qtyDiff=crossLinePrompt.sourceQty!=null&&r.qty!=null&&Number(r.qty)!==Number(crossLinePrompt.sourceQty);
                 const cur=crossLinePrompt.kind==="price"?(r.unitPrice!=null?`$${Number(r.unitPrice).toFixed(2)}`:"—")
                   :crossLinePrompt.kind==="leadTime"?(r.leadTimeDays!=null?`${r.leadTimeDays} days`:"—")
@@ -32381,7 +32381,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       <span style={{fontSize:12,fontWeight:700,color:C.text}}>{r.panelName}</span>
                       <span style={{fontSize:12,color:C.muted}}>current {cur}{r.qty!=null?` · qty ${r.qty}`:""}</span>
                     </div>
-                    {isManualProtected&&<div style={{fontSize:10,color:"#f59e0b",marginTop:3,fontWeight:600}}>manual — protected (price kept; not overwritten)</div>}
+                    {isManualOverride&&<div style={{fontSize:10,color:"#f59e0b",marginTop:3,fontWeight:600}}>manually priced — will be overwritten</div>}
                     {qtyDiff&&<div style={{fontSize:10,color:"#fbbf24",marginTop:3}}>⚠ qty differs ({r.qty} vs {crossLinePrompt.sourceQty}) — check for qty-break pricing</div>}
                   </div>
                 );
@@ -39907,8 +39907,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         if(_samePartKey(row.partNumber)!==key)return row;         // defensive exact re-match
         if(_isExcludedFromPriceCheck(row))return row;             // labor/customer-supplied/etc.
         const rowPatch={};
-        // PRICE — skip on priceSource:"manual" targets (Noah's-bug carve-out, mirrors :40522).
-        if(hasPrice&&row.priceSource!=="manual"){
+        // PRICE — F065 Bug A (Jon 2026-07-24): [Update all] is an EXPLICIT, confirmed user override →
+        // propagate the price to ALL matching target rows INCLUDING manually-priced ones (the modal shows
+        // each Line's current value first, so it's informed). Reverses the earlier "manual — protected"
+        // carve-out FOR THIS EXPLICIT ACTION ONLY. ⚠ money-path — removes a data-safety guard; Coach to
+        // review. The portal/scraper manual-skip elsewhere (doApplyPortalPrices) is untouched.
+        if(hasPrice){
           const ps=patch.priceSource||"bc";
           rowPatch.unitPrice=patch.price;
           rowPatch.priceSource=ps;
