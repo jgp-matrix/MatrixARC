@@ -5516,51 +5516,124 @@ const AUTO_BC_REPRICE_ENABLED=false;
 // "Get New Pricing" / "Refresh All" buttons. RFQ, portal apply, and manual per-row price entry still work.
 // The F050 read-only plausibility sweep still uses estimatePrices (it reads, never sets a price).
 const AUTO_PRICING_ENABLED=false;
+// B057 (2026-07-23) — REBUILT. Push a new PurchasePrice so BC ends up with exactly ONE
+// active record for this item+vendor+UoM: the newest. Two defects were fixed:
+//   (a) the old PATCH used a SINGLE-segment key `PurchasePrices('ITEMNO')` on a COMPOSITE-keyed
+//       legacy-NAV entity — it misfired and fell through to POST a duplicate every push; and
+//   (b) it never EXPIRED the superseded record, so old + junk prices piled up as active
+//       (the root of the $0.71 accumulation).
+// Now: scope strictly to the SAME UoM as the push; if a same-day record exists, update it in
+// place; otherwise EXPIRE every older-and-still-active record (Ending_Date = pushDate − 1 day)
+// and POST the new one. All PATCHes go through the composite key URL (_bcPpKeyUrl) with a FRESH
+// etag (If-Match:"*" is rejected → 409 on this tenant) — mirroring the F051j expire path.
+// Signature + return contract ({ok:true}/{ok:false,reason}) preserved for the ~14 callers.
 async function bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom){
   if(!_bcToken||!itemNo||!vendorNo)return{ok:true};
   try{
+    // startingDate may be a JS timestamp (Date.now()) OR an ISO date string — both normalize here.
     const dateStr=startingDate?new Date(startingDate).toISOString().split('T')[0]:new Date().toISOString().split('T')[0];
     const bcUom=bcNormalizeUom(uom);
+    // pushDate minus one day (UTC-safe) — the Ending_Date stamped on superseded older records.
+    const _pd=new Date(dateStr+"T00:00:00Z");_pd.setUTCDate(_pd.getUTCDate()-1);
+    const expireDate=_pd.toISOString().slice(0,10);
     // Discover the OData page name for Purchase Prices
     const allPages=await bcDiscoverODataPages();
     const ppPage=allPages.find(n=>/purchase.?price/i.test(n));
     if(!ppPage){console.warn("bcPushPurchasePrice: no PurchasePrices OData page found. Available pages:",allPages.join(', '));return{ok:false,reason:'no_page'};}
     const baseUrl=`${BC_ODATA_BASE}/${ppPage}`;
-    // Check if record already exists for this item+vendor
-    const filterUrl=`${baseUrl}?$filter=Item_No eq '${encodeURIComponent(itemNo)}' and Vendor_No eq '${encodeURIComponent(vendorNo)}'`;
+    // Fetch existing records for this item+vendor (full NAV compound key + cost + ending date).
+    // Default metadata only (Accept: application/json) — metadata=full returns unparseable JSON here.
+    const selectCols="Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date";
+    const filterClause=`Item_No eq '${itemNo.replace(/'/g,"''")}' and Vendor_No eq '${vendorNo.replace(/'/g,"''")}'`;
+    const filterUrl=`${baseUrl}?$filter=${encodeURIComponent(filterClause)}&$select=${selectCols}`;
     console.log("bcPushPurchasePrice: checking existing for",itemNo,vendorNo,"via",ppPage);
-    const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
-    if(gr.ok){
-      const gd=await gr.json();
-      const existing=(gd.value||[])[0];
-      if(existing){
-        // DECISION(v1.19.634): Removed % sanity check. Per user: pricing decisions must be
-        // driven by eligibility logic (only scrape when BC price is stale), not by ratio
-        // heuristics that can be fooled by genuine price movements. The upstream fix is to
-        // not call bcPushPurchasePrice with bad data in the first place — see runPricingOnPanel
-        // eligibility filter which now respects BC PurchasePrices Starting_Date.
-        // PATCH existing record
-        const etag=existing["@odata.etag"];
-        const patchBody={Direct_Unit_Cost:unitCost,Starting_Date:dateStr};
-        if(bcUom)patchBody.Unit_of_Measure_Code=bcUom;
-        const pr=await bcGatedFetch(`${baseUrl}('${encodeURIComponent(existing.Item_No)}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag||"*"},body:JSON.stringify(patchBody)});
-        if(pr.ok){console.log("bcPushPurchasePrice PATCH OK:",itemNo,vendorNo,unitCost,dateStr);return{ok:true};}
-        const ptxt=await pr.text().catch(()=>"");
-        console.warn("bcPushPurchasePrice PATCH failed:",pr.status,ptxt);
+    let existing=[];
+    const gr=await bcGatedFetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(gr&&gr.ok){try{const gd=JSON.parse(await gr.text());existing=gd.value||[];}catch(_){}}
+    // SCOPE — Coach F1 (load-bearing, prevents data loss): act ONLY on the EXACT lane ARC writes into —
+    // same UoM AND default Currency_Code='' AND Variant_Code='' AND Minimum_Quantity=0. A record that
+    // merely shares the UoM but is a foreign-currency / variant / volume-break line is a DISTINCT legit
+    // price and must NEVER be expired.
+    const scoped=existing.filter(r=>(r.Unit_of_Measure_Code||'')===(bcUom||'')&&(r.Currency_Code||'')===''&&(r.Variant_Code||'')===''&&(Number(r.Minimum_Quantity)||0)===0);
+    // Coach F3: blank UoM — BC may persist the item's BASE UoM on the POSTed record, which the ''-UoM
+    // scope won't match, so the supersede safely no-ops (no over-expire; behaves like the old path).
+    // Callers should pass a concrete UoM (the active portal/DigiKey/Mouser/manual callers do).
+    if(!bcUom)console.warn("bcPushPurchasePrice: blank UoM — supersede may no-op (BC may store the item base UoM). Caller should pass a concrete UoM.");
+    const keyOf=r=>_bcPpKeyUrl(baseUrl,{itemNo:r.Item_No||'',vendorNo:r.Vendor_No||'',currencyCode:r.Currency_Code||'',startingDate:r.Starting_Date?String(r.Starting_Date).slice(0,10):'',variantCode:r.Variant_Code||'',uom:r.Unit_of_Measure_Code||'',minQty:Number(r.Minimum_Quantity||0)});
+    const sdOf=r=>r.Starting_Date?String(r.Starting_Date).slice(0,10):'';
+    // Best-effort: expire every OLDER + still-active scoped record (Ending_Date = pushDate−1). Never
+    // over-expires (strictly-older + active only; future-dated left alone); one failure never aborts.
+    async function _expireOlderActive(){
+      for(const r of scoped){
+        const sd=sdOf(r);
+        if(!sd||sd>=dateStr)continue; // skip same-day + future-dated
+        const active=_bcDateUnset(r.Ending_Date)||String(r.Ending_Date).slice(0,10)>=dateStr;
+        if(!active)continue; // already expired
+        try{
+          const er=await _bcPatchWithFreshEtag(keyOf(r),{Ending_Date:expireDate});
+          if(er.ok)console.log("bcPushPurchasePrice expired superseded record:",itemNo,vendorNo,"start",sd,"→ Ending",expireDate);
+          else console.warn("bcPushPurchasePrice expire failed (continuing):",er.status,er.error);
+        }catch(e){console.warn("bcPushPurchasePrice expire error (continuing):",e&&e.message);}
       }
     }
-    // Create new record via OData POST
+    // SAME-DAY record → update cost in place (un-expire if it was expired — F5: NAV blank sentinel,
+    // verify live). Coach F4: THEN still expire any OTHER older-active records. If the same-day update
+    // itself fails, expire NOTHING (leave the active price intact).
+    const sameDay=scoped.find(r=>sdOf(r)===dateStr);
+    if(sameDay){
+      const body={Direct_Unit_Cost:unitCost};
+      if(!_bcDateUnset(sameDay.Ending_Date))body.Ending_Date="0001-01-01";
+      const pr=await _bcPatchWithFreshEtag(keyOf(sameDay),body);
+      if(!pr.ok){console.warn("bcPushPurchasePrice same-day update failed:",pr.status,pr.error);return{ok:false,reason:'patch_failed'};}
+      await _expireOlderActive();
+      console.log("bcPushPurchasePrice same-day update OK:",itemNo,vendorNo,unitCost,dateStr);
+      return{ok:true};
+    }
+    // NO same-day record → Coach F2 (prevents a price-LESS item): POST the new record FIRST, and expire
+    // the older ones ONLY after the POST succeeds. A POST failure then leaves the prior price active
+    // (status quo) instead of expiring the old with no replacement.
     const payload={Item_No:itemNo,Vendor_No:vendorNo,Starting_Date:dateStr,Direct_Unit_Cost:unitCost};
     if(bcUom)payload.Unit_of_Measure_Code=bcUom;
     console.log("bcPushPurchasePrice POST:",JSON.stringify(payload));
     const cr=await bcGatedFetch(baseUrl,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify(payload)});
-    if(cr.ok){console.log("bcPushPurchasePrice POST OK:",itemNo,vendorNo,unitCost,dateStr);return{ok:true};}
-    const txt=await cr.text().catch(()=>"");
-    console.warn("bcPushPurchasePrice POST failed:",cr.status,txt);
-    // Detect "item not found" error
-    if(txt.includes('cannot be found in the related table (Item)')){ return{ok:false,reason:'item_not_found',itemNo};}
-    return{ok:false,reason:'post_failed'};
+    if(!cr.ok){
+      const txt=await cr.text().catch(()=>"");
+      console.warn("bcPushPurchasePrice POST failed (nothing expired):",cr.status,txt);
+      if(txt.includes('cannot be found in the related table (Item)'))return{ok:false,reason:'item_not_found',itemNo};
+      return{ok:false,reason:'post_failed'};
+    }
+    console.log("bcPushPurchasePrice POST OK:",itemNo,vendorNo,unitCost,dateStr);
+    await _expireOlderActive(); // POST succeeded → now retire the superseded older records
+    return{ok:true};
   }catch(e){console.warn("bcPushPurchasePrice error:",itemNo,e.message);return{ok:false,reason:'error'};}
+}
+
+// B057 helper — PATCH a legacy-NAV composite-key URL with a FRESH etag. Mirrors the F051j
+// expire path exactly: GET the key URL (default metadata) to read a live etag from the body
+// (@odata.etag) or the ETag response header, then PATCH with If-Match:<freshEtag> (BC rejects
+// If-Match:"*" → 409 on this tenant). A {_testEnvBlocked} fake-200 from the Test host is a
+// phantom write → reported ok:false. Returns {ok,status,error} (never throws).
+async function _bcPatchWithFreshEtag(keyUrl,bodyObj){
+  if(!_bcToken||!keyUrl)return{ok:false,status:0,error:"no token/keyUrl"};
+  let freshEtag="";
+  try{
+    const gr=await bcGatedFetch(keyUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(gr&&gr.ok){
+      const _hEtag=(gr.headers&&gr.headers.get)?gr.headers.get("ETag"):null;
+      let _gb=null;try{_gb=JSON.parse(await gr.text());}catch(_){}
+      freshEtag=(_gb&&_gb["@odata.etag"])||_hEtag||"";
+    }
+  }catch(_ge){}
+  try{
+    const r=await bcGatedFetch(keyUrl,{
+      method:"PATCH",
+      headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":freshEtag||"*","Accept":"application/json"},
+      body:JSON.stringify(bodyObj),
+    });
+    const txt=r?await r.text().catch(()=>""):"";
+    if(r&&r.ok&&/_testEnvBlocked/.test(txt))return{ok:false,status:r.status,error:"test_env_blocked"};
+    return{ok:!!(r&&r.ok),status:r?r.status:0,error:(r&&r.ok)?"":txt.slice(0,160)};
+  }catch(e){return{ok:false,status:0,error:e.message||String(e)};}
 }
 
 // Batch-fetch Purchase Prices from BC for a list of part numbers
