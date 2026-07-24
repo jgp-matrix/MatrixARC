@@ -102,7 +102,7 @@ Not every task goes through all five steps. Small fixes may skip straight to Coa
 - **Build:** JSX -> Babel -> bundle -> Firebase Hosting deploy
 - **BC** = Business Central, Matrix PCI's ERP system. ARC pushes data to BC (planning lines, items, pricing). BC is a secondary datastore, not source of truth
 - **Repo:** `C:\Users\jon\AppDev\MatrixARC\` (you can't access this, but Coach and Marc can)
-- **Current version:** **v1.24.13** (`public/index.html`; release `c061a06b`, 2026-07-22). Prod ACTIVE (no freeze). The 2026-07-22 session shipped v1.23.23→v1.24.13 — the User-Dashboard/rail epic (F025/F026/F027/F032/F033), notifications (B045, F031 #1–#4, B049, B050), B048, B018 money-path fix, F030 dashboard page, F029 slice-1 (Outlook Email panel), B051 markup render, B043/B046/B047/F028. Extraction model is **Claude Opus 4.8** (2576 px image ceiling — this is what made H5 high-DPI extraction possible). *(See "★ LATEST" below + SESSION-STATE.md for the full 2026-07-22 rundown.)*
+- **Current version:** **v1.24.33** (`public/index.html`, 2026-07-23). Prod ACTIVE (no freeze). ★ The 2026-07-23 session was the **PRJ402119 pricing-incident firefight + a big batch** (v1.24.13→v1.24.33, ~110 commits). **CRITICAL: pricing is RFQ-ONLY now — auto-pricing/scraper/AI-estimate are intentionally OFF via kill-switches (~app.jsx:5506-5518); do NOT "fix" the disabled pricing** (memory `project_rfq_only_pricing_mode`). Shipped: containment kill-switches, B052 (poll divergence guard), F045 (budgetary mgr-gate), F057 (CS display), F058 (pill removals), F059 (Mark Committed), F060 (To-Do/Dashboard restructure), F061 (ECO column removal), F051j (BC junk-price cleanup), B057 (write-path supersede/expire), F044 (block-send-on-red + mgr override), F046/F047 (price-setter stamp + hover), B056 (trailing-dot boot guard), B055 (BC Item Browser overflow), G018 (Debug Logs date filter), G019 (Questions hidden behind flag), F063 (SHOW SENT toggle + Dashboard column), F064 (ECO-to-top). Extraction model is **Claude Opus 4.8**. See SESSION-STATE.md for the full current picture + open items.
 - This three-role workflow was established during Milestone D (Archive & Restore) in late May 2026
 
 ---
@@ -337,9 +337,12 @@ Before closing and restarting Freddy, Coach, or Marc sessions, verify that criti
 
 ---
 
-## Recently Active Work (as of 2026-07-22)
+## Recently Active Work (as of 2026-07-23)
 
-### ★ LATEST — 2026-07-22 session (subagent-lane model; prod v1.23.22 → v1.24.13) — big dashboard/notifications batch SHIPPED
+### ★ LATEST — 2026-07-23 session (subagent-lane model; prod v1.24.13 → v1.24.33) — PRJ402119 pricing-incident firefight + big feature batch
+**PRJ402119 incident:** a quote shipped with wrong pricing (~$6000 item at $12). Root cause = the Royal Wholesale (V00373) scraper's "first `$` on the page" extraction wrote garbage **$0.71**/**$1.24** into BC PurchasePrice records across many parts; ARC's newest-Starting_Date-across-vendors fetch then picked the junk. **Contained** (auto-pricing OFF → **RFQ-ONLY**, see memory `project_rfq_only_pricing_mode` — do NOT "fix" the disabled pricing), **cleaned** (F051j expired the junk in the connected sandbox BC), **prevented** (B057 write-path supersede/expire + F041 primary-vendor pick). Also shipped a big batch of quote-quality safeguards + UI (B052, F045, F057, F058, F059, F060, F061, F044, F046/F047, B056, B055, G018, G019, F063, F064). ~110 commits — Coach-reviewed where money-path, Jon-verified. Full detail: **SESSION-STATE.md** + **INBOX.md** triage log. **Top open items:** gap5b-f015 (editing-lease ghost fix — built, needs multi-device verify), Quote Lifecycle & Lock epic (F048/49/51/52), F050, F062. Lessons banked: read the `check-scope.js` line on every deploy (out-of-scope refs pass validate_jsx but crash at runtime); trailing-dot hostname breaks the whole app (B056 guard shipped); this tenant's BC is legacy NAV OData (composite-key PATCH via manual key + fresh etag, no editLink, chokes on metadata=full).
+
+### 2026-07-22 session (subagent-lane model; prod v1.23.22 → v1.24.13) — big dashboard/notifications batch SHIPPED
 **Operating model = subagent-lane, worked well across a very large batch (~175 commits).** Freddy spawned Marc (build, usually worktree-isolated for parallel disjoint-region builds) + Coach (scope/review) lanes per task; flow = build→cherry-pick→test deploy→Jon eyeball→prod deploy; money-path/data-safety got a Coach review before prod. Continue this way.
 
 **Shipped to prod (v1.23.23 → v1.24.13):**
