@@ -5,8 +5,31 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🔴 2026-07-23 · prod v1.24.17 · EMERGENCY (PRJ402119 — all auto-pricing OFF, RFQ-only)
+## Current — 🟢 2026-07-24 · prod v1.24.33 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze
 
+> ## 📌 STATE
+> prod **v1.24.33** (release `65486383`, master @ `a631452a`) · master==origin · working tree clean · **no merge freeze**.
+> PRJ402119 pricing emergency = **CONTAINED**. RFQ remains the ONLY pricing-into-BC path; the 3 kill-switches (`SCRAPER_BC_WRITEBACK_ENABLED` / `AUTO_PRICING_ENABLED` / `AUTO_BC_REPRICE_ENABLED`) stay OFF **by design** until the re-enable prereqs land (this is the deliberate RFQ-only mode, not a fault).
+> 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
+
+> ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
+> **Quote-quality safeguards:** F044 (block-send-on-red + manager override) · F046 (per-row `priceSetBy`/`priceSetAt` audit at ~35 write sites) · F047 (hover "Priced by {who} · {date} · {source}").
+> **BC price hygiene:** F051j (Expire Junk BC Prices admin tool, v1.24.28 — 737 candidates scanned, $0.71/$1.24 junk EXPIRED + audited) · **B057** (write-path supersede — a new PurchasePrice now expires the superseded record; composite-key PATCH fixed; v1.24.29 Jon-VERIFIED, CLOSED).
+> **Quick wins:** B056 (trailing-dot boot guard in index.html — self-corrects a dotted host) · B055 (BC Item Browser results overflow) · G018 (Debug Logs from/to date-window filter, reaches past the 500-row cap).
+> **Display/UX batch:** F057 (show "CS" for customer-supplied / $0 vendor=customer rows) · F058 (remove per-line-card status pill) · F059 (Mark Committed re-anchor, no re-send) · F060/F061 (MY DASHBOARD 3-col restructure + ECO projects into their REAL status columns) · F063/F064 (QUOTES SENT off default board via SHOW SENT toggle + own Dashboard column; ECO sorts to top of column) · G019 (Engineering Questions UI hidden behind `QUESTIONS_ENABLED=false`, reversible).
+
+> ## ⏳ OPEN / QUEUED (already stamped in TODO.md; not built)
+> **Quote Lifecycle & Lock epic** — F048 (lock sent BOM: qty/price/lead-time/vendor + suppress auto-check) · F049 (PO-receipt quoted-vs-current cost-reconcile modal) · F051 (freshness-through-validity gate, on-open + hard send-block) · F052 (expired-quote handling at PO receipt). Scoping as one sequenced plan.
+> **F050** — send-time plausibility / divergence check (may consume the B052 `bcPollDivergence` flag); read-only sweep already on Test.
+> **F062** — dynamic rail "RFQs to Send" → "RFQs to Accept" label; blocked on plumbing per-project rfqUploads submission state into the rail data.
+> **gap5b-f015** — editing-lease ghost fix (BroadcastChannel liveness). BUILT on branch, blocked only on multi-device verify (Jon + Andrew + 2nd device). **High-value — cost Jon real work 2026-07-23.**
+> **F041** — primary-vendor selection: CORE already live; dormant gated edges + broader supplier matrix pending (a pricing re-enable prereq).
+> **Pricing re-enable prereqs** — F041 edges + write-side plausibility gate + scraper extraction fix; flip the 3 kill-switches back ON only after these land.
+> **Parked (low priority):** B053 (on-open auto-check repeat-nag) · B054 (bad learned vendor "ROYAL - SALT LAKE CITY" in `manufacturerVendorMap`).
+
+---
+
+> ## 🗄️ 2026-07-23 — PRJ402119 emergency working-thread (superseded / contained — archived from Current) — prod v1.24.17
 > ## 🔒 RFQ PATH PROTECTION (Jon: "if RFQ breaks we're done") — verifying
 > RFQ is now the ONLY pricing-into-BC path. **Freddy self-check: CLEAN** — all 3 kill-switch flags (`SCRAPER_BC_WRITEBACK_ENABLED`/`AUTO_PRICING_ENABLED`/`AUTO_BC_REPRICE_ENABLED`) appear ONLY at scraper/auto-pricing/pricing-button/poll/on-open sites (grep-confirmed :15705/:25391/:28426/:28754/:28865/:29985/:29991/:38522/:41344); NONE touch `doApplyPortalPrices` (~:39944) or its BC pushes (~:39999/:40005). 🏈 Coach lane doing full end-to-end trace (RFQ send→portal→apply→BC + F041 impact + `extractSupplierQuotePricing` CF) for a GO/NO-GO.
 > **✅ RFQ AUDIT: GO** (Coach) — `doApplyPortalPrices` (`:39898-40199`) writes to BC (Item Card `:40047` + Purchase Price `:40052` + lead-time `:40139`) OUTSIDE every kill-switch; no dependency on any disabled fn; F041 doesn't touch it; Cloud Functions can't see client flags. **RFQ→BC pricing fully intact with everything off.** Bonus: auto-reprice-off means RFQ prices won't get re-clobbered. Also confirmed intact: manual per-row confirm push (`:28205`), Upload-Supplier-Quote import (`:33247`).
