@@ -24291,7 +24291,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
           </div>
         )}
-        <div style={{flex:1,minHeight:0,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+        <div style={{flex:1,minWidth:0,minHeight:0,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+          {/* B055: minWidth:0 lets this flex item shrink below its table's min-content width so the
+              overflow:auto actually engages horizontally (wide async MFR/Vendor content scrolls WITHIN
+              the modal instead of pushing the far-right "Use" toggle off-screen). */}
           {/* DECISION(v1.19.801): minHeight:0 is the flexbox magic that makes flex:1 +
               overflow:auto actually scroll instead of pushing the parent past maxHeight.
               Without it, when results were large, the table forced the modal taller than
@@ -24426,8 +24429,11 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                         {vendorSaveErr&&<span style={{color:C.red,fontSize:10}}>{vendorSaveErr}</span>}
                       </div>
                     ):(
-                      <div style={{display:"flex",alignItems:"center",gap:6,cursor:"default"}}>
-                        <span style={{color:vendorNames[item.number]?C.sub:C.muted}}>{vendorNames[item.number]||"—"}</span>
+                      <div style={{display:"flex",alignItems:"center",gap:6,cursor:"default",minWidth:0}}>
+                        {/* B055: cap + ellipsis so a long async-populated vendor name truncates
+                            instead of widening the table and pushing the "Use" toggle off-screen.
+                            Full name remains available on hover (title). */}
+                        <span title={vendorNames[item.number]||""} style={{color:vendorNames[item.number]?C.sub:C.muted,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{vendorNames[item.number]||"—"}</span>
                         <button title="Edit vendor in BC" onClick={()=>startEditVendor(item)}
                           style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px",fontSize:10,color:C.muted,cursor:"pointer",flexShrink:0,opacity:0.7}}
                           onMouseEnter={e=>{e.target.style.borderColor=C.accent;e.target.style.color=C.accent;e.target.style.opacity=1;}}
@@ -49292,6 +49298,10 @@ function DebugLogsModal({onClose,companyId,uid}){
   const [error,setError]=useState(null);
   const [selected,setSelected]=useState(null);
   const [rangeDays,setRangeDays]=useState(7);
+  // G018: explicit from/to date window ("YYYY-MM-DD" strings). When either is set it overrides the
+  // quick-range buttons, letting an admin jump to any older range past the default 500-most-recent cap.
+  const [fromDate,setFromDate]=useState('');
+  const [toDate,setToDate]=useState('');
   const [severityFilter,setSeverityFilter]=useState('all');
   const [userFilter,setUserFilter]=useState('all');
 
@@ -49300,19 +49310,28 @@ function DebugLogsModal({onClose,companyId,uid}){
     try{
       if(!companyId){setError('Debug logs require company membership.');setLogs([]);return;}
       const path=`companies/${companyId}/debugLogs`;
-      let q;
-      if(rangeDays>0){
+      // G018: createdAt is a millisecond epoch number (see fmtTime / new Date(l.createdAt)).
+      const fromMs=fromDate?new Date(fromDate+'T00:00:00').getTime():null;
+      const toMs=toDate?new Date(toDate+'T23:59:59.999').getTime():null;
+      let q=fbDb.collection(path);
+      if(fromMs!=null||toMs!=null){
+        // Explicit date window overrides the quick-range buttons — range + orderBy on the same
+        // single field (createdAt) needs no composite index, same pattern as the rangeDays branch.
+        if(fromMs!=null)q=q.where('createdAt','>=',fromMs);
+        if(toMs!=null)q=q.where('createdAt','<=',toMs);
+        q=q.orderBy('createdAt','desc').limit(500);
+      }else if(rangeDays>0){
         const cutoff=Date.now()-rangeDays*24*60*60*1000;
-        q=fbDb.collection(path).where('createdAt','>=',cutoff).orderBy('createdAt','desc').limit(500);
+        q=q.where('createdAt','>=',cutoff).orderBy('createdAt','desc').limit(500);
       }else{
-        q=fbDb.collection(path).orderBy('createdAt','desc').limit(500);
+        q=q.orderBy('createdAt','desc').limit(500);
       }
       const snap=await q.get();
       setLogs(snap.docs.map(d=>({id:d.id,...d.data()})));
     }catch(e){setError(e.message||'Failed to load logs');}
     finally{setLoading(false);}
   }
-  useEffect(()=>{load();},[rangeDays,companyId]);
+  useEffect(()=>{load();},[rangeDays,fromDate,toDate,companyId]);
 
   const users=[...new Set(logs.map(l=>l.userEmail||l.createdBy).filter(Boolean))].sort();
   const filtered=logs.filter(l=>{
@@ -49330,7 +49349,17 @@ function DebugLogsModal({onClose,companyId,uid}){
         React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text}},"\uD83D\uDC1B Debug Logs"),
         React.createElement("div",{style:{display:"flex",alignItems:"center",gap:4}},
           React.createElement("span",{style:{fontSize:11,color:C.muted,marginRight:4}},"Range:"),
-          [1,7,30,0].map(d=>React.createElement("button",{key:d,onClick:()=>setRangeDays(d),style:{background:rangeDays===d?C.accent:C.surface,color:rangeDays===d?"#fff":C.muted,border:`1px solid ${rangeDays===d?C.accent:C.border}`,borderRadius:14,padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}},d===0?"All":d===1?"24h":d+"d"))
+          // G018: clicking a quick-range clears any active date window so behavior is unambiguous;
+          // buttons render inactive while a date window is in effect.
+          [1,7,30,0].map(d=>{const active=!fromDate&&!toDate&&rangeDays===d;return React.createElement("button",{key:d,onClick:()=>{setFromDate('');setToDate('');setRangeDays(d);},style:{background:active?C.accent:C.surface,color:active?"#fff":C.muted,border:`1px solid ${active?C.accent:C.border}`,borderRadius:14,padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}},d===0?"All":d===1?"24h":d+"d");})
+        ),
+        // G018: explicit from/to date window to reach entries older than the 500-most-recent cap.
+        React.createElement("div",{style:{display:"flex",alignItems:"center",gap:4}},
+          React.createElement("span",{style:{fontSize:11,color:C.muted}},"From:"),
+          React.createElement("input",{type:"date",value:fromDate,max:toDate||undefined,onChange:e=>setFromDate(e.target.value),style:{background:C.surface,color:C.text,border:`1px solid ${(fromDate||toDate)?C.accent:C.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,colorScheme:"dark"}}),
+          React.createElement("span",{style:{fontSize:11,color:C.muted}},"To:"),
+          React.createElement("input",{type:"date",value:toDate,min:fromDate||undefined,onChange:e=>setToDate(e.target.value),style:{background:C.surface,color:C.text,border:`1px solid ${(fromDate||toDate)?C.accent:C.border}`,borderRadius:6,padding:"3px 8px",fontSize:11,colorScheme:"dark"}}),
+          (fromDate||toDate)?React.createElement("button",{onClick:()=>{setFromDate('');setToDate('');},style:{background:"none",border:`1px solid ${C.border}`,color:C.muted,borderRadius:6,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:600}},"Clear"):null
         ),
         React.createElement("div",{style:{display:"flex",alignItems:"center",gap:6}},
           React.createElement("span",{style:{fontSize:11,color:C.muted}},"Severity:"),

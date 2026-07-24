@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<!-- B056 (2026-07-23): a TRAILING-DOT hostname (e.g. matrix-arc.web.app.) is a DIFFERENT browser
+     origin — it loads with EMPTY localStorage/IndexedDB/Firebase-auth (blank app, "nothing saves")
+     AND breaks BC's OAuth redirect (AADSTS50011 → BC offline). Self-correct to the clean host BEFORE
+     anything else loads, so a dotted URL can never trigger that cascade again. Runs first in <head>. -->
+<script>(function(){try{var h=location.hostname;if(h&&h.charAt(h.length-1)==="."){location.replace(location.href.replace(h,h.replace(/\.+$/,"")));}}catch(e){}})();</script>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>ARC by CoreVega Software</title>
 <link rel="manifest" href="/manifest.json"/>
