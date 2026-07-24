@@ -56,3 +56,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.051 | v1.24.16-T051 | 8787e3ce | (no description) | 2026-07-23 |
 | V.052 | v1.24.16-T052 | b6c70173 | (no description) | 2026-07-23 |
 | V.053 | v1.24.17-T053 | 48b54585 | (no description) | 2026-07-23 |
+| V.054 | v1.24.34-T054 | 06b12f2c | F065 cross-Line Part# price/lead-time propagation (Coach-approved-with-nits, F1 hardened) - for Jon verify on a disposable project | 2026-07-24 |
