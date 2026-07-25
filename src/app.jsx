@@ -25602,6 +25602,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // sourceRowId,sourceQty,capturedProjectId,quoteSentAt}. otherRows are captured LIVE from the
   // project prop at prompt-open (F2) — the persisted crossLineDuplicates index is only the GATE.
   const [crossLinePrompt,setCrossLinePrompt]=useState(null);
+  // F068: cross-PROPAGATION prompt (distinct from crossLinePrompt). Opened AFTER a true A→B cross
+  // (commitBcItem, asCross) settles B's async vendor + lead-time lookups, to offer full-syncing the
+  // OTHER Lines still carrying the OLD part A into B (part# + bcNo + isCrossed/crossedFrom + price +
+  // LT + vendor). Shape: {editedPartNumber(=oldA),oldPartA,newPartB,patch,otherRows,sourceRowId,
+  // sourceQty,capturedProjectId,quoteSentAt}. capturedProjectId is threaded UNCHANGED from commit-time.
+  const [crossPropPrompt,setCrossPropPrompt]=useState(null);
   // DECISION(v1.19.903): Counter that bumps when a price-confirm popup is
   // dismissed without saving. Included in the price input's `key` so the
   // input remounts and visually resets to the saved defaultValue — without
@@ -28138,6 +28144,92 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }catch(e){/* non-fatal — a failed prompt just means no fan-out */}
   }
 
+  // F068: dedicated scan for CROSS-propagation targets — other-Line rows STILL carrying the OLD
+  // part A. Deliberately NOT the crossLineDuplicates index (that index is keyed by CURRENT PN and
+  // rebuilds to B after the source save → it would no longer point at the A-carrying rows). Match
+  // on A, exclude the source row, labor / _isExcludedFromPriceCheck rows, and — F5 (Coach) — untagged
+  // BASE rows while in ECO-edit mode (propagatePartAcrossPanels bypasses _redirectEditToEco, so a
+  // part# swap in place on a base row is wrong; keep those out of the target set entirely). Rows
+  // already carrying B are auto-excluded (their key ≠ key(A)). Values read LIVE from the project prop.
+  function _findCrossPropagationTargets(sourceRowId,oldPartA){
+    const key=_samePartKey(oldPartA);
+    if(!key)return [];
+    const out=[];
+    ((project&&project.panels)||[]).forEach((pan,panelIdx)=>{
+      (pan.bom||[]).forEach(r=>{
+        if(!r)return;
+        if(pan.id===panel.id&&r.id===sourceRowId)return;         // exclude the source row itself
+        if(_samePartKey(r.partNumber)!==key)return;              // must STILL carry the OLD part A
+        if(r.isLaborRow||_isExcludedFromPriceCheck(r))return;    // never a target
+        if(_isEcoEditMode&&_isBaseRowInEcoScope(r))return;       // F5: don't swap a base row's part# in place during ECO edit
+        out.push({
+          panelId:pan.id,
+          panelName:pan.name||pan.drawingNo||("Line "+(panelIdx+1)),
+          rowId:r.id,
+          partNumber:r.partNumber||"",
+          unitPrice:r.unitPrice??null,
+          priceSource:r.priceSource,
+          bcVendorName:r.bcVendorName||"",
+          leadTimeDays:r.leadTimeDays??null,
+          qty:r.qty??null,
+        });
+      });
+    });
+    return out;
+  }
+
+  // F068: after a true A→B cross settles (its async vendor + ItemCard lead-time lookups have
+  // resolved), offer to full-sync the OTHER Lines still on A into B. Called from commitBcItem via
+  // Promise.allSettled on the two retained IIFE promises. GATED on the SETTLED committed row (Coach
+  // F3): confirm isCrossed===true && crossedFrom===oldA — NOT the raw asCross arg (skipLearning /
+  // "Just Apply" delete the cross flags even with asCross=true, and a correction never sets them).
+  //   sourceRowId  — the just-crossed source row
+  //   oldA         — the OLD part number A (what targets still carry; propagate MATCHES on this, F4)
+  //   capturedPanelId / capturedProjectId — captured AT COMMIT-TIME (Async-Ownership); threaded
+  //                  unchanged into crossPropPrompt → onPropagatePart (do NOT re-read here).
+  function _maybePromptCrossPropagation(sourceRowId,oldA,capturedPanelId,capturedProjectId){
+    try{
+      if(ownerPriorityActive)return;                            // silent skip (owner-priority)
+      // Async-Ownership: the user may have navigated during the async lookups. Panel-identity is a
+      // cheap defensive check; the authoritative cross-project guard is capturedProjectId, re-checked
+      // inside propagatePartAcrossPanels (panel-1 isn't globally unique, so don't rely on this alone).
+      if(latestPanelRef.current&&capturedPanelId&&latestPanelRef.current.id!==capturedPanelId)return;
+      // F3: read the SETTLED committed source row from the freshest panel ref and confirm the cross
+      // actually stuck. Excludes "Just Apply" (skipLearning deletes the flags) + corrections.
+      const srcB=((latestPanelRef.current&&latestPanelRef.current.bom)||[]).find(r=>r.id===sourceRowId);
+      if(!srcB)return;
+      if(!(srcB.isCrossed===true&&_samePartKey(srcB.crossedFrom)===_samePartKey(oldA)))return;
+      const newB=(srcB.partNumber||"").trim();
+      if(!newB||_isJunkPartNumber(newB))return;                 // junk-B guard
+      if(_samePartKey(newB)===_samePartKey(oldA))return;        // no-op cross
+      const targets=_findCrossPropagationTargets(sourceRowId,oldA);
+      if(targets.length===0)return;
+      // Build the FULL cross patch from the SETTLED source row B: price + LT + vendor NAME via the
+      // shared _fullCrossLinePatch (present-fields-only), plus the cross-identity fields that
+      // propagatePartAcrossPanels' kind:"cross" branch stamps (partNumber=B, bcNo, manufacturer,
+      // crossedFrom=A). Vendor NUMBER is deliberately NOT carried — the cross branch clears it (F1)
+      // so no name-B/number-A row is produced; RFQ / LT-push / PO all re-resolve B's real vendor.
+      const patch={
+        ..._fullCrossLinePatch(srcB),
+        crossToPartNumber:newB,
+        bcNo:srcB.bcNo||undefined,
+        manufacturer:(srcB.manufacturer||"").trim()||undefined, // F2
+        crossedFrom:oldA,
+      };
+      setCrossPropPrompt({
+        editedPartNumber:oldA,        // F4: propagate MATCHES on the OLD part A (NOT B)
+        oldPartA:oldA,
+        newPartB:newB,
+        patch,
+        otherRows:targets,
+        sourceRowId,
+        sourceQty:srcB.qty??null,
+        capturedProjectId,            // threaded unchanged from commit-time (Async-Ownership)
+        quoteSentAt:(project&&project.quoteSentAt)||null,
+      });
+    }catch(e){/* non-fatal — a failed prompt just means no cross fan-out */}
+  }
+
   function updateBomRow(id,field,val){
     // DECISION(v1.19.873, ECO delta-row model): If we're in active ECO scope and the
     // edited row is an untagged BASE row, redirect the change onto a linked ECO
@@ -28419,9 +28511,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       _vinResolved=!!bcFullPN;
     }
     bcFullPN=bcFullPN||bcSurrogate;
+    // F068: hoist a copy of the OLD part A (origPN is block-scoped inside the .map below) + retain the
+    // two fire-and-forget async IIFE promises (vendor + ItemCard lead-time) so the cross-propagation
+    // prompt can fire only AFTER B's LT/vendor have landed on the source row. Both default to a RESOLVED
+    // promise (Coach F8) so Promise.allSettled is never handed undefined when an IIFE doesn't fire.
+    let _f068OldA="";
+    let _f068VendorP=Promise.resolve();
+    let _f068ItemCardP=Promise.resolve();
     const bom=liveBom.map(r=>{
       if(r.id!==bomRowId)return r;
       const origPN=(r.crossedFrom||r.correctionFrom||r.partNumber||"").trim();
+      _f068OldA=origPN;
       const newPN=bcItem.number;
       const now=Date.now();
       // DECISION(v1.19.640/641): priceDate is driven EXCLUSIVELY by BC PurchasePrices
@@ -28459,7 +28559,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // name (e.g. "PHOENIX" → "Phoenix Contact").
       if(bcItem._mfrCode)updates.manufacturer=bcItem._mfrCode;
       // Async vendor lookup — uses latestPanelRef to avoid stale overwrites
-      if(!updates.bcVendorName&&newPN){(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,{...u2,_noBumpWrite:true},true).catch(()=>{});}}})().catch(()=>{});} // B041: deferred BC vendor lookup — no bump/unlock
+      // F068: retain the promise (was fire-and-forget) so the cross-propagation prompt waits for the
+      // settled vendor. When the guard is false the IIFE doesn't fire; _f068VendorP stays Promise.resolve() (F8).
+      if(!updates.bcVendorName&&newPN){_f068VendorP=(async()=>{const vNo=await bcGetItemVendorNo(newPN);if(vNo){const name=await bcGetVendorName(vNo);if(name){const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,bcVendorName:name}:r2);const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,{...u2,_noBumpWrite:true},true).catch(()=>{});}}})().catch(()=>{});} // B041: deferred BC vendor lookup — no bump/unlock
       if(skipLearning){
         // "Just Apply" — no cross or correction flags, no learning
         delete updates.isCrossed;delete updates.crossedFrom;
@@ -28476,7 +28578,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // Update manufacturer + lead time from BC item — async lookup
       // DECISION(v1.19.688): Item Browser selection also populates leadTimeDays from
       // Item Card Lead_Time_Calculation. Single SELECT fetches both fields.
-      if(newPN){(async()=>{try{
+      // F068: retain the ItemCard lead-time/mfr promise so the cross-propagation prompt waits for the
+      // settled leadTimeDays/leadTimeSource on the source row before offering to fan out to other Lines.
+      if(newPN){_f068ItemCardP=(async()=>{try{
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
         if(iPage){const mr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${newPN}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(mr.ok){const md=((await mr.json()).value||[])[0];if(md){
@@ -28497,7 +28601,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               const u2={...lp,bom:bom2};latestPanelRef.current=u2;onUpdate(u2);saveProjectPanel(uid,projectId,panel.id,{...u2,_noBumpWrite:true},true).catch(()=>{}); // B041: deferred BC ItemCard mfr/lead-time lookup — no bump/unlock
             }
           }}}
-      }catch(e){}})();}
+      }catch(e){}})().catch(()=>{});}
       if(!skipLearning){
         if(asCross){
           // autoReplace:true — ARC selection immediately trains the learning database
@@ -28547,6 +28651,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // :28437 and update only the source row), so a full patch would propagate the OLD part's STALE lead time
       // to the target Lines. Send only the freshly-committed price; LT/vendor sync later via their own edits.
       _maybePromptCrossLine(bomRowId,_committedRow.partNumber,{price:_commitPrice,priceSource:"bc",priceDate:_committedRow.priceDate,bcPoDate:_committedRow.bcPoDate},"price",_committedRow.qty);
+    }
+    // F068: on a TRUE A→B cross (asCross, not skipLearning, PN actually changed), defer a prompt to
+    // full-sync the OTHER Lines still on A into B. Wait for the settled vendor + ItemCard lead-time
+    // (the two retained IIFE promises) so the propagated patch carries B's FULL set, not A's stale LT/
+    // vendor. capturedProjectId/panelId are captured HERE (commit-time) for the Async-Ownership guard,
+    // threaded unchanged into the prompt. Outer gate mirrors the exact condition that set the cross
+    // flags at :28467; _maybePromptCrossPropagation re-confirms on the settled row (Coach F3).
+    if(!skipLearning&&asCross&&_f068OldA&&normPart(bcFullPN)!==normPart(_f068OldA)){
+      const _f068ProjId=projectId,_f068PanelId=panel.id;
+      Promise.allSettled([_f068VendorP,_f068ItemCardP]).then(()=>{
+        _maybePromptCrossPropagation(bomRowId,_f068OldA,_f068PanelId,_f068ProjId);
+      }).catch(()=>{});
     }
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
@@ -32517,6 +32633,71 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 Auto-approve all for 3 min
               </button>
               <button onClick={()=>setCrossLinePrompt(null)}
+                style={{flex:1,padding:"10px 14px",background:"#1a1a2a",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer"}}>
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      ,document.body)}
+      {/* F068: cross-PROPAGATION prompt. Distinct from crossLinePrompt (F065) — this fires after a
+          true A→B cross to offer full-syncing the OTHER Lines still on A into B. Self-contained
+          createPortal sibling; balanced tags (JSX Fragment Rule). [Cross all] passes oldA (F4). */}
+      {crossPropPrompt&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget)setCrossPropPrompt(null);}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",minWidth:440,maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>
+              Part# <span style={{color:C.red}}>{crossPropPrompt.oldPartA}</span> was crossed to <span style={{color:C.accent}}>{crossPropPrompt.newPartB}</span> — also cross it on {crossPropPrompt.otherRows.length} other Line{crossPropPrompt.otherRows.length===1?"":"s"}?
+            </div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+              {(()=>{
+                // Show the FULL set the other Lines will adopt (part# → B, plus price · lead time · vendor,
+                // present-fields-only). Mirrors the F065 modal disclosure so the user sees a complete sync.
+                const p=crossPropPrompt.patch||{};
+                const parts=[];
+                if(p.price!=null)parts.push("$"+Number(p.price).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}));
+                if(p.leadTimeDays!=null)parts.push(Number(p.leadTimeDays)+" days");
+                if(p.bcVendorName&&String(p.bcVendorName).trim())parts.push(String(p.bcVendorName).trim());
+                return <span>They will become <b style={{color:C.accent}}>{crossPropPrompt.newPartB}</b>{parts.length?<> — <b style={{color:C.accent}}>{parts.join(" · ")}</b></>:null} and be marked as crossed from {crossPropPrompt.oldPartA}.</span>;
+              })()}
+            </div>
+            {crossPropPrompt.quoteSentAt&&(
+              <div style={{fontSize:11,background:"#2a1a0a",border:"1px solid #f59e0b",borderRadius:6,padding:"8px 10px",marginBottom:12,color:"#fbbf24",fontWeight:600}}>
+                ⚠ This project's quote has already been sent — crossing these Lines will revise the sent quote (Quote Rev bumps and the sent-lock clears).
+              </div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16,maxHeight:260,overflowY:"auto"}}>
+              {crossPropPrompt.otherRows.map((r,i)=>{
+                const p=crossPropPrompt.patch||{};
+                const isManualOverride=p.price!=null&&r.priceSource==="manual";
+                const qtyDiff=crossPropPrompt.sourceQty!=null&&r.qty!=null&&Number(r.qty)!==Number(crossPropPrompt.sourceQty);
+                const _curParts=[];
+                _curParts.push(r.partNumber||"—");
+                if(p.price!=null)_curParts.push(r.unitPrice!=null?`$${Number(r.unitPrice).toFixed(2)}`:"—");
+                if(p.leadTimeDays!=null)_curParts.push(r.leadTimeDays!=null?`${r.leadTimeDays} days`:"—");
+                if(p.bcVendorName!=null)_curParts.push(r.bcVendorName||"—");
+                const cur=_curParts.join(" · ");
+                return(
+                  <div key={r.panelId+":"+r.rowId+":"+i} style={{border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",background:"#0a0a14"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:12,fontWeight:700,color:C.text}}>{r.panelName}</span>
+                      <span style={{fontSize:12,color:C.muted}}>current {cur}{r.qty!=null?` · qty ${r.qty}`:""}</span>
+                    </div>
+                    {isManualOverride&&<div style={{fontSize:10,color:"#f59e0b",marginTop:3,fontWeight:600}}>manually priced — will be overwritten</div>}
+                    {qtyDiff&&<div style={{fontSize:10,color:"#fbbf24",marginTop:3}}>⚠ qty differs ({r.qty} vs {crossPropPrompt.sourceQty}) — check for qty-break pricing</div>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              {/* F4: pass the OLD part A (editedPartNumber=oldA) so propagate keys on A and matches the
+                  A-carrying targets. kind:"cross" triggers the cross-stamp branch in propagate. */}
+              <button onClick={()=>{const cp=crossPropPrompt;setCrossPropPrompt(null);Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,cp.patch,{targetRowIds:new Set(cp.otherRows.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:"cross"})).catch(e=>console.warn("[F068] cross propagate failed:",e));}}
+                style={{flex:1,padding:"10px 14px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                Cross all
+              </button>
+              <button onClick={()=>setCrossPropPrompt(null)}
                 style={{flex:1,padding:"10px 14px",background:"#1a1a2a",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer"}}>
                 Skip
               </button>
@@ -40067,7 +40248,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   //   opts:  {targetRowIds:Set<rowId>, sourceRowId, capturedProjectId, kind}
   async function propagatePartAcrossPanels(partNumber,patch,opts){
     opts=opts||{};patch=patch||{};
-    const{targetRowIds,sourceRowId,capturedProjectId}=opts;
+    const{targetRowIds,sourceRowId,capturedProjectId,kind}=opts;
     const key=_samePartKey(partNumber);
     if(!key)return;
     // Async/Multi-Project Ownership guard — the human-time gap between the edit and [Update all]
@@ -40111,6 +40292,25 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }
         // VENDOR — label only; applied to all matched rows incl. manual (mirrors portal :40524).
         if(hasVendor)rowPatch.bcVendorName=patch.bcVendorName;
+        // F068: CROSS branch — stamp the cross identity (match was on OLD part A, write NEW part B).
+        // Placed BEFORE the empty-patch bail (Coach F6) so a price-less BC cross still applies. The
+        // price/LT/vendor-NAME above already came from the same patch; here we add part#/bcNo/flags.
+        if(kind==="cross"){
+          const _newB=(patch.crossToPartNumber||"").trim();
+          if(_newB){
+            rowPatch.partNumber=_newB;
+            if(patch.bcNo)rowPatch.bcNo=patch.bcNo;
+            rowPatch.isCrossed=true;
+            rowPatch.crossedFrom=patch.crossedFrom||partNumber;      // A (the matched key)
+            rowPatch.bcVerify={status:"in-bc",at:now};
+            if(patch.manufacturer)rowPatch.manufacturer=patch.manufacturer; // F2: adopt B's manufacturer
+            rowPatch.bcVendorNo="";                                  // F1: clear stale-A number → no name-B/number-A; RFQ/LT-push/PO re-resolve B's vendor from _bcNo(row)
+            // F7: a target that was itself a prior correction becomes a CLEAN cross (mirror commitBcItem's deletes).
+            rowPatch.isCorrection=undefined;rowPatch.correctionType=undefined;rowPatch.correctionFrom=undefined;
+            // Adopt B's extraction-confidence (mirror commitBcItem: high + drop the downgrade reason).
+            rowPatch.confidence="high";rowPatch._confDowngradeReason=undefined;
+          }
+        }
         if(Object.keys(rowPatch).length===0)return row;
         // F065 Bug C (Jon): ANY propagated update (price / lead-time / vendor) means this row is a confirmed
         // duplicate of a part# the user is actively managing → satisfy its extraction-confidence "C" pill
