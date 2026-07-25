@@ -69,7 +69,51 @@ modal. Test repro: part A on Lines 1+2(+3); cross A→B on Line 1; after LT/vend
 [Cross all] → they become B with full set, red cleared; verify qty/techReview/ecoTag survive, crosses persist on
 reload, one A→B alternate, a *correction* does NOT prompt.
 
-## 9. Open decisions for Jon
-- **Q3 (the real fork):** F067 auto-approve also auto-cross? → **Marc rec: NO, always prompt.**
-- **Q6:** reuse the single A→B alternate write → **rec: yes.**
-- **Q7:** include ECO-tagged target rows → **rec: yes, preserve tag.**
+## 9. Decisions (Jon 2026-07-24 — LOCKED)
+- **Q3:** F068 **ALWAYS PROMPTS** — the F067 3-min auto-approve does NOT auto-cross (price/LT/vendor still auto-sync).
+- **Q6:** reuse the single source A→B `alternates` write (no per-target write). ✅
+- **Q7:** include ECO target rows preserving tag — BUT see Coach F5 (skip untagged base targets in ECO-edit mode). ✅
+
+---
+
+## ★ COACH PLAN REVIEW (2026-07-24) — VERDICT: APPROVE-WITH-CHANGES. Build MUST fold in F1–F9.
+Spine is correct (match-A/write-B, additive spread, single saveSave, reuse of propagate guards, explicit prompt,
+single alternate). Async-ownership guard confirmed **SUFFICIENT** (`capturedProjectId` re-checked at `:40076`/`:40133`
+is the authoritative guard; capture it AT COMMIT-TIME and thread unchanged through `crossPropPrompt`→`onPropagatePart`
+— do NOT re-read at prompt-open; `panel-1` isn't globally unique so don't rely on the PanelCard panelId check alone).
+
+**★ #3 STALE-FIELD LIST — target fields the additive spread wrongly keeps from OLD part A → the patch MUST update/clear:**
+- **F1 [HIGH · money-path] `bcVendorNo`** — `_fullCrossLinePatch` carries `bcVendorName` (label) but NOT `bcVendorNo` →
+  crossed target reads name-B / number-A (breaks PO vendor routing `:6630`/`:16097`; the documented defect at `:7153`).
+  **Fix:** set `bcVendorNo` from the settled `srcB` (or explicitly clear both vendor fields so pricing re-resolves) +
+  confirm the PO-push path re-resolves, not just RFQ. **Do not ship name-B/number-A rows.**
+- **F2 [MED] `manufacturer`** — not in the patch; target keeps A's manufacturer. Add `manufacturer` from settled B.
+- **F7 [LOW] correction flags** — if a target was itself a prior correction it carries `isCorrection/correctionType/
+  correctionFrom`; the spread yields dual cross+correction state. **Clear those on cross targets (mirror `:28469`).**
+- *(already in patch — verify present):* `bcNo`, `bcVerify→in-bc`, `priceSource→bc`, `priceDate`/`bcPoDate`,
+  `confidence→high`+drop `_confDowngradeReason` (propagate `:40119`). *(low-pri edge):* stale `bcFuzzySuggestions`/
+  `suggestedPartNumber` for A.
+
+**★ Other required changes:**
+- **F3 [MED · gate] Gate on the SETTLED row, not raw `asCross`.** `skipLearning` takes precedence and deletes the cross
+  flags even when `asCross===true` (`:28465`). Gate F068 on the committed row's `isCrossed===true && crossedFrom===oldA`
+  (the "confirm the cross stuck" step) — robustly excludes "Just Apply" + corrections.
+- **F4 [MED · WOULD NO-OP THE FEATURE] `[Cross all]` MUST pass `oldA`.** F065's modal passes the source's CURRENT PN
+  (=B here) → keys on B → matches no targets → silent no-op. Store `editedPartNumber=oldA` in `crossPropPrompt` and call
+  `onPropagatePart(oldA, patch, {…,kind:"cross"})`. **Explicit divergence from the F065 modal pattern — do not copy-paste it.**
+- **F5 [MED · ECO integrity] `propagatePartAcrossPanels` bypasses `_redirectEditToEco`** — for a part# mutation on a base
+  row while `_isEcoEditMode`, a base row that should become an ECO 'modify' delta would get its part# swapped in place.
+  **Skip untagged base targets when `_isEcoEditMode`** (or route through the delta model). Sharpens Q7.
+- **F6 [LOW-MED · order] Stamp the cross fields BEFORE the empty-patch bail** (`:40114` `if(Object.keys(rowPatch).length===0)return row;`)
+  — a price-less BC cross yields an empty patch and would skip the row. Put the `kind:"cross"` stamping before that guard.
+- **F8 [LOW] Conditional vendor-IIFE promise** — the vendor IIFE fires only `if(!updates.bcVendorName&&newPN)`; when it
+  doesn't, `_f068VendorP` must be a resolved promise so `Promise.allSettled` isn't handed `undefined`.
+- **F9 [LOW · cosmetic] `bcSyncErrors[targetRowId]`** stale on targets (parent-scope propagate doesn't clear it). Accept or clear.
+
+**Coach confirmed correct (no change):** promise-retaining the two IIFEs (their read-map-write tails are synchronous/
+atomic — no lost update; the settled B row carries both LT+vendor) · match-A/write-B no self-collision · single alternate
+reuse · createPortal sibling = no Fragment-Rule risk · the OTHER `isCrossed=true` sites (alternates auto-replace `:11806`/
+`:25679`, portal apply `:41727`/`:40831`) are BULK paths that cross all Lines at once → self-sync, need no propagation
+(state this so scoping is auditable). Preserve list (qty/techReview*/ecoTag/customerSupplied/notes/confidence/…) correct.
+
+**Bottom line (Coach):** land F1–F5 (esp. F1 vendor-number + F4 pass-oldA) then it's build-ready for the money-path lane.
