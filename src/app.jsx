@@ -16778,7 +16778,14 @@ function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
 // two can never disagree — "not red" ⇒ "won't be RFQ'd for lead time". Firm sources:
 // bc_vendor, bc_item, supplier, scraper, manual. Non-firm: "ai", absent, or null days.
 function _hasFirmLeadTime(r){
-  return r.leadTimeDays!=null&&r.leadTimeSource&&r.leadTimeSource!=="ai";
+  if(r.leadTimeDays==null)return false;
+  // F066 (Jon 2026-07-24): a Duct/DIN Rail/Duct Cover row WITH a lead time counts as FIRM even if the
+  // source is an "ai" estimate — they're always-available re-order-schedule commodities, so an estimated
+  // lead time is reliable enough. This one predicate is the #175 SSOT for BOTH row-color and RFQ
+  // eligibility, so exempting here means these items are neither flagged RED for a non-firm LT nor RFQ'd
+  // for a lead time. (A commodity with NO leadTimeDays still returns false — a genuine data gap.)
+  if(_isReorderCommodity(r))return true;
+  return !!r.leadTimeSource&&r.leadTimeSource!=="ai";
 }
 // DECISION(#178): BOM-row price-presence predicate. "Meaningful price" = non-null AND >0
 // (a zero unitPrice is a placeholder, not a real price). Gates the lead-time-only auto-set
@@ -16799,9 +16806,11 @@ function _isExcludedFromPriceCheck(r){
 }
 // F066 (2026-07-24): Duct / DIN Rail / Duct Cover are regular re-order-schedule commodity items —
 // they're re-ordered on a standing schedule, so a stale priceDate is EXPECTED and should NOT flag
-// the row RED. This gates ONLY the priceDate-staleness branch of _isBomRowFlaggedRed (SSOT — flows
-// to both row color + send-block). It is deliberately NOT added to _isExcludedFromPriceCheck: these
-// items MUST still go red on a $0.00 price / qty=0 (those checks run before the staleness branch).
+// the row RED. This exempts them from BOTH the priceDate-staleness branch AND — via _hasFirmLeadTime,
+// which now treats a commodity's estimated LT as firm — the firm-lead-time branch of _isBomRowFlaggedRed.
+// Net: RED only on $0.00 / qty=0 (per Jon). Because _hasFirmLeadTime is the #175 SSOT for row-color AND
+// RFQ eligibility, these items are also NOT RFQ'd for a lead time. Deliberately NOT added to
+// _isExcludedFromPriceCheck: they MUST still go red on $0.00 / qty=0 (those checks run first).
 // Keyword match on partNumber OR description, case-insensitive (Jon: the DUCT/DIN keyword lives in
 // the Part# too). \bduct → duct / duct cover / ductcover; \bdin → din rail / dinrail. The \b word-
 // boundary avoids mid-word false matches (binding / loading / grinding).
@@ -16853,9 +16862,10 @@ function _isBomRowFlaggedRed(r,customerNo,customerName){
   if(!r.customerSupplied&&+r.qty===0)return true;
   if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
   if(!_isExcludedFromPriceCheck(r)&&!vendorIsCustomer){
-    // F066: Duct / DIN Rail / Duct Cover skip the priceDate-staleness (missing/old) branch only —
-    // they still fall through to $0/qty=0 (above) and the firm-lead-time check (below). See
-    // _isReorderCommodity.
+    // F066: Duct / DIN Rail / Duct Cover skip the priceDate-staleness (missing/old) branch here, AND
+    // the firm-lead-time check below is also exempted for them via _hasFirmLeadTime (a commodity's
+    // estimated LT counts as firm). Net: they go RED only on $0/qty=0 (above) — "red only on $0.00" per
+    // Jon. See _isReorderCommodity / _hasFirmLeadTime.
     if(!_isReorderCommodity(r)){
       const _pd=_effectivePriceDate(r);            // B018: BC rows use bcPoDate for the date gate
       if(!_pd)return true;
