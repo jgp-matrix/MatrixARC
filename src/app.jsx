@@ -28052,13 +28052,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   function _fullCrossLinePatch(row){
     const patch={};
     if(!row)return patch;
-    if(row.unitPrice!=null){
+    if(row.unitPrice!==""&&row.unitPrice!=null&&Number.isFinite(+row.unitPrice)){// F065 (Coach F3): finite guard — a cleared "" / non-numeric price must not coerce to $0 and propagate to targets
       patch.price=+row.unitPrice;
       patch.priceSource=row.priceSource;
       patch.priceDate=row.priceDate;
       patch.bcPoDate=row.bcPoDate;
     }
-    if(row.leadTimeDays!=null){
+    if(row.leadTimeDays!==""&&row.leadTimeDays!=null&&Number.isFinite(+row.leadTimeDays)){// F065 (Coach F3): finite guard — a cleared "" lead time must not coerce to 0 and propagate
       patch.leadTimeDays=+row.leadTimeDays;
       patch.leadTimeSource=row.leadTimeSource||"manual";
     }
@@ -28532,10 +28532,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const _committedRow=(bom||[]).find(r=>r.id===bomRowId);
     const _commitPrice=ppPrice!=null?ppPrice:(bcItem.unitCost!=null?+bcItem.unitCost:null);
     if(_committedRow&&_commitPrice!=null&&!_isJunkPartNumber(_committedRow.partNumber)){
-      // F065 full-sync: fan out the row's FULL current set (price + any LT + any vendor synchronously
-      // known). LT and vendor land via LATER async lookups (:28403/:28437) so they may be blank here —
-      // present-fields-only means a later async-filled field just won't be in THIS prompt's patch.
-      _maybePromptCrossLine(bomRowId,_committedRow.partNumber,_fullCrossLinePatch(_committedRow),"price",_committedRow.qty);
+      // F065 (Coach F2): PRICE-ONLY from a BC cross/commit — do NOT full-sync here. _committedRow retains the
+      // OLD part's leadTimeDays/bcVendorName (the NEW part's LT/vendor arrive via later async lookups :28403/
+      // :28437 and update only the source row), so a full patch would propagate the OLD part's STALE lead time
+      // to the target Lines. Send only the freshly-committed price; LT/vendor sync later via their own edits.
+      _maybePromptCrossLine(bomRowId,_committedRow.partNumber,{price:_commitPrice,priceSource:"bc",priceDate:_committedRow.priceDate,bcPoDate:_committedRow.bcPoDate},"price",_committedRow.qty);
     }
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
@@ -32468,11 +32469,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             )}
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16,maxHeight:260,overflowY:"auto"}}>
               {crossLinePrompt.otherRows.map((r,i)=>{
-                const isManualOverride=crossLinePrompt.kind==="price"&&r.priceSource==="manual";
+                // F065 (Coach F1): disclose per-Line based on the PATCH (full-sync carries price+LT+vendor), NOT the
+                // edited `kind`. Otherwise a lead-time edit that ALSO propagates the price would hide the target's
+                // current price + the "will be overwritten" warning → a correct manual price silently lost. Show the
+                // current value for EVERY dimension the patch changes, and flag a manual-price overwrite whenever the
+                // patch carries a price.
+                const p=crossLinePrompt.patch||{};
+                const isManualOverride=p.price!=null&&r.priceSource==="manual";
                 const qtyDiff=crossLinePrompt.sourceQty!=null&&r.qty!=null&&Number(r.qty)!==Number(crossLinePrompt.sourceQty);
-                const cur=crossLinePrompt.kind==="price"?(r.unitPrice!=null?`$${Number(r.unitPrice).toFixed(2)}`:"—")
-                  :crossLinePrompt.kind==="leadTime"?(r.leadTimeDays!=null?`${r.leadTimeDays} days`:"—")
-                  :(r.bcVendorName||"—");
+                const _curParts=[];
+                if(p.price!=null)_curParts.push(r.unitPrice!=null?`$${Number(r.unitPrice).toFixed(2)}`:"—");
+                if(p.leadTimeDays!=null)_curParts.push(r.leadTimeDays!=null?`${r.leadTimeDays} days`:"—");
+                if(p.bcVendorName!=null)_curParts.push(r.bcVendorName||"—");
+                const cur=_curParts.length?_curParts.join(" · "):"—";
                 return(
                   <div key={r.panelId+":"+r.rowId+":"+i} style={{border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",background:"#0a0a14"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
