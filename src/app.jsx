@@ -31178,8 +31178,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         </div>
                       </div>
                     </td>
-                    <td style={{padding:"3px 8px",textAlign:"right",width:80,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
-                      {(row.customerSupplied||(row.unitPrice!=null&&+row.unitPrice===0&&_vendorMatchesCustomer(row.bcVendorNo,row.bcVendorName,project.bcCustomerNumber,project.bcCustomerName)))?"CS":row.unitPrice!=null?"$"+((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):"—"}
+                    <td style={{padding:"3px 10px",textAlign:"right",width:110,minWidth:96,fontSize:13,color:row.unitPrice!=null?C.text:C.muted,fontVariantNumeric:"tabular-nums",whiteSpace:"nowrap"}}>
+                      {(row.customerSupplied||(row.unitPrice!=null&&+row.unitPrice===0&&_vendorMatchesCustomer(row.bcVendorNo,row.bcVendorName,project.bcCustomerNumber,project.bcCustomerName)))?"CS":row.unitPrice!=null?(
+                        // B061: match the Unit $ column — "$" fixed at the left, number right-justified in its own
+                        // field (was "$"+value as one right-aligned string, which overflowed into the Lead column).
+                        <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
+                          <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
+                          <span style={{display:"inline-block",minWidth:70,textAlign:"right"}}>{((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                        </span>
+                      ):"—"}
                     </td>
                     {/* DECISION(v1.19.687/725): Lead column — floating hover tooltip with
                        source + age + supplier stock snapshot (when captured from quote).
