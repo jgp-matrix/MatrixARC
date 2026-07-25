@@ -5,17 +5,18 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-24 · prod v1.24.34 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze
+## Current — 🟢 2026-07-24 · prod v1.24.35 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze
 
 > ## 📌 STATE
-> prod **v1.24.34** (release `d6b43854` — B058 BC-circle fix) · master==origin · working tree clean · **no merge freeze**.
+> prod **v1.24.35** (release `4bc9c79e` — F065 cross-Line propagation + B060 flicker fix + B061 Ext$ format) · master==origin · working tree clean · **no merge freeze**.
+> F065 branch `claude/f065-cross-line-propagation` merged to master (src-only; test-build artifacts sanitized) — can be deleted.
 > PRJ402119 pricing emergency = **CONTAINED**. RFQ remains the ONLY pricing-into-BC path; the 3 kill-switches (`SCRAPER_BC_WRITEBACK_ENABLED` / `AUTO_PRICING_ENABLED` / `AUTO_BC_REPRICE_ENABLED`) stay OFF **by design** until the re-enable prereqs land (this is the deliberate RFQ-only mode, not a fault).
 > 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
 
-> ## ⏳ NEEDS JON (2026-07-24, while in the shop) — reply by number
-> 1. **F065 — ✅ CONFIRMED WORKING on Test V.054** (Jon, after hard-refresh; the stale tab was serving an old build). Full propagation verify (edit dup part → prompt → [Update all] → other Lines update) Jon to complete on Test; then merge to master + prod on his go.
-> 2. **B058 — ✅ CONFIRMED WORKING** (Jon; the earlier "disappeared" was the stale Test tab). Live on prod v1.24.34.
-> 3. **B060 — ✅ FIX GREENLIT (Jon: "fix"), BUILDING.** Promote-on-success rewrite of `applyConfirmedPrice` (stamp `manual` immediately, promote to `bc`/`in-bc` only after the BC push confirms → no optimistic-then-revert → no flicker). Being built ONTO the F065 branch (same function) → Test V.055 with F065 → Coach review → Jon verifies both → merge to master + prod together. (Decouple to a standalone prod fix available on request.)
+> ## ⏳ NEEDS JON (2026-07-24) — reply by number
+> 1. **Prod-verify v1.24.35** (just deployed — hard-refresh): (a) **F065** — a part on 2+ Lines → edit its price/lead-time → prompt → [Update all] updates ALL Lines (manual rows overwritten, shown as "will be overwritten"); confidence pills clear; opens fresh without nudging a lead time. (b) **B060** — "Confirm & Push to BC" on a non-BC part → the BC circle no longer flickers. (c) **B061** — Ext$ column now "$ left / number right" like Unit$, no overflow into Lead Time.
+> 2. **Paused batch — your go to build?** F066 (Duct/DinRail/DuctCover exempt from staleness red) · G020 (hide neutered Get New Pricing) · G021 (PRJ# in PANEL SUMMARY header) · F067 (F065 3-min auto-approve — ⚠ must NOT bypass the modal per Coach, since Bug A removed the manual guard). All queued, none built.
+> 3. **B059** (latent "N not in BC" counter under-count) — parked, low-pri.
 
 > ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
 > **Quote-quality safeguards:** F044 (block-send-on-red + manager override) · F046 (per-row `priceSetBy`/`priceSetAt` audit at ~35 write sites) · F047 (hover "Priced by {who} · {date} · {source}").
