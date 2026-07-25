@@ -25225,7 +25225,7 @@ function DvHistoryModal({history,loading,onClose}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -28102,6 +28102,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       });
       if(otherRows.length===0)return;
       const displayPart=(dupEntry.displayPart||editedPartNumber||"").trim();
+      // F067: if the auto-approve window is active, skip the modal and apply the SAME full-sync patch
+      // to the SAME eligible targets ([Update all]'s rowIds) directly. capturedProjectId is `projectId`
+      // captured HERE at edit-time (this runs synchronously inside the edit handler) — the real
+      // Async-Ownership guard, not a shared ref read later inside propagate. ownerPriorityActive is
+      // already short-circuited at the top of this fn, so an active-owner project neither prompts nor
+      // auto-applies (same as today). The floating banner is the not-silent signal (Coach safeguard).
+      if(crossLineAutoApproveUntil&&Date.now()<crossLineAutoApproveUntil&&onPropagatePart){
+        Promise.resolve(onPropagatePart(editedPartNumber,patch,{
+          targetRowIds:new Set(otherRows.map(r=>r.rowId)),
+          sourceRowId:rowId,
+          capturedProjectId:projectId,
+          kind,
+        })).catch(e=>console.warn("[F067] auto-apply failed:",e));
+        return;
+      }
       setCrossLinePrompt({
         editedPartNumber,displayPart,patch,kind,
         otherRows,
@@ -32475,6 +32490,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 style={{flex:1,padding:"10px 14px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
                 Update all
               </button>
+              {/* F067: apply THIS prompt's [Update all] AND open a 3-min auto-approve window so subsequent
+                  cross-Line edits fan out without a per-edit modal. Window starts FIRST so this apply is
+                  counted in the floating indicator. */}
+              <button onClick={()=>{const cp=crossLinePrompt;setCrossLinePrompt(null);if(onStartCrossLineAutoApprove)onStartCrossLineAutoApprove();Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,cp.patch,{targetRowIds:new Set(cp.otherRows.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:cp.kind})).catch(e=>console.warn("[F067] propagate failed:",e));}}
+                style={{flex:1,padding:"10px 14px",background:"#3a2a08",border:"1px solid #f59e0b",borderRadius:6,color:"#fde68a",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                Auto-approve all for 3 min
+              </button>
               <button onClick={()=>setCrossLinePrompt(null)}
                 style={{flex:1,padding:"10px 14px",background:"#1a1a2a",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer"}}>
                 Skip
@@ -35734,7 +35756,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -37467,6 +37489,8 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     onUpdate(prev=>({...prev,panels:(prev.panels||[]).map(p=>p.id===panel.id?updatedPanel:p)}));
                   }}
                   onPropagatePart={onPropagatePart}
+                  crossLineAutoApproveUntil={crossLineAutoApproveUntil}
+                  onStartCrossLineAutoApprove={onStartCrossLineAutoApprove}
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
                   onViewQuote={onViewQuote}
                   onPrintRfq={onPrintRfq}
@@ -38880,6 +38904,33 @@ function OwnerTakeoverModal({ownerName,onClose,onConfirm}){
   ,document.body);
 }
 
+// F067 (Jon 2026-07-24): floating indicator for the cross-Line auto-approve window. While the
+// 3-minute window is open, _maybePromptCrossLine auto-applies the full-sync patch instead of
+// opening the [Update all] modal — so this banner is the ONLY signal that value is moving across
+// Lines without a per-edit prompt (Coach money-path safeguard: the auto-apply must NOT be silent).
+// Shows a live M:SS countdown, a running count of Lines auto-updated, how many of those overwrote a
+// manually-priced row, and a [Cancel] that ends the window immediately. Self-expires at `until`.
+function CrossLineAutoApproveBanner({until,stats,onCancel}){
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{const iv=setInterval(()=>setNow(Date.now()),500);return()=>clearInterval(iv);},[]);
+  const msLeft=(until||0)-now;
+  const expired=msLeft<=0;
+  useEffect(()=>{if(expired&&onCancel)onCancel();},[expired]); // window elapsed → revert to prompting
+  if(expired)return null;
+  const totalSec=Math.ceil(msLeft/1000);
+  const mm=Math.floor(totalSec/60);
+  const ss=String(totalSec%60).padStart(2,"0");
+  const lines=stats&&stats.lines||0;
+  const manual=stats&&stats.manual||0;
+  return ReactDOM.createPortal(
+    <div style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",zIndex:10000,background:"#1a1206",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 16px",display:"flex",alignItems:"center",gap:14,boxShadow:"0 6px 30px rgba(0,0,0,0.6)",fontSize:12.5,color:"#fbbf24",fontWeight:600,maxWidth:"92vw"}}>
+      <span style={{fontSize:15}}>⏱</span>
+      <span>Auto-approving cross-line updates — <b style={{color:"#fde68a"}}>{mm}:{ss}</b> left · {lines} line{lines===1?"":"s"} updated{manual>0?<b style={{color:"#fca5a5"}}> · {manual} manual overwritten</b>:null}</span>
+      <button onClick={onCancel} style={{background:"#3b0d0d",border:"1px solid #ef4444",borderRadius:5,padding:"4px 12px",fontSize:11,color:"#fecaca",fontWeight:700,cursor:"pointer"}}>Cancel</button>
+    </div>
+  ,document.body);
+}
+
 // ── PROJECT VIEW ──
 function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCopy,onArchive,autoOpenPortal,onPortalOpened,portalFocusId,autoOpenCustomerReview,onCustomerReviewOpened}){
   const [project,setProject]=useState(()=>migrateProject(init));
@@ -38908,6 +38959,26 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [baseUnlocked,setBaseUnlocked]=useState(false);
   const [reviewOverrideSession,setReviewOverrideSession]=useState(false);
   useEffect(()=>{setReviewOverrideSession(false);},[init&&init.id,init&&init.preReviewStatus,init&&init.postReviewStatus]);
+  // F067 (Jon 2026-07-24): cross-Line auto-approve window. When active, PanelCard._maybePromptCrossLine
+  // auto-applies the full-sync patch (same eligible targets as [Update all]) instead of opening the
+  // modal — for a 3-minute window, so a user fixing many duplicate parts in one pass isn't prompted per
+  // edit. Session-only (never persisted to Firestore). `caaUntilRef` mirrors the timestamp so the
+  // propagate fn can read it synchronously (no stale-closure on the state). The window state lives HERE
+  // at ProjectView scope because the user edits across multiple Lines during the window, and the
+  // indicator's running counts come from propagatePartAcrossPanels (also ProjectView-scoped).
+  const [caaUntil,setCaaUntil]=useState(null);               // window expiry timestamp (ms) or null
+  const [caaStats,setCaaStats]=useState({lines:0,manual:0}); // running counts for the floating indicator
+  const caaUntilRef=useRef(null);
+  function startCrossLineAutoApprove(){
+    const until=Date.now()+180000; // 3 minutes
+    caaUntilRef.current=until;      // set synchronously so an immediately-following propagate counts
+    setCaaStats({lines:0,manual:0});
+    setCaaUntil(until);
+  }
+  function cancelCrossLineAutoApprove(){
+    caaUntilRef.current=null;
+    setCaaUntil(null);
+  }
   // DECISION(v1.19.584): Track current project/panel for debug log context
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
   // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
@@ -39989,6 +40060,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const hasLt=patch.leadTimeDays!=null;
     const hasVendor=typeof patch.bcVendorName==="string"&&patch.bcVendorName.trim()!=="";
     let touched=0;
+    let manualOverwritten=0; // F067: target rows that were priceSource:"manual" and got price-overwritten
     const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
       ...panel,
       bom:(panel.bom||[]).map(row=>{
@@ -40003,6 +40075,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // carve-out FOR THIS EXPLICIT ACTION ONLY. ⚠ money-path — removes a data-safety guard; Coach to
         // review. The portal/scraper manual-skip elsewhere (doApplyPortalPrices) is untouched.
         if(hasPrice){
+          if(row.priceSource==="manual")manualOverwritten++; // F067: count silent manual overwrites for the indicator
           const ps=patch.priceSource||"bc";
           rowPatch.unitPrice=patch.price;
           rowPatch.priceSource=ps;
@@ -40030,6 +40103,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       })
     }));
     if(touched===0)return; // nothing eligible actually changed (all manual, etc.)
+    // F067: if the auto-approve window is active, feed the floating indicator's running counts so the
+    // user sees value moving across Lines without a per-edit prompt (Coach money-path safeguard).
+    if(caaUntilRef.current&&Date.now()<caaUntilRef.current){
+      setCaaStats(s=>({lines:s.lines+touched,manual:s.manual+manualOverwritten}));
+    }
     // Red-rule re-runs automatically (render-time _isBomRowFlaggedRed — no persisted flag).
     const crossLineDuplicates=buildCrossLineDuplicates(updatedPanels);
     const updatedProject={...projectRef.current,panels:updatedPanels,crossLineDuplicates};
@@ -41283,7 +41361,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             reviewOverrideSession={reviewOverrideSession}
             onSetReviewOverrideSession={setReviewOverrideSession}
             onPropagatePart={propagatePartAcrossPanels}
+            crossLineAutoApproveUntil={caaUntil}
+            onStartCrossLineAutoApprove={startCrossLineAutoApprove}
           />
+          {/* F067: floating indicator while the cross-Line auto-approve window is open (money-path — not silent). */}
+          {caaUntil&&<CrossLineAutoApproveBanner until={caaUntil} stats={caaStats} onCancel={cancelCrossLineAutoApprove}/>}
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {quoteSendModal&&ReactDOM.createPortal(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}>
