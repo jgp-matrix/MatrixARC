@@ -5,18 +5,19 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-24 · prod v1.24.35 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze
+## Current — 🟢 2026-07-24 · prod v1.24.36 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze
 
 > ## 📌 STATE
-> prod **v1.24.35** (release `4bc9c79e` — F065 cross-Line propagation + B060 flicker fix + B061 Ext$ format) · master==origin · working tree clean · **no merge freeze**.
-> F065 branch `claude/f065-cross-line-propagation` merged to master (src-only; test-build artifacts sanitized) — can be deleted.
+> prod **v1.24.36** (release `cbde8d06`) · master==origin · working tree clean · **no merge freeze**.
+> **v1.24.36 batch (Test-verified + Coach-approved):** F065 **full-sync** [Update all] (price+LT+vendor, one click, clears red) · **F067** 3-min auto-approve (banner+Cancel) · **F066** (Duct/DinRail/DuctCover RED only on $0.00/qty=0 — staleness + estimated-LT + LT-RFQ all exempt) · **G020** (Get New Pricing hidden) · **G021** (PRJ# in Panel Summary) · **B061** (Ext$ colgroup width). Prior v1.24.35 = F065 core + B060 flicker + B061 first pass.
 > PRJ402119 pricing emergency = **CONTAINED**. RFQ remains the ONLY pricing-into-BC path; the 3 kill-switches (`SCRAPER_BC_WRITEBACK_ENABLED` / `AUTO_PRICING_ENABLED` / `AUTO_BC_REPRICE_ENABLED`) stay OFF **by design** until the re-enable prereqs land (this is the deliberate RFQ-only mode, not a fault).
 > 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
 
 > ## ⏳ NEEDS JON (2026-07-24) — reply by number
-> 1. **Verify the Test batch → then I ship to prod.** On **Test V.054** (matrix-arc-test.web.app, base v1.24.35 — hard-refresh, use a DISPOSABLE project): **F065 full-sync** [Update all] (price+LT+vendor in one click, clears red) · **F067 auto-approve 3-min** (banner: countdown · N lines · M manual overwritten · Cancel) · **F066** (Duct/DinRail/DuctCover staleness-exempt) · **G020** (Get New Pricing hidden) · **G021** (PRJ# above PANEL SUMMARY) · **B061** (Ext$ no longer overflows Lead). All Coach-APPROVED for prod. Tell me what holds → I deploy to prod. (Prod v1.24.35 F065/B060/B061 = Jon-confirmed working.)
-> 2. **F068** (Jon idea) — extend F065 cross-Line propagation to CROSSED / SUPERSEDED parts. In analysis (Coach lane); Freddy will bring 2 interpretations + a rec. No action needed yet.
-> 3. **B059** (latent "N not in BC" counter under-count) — parked, low-pri.
+> 1. **Prod-verify v1.24.36** (hard-refresh): the batch above — F065 full-sync clears red across Lines, F067 auto-approve banner, F066 Duct/Din rows no longer red.
+> 2. **F068** — extend F065 to CROSSED/SUPERSEDED parts. Analysis done (`docs/F068-CROSSED-SUPERSEDED-ANALYSIS.md`): **Int.2 (propagate the cross) recommended**; Int.1 (broaden match) blocked on no reliable equivalence data. One timing decision before scoping: new-part price-only vs full LT/vendor sync.
+> 3. **B032** (TODO.md, CRITICAL) — prod data-loss on save-on-open for flat/panels-less projects — highest-severity open item; worth prioritizing.
+> 4. **B059** (latent "N not in BC" counter under-count) — parked, low-pri.
 
 > ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
 > **Quote-quality safeguards:** F044 (block-send-on-red + manager override) · F046 (per-row `priceSetBy`/`priceSetAt` audit at ~35 write sites) · F047 (hover "Priced by {who} · {date} · {source}").
