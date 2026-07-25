@@ -16808,7 +16808,10 @@ function _isExcludedFromPriceCheck(r){
 // TUNABLE — this keyword set is easily extended; Jon/Coach to confirm it against real part#s.
 function _isReorderCommodity(r){
   if(!r)return false;
-  const s=((r.partNumber||"")+" "+(r.description||"")).toLowerCase();
+  // F066 (Coach): match the Part# ONLY, not the description — "DIN rail mount" appears in many descriptions
+  // for real priced items (e.g. a DIN-rail power supply) and would falsely staleness-exempt them. Jon confirmed
+  // the DUCT/DIN keyword reliably lives in the Part#. Keyword set is tunable — confirm against real part#s.
+  const s=(r.partNumber||"").toLowerCase();
   return /\bduct/.test(s)||/\bdin/.test(s);
 }
 // DECISION(v1.19.666): Rules for highlighting a BOM row RED in the table. Three conditions
@@ -28034,6 +28037,35 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     _logQvHistory(project.id,{type,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),rowId:rowId||null,partNumber:partNumber||"",description:description||"",field:field||null,from:String(from??""),to:String(to??"")});
   }
 
+  // F065 full-sync (Jon 2026-07-24): build the FULL priceable patch from a source (edited) row's
+  // CURRENT (post-edit) state, so [Update all] brings the other Lines into COMPLETE agreement in one
+  // click (price + lead time + vendor) rather than propagating only the single edited field — which
+  // left the other Lines' lead times unset and still RED. PRESENT-FIELDS-ONLY: a field the source row
+  // does NOT have is omitted, so a source lacking (say) a lead time never WIPES the targets' lead
+  // times — propagatePartAcrossPanels branches on hasPrice/hasLt/hasVendor independently (:39941-43).
+  //   price/priceSource/priceDate/bcPoDate — only if the source is priced (unitPrice!=null)
+  //   leadTimeDays/leadTimeSource         — only if the source has a lead time (leadTimeDays!=null)
+  //   bcVendorName                        — only if the source has a non-blank vendor
+  // All four cross-Line triggers (updateBomRow price/LT, commitBcItem, applyConfirmedPrice,
+  // updateVendor) build the patch through this ONE helper — DRY/SSOT: "what a full sync copies"
+  // lives in a single place and can't drift per-site.
+  function _fullCrossLinePatch(row){
+    const patch={};
+    if(!row)return patch;
+    if(row.unitPrice!=null){
+      patch.price=+row.unitPrice;
+      patch.priceSource=row.priceSource;
+      patch.priceDate=row.priceDate;
+      patch.bcPoDate=row.bcPoDate;
+    }
+    if(row.leadTimeDays!=null){
+      patch.leadTimeDays=+row.leadTimeDays;
+      patch.leadTimeSource=row.leadTimeSource||"manual";
+    }
+    if(row.bcVendorName&&String(row.bcVendorName).trim())patch.bcVendorName=row.bcVendorName;
+    return patch;
+  }
+
   // F065: after a single-Line price/LT/vendor write, if the edited Part# is a known cross-Line
   // duplicate, open the confirm prompt to fan the change out to the other Lines. The persisted
   // crossLineDuplicates index is ONLY the gate (which rowIds are duplicates); the current values,
@@ -28120,10 +28152,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // F065: cross-Line propagation for direct cell edits of price or lead time. Synchronous —
     // no BC await, no identity risk. priceSource/leadTimeSource are read from the edited row's
     // FINAL state (F1) so targets never diverge from the source's committed source-of-truth.
+    // F065 full-sync: propagate the source row's FULL priceable set (price + LT + vendor),
+    // present-fields-only, via _fullCrossLinePatch — not just the single edited field.
     if(editedRow&&field==="unitPrice"&&val!=null&&val!==""&&!isNaN(+val)){
-      _maybePromptCrossLine(id,editedRow.partNumber,{price:+editedRow.unitPrice,priceSource:editedRow.priceSource,priceDate:editedRow.priceDate,bcPoDate:editedRow.bcPoDate},"price",editedRow.qty);
+      _maybePromptCrossLine(id,editedRow.partNumber,_fullCrossLinePatch(editedRow),"price",editedRow.qty);
     }else if(editedRow&&field==="leadTimeDays"&&val!=null&&val!==""&&!isNaN(+val)){
-      _maybePromptCrossLine(id,editedRow.partNumber,{leadTimeDays:+editedRow.leadTimeDays,leadTimeSource:editedRow.leadTimeSource||"manual"},"leadTime",editedRow.qty);
+      _maybePromptCrossLine(id,editedRow.partNumber,_fullCrossLinePatch(editedRow),"leadTime",editedRow.qty);
     }
     if(editedRow&&String(_oldVal)!==String(val))_logBomEdit("edit",id,editedRow.partNumber,editedRow.description,field,_oldVal,val);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
@@ -28483,7 +28517,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const _committedRow=(bom||[]).find(r=>r.id===bomRowId);
     const _commitPrice=ppPrice!=null?ppPrice:(bcItem.unitCost!=null?+bcItem.unitCost:null);
     if(_committedRow&&_commitPrice!=null&&!_isJunkPartNumber(_committedRow.partNumber)){
-      _maybePromptCrossLine(bomRowId,_committedRow.partNumber,{price:_commitPrice,priceSource:"bc",priceDate:_committedRow.priceDate,bcPoDate:_committedRow.bcPoDate},"price",_committedRow.qty);
+      // F065 full-sync: fan out the row's FULL current set (price + any LT + any vendor synchronously
+      // known). LT and vendor land via LATER async lookups (:28403/:28437) so they may be blank here —
+      // present-fields-only means a later async-filled field just won't be in THIS prompt's patch.
+      _maybePromptCrossLine(bomRowId,_committedRow.partNumber,_fullCrossLinePatch(_committedRow),"price",_committedRow.qty);
     }
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
@@ -28705,7 +28742,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // pollBcPricing could later revert.
     const _srcFinal=(latestPanelRef.current.bom||[]).find(r=>r.id===id);
     if(_srcFinal&&_srcFinal.unitPrice!=null){
-      _maybePromptCrossLine(id,_srcFinal.partNumber,{price:_srcFinal.unitPrice,priceSource:_srcFinal.priceSource,priceDate:_srcFinal.priceDate,bcPoDate:_srcFinal.bcPoDate},"price",_srcFinal.qty);
+      // F065 full-sync: propagate the source row's FULL settled set (price + any LT + any vendor).
+      _maybePromptCrossLine(id,_srcFinal.partNumber,_fullCrossLinePatch(_srcFinal),"price",_srcFinal.qty);
     }
   }
   function updateVendor(id,vendorName){
@@ -28715,8 +28753,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     onUpdate(updated);
     latestPanelRef.current=updated;
     // F065: vendor changes prompt too (decision #1, default ON, pre-includes the other Lines).
-    // Vendor is a label + one shared BC Item Card push — no price movement.
-    if(row&&vendorName&&String(vendorName).trim())_maybePromptCrossLine(id,row.partNumber,{bcVendorName:vendorName},"vendor",row.qty);
+    // Full-sync: build the patch from the row with the NEW vendor applied, so [Update all] also
+    // carries the row's current price + lead time (present-fields-only) — not vendor alone.
+    if(row&&vendorName&&String(vendorName).trim())_maybePromptCrossLine(id,row.partNumber,_fullCrossLinePatch({...row,bcVendorName:vendorName}),"vendor",row.qty);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time (see updateBomRow comment).
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(e){}},1500);
@@ -32395,9 +32434,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               Part# {crossLinePrompt.displayPart||"item"} is on {crossLinePrompt.otherRows.length} other Line{crossLinePrompt.otherRows.length===1?"":"s"}
             </div>
             <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
-              {crossLinePrompt.kind==="price"&&<span>Update the matching rows to <b style={{color:C.accent}}>${Number(crossLinePrompt.patch.price||0).toFixed(2)}</b>?</span>}
-              {crossLinePrompt.kind==="leadTime"&&<span>Update the matching rows to <b style={{color:C.accent}}>{Number(crossLinePrompt.patch.leadTimeDays||0)} days</b> lead time?</span>}
-              {crossLinePrompt.kind==="vendor"&&<span>Update the matching rows' vendor to <b style={{color:C.accent}}>{crossLinePrompt.patch.bcVendorName}</b>?</span>}
+              {(()=>{
+                // F065 full-sync: show the FULL set being applied (price · lead time · vendor),
+                // present-fields-only — so the user sees the other Lines will FULLY match this row.
+                const p=crossLinePrompt.patch||{};
+                const parts=[];
+                if(p.price!=null)parts.push("$"+Number(p.price).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}));
+                if(p.leadTimeDays!=null)parts.push(Number(p.leadTimeDays)+" days");
+                if(p.bcVendorName&&String(p.bcVendorName).trim())parts.push(String(p.bcVendorName).trim());
+                if(parts.length===0)return <span>Match the matching rows on the other Line{crossLinePrompt.otherRows.length===1?"":"s"}?</span>;
+                return <span>Match the other Line{crossLinePrompt.otherRows.length===1?"":"s"} to this row: <b style={{color:C.accent}}>{parts.join(" · ")}</b>?</span>;
+              })()}
             </div>
             {crossLinePrompt.quoteSentAt&&(
               <div style={{fontSize:11,background:"#2a1a0a",border:"1px solid #f59e0b",borderRadius:6,padding:"8px 10px",marginBottom:12,color:"#fbbf24",fontWeight:600}}>
