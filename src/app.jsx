@@ -32693,7 +32693,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <div style={{display:"flex",gap:8}}>
               {/* F4: pass the OLD part A (editedPartNumber=oldA) so propagate keys on A and matches the
                   A-carrying targets. kind:"cross" triggers the cross-stamp branch in propagate. */}
-              <button onClick={()=>{const cp=crossPropPrompt;setCrossPropPrompt(null);Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,cp.patch,{targetRowIds:new Set(cp.otherRows.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:"cross"})).catch(e=>console.warn("[F068] cross propagate failed:",e));}}
+              <button onClick={()=>{const cp=crossPropPrompt;setCrossPropPrompt(null);
+                  // F068 LT-timing fix (Jon 2026-07-24): REBUILD the patch from the source row's CURRENT state at
+                  // click time, not the prompt-open snapshot. B's lead-time/vendor can land AFTER the prompt opened
+                  // (via a resolution path the deferral didn't wait for), so the frozen prompt-open patch could miss
+                  // the LT → targets stayed red. By click time the source row is settled (Jon: it's not red), so
+                  // re-reading latestPanelRef picks up the firm LT. Cross identity fields (B/bcNo/mfr/A) come from cp.
+                  const _fs=((latestPanelRef.current&&latestPanelRef.current.bom)||[]).find(r=>r.id===cp.sourceRowId);
+                  const _freshPatch=_fs?{..._fullCrossLinePatch(_fs),crossToPartNumber:cp.newPartB,bcNo:_fs.bcNo||undefined,manufacturer:(_fs.manufacturer||"").trim()||undefined,crossedFrom:cp.oldPartA}:cp.patch;
+                  Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,_freshPatch,{targetRowIds:new Set(cp.otherRows.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:"cross"})).catch(e=>console.warn("[F068] cross propagate failed:",e));}}
                 style={{flex:1,padding:"10px 14px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
                 Cross all
               </button>
