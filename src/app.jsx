@@ -10303,6 +10303,10 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     const _prOvr=_pendingPreReviewOverrides[projectId];
     if(_prOvr&&!liveProject.preReviewStatus)Object.assign(liveProject,_prOvr);
     liveProject.qvHistory=_mergeQvHistory(projectId,liveProject,null);
+    // F065: recompute the cross-Line duplicate index off the finalized panels. Runs AFTER the
+    // quote-hash block (:_computeQuoteHash is a whitelist that never reads this field, so it can
+    // never perturb Quote Rev) and rides the SAME whole-doc write below — zero extra round-trip.
+    liveProject.crossLineDuplicates=buildCrossLineDuplicates(liveProject.panels);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
     _flushQvHistory(projectId);
@@ -25194,7 +25198,7 @@ function DvHistoryModal({history,loading,onClose}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -25557,6 +25561,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.376): Price confirmation popup — when user manually enters a price,
   // ask if it's confirmed (push to BC Purchase Price + Item Card) or budgetary (BOM only, no BC update, no priceDate).
   const [priceConfirmPending,setPriceConfirmPending]=useState(null); // {id, partNumber, price, row}
+  // F065: cross-Line propagation prompt. {editedPartNumber,displayPart,patch,otherRows,kind,
+  // sourceRowId,sourceQty,capturedProjectId,quoteSentAt}. otherRows are captured LIVE from the
+  // project prop at prompt-open (F2) — the persisted crossLineDuplicates index is only the GATE.
+  const [crossLinePrompt,setCrossLinePrompt]=useState(null);
   // DECISION(v1.19.903): Counter that bumps when a price-confirm popup is
   // dismissed without saving. Included in the price input's `key` so the
   // input remounts and visually resets to the saved defaultValue — without
@@ -28002,6 +28010,53 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     _logQvHistory(project.id,{type,panelId:panel.id,panelName:panel.name||("Panel "+(idx+1)),rowId:rowId||null,partNumber:partNumber||"",description:description||"",field:field||null,from:String(from??""),to:String(to??"")});
   }
 
+  // F065: after a single-Line price/LT/vendor write, if the edited Part# is a known cross-Line
+  // duplicate, open the confirm prompt to fan the change out to the other Lines. The persisted
+  // crossLineDuplicates index is ONLY the gate (which rowIds are duplicates); the current values,
+  // manual-protected tags, and qty notes shown in the modal are read LIVE from the project prop
+  // here at open-time (F2 — never from the possibly-stale cached index scalars).
+  //   kind ∈ {price, leadTime, vendor}. patch is the field set to propagate.
+  //   sourceQty is the edited row's qty (drives the amber qty-break note per Line).
+  function _maybePromptCrossLine(rowId,editedPartNumber,patch,kind,sourceQty){
+    try{
+      if(ownerPriorityActive)return;                       // silent skip — single-Line edit already happened
+      const key=_samePartKey(editedPartNumber);
+      if(!key)return;
+      const dupEntry=project&&project.crossLineDuplicates&&project.crossLineDuplicates.parts&&project.crossLineDuplicates.parts[key];
+      if(!dupEntry)return;                                 // not a known duplicate — cheap common case
+      // Re-read the OTHER Lines' rows LIVE from the project prop (freshest committed state).
+      const otherRows=[];
+      (project.panels||[]).forEach((pan,panelIdx)=>{
+        (pan.bom||[]).forEach(r=>{
+          if(!r)return;
+          if(pan.id===panel.id&&r.id===rowId)return;       // exclude the edited (source) row itself
+          if(_samePartKey(r.partNumber)!==key)return;
+          if(_isExcludedFromPriceCheck(r))return;          // never a target
+          otherRows.push({
+            panelId:pan.id,
+            panelName:pan.name||pan.drawingNo||("Line "+(panelIdx+1)),
+            rowId:r.id,
+            unitPrice:r.unitPrice??null,
+            priceSource:r.priceSource,
+            bcVendorName:r.bcVendorName||"",
+            leadTimeDays:r.leadTimeDays??null,
+            qty:r.qty??null,
+          });
+        });
+      });
+      if(otherRows.length===0)return;
+      const displayPart=(dupEntry.displayPart||editedPartNumber||"").trim();
+      setCrossLinePrompt({
+        editedPartNumber,displayPart,patch,kind,
+        otherRows,
+        sourceRowId:rowId,
+        sourceQty:sourceQty??null,
+        capturedProjectId:projectId,               // captured at prompt-open (Coach caveat)
+        quoteSentAt:project&&project.quoteSentAt||null,
+      });
+    }catch(e){/* non-fatal — a failed prompt just means no fan-out */}
+  }
+
   function updateBomRow(id,field,val){
     // DECISION(v1.19.873, ECO delta-row model): If we're in active ECO scope and the
     // edited row is an untagged BASE row, redirect the change onto a linked ECO
@@ -28038,6 +28093,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if((field==="qty"||field==="partNumber")&&editedRow&&String(_oldVal)!==String(val))_trackBomChange({type:field,rowId:id,partNumber:editedRow.partNumber||"",description:editedRow.description||"",from:String(_oldVal??""),to:String(val??"")});
     onUpdate(updated);
     latestPanelRef.current=updated;
+    // F065: cross-Line propagation for direct cell edits of price or lead time. Synchronous —
+    // no BC await, no identity risk. priceSource/leadTimeSource are read from the edited row's
+    // FINAL state (F1) so targets never diverge from the source's committed source-of-truth.
+    if(editedRow&&field==="unitPrice"&&val!=null&&val!==""&&!isNaN(+val)){
+      _maybePromptCrossLine(id,editedRow.partNumber,{price:+editedRow.unitPrice,priceSource:editedRow.priceSource,priceDate:editedRow.priceDate,bcPoDate:editedRow.bcPoDate},"price",editedRow.qty);
+    }else if(editedRow&&field==="leadTimeDays"&&val!=null&&val!==""&&!isNaN(+val)){
+      _maybePromptCrossLine(id,editedRow.partNumber,{leadTimeDays:+editedRow.leadTimeDays,leadTimeSource:editedRow.leadTimeSource||"manual"},"leadTime",editedRow.qty);
+    }
     if(editedRow&&String(_oldVal)!==String(val))_logBomEdit("edit",id,editedRow.partNumber,editedRow.description,field,_oldVal,val);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time, NOT the closure
@@ -28389,6 +28452,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     latestPanelRef.current=updated;
     onUpdate(updated);
     saveProjectPanel(uid,projectId,panel.id,updated,true).catch(e=>console.warn("commitBcItem save failed:",e));
+    // F065 (F5): propagate PRICE ONLY from a BC cross/commit — its vendor (bcVendorName) and lead
+    // time both land via LATER async ItemCard/vendor lookups (:28316/:28333), so they may be blank
+    // at this fire point. Key off the row's FINAL (possibly newly-crossed) partNumber. Only fan out
+    // when THIS commit actually applied a price (PP prefetch or Item Card unitCost) — no price → skip.
+    const _committedRow=(bom||[]).find(r=>r.id===bomRowId);
+    const _commitPrice=ppPrice!=null?ppPrice:(bcItem.unitCost!=null?+bcItem.unitCost:null);
+    if(_committedRow&&_commitPrice!=null&&!_isJunkPartNumber(_committedRow.partNumber)){
+      _maybePromptCrossLine(bomRowId,_committedRow.partNumber,{price:_commitPrice,priceSource:"bc",priceDate:_committedRow.priceDate,bcPoDate:_committedRow.bcPoDate},"price",_committedRow.qty);
+    }
     setBcFuzzySuggestions(prev=>{const next={...prev};delete next[bomRowId];return next;});
     // Clear any BC sync error for this row — item has been fixed via Item Browser
     setBcSyncErrors(prev=>{const next={...prev};delete next[bomRowId];return next;});
@@ -28543,19 +28615,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const vendorName=priceConfirmVendor.trim();
     // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
     const now=Date.now();
-    // DECISION(v1.19.1026): Set priceSource:"bc" immediately. The v1.19.905 concern
-    // about the PP poll overwriting the typed value is no longer valid — we push the
-    // price to BC below, so BC's price matches. With priceSource:"manual" the row
-    // showed an "M" pill and was excluded from RFQs, which is wrong for a confirmed
-    // price that's been pushed to BC.
+    // B060 (promote-on-success): stamp the typed price as "manual" FIRST — do NOT claim
+    // priceSource:"bc" / bcVerify:"in-bc" up front. The BC circle is membership-driven
+    // (post-B058), so an up-front "in-bc" claim is factually wrong for a not-in-BC row: the
+    // old optimistic-then-revert wrote "bc"/"in-bc", then reverted to "manual" when the push
+    // failed, and that intermediate render showed as a disappear→reappear circle flicker.
+    // We now PROMOTE to "bc" only after the BC push actually succeeds (see below). A failed
+    // or no-token push simply leaves the row "manual" — correct for an item that isn't in BC.
+    // MONEY-PATH NOTE: during the ~1-2s BC push window the row reads priceSource:"manual"
+    // (manual styling, RFQ-eligible) until the push confirms and promotes it to "bc". This is
+    // the intended behavior change — it replaces the wrong transient "in-bc", not real data.
+    // The no-_bcToken / no-push branch now also leaves the row "manual" (the old code stamped
+    // "bc" even when no push was attempted); for a not-in-BC item that is the correct state.
     const updatedBom=(panel.bom||[]).map(r=>{
       if(r.id!==id)return r;
-      const next={...r,unitPrice:price,priceSource:"bc",priceDate:now,bcPoDate:now,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"in-bc",at:now},..._priceStamp()};
+      const next={...r,unitPrice:price,priceSource:"manual",priceDate:now,bcPoDate:null,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"manual",at:now},..._priceStamp()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
     });
     const updated={...panel,bom:updatedBom};onUpdate(updated);
+    latestPanelRef.current=updated;// Coach F065 review F1: sync latest synchronously so the no-await (BC-disconnected) branch + the F065 cross-line fan-out read the EDITED row, not the pre-edit one (other triggers already do this)
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
     // Push to BC Item Card + Purchase Price
@@ -28580,16 +28660,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           }
         }catch(e){console.warn("BC purchase price push failed:",partNumber,e);}
       }
-      // If both BC pushes failed, revert to "manual" so the PP poll doesn't
-      // overwrite the user's typed value with BC's stale price.
-      if(!bcPushOk){
+      // B060: PROMOTE to "bc" ONLY on a confirmed BC push. This is the single point where the
+      // membership-driven BC circle legitimately clears — the item is now confirmed in BC, and
+      // BC's price matches the typed value so the PP poll won't overwrite it. On failure we do
+      // NOTHING: the row stays "manual" (set in the initial write) — no revert, no second
+      // onUpdate → no re-render → no flicker.
+      if(bcPushOk){
         const lp=latestPanelRef.current;
-        const revertBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"manual",priceDate:now,bcPoDate:null,bcVerify:{status:"manual",at:now}}:r);
-        const reverted={...lp,bom:revertBom};
-        latestPanelRef.current=reverted;onUpdate(reverted);
-        try{onSaveImmediate(reverted);}catch(e){console.warn("BC push revert save failed:",e);}
-        console.warn("BC push failed — reverted priceSource to manual for",partNumber);
+        const promoteBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"bc",priceDate:now,bcPoDate:now,bcVerify:{status:"in-bc",at:Date.now()}}:r);
+        const promoted={...lp,bom:promoteBom};
+        latestPanelRef.current=promoted;onUpdate(promoted);
+        try{onSaveImmediate(promoted);}catch(e){console.warn("BC push promote save failed:",e);}
+        console.log("BC push OK — promoted priceSource to bc for",partNumber);
       }
+    }
+    // F065 (F1): fan-out fires AFTER the BC push resolves, reading the source row's FINAL,
+    // SETTLED state from latestPanelRef — which under B060 promote-on-success is "bc" (push
+    // succeeded and the row was promoted above) or "manual" (push failed / no token, row left
+    // untouched). Targets inherit whichever it actually is, never a stale hardcoded "bc" that
+    // pollBcPricing could later revert.
+    const _srcFinal=(latestPanelRef.current.bom||[]).find(r=>r.id===id);
+    if(_srcFinal&&_srcFinal.unitPrice!=null){
+      _maybePromptCrossLine(id,_srcFinal.partNumber,{price:_srcFinal.unitPrice,priceSource:_srcFinal.priceSource,priceDate:_srcFinal.priceDate,bcPoDate:_srcFinal.bcPoDate},"price",_srcFinal.qty);
     }
   }
   function updateVendor(id,vendorName){
@@ -28598,6 +28690,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const updated={...panel,bom:updatedBom};
     onUpdate(updated);
     latestPanelRef.current=updated;
+    // F065: vendor changes prompt too (decision #1, default ON, pre-includes the other Lines).
+    // Vendor is a label + one shared BC Item Card push — no price movement.
+    if(row&&vendorName&&String(vendorName).trim())_maybePromptCrossLine(id,row.partNumber,{bcVendorName:vendorName},"vendor",row.qty);
     if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
     // DECISION(v1.19.729): Save latestPanelRef.current at flush time (see updateBomRow comment).
     autoSaveTimer.current=setTimeout(()=>{try{onSaveImmediate(latestPanelRef.current||updated);}catch(e){}},1500);
@@ -32263,6 +32358,55 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           </div>
         </div>
       ,document.body)}
+      {crossLinePrompt&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget)setCrossLinePrompt(null);}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",minWidth:440,maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>
+              Part# {crossLinePrompt.displayPart||"item"} is on {crossLinePrompt.otherRows.length} other Line{crossLinePrompt.otherRows.length===1?"":"s"}
+            </div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
+              {crossLinePrompt.kind==="price"&&<span>Update the matching rows to <b style={{color:C.accent}}>${Number(crossLinePrompt.patch.price||0).toFixed(2)}</b>?</span>}
+              {crossLinePrompt.kind==="leadTime"&&<span>Update the matching rows to <b style={{color:C.accent}}>{Number(crossLinePrompt.patch.leadTimeDays||0)} days</b> lead time?</span>}
+              {crossLinePrompt.kind==="vendor"&&<span>Update the matching rows' vendor to <b style={{color:C.accent}}>{crossLinePrompt.patch.bcVendorName}</b>?</span>}
+            </div>
+            {crossLinePrompt.quoteSentAt&&(
+              <div style={{fontSize:11,background:"#2a1a0a",border:"1px solid #f59e0b",borderRadius:6,padding:"8px 10px",marginBottom:12,color:"#fbbf24",fontWeight:600}}>
+                ⚠ This project's quote has already been sent — updating these Lines will revise the sent quote (Quote Rev bumps and the sent-lock clears).
+              </div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16,maxHeight:260,overflowY:"auto"}}>
+              {crossLinePrompt.otherRows.map((r,i)=>{
+                const isManualOverride=crossLinePrompt.kind==="price"&&r.priceSource==="manual";
+                const qtyDiff=crossLinePrompt.sourceQty!=null&&r.qty!=null&&Number(r.qty)!==Number(crossLinePrompt.sourceQty);
+                const cur=crossLinePrompt.kind==="price"?(r.unitPrice!=null?`$${Number(r.unitPrice).toFixed(2)}`:"—")
+                  :crossLinePrompt.kind==="leadTime"?(r.leadTimeDays!=null?`${r.leadTimeDays} days`:"—")
+                  :(r.bcVendorName||"—");
+                return(
+                  <div key={r.panelId+":"+r.rowId+":"+i} style={{border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",background:"#0a0a14"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                      <span style={{fontSize:12,fontWeight:700,color:C.text}}>{r.panelName}</span>
+                      <span style={{fontSize:12,color:C.muted}}>current {cur}{r.qty!=null?` · qty ${r.qty}`:""}</span>
+                    </div>
+                    {isManualOverride&&<div style={{fontSize:10,color:"#f59e0b",marginTop:3,fontWeight:600}}>manually priced — will be overwritten</div>}
+                    {qtyDiff&&<div style={{fontSize:10,color:"#fbbf24",marginTop:3}}>⚠ qty differs ({r.qty} vs {crossLinePrompt.sourceQty}) — check for qty-break pricing</div>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{const cp=crossLinePrompt;setCrossLinePrompt(null);Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,cp.patch,{targetRowIds:new Set(cp.otherRows.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:cp.kind})).catch(e=>console.warn("[F065] propagate failed:",e));}}
+                style={{flex:1,padding:"10px 14px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
+                Update all
+              </button>
+              <button onClick={()=>setCrossLinePrompt(null)}
+                style={{flex:1,padding:"10px 14px",background:"#1a1a2a",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer"}}>
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      ,document.body)}
       {crossOrCorrectPending&&(()=>{
         const aiSug=guessCorrection(crossOrCorrectPending.origPN,crossOrCorrectPending.newPN);
         const dismiss=()=>setCrossOrCorrectPending(null);
@@ -35514,7 +35658,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -37246,6 +37390,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   onUpdate={updatedPanel=>{
                     onUpdate(prev=>({...prev,panels:(prev.panels||[]).map(p=>p.id===panel.id?updatedPanel:p)}));
                   }}
+                  onPropagatePart={onPropagatePart}
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
                   onViewQuote={onViewQuote}
                   onPrintRfq={onPrintRfq}
@@ -39115,6 +39260,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         didInitialFirestoreSyncRef.current=true;
         // Always refresh to Firestore's truth on mount, regardless of updatedBy.
         const migrated=migrateProject({...remote,id:init.id});
+        migrated.crossLineDuplicates=buildCrossLineDuplicates(migrated.panels);// F065 Bug B: rebuild the cross-line gate from live panels on the mount snapshot — a pre-F065 server doc carries no crossLineDuplicates and would otherwise clobber the open-hook's index with undefined (→ no prompt until a panel save rebuilt it). Derived + self-healing on every open.
         projectRef.current=migrated;
         setProject(migrated);
         // gap #4 #2b PRE-TICK GUARD (authoritative fresh value): if the server load shows a VALID
@@ -39128,6 +39274,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(remote.updatedBy&&remote.updatedBy!==uid){
         // Always soft-apply: migrate remote data into local state (no page reload).
         const migrated=migrateProject({...remote,id:init.id});
+        migrated.crossLineDuplicates=buildCrossLineDuplicates(migrated.panels);// F065 Bug B: keep the cross-line gate fresh on concurrent remote applies too (same self-heal as the mount branch)
         projectRef.current=migrated;
         setProject(migrated);
         console.log('[CONCURRENT] Soft-applied remote update from',remote.updatedBy);
@@ -39416,6 +39563,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
   // Keep ref in sync with state for use in callbacks
   useEffect(()=>{projectRef.current=project;},[project]);
+
+  // F065 open-hook: compute the cross-Line duplicate index IN MEMORY on project open, so the
+  // edit-time prompt gate is fresh even for pre-F065 projects that were never saved with it.
+  // No Firestore write here (persistence rides the next saveProjectPanel); we only stamp
+  // projectRef + state so the PanelCard `project` prop carries the gate. Pure O(rows) scan.
+  useEffect(()=>{
+    try{
+      const p=projectRef.current;
+      if(!p||!Array.isArray(p.panels))return;
+      const idx=buildCrossLineDuplicates(p.panels);
+      const upd={...p,crossLineDuplicates:idx};
+      projectRef.current=upd;
+      setProject(upd); // in-memory only — do NOT call onChange/save
+    }catch(e){/* non-fatal — absent index simply means no prompt */}
+  },[init&&init.id]);
 
   // DECISION(v1.19.682): Admin takeover handler — writes takeover record to project doc
   // + append-only audit entry to companies/{cid}/ownerTakeovers.
@@ -39721,6 +39883,76 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     lastSavedAt.current=Date.now();
     if(typeof p==="function"){setProject(prev=>{const next=p(prev);projectRef.current=next;onChange(next);return next;});}
     else{setProject(p);projectRef.current=p;onChange(p);}
+  }
+
+  // F065: project-scoped fan-out that copies a confirmed Part# price / lead-time / vendor to the
+  // MATCHING rows on the OTHER Lines. Mirrors doApplyPortalPrices exactly — build updatedPanels
+  // across ALL panels, then persist with ONE safeSave (never loop saveProjectPanel). Passed to
+  // PanelCard (via PanelListView) as `onPropagatePart`; the panel-scoped trigger opens the prompt,
+  // the confirmed write delegates here where projectRef/safeSave live.
+  //   patch: {price?, priceSource?, priceDate?, bcPoDate?, bcVendorName?, leadTimeDays?, leadTimeSource?}
+  //   opts:  {targetRowIds:Set<rowId>, sourceRowId, capturedProjectId, kind}
+  async function propagatePartAcrossPanels(partNumber,patch,opts){
+    opts=opts||{};patch=patch||{};
+    const{targetRowIds,sourceRowId,capturedProjectId}=opts;
+    const key=_samePartKey(partNumber);
+    if(!key)return;
+    // Async/Multi-Project Ownership guard — the human-time gap between the edit and [Update all]
+    // is exactly why this matters. capturedProjectId is captured at prompt-open (NOT re-derived
+    // here), so the guard is real: if the open project swapped, drop the write silently.
+    if(capturedProjectId&&projectRef.current&&projectRef.current.id!==capturedProjectId)return;
+    const now=Date.now();
+    const hasPrice=patch.price!=null;
+    const hasLt=patch.leadTimeDays!=null;
+    const hasVendor=typeof patch.bcVendorName==="string"&&patch.bcVendorName.trim()!=="";
+    let touched=0;
+    const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
+      ...panel,
+      bom:(panel.bom||[]).map(row=>{
+        if(row.id===sourceRowId)return row;                       // never re-touch the source row
+        if(!targetRowIds||!targetRowIds.has(row.id))return row;   // only user-approved targets
+        if(_samePartKey(row.partNumber)!==key)return row;         // defensive exact re-match
+        if(_isExcludedFromPriceCheck(row))return row;             // labor/customer-supplied/etc.
+        const rowPatch={};
+        // PRICE — F065 Bug A (Jon 2026-07-24): [Update all] is an EXPLICIT, confirmed user override →
+        // propagate the price to ALL matching target rows INCLUDING manually-priced ones (the modal shows
+        // each Line's current value first, so it's informed). Reverses the earlier "manual — protected"
+        // carve-out FOR THIS EXPLICIT ACTION ONLY. ⚠ money-path — removes a data-safety guard; Coach to
+        // review. The portal/scraper manual-skip elsewhere (doApplyPortalPrices) is untouched.
+        if(hasPrice){
+          const ps=patch.priceSource||"bc";
+          rowPatch.unitPrice=patch.price;
+          rowPatch.priceSource=ps;
+          rowPatch.priceDate=patch.priceDate??now;
+          if(ps!=="manual")rowPatch.bcPoDate=patch.bcPoDate??now; // so bc rows don't re-flag red
+          Object.assign(rowPatch,_priceStamp());                  // F046: user-confirmed → stamp setter
+        }
+        // LEAD TIME — applied even to manual-price rows (LT is not price).
+        if(hasLt){
+          rowPatch.leadTimeDays=patch.leadTimeDays;
+          rowPatch.leadTimeSource=patch.leadTimeSource||"supplier";
+          rowPatch.leadTimeUpdatedAt=now;
+          rowPatch.leadTimeEstimated=false;
+        }
+        // VENDOR — label only; applied to all matched rows incl. manual (mirrors portal :40524).
+        if(hasVendor)rowPatch.bcVendorName=patch.bcVendorName;
+        if(Object.keys(rowPatch).length===0)return row;
+        // F065 Bug C (Jon): ANY propagated update (price / lead-time / vendor) means this row is a confirmed
+        // duplicate of a part# the user is actively managing → satisfy its extraction-confidence "C" pill
+        // (mirror commitBcItem: confidence high + drop the downgrade reason). Applies regardless of edit kind
+        // or priceSource — the earlier bc-only gate missed lead-time & non-bc propagations (Jon's Line 3).
+        if(row.confidence==="low"||row.confidence==="medium"){rowPatch.confidence="high";rowPatch._confDowngradeReason=undefined;}
+        touched++;
+        return{...row,...rowPatch};
+      })
+    }));
+    if(touched===0)return; // nothing eligible actually changed (all manual, etc.)
+    // Red-rule re-runs automatically (render-time _isBomRowFlaggedRed — no persisted flag).
+    const crossLineDuplicates=buildCrossLineDuplicates(updatedPanels);
+    const updatedProject={...projectRef.current,panels:updatedPanels,crossLineDuplicates};
+    if(capturedProjectId&&projectRef.current.id!==capturedProjectId)return; // re-check the invariant
+    update(updatedProject);
+    await safeSave(uid,updatedProject); // ONE whole-doc write — proven doApplyPortalPrices pattern
   }
 
   const [relinking,setRelinking]=useState(false);
@@ -40967,6 +41199,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             setShowSentEditConfirm={setShowSentEditConfirm}
             reviewOverrideSession={reviewOverrideSession}
             onSetReviewOverrideSession={setReviewOverrideSession}
+            onPropagatePart={propagatePartAcrossPanels}
           />
           {rfqGroups&&<div style={{height:0,overflow:"hidden"}}><RfqDocument groups={rfqGroups} projectName={project.name}/></div>}
           {quoteSendModal&&ReactDOM.createPortal(
@@ -51764,6 +51997,51 @@ function TourOverlay({stepIdx,onNext,onPrev,onDone,onSkip,onMinimize,steps,liveS
 // ── PART NUMBER FUZZY MATCHING ──
 // Normalize: remove spaces/dashes/dots, uppercase
 function normPart(s){return(s||'').replace(/[\s\-\.]/g,'').toUpperCase();}
+// ── F065: Cross-Line (cross-panel) Part# propagation ──
+// SSOT EXACT same-part predicate. Deliberately NOT partMatch() — its fuzzy prefix/suffix
+// containment over-matches short PNs and must never drive a cross-line price copy.
+// Empty-key guarded so blank PNs never collide.
+function _samePartKey(pn){return normPart(pn);}
+function _samePart(a,b){const ka=_samePartKey(a);return !!ka&&ka===_samePartKey(b);}
+// Junk / non-matchable part numbers — same set the BC commit path treats as blank (:28366).
+function _isJunkPartNumber(pn){const u=(pn||"").trim().toUpperCase();return !u||u==="?"||u==="N/A"||u==="EXTRACTION_FAILED";}
+// F065 index builder — PURE, O(rows). Groups matchable BOM rows across ALL panels by exact
+// normPart key; retains only keys spanning >=2 DISTINCT panelIds (but keeps every row). The
+// per-row scalars (price/LT/vendor/qty/source) are a convenience snapshot — the GATE is the
+// rowId list; live money is re-read at prompt-open + at write time (see F2 in the build plan).
+function buildCrossLineDuplicates(panels){
+  const parts={};
+  (panels||[]).forEach((panel,panelIdx)=>{
+    const panelId=panel&&panel.id;
+    const panelName=(panel&&(panel.name||panel.drawingNo))||("Line "+(panelIdx+1));
+    ((panel&&panel.bom)||[]).forEach(r=>{
+      if(!r)return;
+      if(r.isLaborRow||_isExcludedFromPriceCheck(r))return;
+      if(_isJunkPartNumber(r.partNumber))return;
+      const key=_samePartKey(r.partNumber);
+      if(!key)return;
+      let entry=parts[key];
+      if(!entry){entry={displayPart:(r.partNumber||"").trim(),rows:[]};parts[key]=entry;}
+      entry.rows.push({
+        panelId,panelName,panelIdx,rowId:r.id,
+        unitPrice:r.unitPrice??null,
+        priceSource:r.priceSource,
+        priceDate:r.priceDate??null,
+        bcVendorName:r.bcVendorName||"",
+        leadTimeDays:r.leadTimeDays??null,
+        leadTimeSource:r.leadTimeSource,
+        qty:r.qty??null,
+      });
+    });
+  });
+  const out={};
+  Object.keys(parts).forEach(key=>{
+    const entry=parts[key];
+    const distinct=new Set(entry.rows.map(x=>x.panelId));
+    if(distinct.size>=2)out[key]=entry;
+  });
+  return{schemaVersion:1,builtAt:Date.now(),parts:out};
+}
 // #153 Phase B/C: shared passthrough predicate (C97 fix) — EXACT complement of
 // matchable. A row is passthrough (carried unconditionally, never matched) iff it
 // is labor, ECO-tagged, contingency, or auto-loaded. Used with ! for matchable,
