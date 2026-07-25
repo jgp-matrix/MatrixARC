@@ -39919,15 +39919,6 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           rowPatch.priceDate=patch.priceDate??now;
           if(ps!=="manual")rowPatch.bcPoDate=patch.bcPoDate??now; // so bc rows don't re-flag red
           Object.assign(rowPatch,_priceStamp());                  // F046: user-confirmed → stamp setter
-          // F065 Bug C: a propagated BC price confirms the identical part# on this target row too —
-          // mirror commitBcItem (confidence:"high" + drop _confDowngradeReason + bcVerify in-bc) so the
-          // confidence "C" pill clears on the propagated rows, not just the source. Gated to bc (a manual
-          // price never promotes confidence on its own row, so propagation shouldn't either).
-          if(ps==="bc"){
-            rowPatch.confidence="high";
-            rowPatch._confDowngradeReason=undefined; // stripped on save (mirrors commitBcItem's delete)
-            rowPatch.bcVerify={status:"in-bc",at:now};
-          }
         }
         // LEAD TIME — applied even to manual-price rows (LT is not price).
         if(hasLt){
@@ -39939,6 +39930,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // VENDOR — label only; applied to all matched rows incl. manual (mirrors portal :40524).
         if(hasVendor)rowPatch.bcVendorName=patch.bcVendorName;
         if(Object.keys(rowPatch).length===0)return row;
+        // F065 Bug C (Jon): ANY propagated update (price / lead-time / vendor) means this row is a confirmed
+        // duplicate of a part# the user is actively managing → satisfy its extraction-confidence "C" pill
+        // (mirror commitBcItem: confidence high + drop the downgrade reason). Applies regardless of edit kind
+        // or priceSource — the earlier bc-only gate missed lead-time & non-bc propagations (Jon's Line 3).
+        if(row.confidence==="low"||row.confidence==="medium"){rowPatch.confidence="high";rowPatch._confDowngradeReason=undefined;}
         touched++;
         return{...row,...rowPatch};
       })
