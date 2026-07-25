@@ -14,8 +14,8 @@
 > 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
 
 > ## ⏳ NEEDS JON (2026-07-24) — reply by number
-> 1. **Prod-verify v1.24.35** (just deployed — hard-refresh): (a) **F065** — a part on 2+ Lines → edit its price/lead-time → prompt → [Update all] updates ALL Lines (manual rows overwritten, shown as "will be overwritten"); confidence pills clear; opens fresh without nudging a lead time. (b) **B060** — "Confirm & Push to BC" on a non-BC part → the BC circle no longer flickers. (c) **B061** — Ext$ column now "$ left / number right" like Unit$, no overflow into Lead Time.
-> 2. **Paused batch — your go to build?** F066 (Duct/DinRail/DuctCover exempt from staleness red) · G020 (hide neutered Get New Pricing) · G021 (PRJ# in PANEL SUMMARY header) · F067 (F065 3-min auto-approve — ⚠ must NOT bypass the modal per Coach, since Bug A removed the manual guard). All queued, none built.
+> 1. **Verify the Test batch → then I ship to prod.** On **Test V.054** (matrix-arc-test.web.app, base v1.24.35 — hard-refresh, use a DISPOSABLE project): **F065 full-sync** [Update all] (price+LT+vendor in one click, clears red) · **F067 auto-approve 3-min** (banner: countdown · N lines · M manual overwritten · Cancel) · **F066** (Duct/DinRail/DuctCover staleness-exempt) · **G020** (Get New Pricing hidden) · **G021** (PRJ# above PANEL SUMMARY) · **B061** (Ext$ no longer overflows Lead). All Coach-APPROVED for prod. Tell me what holds → I deploy to prod. (Prod v1.24.35 F065/B060/B061 = Jon-confirmed working.)
+> 2. **F068** (Jon idea) — extend F065 cross-Line propagation to CROSSED / SUPERSEDED parts. In analysis (Coach lane); Freddy will bring 2 interpretations + a rec. No action needed yet.
 > 3. **B059** (latent "N not in BC" counter under-count) — parked, low-pri.
 
 > ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
