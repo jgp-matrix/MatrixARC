@@ -13,11 +13,12 @@
 > PRJ402119 pricing emergency = **CONTAINED**. RFQ remains the ONLY pricing-into-BC path; the 3 kill-switches (`SCRAPER_BC_WRITEBACK_ENABLED` / `AUTO_PRICING_ENABLED` / `AUTO_BC_REPRICE_ENABLED`) stay OFF **by design** until the re-enable prereqs land (this is the deliberate RFQ-only mode, not a fault).
 > 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
 
-> ## ⏳ NEEDS JON (2026-07-24) — reply by number
-> 1. **Prod-verify v1.24.36** (hard-refresh): the batch above — F065 full-sync clears red across Lines, F067 auto-approve banner, F066 Duct/Din rows no longer red.
-> 2. **F068** — extend F065 to CROSSED/SUPERSEDED parts. Analysis done (`docs/F068-CROSSED-SUPERSEDED-ANALYSIS.md`): **Int.2 (propagate the cross) recommended**; Int.1 (broaden match) blocked on no reliable equivalence data. One timing decision before scoping: new-part price-only vs full LT/vendor sync.
-> 3. **B032** (TODO.md, CRITICAL) — prod data-loss on save-on-open for flat/panels-less projects — highest-severity open item; worth prioritizing.
+> ## ⏳ NEXT SESSION (end-of-day 2026-07-24) — pick up here
+> 1. **F068 — re-verify the CROSS case on Test V.055** (branch `claude/f068-cross-propagation`, base v1.24.36 — hard-refresh). Built + Coach CODE-APPROVED + LT-timing fix ([Cross all] re-reads source at click). Jon verified the cross *appears* on other Lines but pivoted to the RE-SELECT scenario before confirming the cross carries the **lead time** with the fix. Re-verify: cross A→B on a Line where others have A → [Cross all] → others become B **with price+LT+vendor**, red cleared. If good → merge branch to master + prod. **NOT on master/prod.**
+> 2. **🕐 TABLED lead-time/BC-Item-Browser cluster** (Jon tabled — it's a build): **B062** BC Item Browser shows no LT for any item (doesn't call `bcGetItemLeadTimeDays` :4700 per row; USE can't carry it) + **re-select doesn't push LT** (commitBcItem F065 fire is price-only per Coach F2; a same-part re-select should full-sync the LT). Do as one lead-time-flow pass. Details in INBOX + this is why F068 cross felt LT-less (browser never surfaced the LT).
+> 3. **B032** — ✅ RESOLVED (was a stale EMERGENCY tag — fix shipped v1.23.12, present in prod v1.24.36; TODO.md corrected).
 > 4. **B059** (latent "N not in BC" counter under-count) — parked, low-pri.
+> **✅ SHIPPED PROD v1.24.36 today:** F065 full-sync · F067 auto-approve · F066 (Duct/Din/DuctCover red only on $0, LT-exempt) · G020 · G021 · B061. Jon-verified.
 
 > ## ✅ SHIPPED since v1.24.17 (the emergency baseline)
 > **Quote-quality safeguards:** F044 (block-send-on-red + manager override) · F046 (per-row `priceSetBy`/`priceSetAt` audit at ~35 write sites) · F047 (hover "Priced by {who} · {date} · {source}").
