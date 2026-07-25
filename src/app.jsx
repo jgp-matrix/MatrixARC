@@ -37649,9 +37649,9 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
               {/* G021 (2026-07-24): show the project number (PRJ#) above the PANEL SUMMARY header.
                  Uses project.bcProjectNumber — the canonical project-number field shown elsewhere as
                  "PRJ402142" (e.g. quote header "Project #", cover page "MATRIX PROJECT #"); falls
-                 back to project.name. Display-only, muted/smaller to match surrounding style. */}
+                 back to project.name. Display-only, styled to match the Project-header title (:36926 — fontSize:20/700/C.text) per Jon. */}
               {(project.bcProjectNumber||project.name)&&(
-                <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",marginBottom:-6}}>{project.bcProjectNumber||project.name}</div>
+                <div style={{fontSize:20,fontWeight:700,color:C.text,marginBottom:-6}}>{project.bcProjectNumber||project.name}</div>
               )}
               <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5,marginBottom:2}}>PANEL SUMMARY</div>
               {/* Selected panel name header */}
