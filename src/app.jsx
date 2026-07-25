@@ -16797,6 +16797,20 @@ function _isExcludedFromPriceCheck(r){
   const pn=(r.partNumber||"").toLowerCase(),desc=(r.description||"").toLowerCase();
   return r.isLaborRow||r.customerSupplied||r.isContingency||/matrix\s*systems/i.test(r.bcVendorName||"")||_isBuyoffOrCrate(r);
 }
+// F066 (2026-07-24): Duct / DIN Rail / Duct Cover are regular re-order-schedule commodity items —
+// they're re-ordered on a standing schedule, so a stale priceDate is EXPECTED and should NOT flag
+// the row RED. This gates ONLY the priceDate-staleness branch of _isBomRowFlaggedRed (SSOT — flows
+// to both row color + send-block). It is deliberately NOT added to _isExcludedFromPriceCheck: these
+// items MUST still go red on a $0.00 price / qty=0 (those checks run before the staleness branch).
+// Keyword match on partNumber OR description, case-insensitive (Jon: the DUCT/DIN keyword lives in
+// the Part# too). \bduct → duct / duct cover / ductcover; \bdin → din rail / dinrail. The \b word-
+// boundary avoids mid-word false matches (binding / loading / grinding).
+// TUNABLE — this keyword set is easily extended; Jon/Coach to confirm it against real part#s.
+function _isReorderCommodity(r){
+  if(!r)return false;
+  const s=((r.partNumber||"")+" "+(r.description||"")).toLowerCase();
+  return /\bduct/.test(s)||/\bdin/.test(s);
+}
 // DECISION(v1.19.666): Rules for highlighting a BOM row RED in the table. Three conditions
 // (any one triggers red):
 //   (1) qty === 0     — row has no quantity
@@ -16836,10 +16850,15 @@ function _isBomRowFlaggedRed(r,customerNo,customerName){
   if(!r.customerSupplied&&+r.qty===0)return true;
   if(!r.customerSupplied&&!vendorIsCustomer&&+r.unitPrice===0)return true;
   if(!_isExcludedFromPriceCheck(r)&&!vendorIsCustomer){
-    const _pd=_effectivePriceDate(r);            // B018: BC rows use bcPoDate for the date gate
-    if(!_pd)return true;
-    const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
-    if((Date.now()-_pd)>staleMs)return true;
+    // F066: Duct / DIN Rail / Duct Cover skip the priceDate-staleness (missing/old) branch only —
+    // they still fall through to $0/qty=0 (above) and the firm-lead-time check (below). See
+    // _isReorderCommodity.
+    if(!_isReorderCommodity(r)){
+      const _pd=_effectivePriceDate(r);            // B018: BC rows use bcPoDate for the date gate
+      if(!_pd)return true;
+      const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
+      if((Date.now()-_pd)>staleMs)return true;
+    }
     if(!_hasFirmLeadTime(r))return true;
   }
   return false;
@@ -16976,7 +16995,12 @@ function findIncompleteQuoteItems(project){
       const _vic=_vendorMatchesCustomer(r.bcVendorNo,r.bcVendorName,project.bcCustomerNumber,project.bcCustomerName);
       if(!r.qty||+r.qty===0)reasons.push("qty");
       if(!_vic&&(!r.unitPrice||+r.unitPrice===0))reasons.push("price");
-      if(!_vic){
+      // F066: Duct / DIN Rail / Duct Cover skip the priceDate-staleness Send-block reasons only
+      // (they still block on qty/$0 above). This mirrors the _isBomRowFlaggedRed staleness exemption
+      // so row-color and Send-block stay consistent for these re-order commodities — this function
+      // re-inlines the staleness rule (documented v1.19.677 divergence) rather than calling the red
+      // predicate, so the exemption must be applied here too. See _isReorderCommodity.
+      if(!_vic&&!_isReorderCommodity(r)){
         const _pd=_effectivePriceDate(r);   // B018: BC rows use bcPoDate — same effective date as the red-flag + column
         if(!_pd)reasons.push("priced date");
         else if((Date.now()-_pd)>staleMs)reasons.push("stale price (>"+(staleMs/(24*60*60*1000))+"d)");
@@ -30453,7 +30477,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </button>
               );
             })()}
-            {!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
+            {/* G020 (2026-07-24): "Get New Pricing" / "Refresh All" are no-ops while auto-pricing is
+               off (AUTO_PRICING_ENABLED=false) — they just alert "send an RFQ". Hide them behind the
+               same gate so they REAPPEAR automatically when auto-pricing is re-enabled (reversible;
+               display-only). Manual per-row entry, BC Item Browser, portal/RFQ, DigiKey/Mouser
+               paths are unaffected. */}
+            {AUTO_PRICING_ENABLED&&!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <div style={{position:"relative",display:"inline-flex"}}>
                 <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Refresh pricing — skips items priced within threshold"}
                   onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}runPricingOnPanel();}}
@@ -30611,7 +30640,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 <col style={{width:"10%"}}/><col style={{width:"11%"}}/>
                 {/* DECISION(v1.19.825): Unit $ column was 82px which couldn't fit the source pill + "$" + price input;
                     widened to 116 (F002 removed the source pills but the width is retained for the "$" + input). Ext $ 64. */}
-                <col style={{width:116}}/><col style={{width:64}}/><col style={{width:48}}/><col style={{width:60}}/><col style={{width:40}}/>
+                <col style={{width:100}}/><col style={{width:108}}/><col style={{width:48}}/><col style={{width:60}}/><col style={{width:40}}/>
               </colgroup>
               <thead>
                 <tr style={{background:"#0a0a12"}}>
@@ -37537,6 +37566,13 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             ];
             return(
               <div style={{flex:1,overflowY:"auto",minHeight:0,padding:16,display:"flex",flexDirection:"column",gap:12}}>
+              {/* G021 (2026-07-24): show the project number (PRJ#) above the PANEL SUMMARY header.
+                 Uses project.bcProjectNumber — the canonical project-number field shown elsewhere as
+                 "PRJ402142" (e.g. quote header "Project #", cover page "MATRIX PROJECT #"); falls
+                 back to project.name. Display-only, muted/smaller to match surrounding style. */}
+              {(project.bcProjectNumber||project.name)&&(
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.8,textTransform:"uppercase",marginBottom:-6}}>{project.bcProjectNumber||project.name}</div>
+              )}
               <div style={{fontSize:17,fontWeight:800,color:C.text,letterSpacing:0.5,marginBottom:2}}>PANEL SUMMARY</div>
               {/* Selected panel name header */}
               <div style={{background:"#0a0a12",border:`1px solid ${C.accent}`,borderRadius:8,padding:"10px 12px"}}>
