@@ -13,6 +13,16 @@ The BC web service is **fine** (published; unkeyed + keyed GETs for real records
 
 **Superseded hypotheses below are kept for the record but are NOT the cause.**
 
+## ★★★ DELETE TRACE (2026-07-27) — how BC lost task 20510 (Ryan did NOT delete anything)
+ARC has **6 panels/lines** for PRJ402141; BC has **5 tasks** (20110/20210/20310/20410/20610 — 20510 missing). Ryan reports he only ADDED lines (created with 1, added 5 more). Trace of `companies/{cid}/debugLogs` for this project (id `5x0jfFr6m6pP9wAZ5oN6`):
+- **19× `SAVE BLOCKED: would reduce panels from N to M`** (severity error), 2026-07-20 17:14→17:43 (as Ryan added panels 3→4→5→6, repeated 6→5/6→4/6→3 attempts), again 07-20 23:43, and **again 07-25 22:40** (6→5, 6→4). All by Ryan.
+- **Interpretation:** a **spurious panel-REDUCTION write bug** (B016 write-race / stale-state class) repeatedly tried to shrink the project. ARC's data-safety guard **blocked every one on the ARC/Firestore side** (why ARC still has all 6). But **the guard does NOT cover BC** → the reduction **leaked to BC as the deletion of task 20510** (no BC-delete error logged → it succeeded silently). Result: ARC=6 / BC=5, ARC still computes/references task 20510 → 404 storm. **NOT a user delete.**
+- **Corroborating:** the project's 6 panels have **duplicate names** (two "Panel 2", two "Panel 4") + **no stored per-panel task number** → ARC **computes** Job_Task_No by panel position, so a broken panel-add/duplication flow both (a) drives the spurious reductions and (b) misaligns the computed task numbers.
+- **B065 reframed:** root cause is the **panel-reduction write bug leaking a BC task delete** + ARC computing task#s by position (no durable panel↔BC-task link). Fix spans B016 (stop the spurious reduction / write-race) AND a durable panel↔BC-task binding + self-heal on task-not-found (404) instead of trusting a computed number.
+
+## Drawings not attached to BC (Jon observation 2026-07-27) → B066
+Jon: no scanned drawings appear in BC for this job. Trace: ARC-side extraction ran fine (`addFiles` → 18 pages, `extractBomBatch` 4/4 ok, `extractBomPage` completions) but **ZERO BC document-attachment operations are logged** for the project (no `bcAttachPdfToJob`/`documentAttachments`). Inconclusive from logs alone (a silent success wouldn't log) → **verify directly against BC** (`companies(id)/projects(jobId)/documentAttachments` for PRJ402141). If empty, the BC attach-on-scan step isn't firing / fails silently = **B066 [BUG]**. Likely same silent-failure family as B064 (BC write failures not surfaced).
+
 ## (SUPERSEDED) Earlier framing — NOT the B013 Mode-A (MSAL token expiry) hypothesis
 Ryan has **zero** token/401/ssoSilent entries. His "disconnecting" is two real, distinct problems:
 
