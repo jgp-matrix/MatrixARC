@@ -36,6 +36,20 @@ BC planning-line reads/writes fail (404, sandbox), and the repeated failures chu
 2. **If the sandbox is intended (pre-launch):** publish the `Project_Planning_Lines_Excel` OData web service in `MATR_SndBx_01152026`, and confirm PRJ402141 was synced under that same env (check the project's `bcEnv` stamp vs the company config — `_bcEnvMismatched`).
 3. **Firestore write-exhaustion (B012/B016):** the burst-write amplifier is live and hitting multiple users — the failing BC ops make it worse. Fix the 404 source first (removes the burst), then the durable fix is the B016 await/confirm-per-mutation + churn reduction.
 
+## ★ TIMING — this is CHRONIC, not new (answers "why now?")
+Scanned 1800 recent logs (window 2026-06-20 → 07-27). `Project_Planning_Lines_Excel` 404s total **522**, spanning **~June 22 → today, essentially every day**. June 20–21 show ZERO planning-404s then June 22 onward is heavy → likely a change ~**June 22** (logs don't retain earlier, so can't see before 06-20). **It is NOT Ryan-specific:** recent window = **jon@matrixpci.com 63, Ryan 32**. It went unnoticed for ~5 weeks because a **404 does not flip the BC health pill** (only 401 does, per B013) → the planning-line sync failed **silently**. Ryan surfaced it now only because the failures also trigger the Firestore write-exhaustion that visibly **stalls his session**.
+
+**Not an ARC-side change:** no BC/planning commits around June 22; `_planPageCache`/page-discovery logic unchanged since v1.19.x. ARC discovers the planning page from BC's published web services (`allPages.find(/^project.?planning/i)`, `src/app.jsx:3528/3630`) then queries it. A **404 "Resource not found for the segment"** = the `Project_Planning_Lines_Excel` web service **no longer resolves** in `MATR_SndBx_01152026` despite being set up months ago → **BC-side.** Likely an **orphaned web-service publication after a sandbox refresh/recreate ~June 22** (the Web Services record survives → discovery finds the name → but its target page/query object is gone → query 404s). **BC-admin action (Jon):** verify/republish `Project_Planning_Lines_Excel` in the sandbox; check whether the sandbox was refreshed ~June 22.
+
+## Env-match reconciliation (re: "no user should be on an env ≠ Settings")
+The evidence shows **no env mismatch across users** — every user (Jon + Ryan) is on `MATR_SndBx_01152026`, which **matches** the company Settings config (`companies/{cid}/config/bcEnvironment.env`). This is a **broken web service in the correct, matched env**, not a user on the wrong env. A hard env-match guard (F069) is good defense-in-depth but would NOT fix these 404s.
+
+## Resulting work items (Jon: "all of the above")
+- **B064** — BC connection failures that bypass the honest pill (404 "segment not found" on a discovered web service; also the raw-fetch 401 family per B013 G1) must SURFACE, not fail silently. Add an admin-visible signal + a persistently-failing-endpoint alert so a 5-week silent breakage can't recur. Extends **B013**.
+- **B016 / B012 (write-exhaustion amplifier)** — failing BC ops churn writes → `resource-exhausted` / max-backoff → session stalls (the actual "disconnect"). Harden per B016 (await/confirm per mutation + churn reduction); scope now.
+- **F069** — hard guard: block any BC op when the user's/project's env ≠ Settings env (build on `_bcEnvMismatched` + per-project `bcEnv`). Defense-in-depth (not the cause here).
+- **BC-admin (Jon):** verify/republish `Project_Planning_Lines_Excel` in `MATR_SndBx_01152026`.
+
 ## Follow-ups
 - Confirm Ryan's BC pill color at a "disconnect" moment (expected: GREEN, since 404≠401) — proves it's the freeze/404, not a token drop.
 - Quick check: PRJ402141's `bcEnv` field vs `MATR_SndBx_01152026` (env-mismatch confirmation) — the projects query by `number` returned null (field/path differs; re-check with `projectNumber`).
