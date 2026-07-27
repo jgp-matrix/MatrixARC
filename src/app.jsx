@@ -25608,6 +25608,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // LT + vendor). Shape: {editedPartNumber(=oldA),oldPartA,newPartB,patch,otherRows,sourceRowId,
   // sourceQty,capturedProjectId,quoteSentAt}. capturedProjectId is threaded UNCHANGED from commit-time.
   const [crossPropPrompt,setCrossPropPrompt]=useState(null);
+  // F068 near-miss: per-row opt-in for the "formatted differently" targets in the cross-prop prompt.
+  // A Set of rowIds. Reset to EMPTY (all OFF) on prompt open and on every close — near-miss is opt-in.
+  const [crossPropNearSel,setCrossPropNearSel]=useState(()=>new Set());
   // DECISION(v1.19.903): Counter that bumps when a price-confirm popup is
   // dismissed without saving. Included in the price input's `key` so the
   // input remounts and visually resets to the saved defaultValue — without
@@ -28159,7 +28162,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       (pan.bom||[]).forEach(r=>{
         if(!r)return;
         if(pan.id===panel.id&&r.id===sourceRowId)return;         // exclude the source row itself
-        if(_samePartKey(r.partNumber)!==key)return;              // must STILL carry the OLD part A
+        // F068 near-miss: admit exact-key matches OR mfr-prefix near-misses to the OLD part A.
+        const _exact=_samePartKey(r.partNumber)===key;
+        const _near =!_exact&&_isNearMissPart(r.partNumber,oldPartA);
+        if(!_exact&&!_near)return;                               // must carry OLD part A (exact) or be a near-miss
         if(r.isLaborRow||_isExcludedFromPriceCheck(r))return;    // never a target
         if(_isEcoEditMode&&_isBaseRowInEcoScope(r))return;       // F5: don't swap a base row's part# in place during ECO edit
         out.push({
@@ -28172,6 +28178,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           bcVendorName:r.bcVendorName||"",
           leadTimeDays:r.leadTimeDays??null,
           qty:r.qty??null,
+          nearMiss:_near,
         });
       });
     });
@@ -28216,6 +28223,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         manufacturer:(srcB.manufacturer||"").trim()||undefined, // F2
         crossedFrom:oldA,
       };
+      setCrossPropNearSel(new Set());  // F068: near-miss opt-ins start OFF each time the prompt opens
       setCrossPropPrompt({
         editedPartNumber:oldA,        // F4: propagate MATCHES on the OLD part A (NOT B)
         oldPartA:oldA,
@@ -32645,10 +32653,17 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           createPortal sibling; balanced tags (JSX Fragment Rule). [Cross all] passes oldA (F4). */}
       {crossPropPrompt&&ReactDOM.createPortal(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
-          onMouseDown={e=>{if(e.target===e.currentTarget)setCrossPropPrompt(null);}}>
+          onMouseDown={e=>{if(e.target===e.currentTarget){setCrossPropNearSel(new Set());setCrossPropPrompt(null);}}}>
+          {(()=>{
+          // F068 near-miss: split targets into EXACT (bundled, no checkbox — behaves as before) and
+          // NEAR-MISS (mfr-prefix formatted differently — distinct section, per-row opt-in, default OFF).
+          const _exactRows=crossPropPrompt.otherRows.filter(r=>!r.nearMiss);
+          const _nearRows=crossPropPrompt.otherRows.filter(r=>r.nearMiss);
+          const _willCross=_exactRows.length+_nearRows.filter(r=>crossPropNearSel.has(r.rowId)).length;
+          return(
           <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",minWidth:440,maxWidth:560,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
             <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:6}}>
-              Part# <span style={{color:C.red}}>{crossPropPrompt.oldPartA}</span> was crossed to <span style={{color:C.accent}}>{crossPropPrompt.newPartB}</span> — also cross it on {crossPropPrompt.otherRows.length} other Line{crossPropPrompt.otherRows.length===1?"":"s"}?
+              Part# <span style={{color:C.red}}>{crossPropPrompt.oldPartA}</span> was crossed to <span style={{color:C.accent}}>{crossPropPrompt.newPartB}</span> — also cross it on {_exactRows.length} other Line{_exactRows.length===1?"":"s"}?{_nearRows.length>0?` (plus ${_nearRows.length} possible match${_nearRows.length===1?"":"es"} formatted differently below)`:""}
             </div>
             <div style={{fontSize:12,color:C.muted,marginBottom:12}}>
               {(()=>{
@@ -32668,7 +32683,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               </div>
             )}
             <div style={{display:"flex",flexDirection:"column",gap:6,marginBottom:16,maxHeight:260,overflowY:"auto"}}>
-              {crossPropPrompt.otherRows.map((r,i)=>{
+              {_exactRows.map((r,i)=>{
                 const p=crossPropPrompt.patch||{};
                 const isManualOverride=p.price!=null&&r.priceSource==="manual";
                 const qtyDiff=crossPropPrompt.sourceQty!=null&&r.qty!=null&&Number(r.qty)!==Number(crossPropPrompt.sourceQty);
@@ -32690,10 +32705,43 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 );
               })}
             </div>
+            {_nearRows.length>0&&(
+              <div style={{border:"1px solid #f59e0b",borderRadius:8,padding:"10px 12px",marginBottom:16,background:"#1a1206"}}>
+                <div style={{fontSize:12,fontWeight:700,color:"#fbbf24",marginBottom:8}}>Possible matches — part# formatted differently (opt in per Line):</div>
+                <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:200,overflowY:"auto"}}>
+                  {_nearRows.map((r,i)=>{
+                    const p=crossPropPrompt.patch||{};
+                    const isManualOverride=p.price!=null&&r.priceSource==="manual";
+                    const qtyDiff=crossPropPrompt.sourceQty!=null&&r.qty!=null&&Number(r.qty)!==Number(crossPropPrompt.sourceQty);
+                    const _curParts=[];
+                    _curParts.push(r.partNumber||"—");
+                    if(p.price!=null)_curParts.push(r.unitPrice!=null?`$${Number(r.unitPrice).toFixed(2)}`:"—");
+                    if(p.leadTimeDays!=null)_curParts.push(r.leadTimeDays!=null?`${r.leadTimeDays} days`:"—");
+                    if(p.bcVendorName!=null)_curParts.push(r.bcVendorName||"—");
+                    const cur=_curParts.join(" · ");
+                    const checked=crossPropNearSel.has(r.rowId);
+                    return(
+                      <label key={r.panelId+":"+r.rowId+":"+i} style={{display:"block",border:`1px solid ${C.border}`,borderRadius:6,padding:"7px 10px",background:"#0a0a14",cursor:"pointer"}}>
+                        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+                          <span style={{display:"flex",alignItems:"center",gap:8}}>
+                            <input type="checkbox" checked={checked} onChange={e=>{const on=e.target.checked;setCrossPropNearSel(prev=>{const n=new Set(prev);if(on)n.add(r.rowId);else n.delete(r.rowId);return n;});}} style={{cursor:"pointer"}}/>
+                            <span style={{fontSize:12,fontWeight:700,color:C.text}}>{r.panelName}</span>
+                          </span>
+                          <span style={{fontSize:12,color:C.muted}}>current {cur}{r.qty!=null?` · qty ${r.qty}`:""}</span>
+                        </div>
+                        <div style={{fontSize:10,color:"#fbbf24",marginTop:4,fontWeight:600}}>⚠ Part# formatted differently: {r.partNumber} vs {crossPropPrompt.oldPartA}</div>
+                        {isManualOverride&&<div style={{fontSize:10,color:"#f59e0b",marginTop:3,fontWeight:600}}>manually priced — will be overwritten</div>}
+                        {qtyDiff&&<div style={{fontSize:10,color:"#fbbf24",marginTop:3}}>⚠ qty differs ({r.qty} vs {crossPropPrompt.sourceQty}) — check for qty-break pricing</div>}
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
             <div style={{display:"flex",gap:8}}>
               {/* F4: pass the OLD part A (editedPartNumber=oldA) so propagate keys on A and matches the
                   A-carrying targets. kind:"cross" triggers the cross-stamp branch in propagate. */}
-              <button onClick={()=>{const cp=crossPropPrompt;setCrossPropPrompt(null);
+              <button onClick={()=>{const cp=crossPropPrompt;setCrossPropPrompt(null);setCrossPropNearSel(new Set());
                   // F068 LT-timing fix (Jon 2026-07-24): REBUILD the patch from the source row's CURRENT state at
                   // click time, not the prompt-open snapshot. B's lead-time/vendor can land AFTER the prompt opened
                   // (via a resolution path the deferral didn't wait for), so the frozen prompt-open patch could miss
@@ -32701,16 +32749,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   // re-reading latestPanelRef picks up the firm LT. Cross identity fields (B/bcNo/mfr/A) come from cp.
                   const _fs=((latestPanelRef.current&&latestPanelRef.current.bom)||[]).find(r=>r.id===cp.sourceRowId);
                   const _freshPatch=_fs?{..._fullCrossLinePatch(_fs),crossToPartNumber:cp.newPartB,bcNo:_fs.bcNo||undefined,manufacturer:(_fs.manufacturer||"").trim()||undefined,crossedFrom:cp.oldPartA}:cp.patch;
-                  Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,_freshPatch,{targetRowIds:new Set(cp.otherRows.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:"cross"})).catch(e=>console.warn("[F068] cross propagate failed:",e));}}
+                  // F068 near-miss: cross ALL exact rows + only the CHECKED near-miss rows (default OFF).
+                  const _sel=cp.otherRows.filter(r=>!r.nearMiss||crossPropNearSel.has(r.rowId));
+                  Promise.resolve(onPropagatePart&&onPropagatePart(cp.editedPartNumber,_freshPatch,{targetRowIds:new Set(_sel.map(r=>r.rowId)),sourceRowId:cp.sourceRowId,capturedProjectId:cp.capturedProjectId,kind:"cross"})).catch(e=>console.warn("[F068] cross propagate failed:",e));}}
                 style={{flex:1,padding:"10px 14px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer"}}>
-                Cross all
+                Cross all ({_willCross})
               </button>
-              <button onClick={()=>setCrossPropPrompt(null)}
+              <button onClick={()=>{setCrossPropNearSel(new Set());setCrossPropPrompt(null);}}
                 style={{flex:1,padding:"10px 14px",background:"#1a1a2a",border:`1px solid ${C.border}`,borderRadius:6,color:C.muted,fontWeight:600,fontSize:12,cursor:"pointer"}}>
                 Skip
               </button>
             </div>
-          </div>
+          </div>);})()}
         </div>
       ,document.body)}
       {crossOrCorrectPending&&(()=>{
@@ -40274,7 +40324,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       bom:(panel.bom||[]).map(row=>{
         if(row.id===sourceRowId)return row;                       // never re-touch the source row
         if(!targetRowIds||!targetRowIds.has(row.id))return row;   // only user-approved targets
-        if(_samePartKey(row.partNumber)!==key)return row;         // defensive exact re-match
+        // F068 near-miss: defensive re-match. For kind:"cross" admit exact-OR-near to oldA (partNumber),
+        // so mfr-prefix-formatted rows the user explicitly opted into aren't silently dropped here; a stale
+        // targetRowIds still can't write to a truly unrelated row. All OTHER kinds stay exact-only.
+        const _matchOk=_samePartKey(row.partNumber)===key||(kind==="cross"&&_isNearMissPart(row.partNumber,partNumber));
+        if(!_matchOk)return row;
         if(_isExcludedFromPriceCheck(row))return row;             // labor/customer-supplied/etc.
         const rowPatch={};
         // PRICE — F065 Bug A (Jon 2026-07-24): [Update all] is an EXPLICIT, confirmed user override →
@@ -52397,6 +52451,36 @@ function _samePartKey(pn){return normPart(pn);}
 function _samePart(a,b){const ka=_samePartKey(a);return !!ka&&ka===_samePartKey(b);}
 // Junk / non-matchable part numbers — same set the BC commit path treats as blank (:28366).
 function _isJunkPartNumber(pn){const u=(pn||"").trim().toUpperCase();return !u||u==="?"||u==="N/A"||u==="EXTRACTION_FAILED";}
+// ── F068 near-miss: mfr-prefix-tolerant loose match (curated token set — NOT a blind prefix strip) ──
+// Strip a SINGLE leading whitespace-delimited token from the RAW part# ONLY if it's a known mfr token
+// (from BC_MFR_MAP.terms single-word entries + _MFR_ALIASES single-word keys), then normPart the rest.
+// Loose keys compared on both sides → symmetric. Split on whitespace BEFORE normPart collapses it.
+// Does NOT modify _samePartKey/normPart — exact-match paths are byte-for-byte unaffected.
+let _mfrTokenSet=null;
+function _getMfrTokenSet(){
+  if(_mfrTokenSet)return _mfrTokenSet;
+  const s=new Set();
+  const norm=t=>String(t||"").toUpperCase().replace(/[.\-\/\s]/g,"");
+  try{
+    (typeof BC_MFR_MAP!=="undefined"?BC_MFR_MAP:[]).forEach(e=>{e.terms.forEach(t=>{if(!/\s/.test(t.trim())){const n=norm(t);if(n.length>=2)s.add(n);}});});
+    if(typeof _MFR_ALIASES!=="undefined")Object.keys(_MFR_ALIASES).forEach(k=>{if(!/\s/.test(k.trim())){const n=norm(k);if(n.length>=2)s.add(n);}});
+  }catch(e){}
+  _mfrTokenSet=s;return s;
+}
+function _loosePartKey(pn){
+  const raw=(pn||"").trim();
+  if(!raw)return"";
+  const m=raw.match(/^(\S+)\s+(\S.*)$/);
+  if(m){
+    const tok=m[1].toUpperCase().replace(/[.\-\/]/g,"");
+    if(_getMfrTokenSet().has(tok))return normPart(m[2]);
+  }
+  return normPart(raw);
+}
+function _isNearMissPart(a,b){
+  const la=_loosePartKey(a),lb=_loosePartKey(b);
+  return !!la&&la===lb&&_samePartKey(a)!==_samePartKey(b); // loose-equal but NOT exact-equal
+}
 // F065 index builder — PURE, O(rows). Groups matchable BOM rows across ALL panels by exact
 // normPart key; retains only keys spanning >=2 DISTINCT panelIds (but keeps every row). The
 // per-row scalars (price/LT/vendor/qty/source) are a convenience snapshot — the GATE is the
