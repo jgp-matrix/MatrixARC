@@ -2,7 +2,18 @@
 
 **By:** Freddy (Marc-lane read-only) · **Date:** 2026-07-27 · Evidence: PROD `companies/{cid}/debugLogs` (400 most-recent, span 2026-07-21 → 2026-07-27), read live from Jon's admin session.
 
-## Verdict — NOT the B013 Mode-A (MSAL token expiry) hypothesis
+## ★★ FINAL ROOT CAUSE (corrected 2026-07-27 via live BC OData probes) — WRONG Job_Task_No
+The BC web service is **fine** (published; unkeyed + keyed GETs for real records return 200 — Jon confirmed publication). The failure is that **ARC requests PRJ402141's planning lines under `Job_Task_No = "20510"`, which does not exist in BC.** Live-verified against `MATR_SndBx_01152026`:
+- PRJ402141 has **121 planning lines** under tasks **`20110, 20210, 20310, 20410, 20610`**.
+- **`20510` = 0 lines (not a real task).** ARC keys its planning-line reads/writes to `(Job_No='PRJ402141', Job_Task_No='20510', Line_No=…)` → **404 on every one** → silent (404 doesn't flip the pill) → retry/revert churn → Firestore write-exhaustion → Ryan's session stalls ("disconnecting").
+- The real tasks **skip 20510 and add 20610** → BC's task numbering was **renumbered/shifted** (a task removed/inserted), so ARC's stored **panel→BC `Job_Task_No` mapping went stale.** This is an **ARC bug** (trusting a stale/computed task number instead of re-resolving from BC) + a BC data change (task renumber, likely around the ~June-22 window).
+- **Evidence chain (corrected twice as probes came in):** "web service unpublished" ✗ (Jon: it's published) → "OData key-structure/Page-vs-Query mismatch" ✗ (keyed GET on a real record = 200) → **"ARC's Job_Task_No 20510 doesn't exist; real is 20110–20610" ✓.**
+
+**NEW work item B065 [BUG · HIGH]:** ARC's panel→BC-task-number mapping for a project can go stale (BC task renumber) → planning-line 404 storm. Fix = re-resolve the actual `Job_Task_No` from BC per panel (don't trust a stored/computed increment), + fail loudly on task-not-found (ties to B064). The B064/B016/F069 hardening items remain valid defense-in-depth; **B065 is the actual root-cause bug.**
+
+**Superseded hypotheses below are kept for the record but are NOT the cause.**
+
+## (SUPERSEDED) Earlier framing — NOT the B013 Mode-A (MSAL token expiry) hypothesis
 Ryan has **zero** token/401/ssoSilent entries. His "disconnecting" is two real, distinct problems:
 
 ### 1. BC ENVIRONMENT problem (primary) — 32 events
