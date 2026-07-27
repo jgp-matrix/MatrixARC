@@ -3811,6 +3811,211 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// B065 — DURABLE ARC↔BC BINDINGS (kill the positional-mapping class)
+// ────────────────────────────────────────────────────────────────────────
+// ROOT fix for the positional-drift class (Ryan's 20510 404 storm, the
+// wrong-line-overwrite money risk, the relink off-by-one). ARC historically
+// computed every BC Job_Task_No (20000+panelIndex*100+10) and every BOM
+// Line_No (60000+rowIndex*10000) by ARRAY POSITION and recomputed them on
+// every op — so any panel/row add/delete/reorder (ARC side) or task renumber
+// (BC side) silently slid the mapping onto the wrong or a non-existent
+// record.
+//
+// The durable-binding pattern already exists in-codebase for service cards
+// (allocateServiceCardBcSlot / createServiceCard persist bcProjectTaskNo and
+// bcSyncServiceCardTask READS it). These primitives extend the same pattern
+// to panels (panel.bcTaskNo — the 20N10 posting slot) and BOM rows
+// (row.bcLineNo — the BC Line_No), both written only after a confirmed 2xx.
+//
+// DATA-RETENTION (CLAUDE.md rule 4): panel.bcTaskNo and row.bcLineNo are
+// ADDITIVE metadata. They survive save-reload automatically — saveProject
+// spreads the whole panel/row object and strips ONLY page.dataUrl. They are
+// CLEARED on Copy (createProjectCopy — fresh BC project) and Relink
+// (relinkToBC — new BC project). Migration/discovery is additive-only:
+// NEVER delete or renumber a binding during discovery.
+//
+// ★ ROLLOUT — THIS PASS shipped the B065 FOUNDATION (Marc, on branch
+//   claude/b065-durable-binding):
+//     • the storage contract + preserve-on-save (verified) + these helpers,
+//     • the read-only resolver (F070's read path — mode:'audit'),
+//     • the money-path DELETE part-identity guard on BOTH sync loops
+//       (base + ECO) + a DELETE failure arm feeding result.failed,
+//     • relink off-by-one fix + relink/copy binding hygiene.
+//   ★ DEFERRED to the tested follow-up (needs live-BC verification — a bug in
+//   the read authority breaks EVERY sync): the resolve-don't-compute READ
+//   path (assign Line_No from row.bcLineNo; resolve taskNo from BC instead of
+//   :3834/:4094), populating bindings at create (S2), the lazy migration with
+//   the ambiguity guard + project.bcBindingUnresolved destructive-write block
+//   (S6), and converting all ~27 positional call sites to pass the panel
+//   OBJECT (S4). See docs/B065-DURABLE-BINDING-PLAN.md.
+// ════════════════════════════════════════════════════════════════════════
+
+// Lowest-unused 20N10 posting-task slot for a panel add. Mirrors
+// allocateServiceCardBcSlot. `panels` = current panel list (each may carry a
+// persisted bcTaskNo); returns the posting-task number string (20N10) for the
+// first panel-index N whose slot is unused — so a mid-list insert gets a
+// FRESH number instead of a positional collision. Returns null if exhausted.
+function allocatePanelBcTaskNo(panels){
+  const used=new Set((panels||[]).filter(p=>p&&p.bcTaskNo).map(p=>String(p.bcTaskNo)));
+  for(let n=1;n<=999;n++){
+    const slot=String(20000+n*100+10); // 20110, 20210, … 201010 (N=10)
+    if(!used.has(slot))return slot;
+  }
+  return null;
+}
+
+// Lowest-unused 60000+ BOM Line_No within a panel/task. `rows` = rows already
+// assigned a bcLineNo (persisted bindings); `alsoUsed` = Line_Nos already
+// claimed in the in-flight desired set + BC's existing set. Returns the next
+// free multiple of 10000 at/above 60000 so an inserted row never collides
+// with a bound row's line. Returns null if exhausted.
+function allocateRowBcLineNo(rows,alsoUsed){
+  const used=new Set();
+  (rows||[]).forEach(r=>{if(r&&r.bcLineNo!=null)used.add(Number(r.bcLineNo));});
+  (alsoUsed||[]).forEach(v=>used.add(Number(v)));
+  for(let ln=60000;ln<=60000+10000*5000;ln+=10000){
+    if(!used.has(ln))return ln;
+  }
+  return null;
+}
+
+// Thin synchronous read authority for a panel's BC posting task number.
+// Prefers the durable binding (panel.bcTaskNo); falls back to the positional
+// compute for panels not yet migrated. NOTE (follow-up): callers that MUTATE
+// BC (PATCH/DELETE) must ALSO honor project.bcBindingUnresolved (block
+// destructive writes on an ambiguous project) once the S6 migration lands.
+function resolvePanelTaskNo(project,panel,panelIndex){
+  if(panel&&panel.bcTaskNo)return String(panel.bcTaskNo);
+  let n=panelIndex;
+  if(n==null&&project&&Array.isArray(project.panels)){const idx=project.panels.indexOf(panel);if(idx>=0)n=idx+1;}
+  if(n!=null&&n>=1)return String(20000+n*100+10);
+  return null;
+}
+
+// ── Shared read-only resolver (B065 primitive + F070's read path) ──────────
+// The single BC read that both the durable-binding migration (mode:'resolve')
+// and the F070 mismatch detector (mode:'audit') build on. Does 1 GET for the
+// project's tasks + 1 GET for all its planning lines, then for each ARC panel
+// resolves its BC posting task (stored panel.bcTaskNo → task-Description match
+// → positional fallback) and for each BOM row resolves its BC line (stored
+// row.bcLineNo → part# + Description + residual-order discovery). It NEVER
+// writes — it returns a plan the caller can persist (resolve) or count
+// (audit). The ambiguity flag (duplicate panel discriminators / task-count ≠
+// panel-count) is the signal a caller must NOT auto-PATCH/DELETE on.
+//
+// Returns {ok, reason?, tasks, lines, panels:[{panelIndex,panel,taskNo,
+//   taskSource:'stored'|'description'|'positional'|'missing', ambiguousTask,
+//   rows:[{row,lineNo,lineSource:'stored'|'discovered'|'unbound',
+//   ambiguousLine}]}], ambiguous, unresolvedReason}.
+async function resolveBcBindings(projectNumber, panels, opts){
+  const mode=(opts&&opts.mode)||"audit";
+  panels=Array.isArray(panels)?panels:[];
+  const out={ok:false,mode,tasks:[],lines:[],panels:[],ambiguous:false,unresolvedReason:null};
+  if(!projectNumber){out.reason="missing-project-number";return out;}
+  if(typeof _bcToken==="undefined"||!_bcToken){out.reason="no-bc-token";return out;}
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
+  const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
+  if(!taskPage||!planPage){out.reason="no-odata-page";return out;}
+
+  // Field-name probe (Project_ vs Job_) — reuse the per-session cache the sync
+  // path populates.
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  const cacheKey=`${BC_ODATA_BASE}::${planPage}`;
+  if(typeof window!=="undefined"&&window._bcPlanFieldsCache&&window._bcPlanFieldsCache[cacheKey]){
+    FP_NO=window._bcPlanFieldsCache[cacheKey].FP_NO;FP_TASK_NO=window._bcPlanFieldsCache[cacheKey].FP_TASK_NO;
+  }else{
+    try{
+      const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}}
+    }catch(_){}
+  }
+
+  // GET 1 — all tasks for the project.
+  try{
+    const tf=`${BC_ODATA_BASE}/${taskPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}'`;
+    const tr=await bcGatedFetch(tf,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(tr.ok)out.tasks=(await tr.json()).value||[];
+  }catch(e){out.reason="task-get-failed:"+(e&&e.message||e);}
+  // GET 2 — all planning lines for the project.
+  try{
+    const lf=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}'`;
+    const lr=await bcGatedFetch(lf,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(lr.ok)out.lines=(await lr.json()).value||[];
+  }catch(e){out.reason="line-get-failed:"+(e&&e.message||e);}
+
+  // Index BC posting tasks (20N10) by task# and by a normalized Description
+  // discriminator (leading drawing#).
+  const taskNoField=("Job_No"===FP_NO)?"Job_Task_No":"Project_Task_No";
+  const _taskNoOf=t=>String(t[taskNoField]!=null?t[taskNoField]:(t.Project_Task_No!=null?t.Project_Task_No:t.Job_Task_No));
+  const postingTasks=out.tasks.filter(t=>/^20\d+10$/.test(_taskNoOf(t)));
+  const taskByNo=new Map(out.tasks.map(t=>[_taskNoOf(t),t]));
+  const _leadToken=s=>String(s||"").trim().split(/\s+/)[0].toLowerCase();
+  // Count leading-token collisions among posting tasks (ambiguity signal).
+  const descTokenCounts={};
+  postingTasks.forEach(t=>{const k=_leadToken(t.Description);if(k)descTokenCounts[k]=(descTokenCounts[k]||0)+1;});
+
+  const linesByTask={};
+  out.lines.forEach(l=>{const k=String(l[taskNoField]!=null?l[taskNoField]:(l.Project_Task_No!=null?l.Project_Task_No:l.Job_Task_No));(linesByTask[k]=linesByTask[k]||[]).push(l);});
+
+  const structuralMismatch=postingTasks.length>0&&postingTasks.length!==panels.length;
+  const usedTaskNos=new Set();
+
+  panels.forEach((panel,i)=>{
+    const panelIndex=i+1;
+    const positional=String(20000+panelIndex*100+10);
+    let taskNo=null,taskSource="missing",ambiguousTask=false;
+    // 1) stored binding
+    if(panel&&panel.bcTaskNo&&taskByNo.has(String(panel.bcTaskNo))){taskNo=String(panel.bcTaskNo);taskSource="stored";}
+    // 2) Description match (Jon-locked primary): match on leading drawing#.
+    if(!taskNo){
+      const disc=_leadToken(panel&&(panel.drawingNo||panel.drawingDesc||panel.name));
+      if(disc){
+        const cands=postingTasks.filter(t=>_leadToken(t.Description)===disc&&!usedTaskNos.has(_taskNoOf(t)));
+        if(cands.length===1){taskNo=_taskNoOf(cands[0]);taskSource="description";}
+        else if(cands.length>1){ambiguousTask=true;} // non-unique — do NOT auto-bind
+      }
+    }
+    // 3) positional fallback (only if that task actually exists in BC)
+    if(!taskNo&&!ambiguousTask&&taskByNo.has(positional)&&!usedTaskNos.has(positional)){taskNo=positional;taskSource="positional";}
+    if(taskNo)usedTaskNos.add(taskNo);
+    if(ambiguousTask||structuralMismatch)out.ambiguous=true;
+
+    // Row resolution within the resolved task.
+    const taskLines=(taskNo&&linesByTask[taskNo])||[];
+    const bomRows=((panel&&panel.bom)||[]).filter(r=>r&&!r.isLaborRow&&!r.ecoTag);
+    const usedLineNos=new Set();
+    const rows=bomRows.map(row=>{
+      let lineNo=null,lineSource="unbound",ambiguousLine=false;
+      if(row.bcLineNo!=null&&taskLines.some(l=>Number(l.Line_No)===Number(row.bcLineNo))){lineNo=Number(row.bcLineNo);lineSource="stored";}
+      if(lineNo==null){
+        const pn=_bcNo(row);
+        const cands=taskLines.filter(l=>l.No===pn&&Number(l.Line_No)>=60000&&!usedLineNos.has(Number(l.Line_No)));
+        if(cands.length===1){lineNo=Number(cands[0].Line_No);lineSource="discovered";}
+        else if(cands.length>1){
+          // part# alone not unique — tiebreak on Description, then residual order.
+          const desc=(row.description||"").slice(0,100);
+          const byDesc=cands.filter(l=>(l.Description||"")===desc);
+          const pick=(byDesc.length===1?byDesc[0]:cands[0]);
+          lineNo=Number(pick.Line_No);lineSource="discovered";ambiguousLine=byDesc.length!==1;
+        }
+      }
+      if(lineNo!=null)usedLineNos.add(lineNo);
+      if(ambiguousLine)out.ambiguous=true;
+      return {row,lineNo,lineSource,ambiguousLine};
+    });
+
+    out.panels.push({panelIndex,panel,taskNo,taskSource,ambiguousTask,rows});
+  });
+
+  if(out.ambiguous)out.unresolvedReason=structuralMismatch?`task-count ${postingTasks.length} ≠ panel-count ${panels.length}`:"duplicate discriminator / non-unique line match";
+  out.ok=true;
+  return out;
+}
+if(typeof window!=="undefined"){window.resolveBcBindings=resolveBcBindings;}
+
 async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projectName, opts){
   // Full sync of BC Job Planning Lines for task 20N10 (where N = panelIndex, 1-based).
   // Strategy: delete all existing lines for the task, then recreate from current ARC state.
@@ -4060,12 +4265,36 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // Delete BC lines that are no longer in ARC (e.g. BOM rows removed)
   // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop DELETE calls were
   // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
+  // ★ B065 MONEY-PATH GUARD: DELETE a BC line ONLY when it is a genuine orphan —
+  // no live ARC row is BOUND to it (row.bcLineNo) AND its part# (No) matches no
+  // live BOM row. Under the (interim) positional Line_No scheme a row
+  // insert/delete/reorder shifts every downstream Line_No, so a still-live part's
+  // BC line can land outside the recomputed desired set and — pre-B065 — was
+  // DELETEd as an "orphan" = silent dropped part / wrong order (the headline
+  // money-path risk). The guard trades that SILENT drop for a VISIBLE transient
+  // duplicate (kept old line + new positional line); the duplicate disappears
+  // once the follow-up stable-binding read path (assign Line_No from
+  // row.bcLineNo) removes the churn, and F070's detector surfaces it meanwhile.
+  const _b065LiveParts=new Set(lines.map(l=>l.No).filter(Boolean)); // desired-set part#s (incl. live BOM rows)
+  const _b065RowBound=(ln)=>(panel&&Array.isArray(panel.bom)?panel.bom:[]).some(r=>r&&r.bcLineNo!=null&&Number(r.bcLineNo)===Number(ln));
   for(const ex of existingLines){
     if(!desiredLineNos.has(ex.Line_No)){
+      // B065 guard — skip DELETE if a live row is bound to this line or its part# is still live.
+      if(_b065RowBound(ex.Line_No)||(ex.No&&_b065LiveParts.has(ex.No))){
+        console.warn(`bcSyncPlanningLines: B065 guard — SKIP delete of line ${ex.Line_No} (No='${ex.No}'): part still live or row-bound`);
+        continue;
+      }
       await sleep(100);
       const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
       const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
       if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncPlanningLines: DELETED orphan line ${ex.Line_No}`);}
+      else{
+        // B065/B067: surface DELETE failures into result.failed so a failed
+        // orphan-delete can't be masked as a clean sync (feeds the honest hash).
+        const dtxt=await dr.text().catch(()=>"");
+        failedRows.push({partNumber:ex.No||"",description:`orphan-delete line ${ex.Line_No}`,rowId:null,lineNo:ex.Line_No,status:dr.status,error:dtxt,op:"delete"});
+        console.warn(`bcSyncPlanningLines: orphan DELETE line ${ex.Line_No} failed (${dr.status}):`,dtxt);
+      }
     }
   }
 
@@ -4215,12 +4444,28 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
   // Delete BC lines that are no longer referenced by ARC (e.g. row reverted)
   // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop DELETE calls were
   // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
+  // ★ B065 MONEY-PATH GUARD (ECO path — same rule as the base sync loop): only
+  // DELETE a genuine orphan — no live ECO row is bound to the line AND its part#
+  // matches no live ECO row. Prevents a still-live ECO part being dropped as an
+  // "orphan" when its positional Line_No shifts.
+  const _b065EcoLiveParts=new Set(lines.map(l=>l.No).filter(Boolean));
+  const _b065EcoRowBound=(ln)=>(panel&&Array.isArray(panel.bom)?panel.bom:[]).some(r=>r&&r.bcLineNo!=null&&Number(r.bcLineNo)===Number(ln));
   for(const ex of existingLines){
     if(!desiredLineNos.has(ex.Line_No)){
+      if(_b065EcoRowBound(ex.Line_No)||(ex.No&&_b065EcoLiveParts.has(ex.No))){
+        console.warn(`bcSyncEcoPlanningLines: B065 guard — SKIP delete of line ${ex.Line_No} (No='${ex.No}'): part still live or row-bound`);
+        continue;
+      }
       await sleep(100);
       const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
       const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
       if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncEcoPlanningLines: DELETED orphan line ${ex.Line_No}`);}
+      else{
+        // B065/B067: surface DELETE failures into result.failed (honest hash).
+        const dtxt=await dr.text().catch(()=>"");
+        failedRows.push({partNumber:ex.No||"",description:`ECO orphan-delete line ${ex.Line_No}`,rowId:null,lineNo:ex.Line_No,status:dr.status,error:dtxt,op:"delete"});
+        console.warn(`bcSyncEcoPlanningLines: orphan DELETE line ${ex.Line_No} failed (${dr.status}):`,dtxt);
+      }
     }
   }
 
@@ -10028,6 +10273,9 @@ async function saveProject(uid,project){
   // Don't store page images in Firestore — strip dataUrls from panels
   // DECISION(v1.19.421): Include updatedBy (uid) so concurrent editing detection can
   // distinguish own saves from other users' saves.
+  // DATA-RETENTION (B065): panel.bcTaskNo and row.bcLineNo are additive durable
+  // BC bindings — the panel/row spreads below preserve them; ONLY page.dataUrl is
+  // stripped. Do NOT add these (or any metadata flag) to a strip list.
   data.qvHistory=_mergeQvHistory(project.id,data,_curDoc&&_curDoc.exists?_curDoc.data():null);
   const stripped={...data,updatedBy:uid,updatedAt:Date.now(),panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   const toSave=JSON.parse(JSON.stringify(stripped));
@@ -11480,7 +11728,10 @@ async function copyProject(uid,sourceProject,onProgress){
     return{
       id:"panel-"+(i+1),
       name:panel.name,
-      bom:panel.bom,
+      // B065: strip row-level BC bindings — a copy is a FRESH BC project, so
+      // carrying row.bcLineNo would point the copy's rows at the source's BC
+      // lines. (panel.bcTaskNo is already excluded by this include-list.)
+      bom:(panel.bom||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;}),
       pages:newPages,
       laborData:panel.laborData,
       validation:panel.validation,
@@ -40430,11 +40681,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
       for(let i=0;i<panels.length;i++){
         setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
-        await bcSyncPanelPlanningLines(bc.number,i,panels[i],project.name).catch(e=>console.warn("Relink planning lines error panel",i,e));
+        // B065 C1 FIX: pass the 1-based panel number (i+1). This call previously
+        // passed the 0-based `i` while task structure was built 1-based (:3253)
+        // and every other caller uses i+1 → relinked projects wrote planning
+        // lines onto the wrong tasks + minted a phantom 20010 block.
+        await bcSyncPanelPlanningLines(bc.number,i+1,panels[i],project.name).catch(e=>console.warn("Relink planning lines error panel",i,e));
       }
       const updated={...projectRef.current,bcProjectNumber:bc.number,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
-      // Reset per-panel bc attachment flags
-      if(updated.panels)updated.panels=updated.panels.map(pan=>({...pan,bcPdfAttached:false,bcPdfFileName:null}));
+      // Reset per-panel bc attachment flags + CLEAR durable BC bindings (B065):
+      // relink creates a NEW BC project, so any stored panel.bcTaskNo / row.bcLineNo
+      // point at the OLD project and MUST be dropped so they re-bind against the
+      // new one.
+      if(updated.panels)updated.panels=updated.panels.map(pan=>{
+        const {bcTaskNo,...panRest}=pan||{};
+        return {...panRest,bcPdfAttached:false,bcPdfFileName:null,
+          bom:((pan&&pan.bom)||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;})};
+      });
       setProject(updated);projectRef.current=updated;onChange(updated);
       await saveProject(uid,updated);
       setRelinkMsg("✓ Re-linked to "+bc.number);
