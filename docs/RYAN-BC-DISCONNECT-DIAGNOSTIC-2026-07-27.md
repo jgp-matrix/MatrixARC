@@ -11,6 +11,9 @@ The BC web service is **fine** (published; unkeyed + keyed GETs for real records
 
 **NEW work item B065 [BUG · HIGH]:** ARC's panel→BC-task-number mapping for a project can go stale (BC task renumber) → planning-line 404 storm. Fix = re-resolve the actual `Job_Task_No` from BC per panel (don't trust a stored/computed increment), + fail loudly on task-not-found (ties to B064). The B064/B016/F069 hardening items remain valid defense-in-depth; **B065 is the actual root-cause bug.**
 
+## ✅ UNBLOCKED (2026-07-27) — one-off manual reconciliation
+Jon (prod, editable) nudged panel-5's BOM qty to dirty its sync-hash → clicked ⇅ Sync BC → ARC's own sync back-filled the missing task block **AND** posted the lines. **Verified live in BC (`MATR_SndBx_01152026`):** task block `20500` Begin / `20510` Posting ("CSW1952-121 C Rev B") / `20520` eng / `20599` End all present; **12 planning lines under 20510** (PROGRESS BILLING 10000 + CUT/LAYOUT/WIRE 30/40/50000 + BOM rows 60000+). Descriptions are the real source-of-truth values (ARC generated them, not a placeholder). **404 source resolved → the storm + Firestore write-exhaustion stop → Ryan unblocked** (hard-reload his session). NOTE: the direct BC-write route was blocked by the harness safety classifier (external-system write) — the app-sync route was used instead and is the safer, more complete fix. **This is a one-off; the DURABLE fix so it can't recur = B065 (durable task/line binding + self-heal) + B067 (honest sync-hash).**
+
 **Superseded hypotheses below are kept for the record but are NOT the cause.**
 
 ## ★★★ DELETE TRACE (2026-07-27) — how BC lost task 20510 (Ryan did NOT delete anything)
