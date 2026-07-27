@@ -5027,13 +5027,19 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
   // Multi-token cases where words are split across fields are handled by an additional
   // per-token cross-field intersection pass below.
   const literalTokens=rawTokens.map(t=>t.replace(/'/g,"''"));
+  // B063: item-NUMBER fields are case-SENSITIVELY collated on this tenant (part#s stored UPPERCASE)
+  // → a lowercase part# search returns nothing (Jon repro 2026-07-27: lowercase misses, UPPERCASE finds).
+  // Description fields ARE case-insensitive (v1.19.806). tolower() is rejected by BC SaaS (400, v1.19.806),
+  // so we case-fold ONLY the number-field token by UPPERCASING it; description queries are left untouched.
+  const _isBcNumberField=fn=>/^(no|number|vendor_item_no|common_item_no|manufacturer_code)$/i.test(fn);
   function _andOn(fieldName){
     // DECISION(v1.19.806): No tolower() wrappers — BC SaaS items endpoint chokes on
     // tolower() in filter expressions (silent parser failure, returns 400 with confusing
     // "Blocked field" error pointing at *No*). BC's contains() is already case-insensitive
-    // by default on this tenant's collation, so plain contains() works for mixed-case
-    // descriptions ("Switch" matched by lowercase 'switch' returned 33 items in testing).
-    return literalTokens.map(t=>`contains(${fieldName},'${t}')`).join(' and ');
+    // by default on this tenant's collation for DESCRIPTIONS; number fields need the token
+    // uppercased (B063) since they collate case-sensitively.
+    const uc=_isBcNumberField(fieldName);
+    return literalTokens.map(t=>`contains(${fieldName},'${uc?t.toUpperCase():t}')`).join(' and ');
   }
   try{
     if(field==="both"){
@@ -5059,7 +5065,8 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       const PER_TOKEN_TOP=1000;
       const ITEM_CARD_FIELDS=["No","Description","Description_2","Search_Description","Vendor_Item_No","Common_Item_No","Manufacturer_Code"];
       const fetchedPerField=await Promise.all(
-        ITEM_CARD_FIELDS.map(f=>_bcFetchItemsViaItemCard(`contains(${f},'${primary}')`,PER_TOKEN_TOP,0))
+        // B063: uppercase the primary token for number fields (case-sensitive collation); descriptions unchanged.
+        ITEM_CARD_FIELDS.map(f=>_bcFetchItemsViaItemCard(`contains(${f},'${_isBcNumberField(f)?primary.toUpperCase():primary}')`,PER_TOKEN_TOP,0))
       );
       const candidates=new Map();
       for(const items of fetchedPerField){
