@@ -8,7 +8,7 @@
 ## Current — 🟢 2026-07-24 · prod v1.24.36 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze
 
 > ## 📌 STATE
-> prod **v1.24.37** (release `fce87edc`, 2026-07-27) · master==origin · working tree clean · **no merge freeze**. Latest: **F068** cross-propagation + near-miss opt-in shipped (see 2026-07-27 block below).
+> prod **v1.24.38** (release `e1d28505`, 2026-07-27) · master==origin · working tree clean · **no merge freeze**. Latest: **B063** BC Item Browser search case-insensitive for part#s (v1.24.38, Jon-verified) · **F068** cross-propagation + near-miss opt-in (v1.24.37). See 2026-07-27 blocks below.
 > **v1.24.36 batch (Test-verified + Coach-approved):** F065 **full-sync** [Update all] (price+LT+vendor, one click, clears red) · **F067** 3-min auto-approve (banner+Cancel) · **F066** (Duct/DinRail/DuctCover RED only on $0.00/qty=0 — staleness + estimated-LT + LT-RFQ all exempt) · **G020** (Get New Pricing hidden) · **G021** (PRJ# in Panel Summary) · **B061** (Ext$ colgroup width). Prior v1.24.35 = F065 core + B060 flicker + B061 first pass.
 > PRJ402119 pricing emergency = **CONTAINED**. RFQ remains the ONLY pricing-into-BC path; the 3 kill-switches (`SCRAPER_BC_WRITEBACK_ENABLED` / `AUTO_PRICING_ENABLED` / `AUTO_BC_REPRICE_ENABLED`) stay OFF **by design** until the re-enable prereqs land (this is the deliberate RFQ-only mode, not a fault).
 > 📥 **Inbox: empty** — all captures triaged/promoted to TODO.md (Freddy, 2026-07-24).
