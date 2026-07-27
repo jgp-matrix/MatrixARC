@@ -59,3 +59,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.054 | v1.24.36-T054 | aae00a18 | F068 cross-propagation (full-sync) — cross a part on one Line, offers to cross the same part on the other Lines to B with price+LT+vendor. For Jon verify (disposable project). | 2026-07-24 |
 | V.055 | v1.24.36-T055 | 82a751db | F068 LT-timing fix — [Cross all] re-reads source LT at click (re-verify: cross carries lead time) | 2026-07-24 |
 | V.056 | v1.24.36-T056 | 2da63905 | (no description) | 2026-07-27 |
+| V.057 | v1.24.37-T057 | bb21d7c8 | (no description) | 2026-07-27 |
