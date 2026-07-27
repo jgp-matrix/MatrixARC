@@ -23753,8 +23753,19 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const [vendorNames,setVendorNames]=useState({});
   const [purchaseData,setPurchaseData]=useState({});
   // DECISION(v1.19.688): Lazy-enriched lead time data per item number.
-  // Keyed by item.number → integer days (null = confirmed empty, undefined = not yet fetched).
+  // B062: value widened to {days, source} — days = integer|null (null = confirmed empty),
+  // source = "bc_vendor"|"bc_item"|null. undefined = not yet fetched. Q1: bc_vendor authoritative.
   const [leadTimeData,setLeadTimeData]=useState({});
+  // B062 lazy-on-visible LT pipeline (Q2): fetch LT only for rows as they scroll into view.
+  const _itemVendorNoRef=useRef(new Map());   // item.number -> resolved vendorNo (reused by lazy LT + enrichVendorNames)
+  const _ltQueueRef=useRef([]);               // pending items awaiting an LT fetch
+  const _ltQueuedRef=useRef(new Set());       // item.numbers currently queued/in-flight (dedupe)
+  const _ltDoneRef=useRef(new Set());         // item.numbers with a resolved LT value (persist across searches)
+  const _ltDrainingRef=useRef(false);         // serial drain guard
+  const _ltFetchIdRef=useRef(0);              // bumped on a new search to abort the stale drain
+  const _ltScrollRef=useRef(null);            // results scroll container = IntersectionObserver root
+  const _ltObserverRef=useRef(null);
+  const _ltRowItems=useRef(new WeakMap());    // row <tr> element -> its item (for the observer callback)
   const [customerSupplied,setCustomerSupplied]=useState(false);
   const [editVendorItem,setEditVendorItem]=useState(null); // item.number being edited
   const [editVendorNo,setEditVendorNo]=useState("");
@@ -23972,6 +23983,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     // DECISION(v1.19.469): Track search ID to prevent race conditions when user types fast.
     // If a newer search started while this one was in-flight, discard stale results.
     const myId=append?searchIdRef.current:++searchIdRef.current;
+    if(!append){
+      // B062: abort any in-flight lazy-LT drain and drop still-queued items from the OLD
+      // result set (mirror enrichVendorNames' stale-abort). _ltDoneRef persists so already-
+      // fetched item numbers are never re-fetched when they reappear in a later search.
+      _ltFetchIdRef.current++;
+      _ltQueueRef.current=[];
+      _ltQueuedRef.current.clear();
+    }
     setLoading(true);
     const r=await bcSearchItems(q,{field,top:PAGE,skip:s});
     if(searchIdRef.current!==myId){console.log("BC_BROWSER: discarding stale results for",q);return;}
@@ -23999,25 +24018,28 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     const toFetch=items.filter(it=>it.number&&vendorNames[it.number]===undefined).slice(0,12);
     if(!toFetch.length)return;
     const vBatch={};const pBatch={};
-    const mBatch={};const ltBatch={};
+    const mBatch={};
     for(const it of toFetch){
       if(aborted())return;
       const vNo=await bcGetItemVendorNo(it.number);
+      // B062: cache the resolved vendorNo so the lazy-on-visible LT fetch reuses it
+      // (bc_vendor LT needs the vendorNo) instead of re-hitting ItemCard for it.
+      _itemVendorNoRef.current.set(it.number,vNo||"");
       if(aborted())return;
       vBatch[it.number]=vNo?await bcGetVendorName(vNo):"";
       if(aborted())return;
       const lp=await bcGetLastPurchase(it.number);
       pBatch[it.number]=lp||null;
-      // DECISION(v1.19.688): Fetch Lead_Time_Calculation alongside manufacturer code so the
-      // Item Browser Lead column populates without an extra round-trip per item.
-      // Combined SELECT on ItemCard.
+      // DECISION(v1.19.688): Fetch manufacturer code from ItemCard.
+      // B062 (Q2): lead time is NO LONGER fetched here (12-row cap) — it is fetched
+      // lazily per-row as rows scroll into view via the LT pipeline below, and now
+      // reads the authoritative bc_vendor (ItemVendorCatalog) source first (Q1).
       try{
         if(aborted())return;
         const allPages=await bcDiscoverODataPages();const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-        if(iPage){const mr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code,Lead_Time_Calculation&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(iPage){const mr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${it.number}'&$select=No,Manufacturer_Code&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
           if(mr.ok){const md=((await mr.json()).value||[])[0];if(md){
             mBatch[it.number]=md.Manufacturer_Code||"";
-            ltBatch[it.number]=_bcDateFormulaToDays(md.Lead_Time_Calculation);
           }}}
       }catch(e){}
       // Small inter-request spacing so BC doesn't rate-limit us when the user pages/searches quickly
@@ -24027,7 +24049,78 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     setVendorNames(prev=>({...prev,...vBatch}));
     setPurchaseData(prev=>({...prev,...pBatch}));
     setMfrCodes(prev=>({...prev,...mBatch}));
-    setLeadTimeData(prev=>({...prev,...ltBatch}));
+  }
+
+  // B062 (Q1/Q2): lazy-on-visible lead-time fetch. Enqueued by the IntersectionObserver
+  // when a result row scrolls into view; drained serially with the same 30ms spacing +
+  // stale-abort (on new search) discipline enrichVendorNames uses. Reads the authoritative
+  // bc_vendor (ItemVendorCatalog) LT first, falls back to bc_item (ItemCard) — mirrors the
+  // runPricingBackground precedence (:16164-16166 SSOT). Calls the fetchers DIRECTLY (they
+  // are NOT gated by the AUTO_PRICING_ENABLED kill-switch — only the runPricing* wrappers are).
+  function _enqueueLtFetch(item){
+    if(!_bcToken||!item||!item.number)return;
+    const num=item.number;
+    if(_ltDoneRef.current.has(num)||_ltQueuedRef.current.has(num))return;
+    _ltQueuedRef.current.add(num);
+    _ltQueueRef.current.push(item);
+    _drainLtQueue();
+  }
+  async function _drainLtQueue(){
+    if(_ltDrainingRef.current)return;
+    _ltDrainingRef.current=true;
+    const myId=_ltFetchIdRef.current;
+    try{
+      while(_ltQueueRef.current.length){
+        if(myId!==_ltFetchIdRef.current)break;              // stale-abort: a new search started
+        const item=_ltQueueRef.current.shift();
+        const num=item.number;
+        try{
+          let vNo=_itemVendorNoRef.current.get(num);
+          if(vNo===undefined){vNo=await bcGetItemVendorNo(num)||"";_itemVendorNoRef.current.set(num,vNo);}
+          let days=null,src=null;
+          if(vNo){days=await bcLookupItemVendorLeadTime(num,vNo);if(days!=null)src="bc_vendor";}
+          if(days==null){days=await bcLookupLeadTime(num);if(days!=null)src="bc_item";}
+          if(myId!==_ltFetchIdRef.current)break;             // stale-abort mid-flight
+          _ltQueuedRef.current.delete(num);
+          _ltDoneRef.current.add(num);
+          setLeadTimeData(prev=>({...prev,[num]:{days,source:src}}));
+        }catch(e){_ltQueuedRef.current.delete(num);}          // allow a retry on re-intersect
+        await new Promise(r=>setTimeout(r,30));
+      }
+    }finally{
+      _ltDrainingRef.current=false;
+      // Self-heal: rows that intersected while this drain held the lock were enqueued but
+      // couldn't start their own drain — kick one now so they don't stall until the next scroll.
+      if(_ltFetchIdRef.current===myId&&_ltQueueRef.current.length)_drainLtQueue();
+    }
+  }
+  // B062 (Q2): one IntersectionObserver over the results scroll container. Rows register via
+  // their ref callback; when a row becomes visible its item is enqueued for a lazy LT fetch.
+  // Created once; disconnected on unmount. rootMargin prefetches rows just below the fold.
+  useEffect(()=>{
+    if(typeof IntersectionObserver==="undefined")return;
+    const obs=new IntersectionObserver((entries)=>{
+      for(const e of entries){
+        if(e.isIntersecting){
+          const item=_ltRowItems.current.get(e.target);
+          if(item)_enqueueLtFetch(item);
+        }
+      }
+    },{root:_ltScrollRef.current||null,rootMargin:"100px"});
+    _ltObserverRef.current=obs;
+    return()=>{obs.disconnect();_ltObserverRef.current=null;};
+  },[]);
+  // B062 (step 4): attach the enriched vendor name AND the fetched lead time (days + source)
+  // onto the item handed to onSelect, so commitBcItem can stamp the LT synchronously. Without
+  // this the displayed Lead-column value was discarded on USE. Only attaches LT when a real
+  // value exists (days!=null) — an absent LT never wipes the row's existing lead time.
+  function _withMeta(item){
+    let it=item;
+    const vn=vendorNames[item.number];
+    if(vn)it={...it,_vendorName:vn};
+    const lt=leadTimeData[item.number];
+    if(lt&&lt.days!=null)it={...it,_leadTimeDays:lt.days,_leadTimeSource:lt.source||"bc_item"};
+    return it;
   }
 
   function onQueryChange(val){
@@ -24353,7 +24446,10 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                         .catch(e=>console.warn("[BC] Purchase Price write failed:",e.message));
                     }
                   }
-                  onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
+                  // B062: carry any fetched lead time through on a freshly-created item too.
+                  const _cLt=leadTimeData[created.number];
+                  const _cLtAttach=(_cLt&&_cLt.days!=null)?{_leadTimeDays:_cLt.days,_leadTimeSource:_cLt.source||"bc_item"}:{};
+                  onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,..._cLtAttach,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName,..._cLtAttach});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
               }} disabled={creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
@@ -24365,7 +24461,7 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
           </div>
         )}
-        <div style={{flex:1,minWidth:0,minHeight:0,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
+        <div ref={_ltScrollRef} style={{flex:1,minWidth:0,minHeight:0,overflow:"auto",borderRadius:8,border:`1px solid ${C.border}`}}>
           {/* B055: minWidth:0 lets this flex item shrink below its table's min-content width so the
               overflow:auto actually engages horizontally (wide async MFR/Vendor content scrolls WITHIN
               the modal instead of pushing the far-right "Use" toggle off-screen). */}
@@ -24387,8 +24483,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             <tbody>
               {results.map((item,i)=>(
                 <tr key={item.number+"-"+i}
+                  ref={el=>{if(el&&item.number){_ltRowItems.current.set(el,item);if(_ltObserverRef.current)_ltObserverRef.current.observe(el);}}}
                   style={{borderBottom:`1px solid ${C.border}33`,background:i%2===0?"transparent":"rgba(255,255,255,0.015)",cursor:"pointer"}}
-                  onClick={()=>{const vn=vendorNames[item.number];const it=vn?{...item,_vendorName:vn}:item;onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
+                  onClick={()=>{const it=_withMeta(item);onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
                   onMouseEnter={e=>e.currentTarget.style.background=C.accentDim+"44"}
                   onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":"rgba(255,255,255,0.015)"}>
                   <td style={{padding:"7px 10px",fontWeight:600,whiteSpace:"nowrap"}}>{item._vendorItemNo||item.number}</td>
@@ -24522,15 +24619,21 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                       <span title="Last PO cost">${purchaseData[item.number].directUnitCost.toFixed(2)}</span>
                     ):item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}
                   </td>
-                  <td style={{padding:"7px 10px",textAlign:"center",color:leadTimeData[item.number]!=null?C.text:C.muted,fontSize:12,whiteSpace:"nowrap"}}
-                    title={leadTimeData[item.number]!=null?`Lead time: ${leadTimeData[item.number]} days (from BC Item Card)`:leadTimeData[item.number]===null?"No lead time set on BC Item Card":""}>
-                    {leadTimeData[item.number]!=null?leadTimeData[item.number]:(leadTimeData[item.number]===null?"—":"…")}
+                  {/* B062: leadTimeData value is {days,source} (undefined=not-yet-fetched → "…",
+                      days===null=confirmed-empty → "—"). Q1: source hint (vendor catalog vs item card). */}
+                  {(()=>{const _lt=leadTimeData[item.number];const _d=_lt&&_lt.days!=null?_lt.days:null;const _src=_lt&&_lt.source;
+                    const _srcLabel=_src==="bc_vendor"?"BC vendor catalog":_src==="bc_item"?"BC item card":"BC";
+                    return(
+                  <td style={{padding:"7px 10px",textAlign:"center",color:_d!=null?C.text:C.muted,fontSize:12,whiteSpace:"nowrap"}}
+                    title={_d!=null?`Lead time: ${_d} days (from ${_srcLabel})`:(_lt&&_lt.days===null?"No lead time set in BC":"")}>
+                    {_d!=null?_d:(_lt&&_lt.days===null?"—":"…")}
                   </td>
+                    );})()}
                   <td style={{padding:"7px 10px",color:C.muted,fontSize:12,whiteSpace:"nowrap"}}>
                     {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
                   </td>
                   <td style={{padding:"7px 10px",textAlign:"center"}}>
-                    <button onClick={e=>{e.stopPropagation();const vn=vendorNames[item.number];const it=vn?{...item,_vendorName:vn}:item;onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
+                    <button onClick={e=>{e.stopPropagation();const it=_withMeta(item);onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
                       style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`})}>Use</button>
                   </td>
                 </tr>
@@ -28559,6 +28662,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         bcVerify:{status:"in-bc",at:Date.now()},
         ...(finalPrice!=null?{unitPrice:finalPrice,..._priceStamp()}:{}),
         ...(ppDate?{priceDate:ppDate,bcPoDate:ppDate}:{}),
+        // B062 (step 5, Q1/Q3): stamp the lead time the Item Browser carried in (bc_vendor
+        // preferred, bc_item fallback) SYNCHRONOUSLY so the row un-reds immediately and the
+        // deferred same-part full-sync (below) can read it. Only stamps when a value came in
+        // (deliberate USE/re-select overwrite per Q3); an absent LT never wipes the row's own.
+        ...(bcItem._leadTimeDays!=null?{leadTimeDays:+bcItem._leadTimeDays,leadTimeSource:bcItem._leadTimeSource||"bc_item",leadTimeUpdatedAt:now,leadTimeEstimated:false}:{}),
         confidence:"high",
       };
       delete updates._confDowngradeReason;
@@ -28606,10 +28714,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             }
             const ltDays=_bcDateFormulaToDays(md.Lead_Time_Calculation);
             if(ltDays!=null){
-              patches.leadTimeDays=ltDays;
-              patches.leadTimeSource="bc_item";
-              patches.leadTimeUpdatedAt=Date.now();
-              patches.leadTimeEstimated=false;
+              // B062 (step 6): this async ItemCard read yields a WEAK bc_item LT. Do NOT clobber a
+              // stronger source that already landed on the row — specifically the bc_vendor LT the
+              // Item Browser just stamped synchronously (symptom-1 path), or a supplier/scraper LT.
+              // Manual is deliberately NOT protected here: Q3 allows an explicit USE/re-select to
+              // overwrite a manual LT, and pre-B062 behaviour (a true cross replacing the old part's
+              // LT with the new part's bc_item value) is preserved for non-authoritative sources.
+              const _curRow=((latestPanelRef.current&&latestPanelRef.current.bom)||[]).find(r2=>r2.id===bomRowId);
+              const _curSrc=_curRow&&_curRow.leadTimeSource;
+              if(_curSrc!=="bc_vendor"&&_curSrc!=="supplier"&&_curSrc!=="scraper"){
+                patches.leadTimeDays=ltDays;
+                patches.leadTimeSource="bc_item";
+                patches.leadTimeUpdatedAt=Date.now();
+                patches.leadTimeEstimated=false;
+              }
             }
             if(Object.keys(patches).length>0){
               const lp=latestPanelRef.current;const bom2=(lp.bom||[]).map(r2=>r2.id===bomRowId?{...r2,...patches}:r2);
@@ -28660,7 +28778,30 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // when THIS commit actually applied a price (PP prefetch or Item Card unitCost) — no price → skip.
     const _committedRow=(bom||[]).find(r=>r.id===bomRowId);
     const _commitPrice=ppPrice!=null?ppPrice:(bcItem.unitCost!=null?+bcItem.unitCost:null);
-    if(_committedRow&&_commitPrice!=null&&!_isJunkPartNumber(_committedRow.partNumber)){
+    // B062 (step 7, Q4): classify this commit. A SAME-PART re-select (PN unchanged) gets a DEFERRED
+    // FULL-SYNC (price + LT + vendor) once B's async lookups land; a TRUE cross (PN changed) keeps the
+    // existing immediate PRICE-ONLY fire (below) + the F068 deferred cross-propagation. Mutually
+    // exclusive by the ===/!== PN test — a single commit never fires both fan-out paths.
+    const _b062SamePartReselect=!!_f068OldA&&normPart(bcFullPN)===normPart(_f068OldA);
+    if(_b062SamePartReselect){
+      // Same-part re-select → full-sync across ALL Lines like F065 (Q4). Defer until the vendor +
+      // ItemCard lead-time IIFEs settle, then re-read the SETTLED source row (carries the freshly-
+      // landed LT+vendor) from latestPanelRef and build the FULL patch via the shared
+      // _fullCrossLinePatch SSOT. This is what carries the LEAD TIME to the sibling Lines (symptom 2:
+      // the pre-B062 price-only fire pushed price but not LT, leaving siblings red).
+      const _b062ProjId=projectId,_b062PanelId=panel.id;
+      Promise.allSettled([_f068VendorP,_f068ItemCardP]).then(()=>{
+        try{
+          // Async-Ownership: bail if the user navigated to another panel during the async lookups.
+          if(latestPanelRef.current&&_b062PanelId&&latestPanelRef.current.id!==_b062PanelId)return;
+          const _settledRow=((latestPanelRef.current&&latestPanelRef.current.bom)||[]).find(r=>r.id===bomRowId);
+          if(!_settledRow||_isJunkPartNumber(_settledRow.partNumber))return;
+          const _patch=_fullCrossLinePatch(_settledRow);
+          if(Object.keys(_patch).length===0)return;              // nothing to sync
+          _maybePromptCrossLine(bomRowId,_settledRow.partNumber,_patch,"price",_settledRow.qty);
+        }catch(e){/* non-fatal — a failed prompt just means no fan-out */}
+      }).catch(()=>{});
+    }else if(_committedRow&&_commitPrice!=null&&!_isJunkPartNumber(_committedRow.partNumber)){
       // F065 (Coach F2): PRICE-ONLY from a BC cross/commit — do NOT full-sync here. _committedRow retains the
       // OLD part's leadTimeDays/bcVendorName (the NEW part's LT/vendor arrive via later async lookups :28403/
       // :28437 and update only the source row), so a full patch would propagate the OLD part's STALE lead time
