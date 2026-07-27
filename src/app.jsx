@@ -40269,18 +40269,31 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           try{
             // Write pending marker before sync
             await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true},true); // B041: open BC-sync marker — no bump/unlock
-            await bcSyncPanelPlanningLines(bcNum,i+1,p,projectName);
+            const _syncRes=await bcSyncPanelPlanningLines(bcNum,i+1,p,projectName);
             synced++;
-            // FIX(F-2d.3): Re-enable hash save-back (disabled in v1.20.65 #65b).
-            // Safe now: v1.20.71 replaced stale init.panels with projectRef.current.
-            // Write hash + clear marker atomically in one Firestore write.
-            const syncHash=computePanelBomHash(p);
-            const hashed={...p,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
-            await saveProjectPanel(uid,projectId,p.id,{...hashed,_noBumpWrite:true},true); // B041: open BC-sync hash marker — no bump/unlock
-            // Update React state so manual sync sees the new hash
-            const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?hashed:cp);
-            const upd={...projectRef.current,panels:updPanels};
-            setProject(upd);projectRef.current=upd;onChange(upd);
+            // B067: bcSyncPanelPlanningLines does NOT throw on per-line 404/400 — it
+            // collects them into result.failed. Only stamp bomSyncHash + clear the
+            // pending marker on a CLEAN sync (zero failed lines). Stamping the hash on a
+            // partial/total failure records a divergence as "synced" → hashMatch true
+            // next open → it NEVER retries (precisely how Ryan's 404s stayed masked for
+            // 5 weeks). On failure: skip the hash write entirely, leaving the pre-sync
+            // pending marker in place (mirrors the manual syncPlanningLinesToBC path) so
+            // the next open re-syncs. No extra write — the existing marker write is just
+            // conditioned.
+            if(_syncRes&&_syncRes.failed&&_syncRes.failed.length===0){
+              // FIX(F-2d.3): Re-enable hash save-back (disabled in v1.20.65 #65b).
+              // Safe now: v1.20.71 replaced stale init.panels with projectRef.current.
+              // Write hash + clear marker atomically in one Firestore write.
+              const syncHash=computePanelBomHash(p);
+              const hashed={...p,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
+              await saveProjectPanel(uid,projectId,p.id,{...hashed,_noBumpWrite:true},true); // B041: open BC-sync hash marker — no bump/unlock
+              // Update React state so manual sync sees the new hash
+              const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?hashed:cp);
+              const upd={...projectRef.current,panels:updPanels};
+              setProject(upd);projectRef.current=upd;onChange(upd);
+            }else{
+              console.warn("[OPEN BC SYNC] panel",i+1,"— "+((_syncRes&&_syncRes.failed&&_syncRes.failed.length)||"?")+" line(s) failed; NOT stamping bomSyncHash so it retries next open");
+            }
           }catch(e){
             console.warn("Open BC sync panel",i+1,"failed:",e);
             // Clear marker on failure — don't leave it stuck
@@ -42072,13 +42085,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             try{
                               // F-2d.3: Write pending marker before sync (awaited per review)
                               await saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncPending:true,bomSyncStartedAt:Date.now()},true);
-                              await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
-                              // F-2d.3: Set bomSyncHash + clear pending marker after successful sync
-                              const hashed={...proj.panels[i],bomSyncHash:curHash,bomSyncPending:false,bomSyncStartedAt:null};
-                              const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?hashed:p);
-                              const upd={...projectRef.current,panels:updPanels};
-                              setProject(upd);projectRef.current=upd;onChange(upd);
-                              saveProjectPanel(uid,proj.id,proj.panels[i].id,hashed,true).catch(()=>{});
+                              const _syncRes=await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
+                              // B067: only stamp bomSyncHash + clear the pending marker on a
+                              // CLEAN sync. bcSyncPanelPlanningLines collects per-line 404/400 into
+                              // result.failed instead of throwing; stamping on failure records the
+                              // divergence as "synced" and it never retries (the 5-week Ryan masker).
+                              // On failure: skip the hash write, leaving the pre-sync pending marker so
+                              // the next open re-syncs. No extra write — the marker write is conditioned.
+                              if(_syncRes&&_syncRes.failed&&_syncRes.failed.length===0){
+                                // F-2d.3: Set bomSyncHash + clear pending marker after successful sync
+                                const hashed={...proj.panels[i],bomSyncHash:curHash,bomSyncPending:false,bomSyncStartedAt:null};
+                                const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?hashed:p);
+                                const upd={...projectRef.current,panels:updPanels};
+                                setProject(upd);projectRef.current=upd;onChange(upd);
+                                saveProjectPanel(uid,proj.id,proj.panels[i].id,hashed,true).catch(()=>{});
+                              }else{
+                                console.warn("Pre-print sync panel",i+1,"— "+((_syncRes&&_syncRes.failed&&_syncRes.failed.length)||"?")+" line(s) failed; NOT stamping bomSyncHash");
+                              }
                             }catch(e){
                               console.warn("Pre-print sync panel",i+1,"failed:",e);
                               // F-2d.3: Clear marker on failure
