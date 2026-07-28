@@ -430,10 +430,31 @@ let _bcLast401At=0;
 // self-healing transient) — see the bcGatedFetch 401 branch below.
 let _bcHealthState='green';
 const _bcHealthSubs=new Set();
+// F071 — commit-gate settle clock + cold-boot verification flag (consumed by _bcCommitBlocked below).
+//   _bcRedSinceAt : ms timestamp stamped when health transitions INTO 'red' (0 while not red). The
+//     commit-gate treats BC as "disconnected" only AFTER red has persisted past _BC_COMMIT_GRACE_MS,
+//     so a self-healing 401 blip (which resolves entirely in amber, never reaching red) never blocks
+//     a commit. A recovery back to amber/green clears the clock.
+//   _bcVerifiedOnce : flips true on the first successful BC round-trip this session (r.ok in
+//     bcGatedFetch). Guards the cold-boot window where _bcHealthState defaults to 'green' before
+//     anything has actually confirmed BC is reachable — commits stay blocked ('unverified') until proven.
+let _bcRedSinceAt=0;
+let _bcVerifiedOnce=false;
 function _setBcHealth(state){
   if(state===_bcHealthState)return; // transition-only — no churn on the common green→green path
+  if(state==='red')_bcRedSinceAt=Date.now(); // F071 — start the settle clock on entering red
+  else _bcRedSinceAt=0;                       // any recovery (amber/green) clears it
   _bcHealthState=state;
   _bcHealthSubs.forEach(fn=>{try{fn(state);}catch(_){}});
+}
+// F071 — flip the cold-boot verification flag on the FIRST confirmed-reachable BC call. A green→green
+// _setBcHealth is a no-op (transition-only), so the flip is broadcast here explicitly so the commit-gate
+// mirror releases out of 'unverified' the moment BC is first proven reachable — without waiting for a
+// state transition that may never come on an already-green session.
+function _markBcVerified(){
+  if(_bcVerifiedOnce)return;
+  _bcVerifiedOnce=true;
+  _bcHealthSubs.forEach(fn=>{try{fn(_bcHealthState);}catch(_){}});
 }
 // DEBUG (B013-2 manual verification): drive the pill directly to eyeball all three states + the
 // bcOnline side-effects without a real BC round-trip. e.g. window._arcBcHealth('amber').
@@ -562,6 +583,71 @@ try{if(typeof window!=="undefined"){
   window._bcEndpointBroken=_bcEndpointBroken;
   window._bcBrokenEndpoints=_bcBrokenEndpoints;
 }}catch(_){}
+// ── F071 — BC COMMIT-GATE (SSOT predicate + React mirror) ────────────────────────
+// Blocks money-path COMMITS to BC when BC isn't usable, while leaving all reads + Firestore-only
+// edits fully available (queued editing continues uninterrupted). This is the ENFORCEMENT consumer
+// of the B013 health pub-sub + B064 structural-fault recorder — it does not DETECT, it REACTS.
+// Factor the RULE here once; every call site (module commit fn AND JSX button) consumes this one
+// predicate, so "what counts as blocked" can never drift across sites. Posture (Jon-locked):
+// block-commits-allow-queued-editing.
+const _BC_COMMIT_GRACE_MS=8000; // sustained-RED settle window before commits block (Jon-locked 8s)
+// Returns {blocked:true,reason}|null. reason ∈ {'unverified','endpoint','disconnected'}.
+//   'unverified'   — cold boot: no successful BC round-trip yet this session (green-by-default guard).
+//   'endpoint'     — a BC web service this action needs is structurally 404ing (B064, needs N>=2).
+//   'disconnected' — no token, OR health has been RED continuously past the grace window.
+// Anti-lockout is by construction: transient blips resolve in amber and never reach red; a lone
+// probe-404 never trips endpoint (N>=2); reads are never routed here; and the gate self-clears the
+// instant health returns green (via the _bcHealthSubs subscriber in useBcCommitGate).
+function _bcCommitBlocked(){
+  try{
+    if(!_bcVerifiedOnce)return{blocked:true,reason:'unverified'};
+    if(typeof window!=="undefined"&&window._bcEndpointBroken&&window._bcEndpointBroken())return{blocked:true,reason:'endpoint'};
+    if(!_bcToken)return{blocked:true,reason:'disconnected'};
+    if(_bcHealthState==='red'&&_bcRedSinceAt&&(Date.now()-_bcRedSinceAt)>=_BC_COMMIT_GRACE_MS)return{blocked:true,reason:'disconnected'};
+    return null;
+  }catch(_){return null;} // never let the gate itself throw and wedge a commit path
+}
+try{if(typeof window!=="undefined")window._bcCommitBlocked=_bcCommitBlocked;}catch(_){} // debug/repro hook
+// User-facing copy (owner-priority idiom). tier 'A' → hard-block wording; tier 'B' → soft "saved,
+// will sync" wording (Tier-B enqueues rather than hard-blocks).
+function _bcCommitBlockMsg(reason,tier){
+  if(reason==='endpoint'){
+    let seg='';try{const b=(window._bcBrokenEndpoints&&window._bcBrokenEndpoints())||[];seg=b[0]||'';}catch(_){}
+    return `A Business Central service this action needs is unavailable${seg?` (endpoint '${seg}')`:''}. Notify your admin — reconnecting won't fix it.`;
+  }
+  if(reason==='unverified')return "Business Central hasn't been verified yet this session. Give it a moment, then try again.";
+  return tier==='B'
+    ? "BC is offline. Your edits are saved and will sync when BC reconnects."
+    : "BC is offline — this can't be sent until BC reconnects. Click the BC status pill to reconnect.";
+}
+function _fireBcCommitBlockedAlert(reason){arcAlert(_bcCommitBlockMsg(reason,'A'));}
+// React mirror: subscribe to the health pub-sub + the structural-fault pub-sub, and schedule ONE
+// re-evaluation at grace-window expiry so a sustained outage flips the gate live (no user action).
+// Returns {blocked,reason}|null. Consumed as the `bcCommitGate` prop, threaded ALONGSIDE
+// `ownerPriorityActive` (owner-priority alert takes precedence where both apply).
+function useBcCommitGate(){
+  const [gate,setGate]=useState(()=>_bcCommitBlocked());
+  useEffect(()=>{
+    let graceTimer=null;
+    const recompute=()=>{
+      setGate(_bcCommitBlocked());
+      if(graceTimer){clearTimeout(graceTimer);graceTimer=null;}
+      // If RED but still inside the settle window, re-check once at expiry so the button
+      // disables the instant the grace passes (health won't re-broadcast on its own).
+      if(_bcHealthState==='red'&&_bcRedSinceAt){
+        const remaining=_BC_COMMIT_GRACE_MS-(Date.now()-_bcRedSinceAt);
+        if(remaining>0)graceTimer=setTimeout(recompute,remaining+50);
+      }
+    };
+    const hfn=()=>recompute();
+    const ffn=()=>recompute();
+    _bcHealthSubs.add(hfn);
+    _bcEndpointFaultSubs.add(ffn);
+    recompute();
+    return()=>{_bcHealthSubs.delete(hfn);_bcEndpointFaultSubs.delete(ffn);if(graceTimer)clearTimeout(graceTimer);};
+  },[]);
+  return gate;
+}
 const _bcSemaphore={inflight:0,max:6,queue:[]};
 function _bcRelease(){
   _bcSemaphore.inflight--;
@@ -678,7 +764,7 @@ async function bcGatedFetch(url,options){
     // B013-2 — a 2xx proves the current token is VALID → clear any amber/red degradation signal.
     // Guarded on r.ok so a non-auth error (400/403/5xx) doesn't falsely report "connected".
     // B064 — a success to a previously-faulting endpoint also clears its amber degraded chip.
-    if(r.ok){_setBcHealth('green');_clearBcEndpointFault(url);}
+    if(r.ok){_markBcVerified();_setBcHealth('green');_clearBcEndpointFault(url);}
     return r;
   }
 }
@@ -4707,6 +4793,9 @@ function _quoteHeadingLabel(project){
 }
 
 async function bcCreateProject(displayName, customerNumber, customerProjectNumber){
+  // F071 Tier-A HARD-BLOCK (never queue — a queued create risks minting a duplicate BC job).
+  // Defense-in-depth: the UI disables the create/relink buttons, this backstops any programmatic caller.
+  {const _g=_bcCommitBlocked();if(_g)throw new Error(_bcCommitBlockMsg(_g.reason,'A'));}
   if(!_bcToken)throw new Error("Not connected to Business Central");
   if(!customerNumber)throw new Error("A customer must be selected");
   const compId=await bcGetCompanyId();
@@ -21546,7 +21635,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
 // project" — it hands the uploaded metadata back OUT via onDone (initial PO submit) or
 // onSavePoDoc (attaching a doc to an already-recorded PO), and the render site folds it
 // into the single existing saveProject call keyed off projectRef.current.
-function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc}){
+function PoReceivedModal({project,bcProjectNumber,uid,bcCommitGate,onClose,onDone,onSavePoDoc}){
   const panels=project.panels||[];
   // Snapshot at open: was a PO already recorded? Drives the "View PO" panel vs the
   // fresh-entry form. bcPoNumber is only set alongside wonAt, so this is the won state.
@@ -21665,6 +21754,9 @@ function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc
   async function handleSubmit(){
     if(!poNumber.trim()){arcAlert("Please enter a PO number.");return;}
     if(!bcProjectNumber){arcAlert("No BC Project Number on this project. Cannot write to BC.");return;}
+    // F071 Tier-A HARD-BLOCK — PO submit writes the customer PO + ship dates straight to the BC job
+    // (header patch + per-panel end dates + attachment). Never do that against an unusable BC.
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     setSaving(true);setErrors([]);
     const errs=[];
     try{
@@ -21802,8 +21894,9 @@ function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc
             )}
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
               <button onClick={onClose} disabled={saving} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Cancel</button>
-              <button onClick={handleSubmit} disabled={saving||!poNumber.trim()} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"7px 20px",borderRadius:6,cursor:saving?"not-allowed":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:saving||!poNumber.trim()?0.6:1}}>{saving?"Writing to BC…":"Submit PO"}</button>
+              <button onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):handleSubmit} disabled={saving||!poNumber.trim()||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"7px 20px",borderRadius:6,cursor:(saving||bcCommitGate)?"not-allowed":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:(saving||!poNumber.trim()||bcCommitGate)?0.6:1}}>{saving?"Writing to BC…":bcCommitGate?"Submit PO (BC offline)":"Submit PO"}</button>
             </div>
+            {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4,marginTop:8,textAlign:"right"}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
           </>
         )}
       </div>
@@ -25613,7 +25706,7 @@ function DvHistoryModal({history,loading,onClose}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,bcCommitGate,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -29200,6 +29293,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
   async function applyConfirmedPrice(){
     if(!priceConfirmPending)return;
+    // F071 Tier-A HARD-BLOCK — Item Card + Purchase Price push. When BC isn't usable, don't push
+    // (and don't silently no-op): steer the user to the Budgetary option, which saves BOM-only.
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     const{id,partNumber,price}=priceConfirmPending;
     const vendorName=priceConfirmVendor.trim();
     // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
@@ -32935,10 +33031,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {priceConfirmVendors.map(v=><option key={v.number} value={v.displayName}>{v.displayName} ({v.number})</option>)}
                   </select>
                 </div>
-                <button onClick={applyConfirmedPrice}
-                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",width:"100%"}}>
+                <button onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):applyConfirmedPrice}
+                  disabled={!!bcCommitGate}
+                  title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""}
+                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:bcCommitGate?"not-allowed":"pointer",width:"100%",opacity:bcCommitGate?0.45:1}}>
                   ✓ Confirm & Push to BC
                 </button>
+                {bcCommitGate&&<div style={{fontSize:10,color:"#fca5a5",lineHeight:1.4,marginTop:6}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')} Use <b>Budgetary Estimate</b> above to save the price locally.</div>}
               </div>
             </div>
             {/* DECISION(v1.19.903): Renamed Cancel → Discard with destructive
@@ -35659,7 +35758,7 @@ function createBomApprovalTokenDoc(project,barId,sentTo){
 // ── PANEL LIST VIEW ──
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
-function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
+function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive,bcCommitGate}){
   function persistProject(upd){const{_noBumpWrite,...clean}=upd;onUpdate(clean);return safeSave(uid,_noBumpWrite?{...clean,_noBumpWrite:true}:clean);} // B041: _noBumpWrite (if set) reaches saveProject via safeSave but is stripped from onUpdate so it never pollutes React state (Rule 3 safe)
   // F020 (Option A): live edit of the inline Payment Terms / Shipping Method fields.
   // Mirrors QuoteTab.setQ (onUpdate only, no per-keystroke Firestore write) — the parent
@@ -35743,10 +35842,14 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   const _redCount=_anyRed?_countRedRows(project):0;
   const _isMgr=isManager();
   const _redHardBlocks=_anyRed&&!_isMgr; // non-managers: red disables Send
-  const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
+  // F071 Tier-A HARD-BLOCK — Send Quote to customer is blocked when BC isn't usable (Jon-locked:
+  // never send stale/unreconciled pricing to a customer while BC is down). Folds into sendBlocked so
+  // the buttons disable; owner-priority alert still takes precedence in handleSend.
+  const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive||!!bcCommitGate;
   async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     const m=modalData;
     // Incomplete-items / owner-priority hard block applies to everyone (managers included —
     // the F044 override is red-row-only, never for missing pricing/verification/tech-review).
@@ -36088,8 +36191,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <div style={{marginTop:12,padding:"10px 12px",background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,flexShrink:0}}>
             <div style={{fontSize:12,fontWeight:700,color:C.yellow,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
               <span>⚠</span>
-              <span>Send disabled{_hasVerifyBlock?" — BOM verification required":""}{_hasTechReviewBlock?(_hasVerifyBlock?" + ":" — ")+_trLineCount+" line"+(_trLineCount>1?"s":"")+" need Technical Review":""}{_pricingIssueCount>0?((_hasVerifyBlock||_hasTechReviewBlock)?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
+              <span>Send disabled{bcCommitGate?" — Business Central unavailable":""}{_hasVerifyBlock?" — BOM verification required":""}{_hasTechReviewBlock?(_hasVerifyBlock?" + ":" — ")+_trLineCount+" line"+(_trLineCount>1?"s":"")+" need Technical Review":""}{_pricingIssueCount>0?((_hasVerifyBlock||_hasTechReviewBlock)?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
             </div>
+            {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.5,marginBottom:6}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
             <div style={{fontSize:11,color:"#fde68a",lineHeight:1.5,maxHeight:140,overflow:"auto"}}>
               {incompleteItems.slice(0,8).map((i,k)=>(
                 <div key={k} style={{padding:"2px 0"}}>
@@ -36109,7 +36213,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
           <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked||_redHardBlocks}
-            title={sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF only"}
+            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF only"}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
             {sending?"Sending…":(sendBlocked||_redHardBlocks)?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
@@ -36117,7 +36221,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
               BOM Report PDF (spreadsheet-style listing of every panel's BOM
               with ARC Item # / Ref Dwg # / Qty / Description / MFR). */}
           <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked||_redHardBlocks}
-            title={sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
+            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
             {sending?"Sending…":"✉ Send w/BOM"}
           </button>
@@ -36392,7 +36496,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,bcCommitGate,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -38099,6 +38203,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
                   ownerPriorityActive={ownerPriorityActive}
+                  bcCommitGate={bcCommitGate}
                   remoteEditor={(() => {
                     // DECISION(v1.19.614): REVERTED v1.19.608 broadening. Only grey out the
                     // specific panel whose bg task matches (panel.id or panel.id+'_bcsync').
@@ -39088,7 +39193,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
-    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
+    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive} bcCommitGate={bcCommitGate}/>}
     {/* #133 Change 3: standalone Send Quoted BOM modal. Lighter than QuoteSendModal —
         no reply-to-thread, no BOM toggle, no print. Purple accent distinguishes it
         from the blue quote send. */}
@@ -39651,6 +39756,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // owner is present. Non-owners see banner + chime; 14 destructive actions are disabled.
   // See docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md
   const [ownerPriorityActive,setOwnerPriorityActive]=useState(false);
+  // F071 — BC commit-gate mirror ({blocked,reason}|null). Threaded as `bcCommitGate` alongside
+  // `ownerPriorityActive` into PanelListView/PanelCard/QuoteSendModal/PoReceivedModal. SSOT predicate
+  // is `_bcCommitBlocked()`; owner-priority takes precedence where both apply.
+  const bcCommitGate=useBcCommitGate();
   const [takeoverActive,setTakeoverActive]=useState(null);
   const [showTakeoverModal,setShowTakeoverModal]=useState(false);
   // B012 editing lease (P1): leaseReadOnly is the authoritative "someone else holds it" flag,
@@ -40792,6 +40901,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [relinkMsg,setRelinkMsg]=useState(null);
   async function relinkToBC(){
     if(!_bcToken){arcAlert("Connect to Business Central first.");return;}
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;} // F071 Tier-A — relink creates a new BC project
     if(!(await arcConfirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?",{kind:"warning",okLabel:"Re-link"})))return;
     setRelinking(true);setRelinkMsg("Creating BC project…");
     try{
@@ -41979,6 +42089,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             viewers={viewers}
             projectRemoteTasks={projectRemoteTasks}
             ownerPriorityActive={ownerPriorityActive}
+            bcCommitGate={bcCommitGate}
             autoOpenCustomerReview={autoOpenCustomerReview}
             onCustomerReviewOpened={onCustomerReviewOpened}
             activeScope={activeScope}
@@ -42220,7 +42331,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             }catch(e){console.warn("[API] Failed to fetch vendors for alternate pricing:",e.message);}
           }}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} projectId={project.id} onClose={()=>setShowRfqHistory(false)}/>}
-          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} uid={uid} onClose={()=>setShowPoModal(false)} onDone={async(poNum,poDocMeta)=>{
+          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} uid={uid} bcCommitGate={bcCommitGate} onClose={()=>setShowPoModal(false)} onDone={async(poNum,poDocMeta)=>{
             setShowPoModal(false);
             const firstPanel=(projectRef.current.panels||[])[0];
             const dueDate=firstPanel?.requestedShipDate||"";
@@ -45907,6 +46018,7 @@ function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,project,onConfi
 
 // ── NEW PROJECT MODAL ──
 function NewProjectModal({uid,onCreated,onClose}){
+  const bcCommitGate=useBcCommitGate(); // F071 Tier-A — New BC project create hard-blocks when BC unusable
   const [name,setName]=useState("");
   const [custProjNum,setCustProjNum]=useState(""); // F021: CUSTOMER's project # → BC External Document No.
   const [panelCount,setPanelCount]=useState(1);
@@ -46061,6 +46173,8 @@ function NewProjectModal({uid,onCreated,onClose}){
   async function create(e){
     e.preventDefault();
     if(!name.trim()||!selectedCustomer)return;
+    // F071 Tier-A HARD-BLOCK — never queue a BC project create (a queued create risks a duplicate job).
+    if(bcCommitGate){setCreateErr(_bcCommitBlockMsg(bcCommitGate.reason,'A'));return;}
     setLoading(true);setCreateErr("");
     const trimmed=name.trim();
     if(!_bcToken){setBcStatus("connecting");await acquireBcToken(true);}
@@ -46286,10 +46400,11 @@ function NewProjectModal({uid,onCreated,onClose}){
           {bcStatus==="taskwarn"&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>Project created — task structure pending (see error below)</div>}
           {createErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{createErr}</div>}
           {!selectedCustomer&&name.trim()&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>A customer is required to create a project.</div>}
+          {bcCommitGate&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
           <div style={{display:"flex",gap:10,marginTop:4}}>
             <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
-            <button type="submit" disabled={!name.trim()||!selectedCustomer||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||!selectedCustomer||loading?0.5:1})}>
-              {loading?"Creating…":"Create Project"}
+            <button type="submit" disabled={!name.trim()||!selectedCustomer||loading||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||!selectedCustomer||loading||bcCommitGate?0.5:1,cursor:bcCommitGate?"not-allowed":undefined})}>
+              {loading?"Creating…":bcCommitGate?"Create Project (BC offline)":"Create Project"}
             </button>
           </div>
         </form>
