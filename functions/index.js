@@ -556,19 +556,43 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
   const MTX_RE = /^MTX-/i;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Non-item / non-priceable row predicate — PORTED VERBATIM from ARC's SSOT
+  // _isExcludedFromPriceCheck / _isBuyoffOrCrate (src/app.jsx :17358 / :17354), the same predicate
+  // that drives BOM red-flagging (see CLAUDE.md "BOM Row Highlighting": labor, customer-supplied,
+  // contingency, buyoff/crate, Matrix Systems vendor are excluded). These are pseudo-parts (CRATE,
+  // CONTINGENCY, WIRE & CONSUMABLES, JOB BUYOFF, etc.), NOT real BC items — they carry no
+  // Vendor_Item_No and must not be flagged unresolvable. The CF can't cross-call app.jsx, so the
+  // logic is replicated (SSOT-by-replication). CONTINGENCY_PNS mirrors app.jsx's contingency part#
+  // set (:12417) so legacy contingency rows recognized by part# (not the isContingency flag) — e.g.
+  // "WIRE & CONSUMABLES" — are also caught, matching ARC's own `r.isContingency||CONTINGENCY_PNS`
+  // idiom (:7660/:8902). Text-matching here is ARC's OWN heuristic, not a new one.
+  const CONTINGENCY_PNS = new Set(['CONTINGENCY', 'BOM CONTINGENCY', 'WIRE & CONSUMABLES']);
+  const _cfIsBuyoffOrCrate = (r) => {
+    const pn = (r.partNumber || '').toLowerCase(), desc = (r.description || '').toLowerCase(), cf = (r.crossedFrom || '').toLowerCase();
+    return /buyoff/i.test(pn) || /buyoff/i.test(desc) || /buyoff/i.test(cf) || /crat(e|ing)/i.test(pn) || /crat(e|ing)/i.test(desc) || /crat(e|ing)/i.test(cf);
+  };
+  const _cfIsNonItem = (r) => {
+    if (!r) return false;
+    const isContingency = r.isContingency || CONTINGENCY_PNS.has((r.partNumber || '').trim().toUpperCase());
+    return !!r.isLaborRow || !!r.customerSupplied || isContingency || /matrix\s*systems/i.test(r.bcVendorName || '') || _cfIsBuyoffOrCrate(r);
+  };
+
   const snap = await db.collection(`companies/${companyId}/projects`).get();
 
   // ── Phase 1 (READ-ONLY): dedupe the unique set of resolvable values across all BOM rows ──
-  // Resolvable candidate = (row.bcNo || row.partNumber), non-blank, not already MTX, not a labor row.
+  // Resolvable candidate = (row.bcNo || row.partNumber), non-blank, not already MTX, not a non-item
+  // row (labor/contingency/crate/buyoff/customer-supplied/Matrix-Systems — never real BC items).
   const uniqueVals = new Set();
+  const valueMeta = {}; // value -> {description, manufacturer} (first occurrence, for enriching lists)
   for (const d of snap.docs) {
     const pd = d.data() || {};
     for (const panel of (pd.panels || [])) {
       for (const row of (panel.bom || [])) {
-        if (row && row.isLaborRow) continue;
-        const v = ((row && (row.bcNo || row.partNumber)) || '').toString().trim();
+        if (!row || _cfIsNonItem(row)) continue;
+        const v = ((row.bcNo || row.partNumber) || '').toString().trim();
         if (!v || MTX_RE.test(v)) continue;
         uniqueVals.add(v);
+        if (!valueMeta[v]) valueMeta[v] = { description: row.description || null, manufacturer: row.manufacturer || null };
       }
     }
   }
@@ -609,7 +633,7 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
   }
 
   // ── Phase 2: classify + report every row; apply field-level RMW when live ──
-  let total = 0, resolvable = 0, alreadyMtx = 0, laborOrNull = 0, unresolvable = 0;
+  let total = 0, resolvable = 0, alreadyMtx = 0, laborOrNull = 0, nonItem = 0, unresolvable = 0;
   let appliedProjects = 0, appliedRows = 0, panelFieldsRewritten = 0;
   const unresolvableList = [];
   const appliedPairs = {}; // old -> MTX actually written (audit / reverse map)
@@ -630,6 +654,10 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
         const raw = ((row && (row.bcNo || row.partNumber)) || '').toString().trim();
         if (!raw) { laborOrNull++; continue; }
         if (MTX_RE.test(raw)) { alreadyMtx++; continue; }
+        // Non-item pseudo-parts (contingency/crate/buyoff/customer-supplied/Matrix-vendor) are not
+        // real BC items — bucket as nonItem so they don't pollute unresolvable. (SSOT: app.jsx
+        // _isExcludedFromPriceCheck.) Left untouched by the rewrite.
+        if (_cfIsNonItem(row)) { nonItem++; continue; }
         const mtx = oldToMtx[raw];
         if (mtx) {
           resolvable++;
@@ -646,7 +674,9 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
           }
         } else {
           unresolvable++;
-          unresolvableList.push({ projectId, projectNumber, panel: pi + 1, rowId: (row && row.id) || null, value: raw });
+          // Enrich with description + manufacturer (pulled from the same row — no extra reads) so
+          // Jon can identify each flagged item in BC.
+          unresolvableList.push({ projectId, projectNumber, panel: pi + 1, rowId: (row && row.id) || null, value: raw, description: (row && row.description) || null, manufacturer: (row && row.manufacturer) || null });
           if (!forceDry) { row._bcReconcileFlag = true; docChanged = true; } // leave value unchanged, flag for manual
         }
       }
@@ -666,6 +696,10 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
     }
   }
 
+  // Enrich the ambiguous value list (>1 prefix hit) with description/manufacturer from the first
+  // row that carried each value — same identify-in-BC aid as unresolvableList.
+  const ambiguousList = ambiguous.map((v) => ({ value: v, description: (valueMeta[v] && valueMeta[v].description) || null, manufacturer: (valueMeta[v] && valueMeta[v].manufacturer) || null }));
+
   // ── Audit doc (live runs only) — old→MTX map + counts for reverse-run/rollback ──
   let auditDocPath = null;
   if (!forceDry) {
@@ -677,20 +711,21 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
       by: uid,
       bcODataBase,
       appliedProjects, appliedRows, panelFieldsRewritten,
-      resolvable, alreadyMtx, laborOrNull, unresolvable, total,
+      resolvable, alreadyMtx, laborOrNull, nonItem, unresolvable, total,
       pairs: appliedPairs,                        // old -> MTX (reverse map)
       unresolvableSample: unresolvableList.slice(0, 500),
     });
   }
 
-  console.log(`[reconcileBcNos] company=${companyId} dryRun=${forceDry} total=${total} resolvable=${resolvable} alreadyMtx=${alreadyMtx} laborOrNull=${laborOrNull} unresolvable=${unresolvable} ambiguous=${ambiguous.length} appliedProjects=${appliedProjects} appliedRows=${appliedRows}`);
+  console.log(`[reconcileBcNos] company=${companyId} dryRun=${forceDry} total=${total} resolvable=${resolvable} alreadyMtx=${alreadyMtx} laborOrNull=${laborOrNull} nonItem=${nonItem} unresolvable=${unresolvable} ambiguous=${ambiguous.length} appliedProjects=${appliedProjects} appliedRows=${appliedRows}`);
 
   const result = {
     dryRun: forceDry,                 // honest: true whenever no writes were applied
-    total, resolvable, alreadyMtx, laborOrNull, unresolvable,
+    total, resolvable, alreadyMtx, laborOrNull, nonItem, unresolvable,
     pairs,                            // [{old,mtx}] — full resolvable map
-    unresolvableList,                 // [{projectId,projectNumber,panel,rowId,value}]
-    ambiguous,                        // values with >1 prefix hit (unresolvable, informational)
+    unresolvableList,                 // [{projectId,projectNumber,panel,rowId,value,description,manufacturer}]
+    ambiguousList,                    // [{value,description,manufacturer}] — >1 prefix hit (unresolvable)
+    ambiguous: ambiguous.length,      // count of ambiguous values
     resolveErrors,                    // values whose OData lookup errored (unresolvable)
     panelFieldsRewritten,
     applied: forceDry ? null : { projects: appliedProjects, rows: appliedRows, panelFields: panelFieldsRewritten, auditDoc: auditDocPath },
@@ -703,14 +738,14 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
   await statusRef.set({
     status: 'done', dryRun: forceDry, startedAt, finishedAt: Date.now(), by: uid,
     report: {
-      total, resolvable, alreadyMtx, laborOrNull, unresolvable,
+      total, resolvable, alreadyMtx, laborOrNull, nonItem, unresolvable,
       ambiguous: ambiguous.length, resolveErrors: resolveErrors.length,
       panelFieldsRewritten,
       applied: result.applied,
       pairsTotal: pairs.length,
       pairsSample: pairs.slice(0, 200),      // capped — full map is in bcReconcileRuns/{ts} on live runs
-      unresolvableList,                       // FULL
-      ambiguousList: ambiguous,               // FULL
+      unresolvableList,                       // FULL [{...,description,manufacturer}]
+      ambiguousList,                          // FULL [{value,description,manufacturer}]
       resolveErrorsList: resolveErrors,       // FULL (small)
     },
   }, { merge: true });
