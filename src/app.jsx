@@ -406,6 +406,10 @@ let _bcToken=null;
 let _bcCompanyId=null;
 let _msalInstance=null;
 let _msalReady=false;
+// WS4(b) — migration Re-link guard. Set true while relinkToBC is mid-flight so the
+// background BC-import sync (:52396) short-circuits its stub-creation and can't race
+// the relink into minting a shadow arc-<id> project doc.
+let _relinkInFlight=false;
 
 // ── TODO #64 / Phase A: Global BC concurrency semaphore ──
 // Caps simultaneous BC OData/REST requests to prevent 429 rate-limit storms.
@@ -4443,6 +4447,24 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   let created=0,updated=0,deleted=0,skipped=0;
   const desiredLineNos=new Set(lines.map(l=>l.Line_No));
 
+  // WS3 (BC-sandbox migration) — opt-in FAIL-FAST. A per-line 400 storm (e.g. every item
+  // POST 400s because #163 reconciliation wasn't run) previously ran to completion and tripped
+  // BC's "too many error requests" throttle. 400 ≠ 429, so the postLine 429 backoff above does
+  // NOT cover it. relinkToBC passes opts.failFast (a shared {max,consecutive,aborted} object,
+  // shared across a project's panels); after `max` CONSECUTIVE non-2xx/non-429 line errors we
+  // abort the remaining POSTs. Any caller that omits opts.failFast is byte-for-byte unchanged.
+  const _ff=(opts&&opts.failFast&&typeof opts.failFast==='object')?opts.failFast:null;
+  if(_ff&&typeof _ff.max!=='number')_ff.max=5;
+  // Returns true when the caller should abort the remaining line POSTs.
+  const _ffNote=(status)=>{
+    if(!_ff)return false;
+    if(status===429)return false;            // throttle — retried/backed off, not a hard line error
+    if(status>=200&&status<300){_ff.consecutive=0;return false;} // success resets the streak
+    _ff.consecutive=(_ff.consecutive||0)+1;
+    if(_ff.consecutive>=_ff.max){_ff.aborted=true;return true;}
+    return false;
+  };
+
   // DECISION(v1.19.615): Exponential-backoff retry (up to 3 attempts) on 429 Too Many Requests.
   // Was: single 2-s retry, which still left tens of failed lines on busy BC tenants. Also suppress
   // per-line 429 warnings — caller logs a summary of failures at the end.
@@ -4497,6 +4519,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
         // B013-3 — stamp the HTTP status so the sync-failure modal branches on status===401 deterministically
         // (session-expired), rather than regexing the body. Additive field; harmless to all existing readers.
         if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:pr.status,error:txt});}
+      if(_ffNote((pr.ok||pr.status===204)?200:pr.status))break; // WS3 fail-fast
     }else{
       // New line — POST
       await sleep(300); // was 150 — slower to avoid BC rate limiting
@@ -4508,6 +4531,9 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
         const r2=await postLine(_fallback);
         if(r2.ok){created++;}else{const txt2=await r2.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:r2.status,error:txt2});}
       }else{const txt=await r.text();if(_row)failedRows.push({partNumber:_row.partNumber||"",description:_row.description||"",rowId:_row.id,lineNo:line.Line_No,status:r.status,error:txt});}
+      // WS3 fail-fast — count on the PRIMARY POST status (the storm signal), even if the text
+      // fallback later succeeds; a genuine one-off 400 won't trip (streak resets on any success).
+      if(_ffNote(r.ok?200:r.status))break;
     }
   }
 
@@ -4547,8 +4573,8 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     }
   }
 
-  console.log(`bcSyncPlanningLines: ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted${failedRows.length?`, ${failedRows.length} FAILED`:""}`,failedRows);
-  return{created,updated,skipped,deleted,total:lines.length,failed:failedRows};
+  console.log(`bcSyncPlanningLines: ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted${failedRows.length?`, ${failedRows.length} FAILED`:""}${_ff&&_ff.aborted?" [ABORTED — fail-fast]":""}`,failedRows);
+  return{created,updated,skipped,deleted,total:lines.length,failed:failedRows,aborted:!!(_ff&&_ff.aborted)};
 }
 
 // DECISION(v1.19.879, ECO Stage D): Sync ECO-tagged BOM rows for a single
@@ -4801,7 +4827,7 @@ function _quoteHeadingLabel(project){
   return s||"Line Items";
 }
 
-async function bcCreateProject(displayName, customerNumber, customerProjectNumber){
+async function bcCreateProject(displayName, customerNumber, customerProjectNumber, opts){
   // F071 Tier-A HARD-BLOCK (never queue — a queued create risks minting a duplicate BC job).
   // Defense-in-depth: the UI disables the create/relink buttons, this backstops any programmatic caller.
   {const _g=_bcCommitBlocked();if(_g)throw new Error(_bcCommitBlockMsg(_g.reason,'A'));}
@@ -4809,17 +4835,48 @@ async function bcCreateProject(displayName, customerNumber, customerProjectNumbe
   if(!customerNumber)throw new Error("A customer must be selected");
   const compId=await bcGetCompanyId();
   if(!compId)throw new Error("Could not resolve Business Central company");
+  // WS1 (BC-sandbox migration, KEYSTONE) — Re-link-scoped caller-supplied No.
+  // When opts.projectNumber is provided (ONLY relinkToBC passes it), BC must carry the
+  // ARC number so ARC is never renumbered AND the import-sync matches it (no shadow doc).
+  // New-Project callers pass no opts → wantNo=null → auto-number series, unchanged.
+  const wantNo=(opts&&opts.projectNumber!=null&&String(opts.projectNumber).trim())?String(opts.projectNumber).trim():null;
   let projectId=null;
   try{
-    // Step 1: Create project (name only)
+    // Step 1: Create project. Include `number` when a specific No. was requested (manual-nos
+    // migration path); BC either honors it (manual-nos series) or ignores it and auto-assigns,
+    // in which case Step 1b renames via OData. New-Project flow keeps the {displayName}-only body.
+    const _createBody=wantNo?{number:wantNo,displayName}:{displayName};
     const r=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects`,{
       method:"POST",
       headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},
-      body:JSON.stringify({displayName})
+      body:JSON.stringify(_createBody)
     });
     if(!r.ok){const txt=await r.text();throw new Error(`BC project creation failed (${r.status}): ${txt}`);}
     const d=await r.json();
     projectId=d.id;
+    let effectiveNo=d.number;
+
+    // Step 1b (WS1): if a No. was requested but BC auto-assigned a different one, create-then-PATCH
+    // the No. via OData (Q2 fallback), then read the project back to confirm the rename landed.
+    if(wantNo&&effectiveNo!==wantNo){
+      console.warn(`bcCreateProject: BC auto-assigned ${effectiveNo} despite requested ${wantNo} — attempting OData No. rename`);
+      await bcPatchJobOData(effectiveNo,{No:wantNo});
+      try{
+        const chk=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/projects(${projectId})?$select=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+        if(chk.ok){const cd=await chk.json();effectiveNo=(cd&&cd.number)||effectiveNo;}
+      }catch(ce){console.warn("bcCreateProject: post-rename read-back failed:",ce&&ce.message);}
+    }
+
+    // Step 1c (WS1): HARD VERIFY — the confirmed No. MUST equal the requested one. If BC still
+    // auto-assigned (renumber risk = the pilot dealbreaker), throw so the catch rolls back the
+    // freshly-created BC job. Never return a mismatched number.
+    if(wantNo&&effectiveNo!==wantNo){
+      throw new Error(`BC project number mismatch: requested ${wantNo} but BC carries ${effectiveNo}. Aborting to avoid renumbering the ARC project. Confirm the sandbox's Project No. Series allows Manual Nos.`);
+    }
+
+    // The number ARC binds to + writes into Global_Dimension_1_Code: the requested (ARC) number
+    // when supplied, else BC's auto-assigned one (New-Project behavior — unchanged).
+    const numberForBind=wantNo||d.number;
 
     // Step 2: PATCH project defaults via OData (BC requires customer before task lines)
     // Ending_Date (customer requested ship date) is a future ARC field — not yet tracked.
@@ -4827,7 +4884,7 @@ async function bcCreateProject(displayName, customerNumber, customerProjectNumbe
     const today=new Date().toISOString().split('T')[0];
     const _patchFields={
       Bill_to_Customer_No:customerNumber,
-      Global_Dimension_1_Code:d.number,
+      Global_Dimension_1_Code:numberForBind,
       Location_Code:"MAIN",
       Status:"Quote",
       Job_Posting_Group:"DEFAULT",
@@ -4840,15 +4897,15 @@ async function bcCreateProject(displayName, customerNumber, customerProjectNumbe
     // Only write when non-blank so we never clobber the field with an empty string.
     const _extDocNo=_composeExternalDocNo({customerProjectNumber});
     if(_extDocNo)_patchFields.External_Document_No=_extDocNo;
-    await bcPatchJobOData(d.number,_patchFields).then(()=>{
-      console.log("bcCreateProject: Project Code dimension (Global_Dimension_1_Code) set to",d.number);
+    await bcPatchJobOData(numberForBind,_patchFields).then(()=>{
+      console.log("bcCreateProject: Project Code dimension (Global_Dimension_1_Code) set to",numberForBind);
     }).catch(e=>{
-      if(!_bcToken)bcEnqueue('patchJob',{projectNumber:d.number,fields:_patchFields},`Update BC project ${d.number}`);
+      if(!_bcToken)bcEnqueue('patchJob',{projectNumber:numberForBind,fields:_patchFields},`Update BC project ${numberForBind}`);
       else throw e;
     });
 
     // Step 3: Panel task structure is created by the caller (bcCreatePanelTaskStructure) after panels are known
-    return{id:d.id,number:d.number,displayName:d.displayName,customerNumber:customerNumber,customerName:null};
+    return{id:d.id,number:numberForBind,displayName:d.displayName,customerNumber:customerNumber,customerName:null};
   }catch(e){
     // Rollback: delete the BC project if it was created
     if(projectId){
@@ -41480,20 +41537,68 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;} // F071 Tier-A — relink creates a new BC project
     if(!(await arcConfirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?",{kind:"warning",okLabel:"Re-link"})))return;
     setRelinking(true);setRelinkMsg("Creating BC project…");
+    _relinkInFlight=true; // WS4(b) — pause the background import-sync's stub-creation while we relink
     try{
-      const bc=await bcCreateProject(project.name,project.bcCustomerNumber||null,project.customerProjectNumber);
+      // WS1 (KEYSTONE) — push ARC's number so BC carries it. bcCreateProject hard-verifies the
+      // returned No. equals the requested one (and rolls back + throws on mismatch). Pass opts only
+      // when this project already has an ARC number; a blank number falls back to BC auto-numbering
+      // (non-migration relink), old behavior preserved.
+      const wantNo=(project.bcProjectNumber!=null&&String(project.bcProjectNumber).trim())?String(project.bcProjectNumber).trim():null;
+      const bc=await bcCreateProject(project.name,project.bcCustomerNumber||null,project.customerProjectNumber,wantNo?{projectNumber:wantNo}:undefined);
+      // WS2 (defensive) — never let BC's number overwrite ARC's. When we requested a specific
+      // number, assert BC honored it and ABORT (no save/overwrite) on mismatch. With WS1's
+      // in-create verify this should never trip, but it backstops any renumber before we persist.
+      if(wantNo&&String(bc.number)!==wantNo){
+        throw new Error(`Re-link aborted: BC returned ${bc.number} but the ARC project is ${wantNo}. Not overwriting ARC's number. Verify the sandbox Project No. Series allows Manual Nos.`);
+      }
+      const _bindNumber=wantNo||bc.number; // ARC's number when we own it, else BC's (legacy path)
+
+      // WS4(a) — persist the new BC binding BEFORE the task/line sync loop so the background
+      // import-sync's per-cycle read (persisted-projects) already sees this project's number/id
+      // and won't race the relink into minting a shadow arc-<id> stub. _noBumpWrite = no
+      // version-bump / no unlock, mirrors the import path.
+      try{
+        await saveProject(uid,{...projectRef.current,bcProjectNumber:_bindNumber,bcProjectId:bc.id,bcEnv:_bcConfig.env,_noBumpWrite:true});
+      }catch(e){console.warn("Relink: early BC-binding persist failed (import-sync guard degraded):",e&&e.message);}
+
       setRelinkMsg("Creating task structure…");
       const panels=project.panels||[];
       await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
+
+      // WS3 — itemized planning-line outcome + FAIL-FAST. A shared failFast object counts
+      // CONSECUTIVE non-2xx/non-429 line errors across the project's panels; at N=5 we abort the
+      // remaining line POSTs (stops a 400 storm from tripping BC's "too many error requests"
+      // throttle). Every panel's result.failed is captured — no silent "✓ Re-linked" on failure.
+      const _failFast={max:5,consecutive:0,aborted:false};
+      const _panelOutcomes=[];
+      let _relinkAborted=false;
       for(let i=0;i<panels.length;i++){
+        if(_relinkAborted)break;
         setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
         // B065 C1 FIX: pass the 1-based panel number (i+1). This call previously
         // passed the 0-based `i` while task structure was built 1-based (:3253)
         // and every other caller uses i+1 → relinked projects wrote planning
         // lines onto the wrong tasks + minted a phantom 20010 block.
-        await bcSyncPanelPlanningLines(bc.number,i+1,panels[i],project.name).catch(e=>console.warn("Relink planning lines error panel",i,e));
+        let res=null;
+        try{
+          res=await bcSyncPanelPlanningLines(bc.number,i+1,panels[i],project.name,{failFast:_failFast});
+        }catch(e){
+          console.warn("Relink planning lines error panel",i,e);
+          _panelOutcomes.push({panel:i+1,ok:false,error:(e&&e.message)||String(e)});
+          continue;
+        }
+        const _f=(res&&res.failed)||[];
+        if(_f.length){
+          _panelOutcomes.push({panel:i+1,ok:false,failed:_f.map(f=>({partNumber:f.partNumber||"",lineNo:f.lineNo,status:f.status}))});
+        }else{
+          _panelOutcomes.push({panel:i+1,ok:true,created:res?res.created:0});
+        }
+        if(res&&res.aborted)_relinkAborted=true;
       }
-      const updated={...projectRef.current,bcProjectNumber:bc.number,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
+      const _failedPanels=_panelOutcomes.filter(o=>!o.ok);
+
+      // WS2 — keep ARC's number (do NOT set bcProjectNumber=bc.number).
+      const updated={...projectRef.current,bcProjectNumber:_bindNumber,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
       // Reset per-panel bc attachment flags + CLEAR durable BC bindings (B065):
       // relink creates a NEW BC project, so any stored panel.bcTaskNo / row.bcLineNo
       // point at the OLD project and MUST be dropped so they re-bind against the
@@ -41505,11 +41610,26 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       });
       setProject(updated);projectRef.current=updated;onChange(updated);
       await saveProject(uid,updated);
-      setRelinkMsg("✓ Re-linked to "+bc.number);
-      setTimeout(()=>setRelinkMsg(null),3000);
+
+      // WS3 — surface the itemized outcome; NEVER a bare "✓ Re-linked" when anything failed.
+      if(_relinkAborted){
+        console.error("Relink ABORTED (fail-fast) — panel outcomes:",_panelOutcomes);
+        setRelinkMsg(`⚠ Re-link ABORTED after ${_failFast.consecutive} consecutive BC errors — BOM NOT fully synced`);
+        arcAlert(`Re-link to ${_bindNumber} was ABORTED after ${_failFast.consecutive} consecutive Business Central line errors — the BOM did NOT fully transfer. This usually means the #163 bcNo→MTX reconciliation has not been run against this sandbox. No renumber occurred (ARC stays ${_bindNumber}).`,{kind:"error"});
+      }else if(_failedPanels.length){
+        console.error("Relink completed WITH FAILURES — panel outcomes:",_panelOutcomes);
+        const _detail=_failedPanels.slice(0,4).map(o=>o.failed?`panel ${o.panel}: ${o.failed.slice(0,3).map(f=>`${f.partNumber||"?"} (line ${f.lineNo}, ${f.status})`).join(", ")}${o.failed.length>3?` +${o.failed.length-3} more`:""}`:`panel ${o.panel}: ${o.error}`).join("\n");
+        setRelinkMsg(`⚠ Re-linked to ${_bindNumber} — ${_failedPanels.length} panel(s) had line failures`);
+        arcAlert(`Re-linked to ${_bindNumber}, but some planning lines failed to sync:\n\n${_detail}\n\nARC's number was preserved (no renumber). Review before relying on the BC BOM.`,{kind:"warning"});
+      }else{
+        setRelinkMsg("✓ Re-linked to "+_bindNumber);
+      }
+      setTimeout(()=>setRelinkMsg(null),(_relinkAborted||_failedPanels.length)?15000:3000);
     }catch(e){
       console.error("Relink error:",e);
       setRelinkMsg("Failed: "+(e.message||e));
+    }finally{
+      _relinkInFlight=false; // WS4(b) — always release the import-sync guard
     }
     setRelinking(false);
   }
@@ -52402,7 +52522,11 @@ INSTRUCTIONS:
           // PRJ number blocks its stub even if its bcProjectId is blank/mismatched.
           const existById=new Set(persistedById),existByNumber=new Set(persistedByNumber);
           ps.forEach(p=>{if(p.bcProjectId)existById.add(p.bcProjectId);if(p.bcProjectNumber)existByNumber.add(String(p.bcProjectNumber));});
-          const toImport=bcProjects.filter(bp=>bp.id&&!existById.has(bp.id)&&!(bp.number&&existByNumber.has(String(bp.number))));
+          // WS4(b) — while a relink is in flight, do NOT import any BC job as a stub. The relink
+          // creates a new BC job whose number ARC already owns; importing it now would race the
+          // relink's persist and mint a shadow arc-<id> doc. The customer-name resync below still
+          // runs. Guard clears in relinkToBC's finally.
+          const toImport=_relinkInFlight?[]:bcProjects.filter(bp=>bp.id&&!existById.has(bp.id)&&!(bp.number&&existByNumber.has(String(bp.number))));
           const newProjects=toImport.map(bp=>({
             id:"arc-"+bp.id.replace(/-/g,""),
             name:bp.displayName||bp.number||"Imported Project",

@@ -501,6 +501,190 @@ exports.stampProjectsBcEnv = functions.runWith({ maxInstances: 1 }).https.onCall
   return { companyId, env, total, stamped: dryRun ? 0 : committed, wouldStamp: toStamp, alreadyStamped, otherEnv, otherEnvSamples, dryRun };
 });
 
+// ── reconcileBcNos — #163 BC-sandbox migration reconciliation ────────────────────────────
+// Walks every project's BOM rows and reconciles the cached BC item "No." (old mfr Part#) to the
+// new sandbox's MTX-##### surrogate. In the #163 sandbox, item No. → MTX-##### and the full Part#
+// moved into Vendor_Item_No, so a planning-line POST keyed on the old Part# gets BC 400. This CF
+// resolves each old value → MTX No. via ItemCard?$filter=Vendor_Item_No and rewrites the row caches.
+//
+// Templated on stampProjectsBcEnv (admin-gate + company project-walk + dryRun + report skeleton)
+// and bulkMfrLookup (client delegates its BC bearer token + bcODataBase; server-side ItemCard
+// resolution; dryRun DEFAULT TRUE; isTest force-dry; assertBcODataBase SSRF pin).
+//
+// DATA-SAFETY (Data-Retention #1/#4/#6): dry-run default TRUE; resolution phase is READ-ONLY;
+// apply phase does a FIELD-LEVEL read-modify-write per project doc (update({panels}) — never a
+// whole-doc set), rewriting ONLY the reconciled row fields in place and preserving every other
+// field (schemaVersion, storageUrl, admin fields) + all other collections. Unresolvable rows are
+// LEFT UNCHANGED and flagged (never guessed). bcItemId/bcVerify are NULLED (env-specific), not
+// fabricated. Applied old→MTX pairs are persisted to companies/{cid}/bcReconcileRuns/{ts} (audit +
+// reverse-run/rollback map). Config learning-DBs (sqCrossings / supplierCrossRef) are NOT touched
+// in this run (deferred, per plan). isTestCompany is skipped/forced-dry.
+exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB', maxInstances: 1 }).https.onCall(async (data, context) => {
+  // Admin gate — mirror stampProjectsBcEnv
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const uid = context.auth.uid;
+  const profileSnap = await db.doc(`users/${uid}/config/profile`).get();
+  const companyId = profileSnap.exists ? profileSnap.data().companyId : null;
+  if (!companyId) throw new functions.https.HttpsError('failed-precondition', 'No company workspace for caller');
+  const memberSnap = await db.doc(`companies/${companyId}/members/${uid}`).get();
+  if (!memberSnap.exists || memberSnap.data().role !== 'admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Admin only');
+  }
+
+  const { bcToken, bcODataBase } = data || {};
+  if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+  assertBcODataBase(bcODataBase);
+
+  // dryRun DEFAULT TRUE — only an explicit dryRun:false applies writes. isTest / isTestCompany
+  // force dry (writes suppressed) but the read-only resolution + classification still run so the
+  // report is produced — mirrors bulkMfrLookup's _skipMfrWrites honesty.
+  const companySnap = await db.doc(`companies/${companyId}`).get();
+  const isTestCompany = !!(companySnap.exists && companySnap.data() && companySnap.data().isTestCompany);
+  const dryRun = !(data && data.dryRun === false);
+  const forceDry = dryRun || isTestCompany || !!(data && data.isTest === true);
+
+  const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
+  const MTX_RE = /^MTX-/i;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const snap = await db.collection(`companies/${companyId}/projects`).get();
+
+  // ── Phase 1 (READ-ONLY): dedupe the unique set of resolvable values across all BOM rows ──
+  // Resolvable candidate = (row.bcNo || row.partNumber), non-blank, not already MTX, not a labor row.
+  const uniqueVals = new Set();
+  for (const d of snap.docs) {
+    const pd = d.data() || {};
+    for (const panel of (pd.panels || [])) {
+      for (const row of (panel.bom || [])) {
+        if (row && row.isLaborRow) continue;
+        const v = ((row && (row.bcNo || row.partNumber)) || '').toString().trim();
+        if (!v || MTX_RE.test(v)) continue;
+        uniqueVals.add(v);
+      }
+    }
+  }
+
+  // ── Resolve each unique value → MTX "No." via ItemCard Vendor_Item_No ──
+  // Truncation fallback: exact match first (old bcNo may be 20-char capped, new Vendor_Item_No is
+  // full); if no exact hit, single-hit-only startswith(Vendor_Item_No,<v>) — accept iff EXACTLY one
+  // item returns, else mark ambiguous (unresolvable). Never guess.
+  const oldToMtx = {};   // v -> MTX No.
+  const ambiguous = [];  // v with >1 startswith hit (unresolvable)
+  const resolveErrors = []; // v where the OData lookup errored (unresolvable)
+  for (const v of uniqueVals) {
+    const esc = v.replace(/'/g, "''");
+    let mtx = null;
+    try {
+      const r1 = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${esc}'&$select=No,Vendor_Item_No&$top=1`, { headers: bcHeaders });
+      if (r1.ok) {
+        const row = ((await r1.json()).value || [])[0];
+        if (row && row.No) mtx = String(row.No).trim();
+      }
+      if (!mtx) {
+        // Truncation fallback — single-hit-only prefix match.
+        const r2 = await fetch(`${bcODataBase}/ItemCard?$filter=startswith(Vendor_Item_No,'${esc}')&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
+        if (r2.ok) {
+          const vals = (await r2.json()).value || [];
+          if (vals.length === 1 && vals[0].No) mtx = String(vals[0].No).trim();
+          else if (vals.length > 1) ambiguous.push(v);
+        }
+      }
+    } catch (e) {
+      resolveErrors.push({ value: v, error: e && e.message });
+    }
+    if (mtx) oldToMtx[v] = mtx;
+    await sleep(120); // gentle throttle — read-only GETs, avoid tripping BC rate limits
+  }
+
+  // ── Phase 2: classify + report every row; apply field-level RMW when live ──
+  let total = 0, resolvable = 0, alreadyMtx = 0, laborOrNull = 0, unresolvable = 0;
+  let appliedProjects = 0, appliedRows = 0, panelFieldsRewritten = 0;
+  const unresolvableList = [];
+  const appliedPairs = {}; // old -> MTX actually written (audit / reverse map)
+  const pairs = Object.keys(oldToMtx).map((k) => ({ old: k, mtx: oldToMtx[k] }));
+
+  for (const d of snap.docs) {
+    const pd = d.data() || {};
+    const projectId = d.id;
+    const projectNumber = pd.bcProjectNumber || pd.number || null;
+    const panels = pd.panels || [];
+    let docChanged = false;
+    for (let pi = 0; pi < panels.length; pi++) {
+      const panel = panels[pi] || {};
+      const bom = panel.bom || [];
+      for (const row of bom) {
+        total++;
+        if (row && row.isLaborRow) { laborOrNull++; continue; }
+        const raw = ((row && (row.bcNo || row.partNumber)) || '').toString().trim();
+        if (!raw) { laborOrNull++; continue; }
+        if (MTX_RE.test(raw)) { alreadyMtx++; continue; }
+        const mtx = oldToMtx[raw];
+        if (mtx) {
+          resolvable++;
+          if (!forceDry) {
+            // Field-level rewrite on the resolvable row — mirrors applyRemaps (app.jsx :11485).
+            row.bcNo = mtx;
+            row.bcItemNumber = mtx;
+            row.bcPartNumber = mtx;
+            row.bcItemId = null;  // BC GUID is env-specific — invalid in the new sandbox
+            row.bcVerify = null;  // needs re-verification against the new env
+            appliedRows++;
+            appliedPairs[raw] = mtx;
+            docChanged = true;
+          }
+        } else {
+          unresolvable++;
+          unresolvableList.push({ projectId, projectNumber, panel: pi + 1, rowId: (row && row.id) || null, value: raw });
+          if (!forceDry) { row._bcReconcileFlag = true; docChanged = true; } // leave value unchanged, flag for manual
+        }
+      }
+      // panel.bcItemNumber — secondary cache, rewrite where present (panels pushed as assembly items)
+      const pv = (panel.bcItemNumber || '').toString().trim();
+      if (pv && !MTX_RE.test(pv) && oldToMtx[pv] && !forceDry) {
+        panel.bcItemNumber = oldToMtx[pv];
+        panelFieldsRewritten++;
+        docChanged = true;
+      }
+    }
+    if (!forceDry && docChanged) {
+      // FIELD-LEVEL read-modify-write: update ONLY the `panels` field (we mutated it in place),
+      // preserving every other project-doc field. Never a whole-doc set.
+      await d.ref.update({ panels });
+      appliedProjects++;
+    }
+  }
+
+  // ── Audit doc (live runs only) — old→MTX map + counts for reverse-run/rollback ──
+  let auditDocPath = null;
+  if (!forceDry) {
+    const ts = Date.now();
+    auditDocPath = `companies/${companyId}/bcReconcileRuns/${ts}`;
+    await db.doc(auditDocPath).set({
+      ts,
+      runAt: admin.firestore.FieldValue.serverTimestamp(),
+      by: uid,
+      bcODataBase,
+      appliedProjects, appliedRows, panelFieldsRewritten,
+      resolvable, alreadyMtx, laborOrNull, unresolvable, total,
+      pairs: appliedPairs,                        // old -> MTX (reverse map)
+      unresolvableSample: unresolvableList.slice(0, 500),
+    });
+  }
+
+  console.log(`[reconcileBcNos] company=${companyId} dryRun=${forceDry} total=${total} resolvable=${resolvable} alreadyMtx=${alreadyMtx} laborOrNull=${laborOrNull} unresolvable=${unresolvable} ambiguous=${ambiguous.length} appliedProjects=${appliedProjects} appliedRows=${appliedRows}`);
+
+  return {
+    dryRun: forceDry,                 // honest: true whenever no writes were applied
+    total, resolvable, alreadyMtx, laborOrNull, unresolvable,
+    pairs,                            // [{old,mtx}] — full resolvable map
+    unresolvableList,                 // [{projectId,projectNumber,panel,rowId,value}]
+    ambiguous,                        // values with >1 prefix hit (unresolvable, informational)
+    resolveErrors,                    // values whose OData lookup errored (unresolvable)
+    panelFieldsRewritten,
+    applied: forceDry ? null : { projects: appliedProjects, rows: appliedRows, panelFields: panelFieldsRewritten, auditDoc: auditDocPath },
+  };
+});
+
 // ── TEAM MANAGEMENT ──
 
 exports.inviteTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
