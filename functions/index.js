@@ -450,6 +450,57 @@ exports.testTeamsWebhook = functions.runWith({ maxInstances: 5 }).https.onCall(a
   return { success: true };
 });
 
+// ── ONE-OFF MIGRATION HELPER (2026-07-28): stamp every project with the current BC env ──
+// Purpose: before pointing ARC at a new BC sandbox, ensure EVERY project carries a `bcEnv`
+// stamp so that after the switch they ALL flag env-mismatched (grey + "Re-link to BC") instead
+// of silently 404'ing against the new env (unstamped projects are treated as "matching" and would
+// try to sync). SAFETY: additive + idempotent — sets `bcEnv` ONLY on projects that are missing it;
+// NEVER overwrites an existing bcEnv (a project already on a different env is reported, not clobbered).
+// Admin-only; derives company + target env from the caller's profile so no client params are needed.
+// Supports { dryRun: true } to return the counts WITHOUT writing (run dry first, then for real).
+exports.stampProjectsBcEnv = functions.runWith({ maxInstances: 1 }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const uid = context.auth.uid;
+  const profileSnap = await db.doc(`users/${uid}/config/profile`).get();
+  const companyId = profileSnap.exists ? profileSnap.data().companyId : null;
+  if (!companyId) throw new functions.https.HttpsError('failed-precondition', 'No company workspace for caller');
+  const memberSnap = await db.doc(`companies/${companyId}/members/${uid}`).get();
+  if (!memberSnap.exists || memberSnap.data().role !== 'admin') {
+    throw new functions.https.HttpsError('permission-denied', 'Admin only');
+  }
+  // Target env: caller-supplied override, else the company's configured BC env.
+  let env = (data && typeof data.env === 'string' && data.env.trim()) ? data.env.trim() : null;
+  if (!env) {
+    const cfgSnap = await db.doc(`companies/${companyId}/config/bcEnvironment`).get();
+    env = cfgSnap.exists ? (cfgSnap.data().env || null) : null;
+  }
+  if (!env) throw new functions.https.HttpsError('failed-precondition', 'No BC environment configured');
+  const dryRun = !!(data && data.dryRun);
+  const snap = await db.collection(`companies/${companyId}/projects`).get();
+  let total = 0, toStamp = 0, alreadyStamped = 0, otherEnv = 0;
+  const otherEnvSamples = [];
+  let batch = db.batch(), n = 0, committed = 0;
+  for (const d of snap.docs) {
+    total++;
+    const cur = d.data().bcEnv;
+    if (cur === env) { alreadyStamped++; continue; }
+    if (cur) { // already stamped with a DIFFERENT env — never clobber; report only
+      otherEnv++;
+      if (otherEnvSamples.length < 25) otherEnvSamples.push({ id: d.id, bcEnv: cur, name: d.data().name || d.data().bcProjectNumber || null });
+      continue;
+    }
+    toStamp++;
+    if (!dryRun) {
+      batch.update(d.ref, { bcEnv: env });
+      n++;
+      if (n >= 400) { await batch.commit(); committed += n; batch = db.batch(); n = 0; }
+    }
+  }
+  if (!dryRun && n > 0) { await batch.commit(); committed += n; }
+  console.log(`[stampProjectsBcEnv] company=${companyId} env=${env} total=${total} ${dryRun ? 'wouldStamp' : 'stamped'}=${toStamp} already=${alreadyStamped} otherEnv=${otherEnv} dryRun=${dryRun}`);
+  return { companyId, env, total, stamped: dryRun ? 0 : committed, wouldStamp: toStamp, alreadyStamped, otherEnv, otherEnvSamples, dryRun };
+});
+
 // ── TEAM MANAGEMENT ──
 
 exports.inviteTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
