@@ -438,6 +438,130 @@ function _setBcHealth(state){
 // DEBUG (B013-2 manual verification): drive the pill directly to eyeball all three states + the
 // bcOnline side-effects without a real BC round-trip. e.g. window._arcBcHealth('amber').
 try{if(typeof window!=="undefined")window._arcBcHealth=function(s){if(s==='green'||s==='amber'||s==='red')_setBcHealth(s);};}catch(_){}
+// ── B064 — STRUCTURAL-404 FAULT RECORDER (SSOT) ──────────────────────────────
+// A 404 from BC has two very different meanings:
+//   (a) NORMAL — an existence probe for a legitimately-absent keyed row (a task or
+//       line ARC hasn't created yet). Expected; must NOT alarm.
+//   (b) STRUCTURAL — a broken/unpublished web service OR a PERSISTENT wrong-key
+//       request (the Ryan case: ARC asks for a non-existent Job_Task_No every sync,
+//       so the same 404 recurs forever and the panel never reaches BC).
+// Body text ALONE can't discriminate: a missing keyed record returns the SAME
+// "Resource not found for the segment" / BadRequest_ResourceNotFound body as a
+// broken service (Freddy live-verified on the Ryan case). So a fault is treated as
+// STRUCTURAL only after it PERSISTS — N>=_BC_FAULT_THRESHOLD faults on the same
+// endpoint/segment within a session. This mirrors the _bcHealth pub-sub so the
+// toolbar can render an amber advisory chip WITHOUT flipping the (green) connection
+// pill: a 404 means BC is UP but one endpoint is broken — reconnecting won't help.
+const _BC_FAULT_THRESHOLD=2; // faults on one endpoint/session before it's "structural"
+const _bcEndpointFaults=new Map(); // segment -> {count,firstAt,lastAt,env,sampleBody,broken,loggedOnce}
+const _bcEndpointFaultSubs=new Set();
+function _bcAnyStructuralFault(){for(const e of _bcEndpointFaults.values())if(e&&e.broken)return true;return false;}
+function _bcFaultNotify(){const broken=_bcAnyStructuralFault();_bcEndpointFaultSubs.forEach(fn=>{try{fn(broken);}catch(_){}});}
+// Parse the OData/API path segment (the published web-service NAME) out of a BC URL
+// so every keyed call to the same service coalesces onto ONE fault entry.
+function _bcEndpointSeg(url){
+  try{
+    const s=String(url);
+    const m=s.match(/\/ODataV4\/(?:Company\([^)]*\)\/)?([^(/?#]+)/i);
+    if(m&&m[1])return decodeURIComponent(m[1]);
+    const m2=s.match(/\/api\/v2\.0\/(?:companies\([^)]*\)\/)?([^(/?#]+)/i);
+    if(m2&&m2[1])return decodeURIComponent(m2[1]);
+    return s.split(/[?#]/)[0].slice(-60);
+  }catch(_){return"unknown";}
+}
+// TRUE only for a body shaped like a resource-not-found segment error. NOTE (Ryan
+// case): a missing KEYED record returns this SAME body, so callers must ALSO require
+// persistence (>=_BC_FAULT_THRESHOLD) before treating it as structural — body alone
+// is not sufficient. That persistence gate lives in _recordBcEndpointFault.
+function _isStructural404(status,bodyText){
+  if(status!==404)return false;
+  const b=String(bodyText||"");
+  return /Resource not found for the segment/i.test(b)||/BadRequest_ResourceNotFound/i.test(b)||/BadRequest_NotFound/i.test(b);
+}
+// TRUE when the URL is a single-entity KEYED GET — the entity set is immediately followed by a
+// (…key…) predicate, e.g. ProjectPlanningLines(Project_No='..',Project_Task_No='..',Line_No=10000).
+// Coach CHANGES-REQUIRED (B064 review): a benign ABSENT keyed row returns the SAME "Resource not
+// found for the segment" body as a genuinely-down endpoint, and the patch fns burst-fire up to 4
+// same-segment keyed GETs (Line_No 10000/30000/40000/50000) on project open → 4 hits/call would
+// cross the N=2 threshold and false-trip the "BC degraded" chip (and F071's commit-block) on a
+// HEALTHY endpoint. So keyed GETs are EXCLUDED from structural-fault recording. A collection /
+// $filter read, by contrast, 404s ONLY when the web service is genuinely unpublished (a $filter
+// no-match returns 200-with-empty-value, never 404) → false-positive-free structural signal.
+// (The wrong-TASK case, e.g. Ryan's task 20510, is DELIBERATELY not caught here — a persistence
+// heuristic can't separate "wrong task" from "lines not yet created"; that's B065's durable-binding job.)
+function _bcUrlIsKeyed(url){
+  try{
+    let s=String(url).split(/[?#]/)[0]; // drop query/hash first
+    // Neutralize the company CONTAINER predicate so its () isn't mistaken for an entity key.
+    s=s.replace(/\/Company\([^)]*\)/i,'/Company').replace(/\/companies\([^)]*\)/i,'/companies');
+    return /\([^)]*\)\/?$/.test(s); // last path segment carries a (...) key predicate
+  }catch(_){return false;}
+}
+// Record a segment-not-found 404 against its endpoint. Increments the per-endpoint
+// counter and, once persistence crosses the threshold, marks the endpoint broken +
+// broadcasts + logs ONE honest debugLog (deduped once/endpoint/session). This recorder
+// must NEVER emit a debugLog per 404 — that per-404 write was the B016 write-exhaustion
+// amplifier behind the 522-entry storm. Non-structural-bodied 404s are ignored.
+function _recordBcEndpointFault(url,bodyText){
+  try{
+    if(!_isStructural404(404,bodyText))return; // only "resource not found for segment"-shaped 404s count
+    if(_bcUrlIsKeyed(url))return; // EXCLUDE single-entity keyed GETs — absent-row 404 ≠ endpoint-down (Coach B064)
+    const seg=_bcEndpointSeg(url);
+    const now=Date.now();
+    let e=_bcEndpointFaults.get(seg);
+    if(!e){e={count:0,firstAt:now,lastAt:now,env:_bcConfig.env,sampleBody:String(bodyText||"").slice(0,300),broken:false,loggedOnce:false};_bcEndpointFaults.set(seg,e);}
+    e.count++;e.lastAt=now;
+    if(!e.sampleBody&&bodyText)e.sampleBody=String(bodyText).slice(0,300);
+    const wasBroken=e.broken;
+    if(e.count>=_BC_FAULT_THRESHOLD)e.broken=true;
+    if(e.broken&&!e.loggedOnce){
+      e.loggedOnce=true; // dedupe: exactly one debugLog per endpoint per session (aggregator consumes this)
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"error",source:"bcStructuralFault",message:`BC endpoint '${seg}' returned ${e.count} structural 404s this session — the web service is unavailable OR ARC is requesting a key that does not exist in BC; ARC↔BC sync for this endpoint is silently failing`,extra:{
+            endpoint:seg,
+            faultCount:e.count,
+            firstAt:new Date(e.firstAt).toISOString(),
+            lastAt:new Date(e.lastAt).toISOString(),
+            env:_bcConfig.env,
+            companyName:_bcConfig.companyName,
+            userUpn:_bcUserUpn(),
+            urlPattern:seg,
+            status:404,
+            responseExcerpt:e.sampleBody,
+            isTestEnv:IS_TEST_ENV,
+          }});
+        }
+      }catch(_){}
+    }
+    if(e.broken&&!wasBroken)_bcFaultNotify(); // broadcast only on the healthy->broken transition
+  }catch(_){}
+}
+// Clear the fault for an endpoint once a call to it SUCCEEDS (routed through the
+// bcGatedFetch ok-path). Removes the entry + broadcasts if the broken set changed.
+function _clearBcEndpointFault(url){
+  try{
+    if(_bcEndpointFaults.size===0)return; // fast common path — nothing recorded
+    const seg=_bcEndpointSeg(url);
+    const e=_bcEndpointFaults.get(seg);
+    if(!e)return;
+    const wasBroken=e.broken;
+    _bcEndpointFaults.delete(seg);
+    if(wasBroken)_bcFaultNotify();
+  }catch(_){}
+}
+// ★ Queryable predicates for F071 (the commit-gate, scoped in parallel) + the chip.
+function _bcEndpointBroken(seg){
+  if(!seg)return _bcAnyStructuralFault();
+  const e=_bcEndpointFaults.get(seg);
+  return !!(e&&e.broken);
+}
+function _bcBrokenEndpoints(){const out=[];for(const [seg,e] of _bcEndpointFaults.entries())if(e&&e.broken)out.push(seg);return out;}
+try{if(typeof window!=="undefined"){
+  window._bcHasStructuralFault=_bcAnyStructuralFault; // F071 commit-gate consumes this
+  window._bcEndpointBroken=_bcEndpointBroken;
+  window._bcBrokenEndpoints=_bcBrokenEndpoints;
+}}catch(_){}
 const _bcSemaphore={inflight:0,max:6,queue:[]};
 function _bcRelease(){
   _bcSemaphore.inflight--;
@@ -496,6 +620,19 @@ async function bcGatedFetch(url,options){
       window._arcForceBc401--;
       r=new Response('{"error":{"message":"forced 401 (debug hook)"}}',{status:401,headers:{"Content-Type":"application/json"}});
     }
+    // DEBUG (B064 manual verification): window._arcForceBc404="<Segment>" synthesizes EVERY BC
+    // response whose URL contains that segment as a structural 404 (segment-not-found body) until
+    // Jon clears the global. Persistent (not a one-shot counter like _arcForceBc401) BY DESIGN —
+    // the structural detector needs N>=2 faults to trip, so a persistent force lets Jon repro the
+    // amber "endpoint degraded" chip by re-running the sync. NOTE: the recorder only counts
+    // COLLECTION / $filter reads (keyed single-entity GETs are excluded — see _bcUrlIsKeyed), so
+    // force a segment that ARC hits via a collection read, e.g.
+    // window._arcForceBc404="ProjectPlanningLines"; then push a panel twice — the $filter
+    // existing-lines read in bcSyncPanelPlanningLines is the collection call that trips it.
+    if(typeof window!=="undefined"&&window._arcForceBc404&&String(url).includes(window._arcForceBc404)){
+      const _seg=window._arcForceBc404;
+      r=new Response(JSON.stringify({error:{code:"BadRequest_ResourceNotFound",message:`No HTTP resource was found that matches the request URI. Resource not found for the segment '${_seg}'.`}}),{status:404,headers:{"Content-Type":"application/json"}});
+    }
     if(r.status===429){
       if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
       depth++;
@@ -530,9 +667,18 @@ async function bcGatedFetch(url,options){
       _setBcHealth('red'); // B013-2 — silent refresh has ALREADY failed → flip the pill red immediately
       return r;
     }
+    // B064 — a 404 is BC-is-up-but-endpoint-broken, NOT a dead token (the pill stays green).
+    // Feed it to the structural-fault recorder, which discriminates a normal missing-row probe
+    // from a persistent structural fault (threshold N>=2). Clone so the caller's response stream
+    // stays intact (callers read r.text()/r.json() below). Only segment-not-found bodies count.
+    if(r.status===404){
+      try{const _bt=await r.clone().text();_recordBcEndpointFault(url,_bt);}catch(_){}
+      return r;
+    }
     // B013-2 — a 2xx proves the current token is VALID → clear any amber/red degradation signal.
-    // Guarded on r.ok so a non-auth error (400/403/404/5xx) doesn't falsely report "connected".
-    if(r.ok)_setBcHealth('green');
+    // Guarded on r.ok so a non-auth error (400/403/5xx) doesn't falsely report "connected".
+    // B064 — a success to a previously-faulting endpoint also clears its amber degraded chip.
+    if(r.ok){_setBcHealth('green');_clearBcEndpointFault(url);}
     return r;
   }
 }
@@ -3649,7 +3795,9 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
   const taskFilterUrl=`${BC_ODATA_BASE}/${taskPage}?$filter=${FT_NO} eq '${encodeURIComponent(projectNumber)}' and ${FT_TASK_NO} eq '${encodeURIComponent(taskNo)}'`;
   let taskExists=false;
   try{
-    const r=await fetch(taskFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    // B064 — route the probe through bcGatedFetch (401 refresh + structural-404 recording if the
+    // task web service itself is broken). Semantics unchanged: ok→parse, 400→Job_ fallback below.
+    const r=await bcGatedFetch(taskFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(r.ok){const d=await r.json();taskExists=(d.value||[]).length>0;}
     else if(r.status===400){
       // Try Job_ fallback for the task page
@@ -3692,7 +3840,8 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
   const lineFilterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and Line_No eq 10000`;
   let lineExists=false;
   try{
-    const r=await fetch(lineFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    // B064 — route the probe through bcGatedFetch (401 refresh + structural-404 recording).
+    const r=await bcGatedFetch(lineFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(r.ok){const d=await r.json();lineExists=(d.value||[]).length>0;}
   }catch(e){console.warn("bcSyncServiceCardTask: line lookup failed",e.message);}
 
@@ -4060,7 +4209,9 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     let detected=false;
     try{
       const probeUrl=`${BC_ODATA_BASE}/${planPage}?$top=1`;
-      const pr=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      // B064 — route the field-detection probe through bcGatedFetch (401 refresh + structural-404
+      // recording if the planning web service is broken). $metadata fallback below stays raw.
+      const pr=await bcGatedFetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
       if(pr.ok){
         const pd=await pr.json();
         const rec=(pd.value||[])[0];
@@ -4093,7 +4244,10 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
 
   // Step 1: fetch existing planning lines for this task (for incremental sync)
   const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}'`;
-  const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // B064 — route the existing-lines read through bcGatedFetch (401 refresh + structural-404
+  // recording — this is where a broken planning web service surfaces). Diff semantics below
+  // (gr.ok?...:[]) unchanged; this read feeds the money-path diff, so ONLY the fetch wrapper changed.
+  const gr=await bcGatedFetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   const existingLines=gr.ok?(await gr.json()).value||[]:[];
   const existingByLineNo=Object.fromEntries(existingLines.map(l=>[l.Line_No,l]));
 
@@ -4382,7 +4536,8 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
 
   // Fetch existing 60000+ lines for this ECO task
   const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and Line_No ge 60000`;
-  const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // B064 — route the existing-lines read through bcGatedFetch (401 refresh + structural-404 recording).
+  const gr=await bcGatedFetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   const existingLines=gr.ok?(await gr.json()).value||[]:[];
   const existingByLineNo=Object.fromEntries(existingLines.map(l=>[l.Line_No,l]));
 
@@ -6507,35 +6662,14 @@ async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
   if(!meta)return;
   const {planPage,FP_NO,FP_TASK_NO}=meta;
   const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
-  const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  if(!gr.ok){
-    // DECISION(v1.19.984, BC 404 diagnostic): When the GET fails for a
-    // non-admin user but works for the admin (real failure case: Noah's
-    // session showed 404 here while Jon's didn't), capture the full BC
-    // request context to debug logs — including the MSAL user identity
-    // tied to the BC token. BC commonly returns 404 (instead of 403) for
-    // resources the calling user lacks permissions on, so per-user 404
-    // divergence usually means per-user BC permissions divergence.
-    let bodyExcerpt='';
-    try{bodyExcerpt=(await gr.text()).slice(0,300);}catch(_){}
-    console.warn("bcPatchProgressBilling: GET failed",gr.status);
-    try{
-      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"&&gr.status===404){
-        window.logDebugEntry({severity:"warn",source:"bcPatchProgressBilling",message:`GET 404 — planning line not visible to this user (admin can see it); likely BC permissions or company/env mismatch`,extra:{
-          status:gr.status,
-          projectNumber,taskNo,
-          planPage,FP_NO,FP_TASK_NO,
-          bcOdataBase:BC_ODATA_BASE,
-          bcEnv:_bcConfig.env,
-          bcCompanyName:_bcConfig.companyName,
-          bcUserUpn:_bcUserUpn(),
-          urlPattern:`${planPage}(...,Line_No=10000)`,
-          responseExcerpt:bodyExcerpt,
-        }});
-      }
-    }catch(_){}
-    return;
-  }
+  // B064 — route the etag-GET through bcGatedFetch: a 401 now silent-refreshes + flips the
+  // health pill, and a structural 404 is recorded (deduped, honest message, N>=2 persistence)
+  // by the shared fault recorder inside the gate. This REPLACES the old inline per-404
+  // logDebugEntry that guessed "likely BC permissions" (wrong — the Ryan root cause is a
+  // non-existent Job_Task_No) and storm-wrote 522 near-identical entries (the B016 amplifier).
+  // Data flow below (etag → conditional If-Match PATCH) is byte-identical — observability only.
+  const gr=await bcGatedFetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!gr.ok){console.warn("bcPatchProgressBilling: GET failed",gr.status);return;}
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
   const pr=await bcGatedFetch(lineUrl,{
@@ -6572,27 +6706,12 @@ async function bcPatchLaborPlanningLines(projectNumber,panelIndex,panel){
   for(const {lineNo,qty,label} of patches){
     try{
       const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
-      const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!gr.ok){
-        let bodyExcerpt='';
-        try{bodyExcerpt=(await gr.text()).slice(0,300);}catch(_){}
-        console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);
-        try{
-          if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"&&gr.status===404){
-            window.logDebugEntry({severity:"warn",source:"bcPatchLaborPlanningLines",message:`GET 404 on ${label} line ${lineNo} — line not visible to this user (admin can see it); likely BC permissions or company/env mismatch`,extra:{
-              status:gr.status,
-              projectNumber,taskNo,lineNo,label,
-              planPage,FP_NO,FP_TASK_NO,
-              bcOdataBase:BC_ODATA_BASE,
-              bcEnv:_bcConfig.env,
-              bcCompanyName:_bcConfig.companyName,
-              bcUserUpn:_bcUserUpn(),
-              responseExcerpt:bodyExcerpt,
-            }});
-          }
-        }catch(_){}
-        continue;
-      }
+      // B064 — route the etag-GET through bcGatedFetch (401 refresh + structural-404 recording via
+      // the shared recorder, deduped once/endpoint/session). Replaces the old inline per-404
+      // logDebugEntry that guessed "BC permissions" and storm-wrote (the 522-entry amplifier).
+      // etag → conditional PATCH + skip-if-correct data flow below is unchanged.
+      const gr=await bcGatedFetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!gr.ok){console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);continue;}
       const rec=await gr.json();
       if(rec.Quantity===qty){console.log(`bcPatchLabor ${label}: already ${qty}, skip`);continue;}
       const etag=rec["@odata.etag"];
@@ -6617,7 +6736,8 @@ async function bcPatchPanelEndDate(projectNumber,panelIndex,endDate){
   if(!meta)return;
   const {planPage,FP_NO,FP_TASK_NO}=meta;
   const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
-  const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // B064 — route the etag-GET through bcGatedFetch (401 refresh + structural-404 recording).
+  const gr=await bcGatedFetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!gr.ok){console.warn("bcPatchPanelEndDate: GET failed",gr.status);return;}
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
@@ -50582,6 +50702,7 @@ function App({user}){
   const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcHealth,setBcHealth]=useState(_bcHealthState); // B013-2 — 'green'|'amber'|'red' degradation signal for the pill
+  const [bcFaultBroken,setBcFaultBroken]=useState(_bcAnyStructuralFault()); // B064 — a BC endpoint is structurally 404ing (amber advisory chip, pill stays green)
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
   const [bcQueueCount,setBcQueueCount]=useState(()=>_bcQGet().length);
@@ -51525,6 +51646,16 @@ INSTRUCTIONS:
     return()=>{_bcHealthSubs.delete(fn);};
   },[]);
 
+  // B064 — subscribe to the structural-404 fault detector so the amber "endpoint degraded"
+  // advisory chip appears/clears live (distinct from the connection pill — a 404 means BC is
+  // up but an endpoint is broken; reconnecting won't help). Mirrors the _bcHealthSubs effect.
+  useEffect(()=>{
+    const fn=(broken)=>setBcFaultBroken(broken);
+    _bcEndpointFaultSubs.add(fn);
+    setBcFaultBroken(_bcAnyStructuralFault()); // sync in case a fault tripped before mount
+    return()=>{_bcEndpointFaultSubs.delete(fn);};
+  },[]);
+
   // Poll BC every 5 minutes and import any projects not yet in ARC
   useEffect(()=>{
     if(!user?.uid)return;
@@ -51884,6 +52015,21 @@ INSTRUCTIONS:
               <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:C_.dot,boxShadow:`0 0 5px ${C_.dot}`,animation:st==='amber'?"pulse 2s ease-in-out infinite":undefined}}/>
               <span style={{fontSize:12,fontWeight:600,color:C_.tx,whiteSpace:"nowrap"}}>{C_.label}</span>
             </div>);
+          })()}
+          {/* B064 — amber "endpoint degraded" advisory chip. Distinct from the connection pill:
+              the pill can be green (BC is up) while a specific web service / keyed request 404s
+              persistently, silently failing planning-line sync. Clears when that endpoint next
+              succeeds (routed through bcGatedFetch's ok-path). */}
+          {bcFaultBroken&&(()=>{
+            const segs=_bcBrokenEndpoints();
+            const seg=segs[0]||"endpoint";
+            const many=segs.length>1;
+            const tip=`BC is connected, but ${many?"endpoints":"an endpoint"} ARC needs (${segs.join(", ")||seg}) returned repeated structural 404s — planning-line sync for ${many?"these":"this"} is likely failing silently. Notify your admin; reconnecting will NOT help.`;
+            return(
+              <div title={tip} style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:"#3a1f0044",border:"1px solid #f59e0b66"}}>
+                <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:C.yellow,boxShadow:`0 0 5px ${C.yellow}`,animation:"pulse 2s ease-in-out infinite"}}/>
+                <span style={{fontSize:12,fontWeight:600,color:"#fcd34d",whiteSpace:"nowrap"}}>⚠ BC sync degraded — endpoint '{seg}'{many?` +${segs.length-1} more`:""} unavailable</span>
+              </div>);
           })()}
           {bcQueueCount>0&&(
             <div title={`${bcQueueCount} BC operation${bcQueueCount>1?'s':''} pending — will retry when connected`}
