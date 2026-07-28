@@ -63,3 +63,44 @@ Fixes #1 (renumber) AND #3-shadow (#4 below) in one move: if the BC job = `PRJ40
 2. **BC number-set mechanism:** does the new sandbox's `projects` API accept `number` on POST (manual-nos), or must we create-then-PATCH the `No.`? (BC-admin verification — affects WS1 implementation.)
 3. **Bulk vs per-project:** after a clean pilot, add a guarded "Re-link all greyed projects" bulk action, or re-link individually? (95 projects.)
 4. **Drawings:** Re-link does not re-attach PDFs/drawings — separate step per project. In scope for the migration, or handled later?
+
+---
+
+# Build-ready scope (Coach, 2026-07-28) — verified line refs
+
+## #163 reconciliation — NOT a single-field rewrite (keystone)
+`_bcNo(row)` (`:5145`) = `row.bcNo || partNumber.slice(0,20)` — the ONLY value POSTed as planning-line `No:` (`:4404`/`:4619`) → sole **money-path** cache. But the BC item No. is cached in **6 places**; reconciliation must handle each:
+- `row.bcNo` — **YES, mandatory** (planning-line POST).
+- `row.bcItemNumber` (`:11526`) — YES (quote↔supplier-quote BC cross-match).
+- `row.bcPartNumber` — YES (restore-remap join + RFQ crossings; cheap, same walk).
+- `panel.bcItemNumber` — YES **if** any panels pushed as assembly items (stale → 404 pulse).
+- `sqCrossings.*.bcItemNumber` (config learning-DB `:9959`) — flag; non-gating.
+- `supplierCrossRef.records[].bcPartNumber` (config learning-DB) — flag; non-gating.
+- `row.bcItemId` (BC GUID) — **NULL it** (env-specific; new env invalidates old GUIDs) — as `applyRemaps :11525` already does.
+**Precedent:** `applyRemaps` (`:11485-11529`) already rewrites `partNumber/bcPartNumber/bcItemNumber/bcItemId/bcVerify` together — the reconciliation is a bulk, non-interactive `applyRemaps` keyed by an ItemCard-resolved old→MTX map.
+
+## Execution vehicle — new CF `reconcileBcNos` (templates already exist)
+- **`stampProjectsBcEnv`** (`functions/index.js:461`) = the project-walk + `dryRun` + batched-write + report skeleton (verbatim reusable).
+- **`bulkMfrLookup`** (`:2390`) = the client-passes-`bcToken`+`bcODataBase` + server-side ItemCard resolution + `dryRun` default-true + `isTest` force-dry pattern (answers "does a CF have BC creds?" — client delegates its MSAL token).
+- **Data-safety:** unlike `stampProjectsBcEnv`'s scalar `batch.update`, this rewrites nested `panels[].bom[]` → must **read-modify-write field-level per project doc** (preserve every other field, `schemaVersion`, learning DBs, `storageUrl`, admin fields) — Data-Retention #1/#4 server-side. Persist applied old→new pairs to `companies/{cid}/bcReconcileRuns/{ts}` (audit + reverse-run map).
+
+## Dry-run-first protocol (`dryRun` default TRUE)
+1. **Resolution (read-only):** dedupe unique `bcNo||partNumber` across all projects; `ItemCard?$filter=Vendor_Item_No eq '<v>'&$select=No,Vendor_Item_No&$top=1` (`_resolveBcNoFromVendorItemNo :5168`) → `oldToMtx`.
+2. **Classify + report every row:** resolvable / already-MTX (`^MTX-`, skip) / labor-or-null (skip) / **unresolvable (flag, never guess)** + counts + full old→new pairs + unresolvable list w/ project/panel/row identity.
+3. Jon verifies → re-invoke `dryRun:false`.
+4. **Apply:** field-level rewrite on resolvable rows only (bcNo+bcItemNumber+bcPartNumber, null bcItemId+bcVerify); leave unresolvable + mark `_bcReconcileFlag`; post-write re-resolve → expect 0 resolvable-but-unwritten.
+- **★ Truncation risk (surface to Jon):** old `bcNo` 20-char capped (`_bcNo` `:5145`); new `Vendor_Item_No` is full → a truncated bcNo won't exact-match → unresolvable. Resolver: exact match first, then **single-hit-only** `startswith(Vendor_Item_No,<bcNo>)` (accept iff exactly one hit; else flag ambiguous). If the unresolvable count is still meaningful → fall back to Jon's #163 3-column mapping sheet (old-BC-No primary join). **Run the resolution dry-run FIRST to size this.**
+
+## WS1/WS2/WS3/WS4 (line-grounded)
+- **WS1** `bcCreateProject :4804`: add `opts.projectNumber` → POST `{number,displayName}` (or create-then-PATCH the No. under manual-nos — open Q2); `Global_Dimension_1_Code=opts.projectNumber` (`:4830`); **verify returned No.===requested, else roll back (`:4852-4864`) + throw.** Callers: `relinkToBC` passes `project.bcProjectNumber`; New-Project (`:11741`/`:46760`) unchanged.
+- **WS2** `relinkToBC :41496`: keep `project.bcProjectNumber`; **assert `bc.number===project.bcProjectNumber`, abort+surface on mismatch** (no overwrite). Still update bcProjectId/bcEnv + clear bindings.
+- **WS3** `relinkToBC :41487-41494`: read each panel's `bcSyncPanelPlanningLines` `result.failed` (`:4551`) → non-✓ itemized outcome, never silent "✓" (`:41508`). **Fail-fast:** abort remaining line POSTs after **N=5 consecutive** non-2xx/non-429 errors (the pilot's throttle was BC's "too many error requests" from a 400 flood — 400≠429, so existing 429 backoff `:4449-4467` doesn't cover it).
+- **WS4** import-sync `:52381-52419`: (1) `relinkToBC` persists `{bcProjectId,bcProjectNumber,bcEnv}` **before** the sync loop (`_noBumpWrite`) so the import's per-cycle read (`:52389`) sees the number; (2) `_relinkInFlight` flag short-circuits the import block during a relink/bulk. Do both.
+
+## Blocking decisions
+1. **[WS1] Q2 — BC number-set:** does the new sandbox's v2.0 `projects` POST accept `number` under manual-nos, or create-then-PATCH? (BC-admin verify; code handles both, so non-blocking to *start*.)
+2. **[reconciliation] Truncation join:** live `Vendor_Item_No` resolver + single-hit `startswith`, or require the #163 3-column mapping sheet? **Decide from the dry-run's unresolvable count — run resolution dry-run FIRST.**
+3. Secondary caches (panel.bcItemNumber + config DBs) in-run or deferred. 4. Bulk vs per-project (95). 5. Drawings re-attach.
+
+## Gates
+validate_jsx → Coach money-path review (`reconcileBcNos`+WS1-4) → Test → **dry-run on new sandbox (report; Jon verifies counts)** → live reconcile → **1-project pilot relink w/ network trace** → Jon → guarded bulk. No bulk until one pilot clean end-to-end.
