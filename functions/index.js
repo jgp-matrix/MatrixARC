@@ -772,6 +772,139 @@ exports.onSupplierQuoteSubmitted = functions.firestore
     return null;
   });
 
+// ── B064: BC STRUCTURAL-FAULT COMPANY-WIDE AGGREGATOR ──
+// The client (B064, prod v1.24.41) writes ONE debugLog per broken BC endpoint per SESSION
+// (severity:"error", source:"bcStructuralFault"). A single user's in-session chip cannot
+// catch a company-wide, multi-week silent breakage (the Ryan 404 incident) — so this
+// server-side aggregator fires ONE admin alert (Teams + push) when the SAME endpoint stays
+// broken across the company past a threshold in 24h. It is HARD-deduped to one alert per
+// company+endpoint per cooldown window via a marker doc, because the parent trigger fires on
+// EVERY debugLog create.
+const BC_FAULT_ALERT_THRESHOLD = 5;                     // fire when distinct-users OR total fault entries in the window reach this
+const BC_FAULT_ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;   // 24h look-back for counting faults
+const BC_FAULT_ALERT_COOLDOWN_MS = 24 * 60 * 60 * 1000; // at most one alert per company+endpoint per 24h
+
+async function _maybeAlertBcStructuralFault(companyId, entry) {
+  const extra = (entry && entry.extra) || {};
+  // Guardrail 1: never alert on test-env faults (matrix-arc-test).
+  if (extra.isTestEnv === true) return;
+  const endpoint = String(extra.endpoint || extra.urlPattern || '').trim();
+  if (!endpoint) return; // Guardrail 2: nothing to key/dedupe on.
+
+  // Company lookup + test-company guard (a test company must not alert real admins).
+  let companyName = String(extra.companyName || 'MatrixARC');
+  try {
+    const cDoc = await db.doc(`companies/${companyId}`).get();
+    if (cDoc.exists) {
+      const cd = cDoc.data() || {};
+      if (cd.isTestCompany === true) { functions.logger.info('[bcFaultAggregator] skip (test company)', companyId); return; }
+      if (cd.name) companyName = cd.name;
+    }
+  } catch (e) { /* proceed with fallback name */ }
+
+  const now = Date.now();
+  const windowStart = now - BC_FAULT_ALERT_WINDOW_MS;
+
+  // Count recent faults for THIS endpoint across the company. Query the single, already
+  // auto-indexed createdAt field (no composite index needed — same pattern as DebugLogsModal),
+  // then filter source + endpoint in memory. .limit() bounds the read.
+  let total = 0;
+  const users = new Set();
+  let firstAt = extra.firstAt || new Date(now).toISOString();
+  let lastAt = extra.lastAt || new Date(now).toISOString();
+  try {
+    const snap = await db.collection(`companies/${companyId}/debugLogs`)
+      .where('createdAt', '>=', windowStart)
+      .orderBy('createdAt', 'desc')
+      .limit(500)
+      .get();
+    snap.forEach(d => {
+      const x = d.data() || {};
+      if (x.source !== 'bcStructuralFault') return;
+      const xe = x.extra || {};
+      if (xe.isTestEnv === true) return; // don't let test-env entries inflate the count
+      const ep = String(xe.endpoint || xe.urlPattern || '').trim();
+      if (ep !== endpoint) return;
+      total++;
+      users.add(x.createdBy || x.userEmail || d.id);
+      if (xe.firstAt && String(xe.firstAt) < String(firstAt)) firstAt = xe.firstAt;
+      if (xe.lastAt && String(xe.lastAt) > String(lastAt)) lastAt = xe.lastAt;
+    });
+  } catch (e) {
+    functions.logger.warn('[bcFaultAggregator] fault query failed:', e.message);
+    return;
+  }
+
+  const distinctUsers = users.size;
+  // Threshold: distinct-users OR total entries. The client dedupes to one entry per
+  // endpoint per session, so distinctUsers ≈ affected users; total also catches a single
+  // user hitting it across many sessions.
+  if (distinctUsers < BC_FAULT_ALERT_THRESHOLD && total < BC_FAULT_ALERT_THRESHOLD) return;
+
+  // Hard dedupe: at most one alert per company+endpoint per cooldown window. Transaction on a
+  // single marker doc (map keyed by a sanitized endpoint key) so concurrent fault writes from
+  // different users can't both fire. Fail closed on transaction error (never risk a storm).
+  const endpointKey = (endpoint.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120)) || 'endpoint';
+  const markerRef = db.doc(`companies/${companyId}/config/bcFaultAlerts`);
+  let shouldAlert = false;
+  try {
+    await db.runTransaction(async tx => {
+      const mSnap = await tx.get(markerRef);
+      const data = mSnap.exists ? (mSnap.data() || {}) : {};
+      const endpoints = data.endpoints || {};
+      const prev = endpoints[endpointKey];
+      if (prev && prev.lastAlertedAt && (now - prev.lastAlertedAt) < BC_FAULT_ALERT_COOLDOWN_MS) {
+        shouldAlert = false; // still in cooldown — suppress
+        return;
+      }
+      endpoints[endpointKey] = { lastAlertedAt: now, endpoint, env: extra.env || '', faultCount: total, distinctUsers };
+      tx.set(markerRef, { endpoints }, { merge: true });
+      shouldAlert = true;
+    });
+  } catch (e) {
+    functions.logger.warn('[bcFaultAggregator] dedupe transaction failed:', e.message);
+    return; // fail closed
+  }
+  if (!shouldAlert) return;
+
+  // Admin uids for push (same lookup as onIssueReported).
+  let adminUids = [];
+  try {
+    const membersSnap = await db.collection(`companies/${companyId}/members`).get();
+    adminUids = membersSnap.docs.filter(d => d.data().role === 'admin').map(d => d.id);
+  } catch (e) { /* ignore — Teams still posts */ }
+
+  const env = extra.env || 'unknown';
+  const alertBody = `⚠ BC endpoint '${endpoint}' has failed ${total} time(s) across ${distinctUsers} user(s) in the last 24h (env ${env}) — ARC↔BC sync for this endpoint is silently failing. Investigate the BC web service / task mapping.`;
+
+  // 1) Teams webhook (once).
+  await postToTeams({
+    title: `⚠ BC Sync Degraded — ${companyName}`,
+    body: alertBody,
+    url: APP_URL,
+    facts: [
+      { name: 'Endpoint', value: endpoint },
+      { name: 'Environment', value: env },
+      { name: 'Fault count (24h)', value: String(total) },
+      { name: 'Distinct users', value: String(distinctUsers) },
+      { name: 'First seen', value: String(firstAt) },
+      { name: 'Last seen', value: String(lastAt) },
+    ],
+  });
+
+  // 2) Push to each admin.
+  const notifTitle = '⚠ BC Sync Degraded';
+  const notifBody = `Endpoint '${endpoint}' failing across ${distinctUsers} user(s) — BC sync silently broken.`;
+  for (const adminUid of adminUids) {
+    await sendPushToUser(adminUid, {
+      title: notifTitle,
+      body: notifBody,
+      data: { url: APP_URL + '?openDebugLogs=1', type: 'bc_structural_fault', tag: `bcfault_${endpointKey}` },
+    });
+  }
+  functions.logger.info(`[bcFaultAggregator] alert fired — company ${companyId}, endpoint '${endpoint}' (${total} faults, ${distinctUsers} users, env ${env})`);
+}
+
 // ── USER-REPORTED ISSUE NOTIFICATIONS ──
 // DECISION(v1.19.594): When a user clicks "Report Issue", notify all admins of the
 // company via in-app bell, push, email, and Teams. Only fires for severity='user_reported'
@@ -781,6 +914,17 @@ exports.onIssueReported = functions.firestore
   .document('companies/{companyId}/debugLogs/{logId}')
   .onCreate(async (snap, context) => {
     const entry = snap.data() || {};
+
+    // B064: BC structural-fault aggregator runs BEFORE the user_reported gate below
+    // (these entries are severity:"error", not "user_reported"). Fire a company-wide admin
+    // alert when an endpoint stays broken past threshold, then stop — the rest of this
+    // trigger (issue-report email/bell) does not apply to auto-captured BC faults.
+    if (entry.source === 'bcStructuralFault') {
+      try { await _maybeAlertBcStructuralFault(context.params.companyId, entry); }
+      catch (e) { functions.logger.warn('[bcFaultAggregator] error:', e.message); }
+      return null;
+    }
+
     if (entry.severity !== 'user_reported') return null;
 
     const companyId = context.params.companyId;
