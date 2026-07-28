@@ -543,6 +543,15 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
   const dryRun = !(data && data.dryRun === false);
   const forceDry = dryRun || isTestCompany || !!(data && data.isTest === true);
 
+  // Durable run report — the dry-run walk can exceed the client callable window; the client polls
+  // this fixed doc so the computed report survives a timeout. Written 'running' now, 'done' with the
+  // full report at the end, 'error' in the catch so failures are visible too. (maxInstances:1 keeps
+  // this a strictly one-at-a-time op — a concurrent invoke can't collide on this doc.)
+  const statusRef = db.doc(`companies/${companyId}/config/bcReconcileStatus`);
+  const startedAt = Date.now();
+  await statusRef.set({ status: 'running', dryRun: forceDry, startedAt, by: uid });
+
+  try {
   const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
   const MTX_RE = /^MTX-/i;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -574,12 +583,14 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
   for (const v of uniqueVals) {
     const esc = v.replace(/'/g, "''");
     let mtx = null;
+    let sawNon2xx = false; // BC's "too many error requests" guard is triggered by ERROR responses,
+                           // not successful GETs — so only throttle after a non-2xx (or a fetch throw).
     try {
       const r1 = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${esc}'&$select=No,Vendor_Item_No&$top=1`, { headers: bcHeaders });
       if (r1.ok) {
         const row = ((await r1.json()).value || [])[0];
         if (row && row.No) mtx = String(row.No).trim();
-      }
+      } else { sawNon2xx = true; }
       if (!mtx) {
         // Truncation fallback — single-hit-only prefix match.
         const r2 = await fetch(`${bcODataBase}/ItemCard?$filter=startswith(Vendor_Item_No,'${esc}')&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
@@ -587,13 +598,14 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
           const vals = (await r2.json()).value || [];
           if (vals.length === 1 && vals[0].No) mtx = String(vals[0].No).trim();
           else if (vals.length > 1) ambiguous.push(v);
-        }
+        } else { sawNon2xx = true; }
       }
     } catch (e) {
       resolveErrors.push({ value: v, error: e && e.message });
+      sawNon2xx = true;
     }
     if (mtx) oldToMtx[v] = mtx;
-    await sleep(120); // gentle throttle — read-only GETs, avoid tripping BC rate limits
+    if (sawNon2xx) await sleep(15); // back off ONLY after an error response — successful runs stay fast
   }
 
   // ── Phase 2: classify + report every row; apply field-level RMW when live ──
@@ -673,7 +685,7 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
 
   console.log(`[reconcileBcNos] company=${companyId} dryRun=${forceDry} total=${total} resolvable=${resolvable} alreadyMtx=${alreadyMtx} laborOrNull=${laborOrNull} unresolvable=${unresolvable} ambiguous=${ambiguous.length} appliedProjects=${appliedProjects} appliedRows=${appliedRows}`);
 
-  return {
+  const result = {
     dryRun: forceDry,                 // honest: true whenever no writes were applied
     total, resolvable, alreadyMtx, laborOrNull, unresolvable,
     pairs,                            // [{old,mtx}] — full resolvable map
@@ -683,6 +695,32 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
     panelFieldsRewritten,
     applied: forceDry ? null : { projects: appliedProjects, rows: appliedRows, panelFields: panelFieldsRewritten, auditDoc: auditDocPath },
   };
+
+  // Durable 'done' report — client polls this doc, so it survives a callable timeout. pairs are
+  // CAPPED to keep the doc under Firestore's 1 MB limit; the COMPLETE old→MTX map still lands in
+  // the bcReconcileRuns/{ts} audit doc on live applies. Counts + FULL unresolvable/ambiguous lists
+  // are kept whole (those drive Jon's verify + the truncation-join decision).
+  await statusRef.set({
+    status: 'done', dryRun: forceDry, startedAt, finishedAt: Date.now(), by: uid,
+    report: {
+      total, resolvable, alreadyMtx, laborOrNull, unresolvable,
+      ambiguous: ambiguous.length, resolveErrors: resolveErrors.length,
+      panelFieldsRewritten,
+      applied: result.applied,
+      pairsTotal: pairs.length,
+      pairsSample: pairs.slice(0, 200),      // capped — full map is in bcReconcileRuns/{ts} on live runs
+      unresolvableList,                       // FULL
+      ambiguousList: ambiguous,               // FULL
+      resolveErrorsList: resolveErrors,       // FULL (small)
+    },
+  }, { merge: true });
+
+  return result;
+  } catch (err) {
+    // Surface failures on the status doc too (a client timeout would otherwise hide them).
+    await statusRef.set({ status: 'error', dryRun: forceDry, startedAt, finishedAt: Date.now(), error: (err && err.message) || String(err) }, { merge: true }).catch(() => {});
+    throw err;
+  }
 });
 
 // ── TEAM MANAGEMENT ──
