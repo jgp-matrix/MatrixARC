@@ -63,3 +63,29 @@ Jon: *"We have the Cross-Reference feature… allows ARC to automatically select
 
 ## Sequencing
 ARC-side-only → **independent of the BC-integrity cluster (B064/B065/F071)**; ship off the critical path. Coupling appears ONLY if v1 adds BC write-back — explicitly deferred to avoid entangling with F071's commit-gate + B064's fault-surfacing.
+
+---
+
+# Build-ready ordered plan (Coach re-scope, 2026-07-27 · base v1.24.42 · `src/app.jsx` only)
+
+All work inside `BCItemBrowserModal` (`:24167`) + one new learning-DB helper pair + one apply branch. ARC-side only, NO BC write-back. Modal already grows H+W (resize handle `:25066-25095`, floors `:25075-76`, persisted `_saveBcBrowserSize` `:24164`).
+
+**S1 — ALT button next to USE (per result row).** Actions `<td>` `:25001-25004`: wrap Use + a new **ALT** button in a `flex` container (`flexShrink:0` on both — B055 guard `:24838`). ALT = violet `#a78bfa` ("manage"), Use keeps `C.accent`. `onClick` calls `openAltModal(item)` with `e.stopPropagation()` (row onClick `:24858` = Use).
+
+**S2 — Alternates entry modal** (nested `createPortal`, `zIndex:320` over the browser's 300). State near `:24218`. Grid, one row per alternate: **Supplier** (free text), **Price** (numeric ≥0, mirror `updatePrice` guard `:29231`), **Lead Time (days)** (int ≥0), **✕ delete-row**; **+ Add alternate**; **Save**/**Cancel**. NO MFR field (identical product). Persisted row `{supplier, price:number|null, leadTimeDays:number|null, enteredAt, enteredBy}`.
+
+**S3 — new `config/itemAlternates` learning DB** (near `_readSupplierConfig` `:2632`). **Shape = map-of-arrays keyed by BC item No** (chosen for delete-row + no cross-item clobber): `{ items: { [itemNo]: [ {supplier,price,leadTimeDays,enteredAt,enteredBy} ] } }`. `loadItemAlternates(uid,itemNo)` via `_readSupplierConfig`; `saveItemAlternates(uid,itemNo,rows)` via `fbDb.doc(_supplierDocPath(uid,"itemAlternates")).set({items:{[itemNo]:rows}},{merge:true})` (dot-path merge → other items untouched). **Data-Retention:** uncapped, additive, `APP_SCHEMA_VERSION` unchanged. Optional `_itemAltCache` mirroring `_altCache`.
+
+**S4 — unified selector, inserted between Load More `:25021` and DRAWING REFERENCE `:25025`** (same flex column, `flexShrink:0`). Groups: **① Primary** (Item Card `bcVendorName`, label+✓, non-selectable) · **② user alternates** (editable+Select+✎) · **②-b BC Purchase-Price vendors** (`bcFetchPurchasePricesMultiVendor` `:6446`, names via `bcGetVendorName` `:6984`, read-only, "from BC", lazy + skip if `!_bcToken`) · **③ cross-ref parts** (`loadAlternates` `:2715`, "CROSS"). Factor into a reusable `SourceOptionList({groups,onPick})` so **F010** (part-axis) reuses it. Hide block if all empty + no targetRow.
+
+**S5 — apply-on-select (ARC-side only), new `applySecondary(bomRowId,pick)` near `applyBcItem` `:29163`.** Secondary supplier → RMW the row: set `bcVendorName`(+`bcVendorNo` if resolvable), `unitPrice`+`priceSource:"manual"`+`_priceStamp()` (mirror `:29290`), `leadTimeDays`+`leadTimeSource:"manual"`, and **`vendorSource:"manual-secondary"`** (the guard — future re-price/vendor-auto-assign must skip it, mirroring `priceSource:"manual"` skips `:41732`/`:42321`); save via existing `onSaveImmediate`. Cross-ref part → reuse the existing cross flow (`applyBcItem`/`commitBcItem`, already stamps `isCrossed`/`crossedFrom` + trains `saveAlternateEntry` `:29090`). **NO BC write-back** → F071 `bcCommitGate` (`:24168`) does NOT apply to S1/S2/S5 (gates BC-create only).
+
+**Guardrails:** kill switches `:6017`/`:6023` untouched; add `vendorSource` to the row-field preservation list (Data-Retention rule 4); `bcCommitGate` NOT read by ALT/select; B055 `flexShrink:0`; ②-b silent if BC offline.
+
+**Resolved (Coach recs accepted by Freddy):** (1) S3 = map-of-arrays keyed by itemNo (delete-row needs removal; arrayUnion can't). (2) ② supplier = free-text string in v1 (Jon's "online retailer" alternates often aren't BC vendors); BC `Vendor_No` resolution deferred to v2.
+
+**Acceptance:** ALT left of Use; entry modal add/edit/delete multi-row → persists keyed by item No → re-lists on a fresh BOM with that item; selector lists ①②②-b③; selecting ②/②-b writes vendor(+price+LT) + both source stamps, survives save/reload; selecting ③ = existing cross flow; **zero BC writes on any alternate op (verify via Test network trace)**; modal grows to fit; `itemAlternates` uncapped, no other item dropped, `schemaVersion` unchanged.
+
+**Gates:** `node validate_jsx.js` → Coach code-review (money-path) → `deploy-test.sh` → Jon verify on `matrix-arc-test.web.app` → prod.
+
+**Files:** `src/app.jsx` only (S1 `:25001`, S2 nested modal, S4 `~:25022`, S3 helpers `~:2725`, S5 `~:29163`, preservation list). No functions/rules, no `APP_SCHEMA_VERSION` bump.
