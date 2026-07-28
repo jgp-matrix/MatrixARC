@@ -24165,6 +24165,7 @@ function _saveBcBrowserSize(w,h){
   try{localStorage.setItem(_BC_BROWSER_SIZE_KEY,JSON.stringify({w:Math.round(w),h:Math.round(h)}));}catch(e){}
 }
 function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
+  const bcCommitGate=useBcCommitGate(); // F071 Tier-A — "Create in BC" writes an item + Purchase Price to BC
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
   const [results,setResults]=useState([]);
@@ -24804,6 +24805,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <button disabled={creating||!createNumber.trim()} onClick={async()=>{
+                // F071 Tier-A HARD-BLOCK — this writes a new Item Card + Purchase Price to BC; never
+                // push a stale cost while BC is down/unverified. Backstops the disabled button below.
+                if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
                 setCreating(true);setCreateErr("");
                 try{
                   const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined,manufacturerCode:createMfr||undefined});
@@ -24820,11 +24824,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
-              }} disabled={creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
-                {creating?"Creating…":!dropdownsLoaded?"Loading…":"Create in BC"}
+              }} disabled={creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting||bcCommitGate?0.5:1,cursor:bcCommitGate?"not-allowed":undefined})}>
+                {creating?"Creating…":!dropdownsLoaded?"Loading…":bcCommitGate?"Create in BC (BC offline)":"Create in BC"}
               </button>
               <button onClick={()=>{setShowCreate(false);setCreateErr("");}}
                 style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,textDecoration:"underline"}}>Cancel</button>
+              {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4,flex:1,minWidth:180}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
               {createErr&&<div style={{color:C.red,fontSize:12,flex:1}}>{createErr}</div>}
             </div>
           </div>
@@ -36526,6 +36531,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [bomSending,setBomSending]=useState(false);     // in-flight guard — prevents double-send
   async function handleBomSend(){
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
+    // F071 Tier-A HARD-BLOCK (Jon 2026-07-27) — customer-facing pricing must not go out while BC is
+    // down, same rationale as Send Quote (even though this is a Graph email touching no BC directly).
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     const m=bomSendModal;
     if(!m||bomSending)return;
     const verifyBlocks=findIncompleteQuoteItems(project).filter(i=>i.isVerificationBlock);
@@ -39221,7 +39229,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
             <button onClick={()=>setBomSendModal(null)} disabled={bomSending} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`,opacity:bomSending?0.5:1})}>Cancel</button>
-            <button onClick={handleBomSend} disabled={bomSending} title="Email the quoted BOM to the customer for review/approval" style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:bomSending?0.5:1,cursor:bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":"Send Quoted BOM"}</button>
+            <button onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):handleBomSend} disabled={bomSending||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):"Email the quoted BOM to the customer for review/approval"} style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:(bomSending||bcCommitGate)?0.5:1,cursor:bcCommitGate?"not-allowed":bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":bcCommitGate?"Send Quoted BOM (BC offline)":"Send Quoted BOM"}</button>
           </div>
         </div>
       </div>
