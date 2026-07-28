@@ -2649,6 +2649,42 @@ async function _readSupplierConfig(uid,docName){
   }catch(e){console.warn(`[supplier-config:${docName}/user]`,e.message);return{data:{},source:"user"};}
 }
 
+// ── ITEM ALTERNATES (F072) — user-managed SECONDARY SUPPLIERS per BC item ──
+// A different SUPPLIER for the IDENTICAL product (e.g. an online retailer when the local
+// supplier can't get it). DISTINCT from the Cross-Reference feature (config/alternates =
+// a substitute PART#). No MFR field (identical product).
+//
+// Additive learning DB. Data-Retention: UNCAPPED, preserve-on-save, APP_SCHEMA_VERSION
+// UNCHANGED. Team-scoped via _supplierDocPath/_readSupplierConfig (mirrors supplierCrossRef).
+// Shape = MAP-OF-ARRAYS keyed by BC item No (chosen over records[]/arrayUnion so a delete-row
+// can REMOVE an entry): { items: { [itemNo]: [ {supplier,price,leadTimeDays,enteredAt,enteredBy} ] } }.
+// saveItemAlternates uses a dot-path merge on items.<itemNo> so sibling items are never clobbered.
+let _itemAltCache=null; // {items:{...}} once loaded (mirrors _altCache)
+function _invalidateItemAltCache(){_itemAltCache=null;}
+async function loadItemAlternates(uid,itemNo){
+  if(!itemNo)return[];
+  try{
+    if(!_itemAltCache){
+      const {data}=await _readSupplierConfig(uid,"itemAlternates");
+      _itemAltCache=(data&&data.items)?{items:{...data.items}}:{items:{}};
+    }
+    const rows=(_itemAltCache.items||{})[itemNo];
+    return Array.isArray(rows)?rows:[];
+  }catch(e){console.warn("[itemAlternates load]",e.message);return[];}
+}
+async function saveItemAlternates(uid,itemNo,rows){
+  if(!itemNo)return[];
+  const clean=Array.isArray(rows)?rows:[];
+  // Keep the in-memory cache coherent so a subsequent load reflects the just-saved rows.
+  if(!_itemAltCache)_itemAltCache={items:{}};
+  if(!_itemAltCache.items)_itemAltCache.items={};
+  _itemAltCache.items[itemNo]=clean;
+  // Dot-path merge → only THIS item's array is (re)written; every other item is untouched.
+  // An empty array is a valid state (all rows deleted). Additive doc, schemaVersion unchanged.
+  await fbDb.doc(_supplierDocPath(uid,"itemAlternates")).set({items:{[itemNo]:clean}},{merge:true});
+  return clean;
+}
+
 // DECISION(v1.19.996, audit Item D follow-up): rfq_history collection
 // migration. Writes go to the company-shared collection; reads merge both
 // company-shared and legacy user-shared collections so existing per-user
@@ -24164,7 +24200,42 @@ function _loadBcBrowserSize(){
 function _saveBcBrowserSize(w,h){
   try{localStorage.setItem(_BC_BROWSER_SIZE_KEY,JSON.stringify({w:Math.round(w),h:Math.round(h)}));}catch(e){}
 }
-function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
+// F072 — reusable source-option list (Primary / secondary alternates / BC vendors / cross-ref
+// parts). Presentational only; the parent builds `groups` + wires each row's onSelect/onEdit.
+// Built reusable so F010 (part-axis alternate PARTS picker) can adopt the same chrome later.
+// groups: [{label, rows:[{id,title,sub,tag,selectable,check,onSelect,onEdit}]}]. Empty groups drop.
+function SourceOptionList({groups}){
+  const shown=(groups||[]).filter(g=>g&&(g.rows||[]).length);
+  if(!shown.length)return null;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {shown.map((g,gi)=>(
+        <div key={gi}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>{g.label}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {g.rows.map((r,ri)=>(
+              <div key={r.id||ri} style={{display:"flex",alignItems:"center",gap:8,background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.title||"—"}</div>
+                  {r.sub&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.sub}</div>}
+                </div>
+                {r.tag&&<span style={{fontSize:10,color:C.muted,flexShrink:0,padding:"1px 6px",border:`1px solid ${C.border}`,borderRadius:4,whiteSpace:"nowrap"}}>{r.tag}</span>}
+                {r.onEdit&&<button title="Edit alternates" onClick={r.onEdit} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px",fontSize:10,color:C.muted,cursor:"pointer",flexShrink:0}}>✎</button>}
+                {r.selectable?(
+                  <button onClick={r.onSelect} style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`,flexShrink:0})}>Select</button>
+                ):r.check?(
+                  <span style={{color:"#4ade80",fontSize:13,flexShrink:0}} title="Primary supplier (auto-selected)">✓</span>
+                ):null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
   const bcCommitGate=useBcCommitGate(); // F071 Tier-A — "Create in BC" writes an item + Purchase Price to BC
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
@@ -24232,6 +24303,19 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const _ltObserverRef=useRef(null);
   const _ltRowItems=useRef(new WeakMap());    // row <tr> element -> its item (for the observer callback)
   const [customerSupplied,setCustomerSupplied]=useState(false);
+  // F072 — user-managed Alternates (secondary suppliers for the IDENTICAL product) + selector.
+  // ALT entry modal (S2): altModalItem=the item being edited (null=closed); altRows=string-input rows.
+  const [altModalItem,setAltModalItem]=useState(null);
+  const [altRows,setAltRows]=useState([]);
+  const [altSaving,setAltSaving]=useState(false);
+  const [altErr,setAltErr]=useState("");
+  // Unified secondary-source selector (S4): selectorItem = the focused BC item whose sources show.
+  // Seeded from the targetRow's BC item No so saved alternates re-list on a fresh BOM with that item.
+  const [selectorItem,setSelectorItem]=useState(()=>targetRow&&(targetRow.bcNo||targetRow.partNumber)?{number:targetRow.bcNo||"",displayName:targetRow.description||"",partNumber:targetRow.partNumber||""}:null);
+  const [selUserAlts,setSelUserAlts]=useState([]);   // ② user alternates (editable)
+  const [selBcVendors,setSelBcVendors]=useState([]); // ②-b BC Purchase-Price vendors (read-only)
+  const [selPrimaryVendor,setSelPrimaryVendor]=useState(""); // ① Item Card vendor (non-selectable)
+  const [selCrossRefs,setSelCrossRefs]=useState([]); // ③ cross-ref parts (existing config/alternates)
   const [editVendorItem,setEditVendorItem]=useState(null); // item.number being edited
   const [editVendorNo,setEditVendorNo]=useState("");
   const [savingVendor,setSavingVendor]=useState(false);
@@ -24631,6 +24715,82 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     }
     setSavingVendor(false);
   }
+
+  // ── F072 Alternates handlers ───────────────────────────────────────────────
+  // Open the ALT entry modal for a specific BC item + focus the selector on it.
+  function openAltModal(item){
+    setSelectorItem(item);
+    setAltErr("");
+    setAltModalItem(item);
+    loadItemAlternates(_appCtx.uid,item.number).then(rows=>{
+      setAltRows((rows&&rows.length)
+        ?rows.map(r=>({supplier:r.supplier||"",price:r.price==null?"":String(r.price),leadTimeDays:r.leadTimeDays==null?"":String(r.leadTimeDays)}))
+        :[{supplier:"",price:"",leadTimeDays:""}]);
+    }).catch(()=>setAltRows([{supplier:"",price:"",leadTimeDays:""}]));
+  }
+  function updateAltRow(i,field,val){setAltRows(rows=>rows.map((r,j)=>j===i?{...r,[field]:val}:r));}
+  async function saveAltRows(){
+    if(!altModalItem)return;
+    setAltErr("");
+    const clean=[];
+    for(const r of altRows){
+      const supplier=(r.supplier||"").trim();
+      if(!supplier)continue; // silently drop blank rows (supplier is required)
+      const price=(r.price===""||r.price==null)?null:+r.price;
+      if(price!=null&&(isNaN(price)||price<0)){setAltErr("Price must be 0 or greater.");return;}
+      const lt=(r.leadTimeDays===""||r.leadTimeDays==null)?null:parseInt(r.leadTimeDays,10);
+      if(lt!=null&&(isNaN(lt)||lt<0)){setAltErr("Lead time must be a whole number of days (0+).");return;}
+      clean.push({supplier,price,leadTimeDays:lt,enteredAt:Date.now(),enteredBy:(fbAuth.currentUser&&fbAuth.currentUser.email)||_appCtx.uid||""});
+    }
+    setAltSaving(true);
+    try{
+      await saveItemAlternates(_appCtx.uid,altModalItem.number,clean);
+      if(selectorItem&&selectorItem.number===altModalItem.number)setSelUserAlts(clean);
+      setAltModalItem(null);
+    }catch(e){setAltErr(e.message||"Save failed");}
+    setAltSaving(false);
+  }
+
+  // Load the four source groups whenever the focused item changes. ①/②-b/②-b are BC-backed
+  // (lazy; skipped when BC is offline — !_bcToken). ② reads the F072 learning DB; ③ reads the
+  // existing cross-reference DB filtered to this part. All reads only — no writes.
+  useEffect(()=>{
+    if(!selectorItem){setSelUserAlts([]);setSelBcVendors([]);setSelPrimaryVendor("");setSelCrossRefs([]);return;}
+    let cancelled=false;
+    const itemNo=selectorItem.number||"";
+    const pn=selectorItem.partNumber||"";
+    // ② user alternates (F072 learning DB, keyed by BC item No)
+    if(itemNo)loadItemAlternates(_appCtx.uid,itemNo).then(rows=>{if(!cancelled)setSelUserAlts(rows||[]);}).catch(()=>{if(!cancelled)setSelUserAlts([]);});
+    else setSelUserAlts([]);
+    // ① primary vendor (Item Card Vendor_No) — reuse enriched name if present, else lazy fetch
+    const known=vendorNames[itemNo];
+    if(known)setSelPrimaryVendor(known);
+    else if(itemNo&&_bcToken){bcGetItemVendorNo(itemNo).then(vNo=>vNo?bcGetVendorName(vNo):"").then(nm=>{if(!cancelled)setSelPrimaryVendor(nm||"");}).catch(()=>{});}
+    else setSelPrimaryVendor("");
+    // ②-b BC Purchase-Price vendors (read-only "from BC") — lazy, skip when BC offline
+    if(itemNo&&_bcToken){
+      bcFetchPurchasePricesMultiVendor([itemNo]).then(async map=>{
+        const out=[];
+        for(const [key,val] of map.entries()){
+          if(!key.startsWith(itemNo+":"))continue;
+          const vendorNo=key.slice(itemNo.length+1);
+          if(!vendorNo)continue;
+          const nm=await bcGetVendorName(vendorNo);
+          out.push({vendorNo,vendorName:nm||vendorNo,price:val.directUnitCost,uom:val.uom});
+        }
+        if(!cancelled)setSelBcVendors(out);
+      }).catch(()=>{if(!cancelled)setSelBcVendors([]);});
+    }else setSelBcVendors([]);
+    // ③ cross-ref parts (existing config/alternates) filtered to this part number
+    if(pn){
+      loadAlternates(_appCtx.uid).then(alts=>{
+        const norm=normPart(pn);
+        const matches=(alts||[]).filter(a=>a&&a.replacement&&a.replacement.partNumber&&normPart(a.originalPN)===norm);
+        if(!cancelled)setSelCrossRefs(matches);
+      }).catch(()=>{if(!cancelled)setSelCrossRefs([]);});
+    }else setSelCrossRefs([]);
+    return()=>{cancelled=true;};
+  },[selectorItem&&selectorItem.number,selectorItem&&selectorItem.partNumber]);
 
   const backdropMdRef=useRef(false);
   return ReactDOM.createPortal(
@@ -25102,8 +25262,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
                   </td>
                   <td style={{padding:"7px 10px",textAlign:"center"}}>
-                    <button onClick={e=>{e.stopPropagation();const it=_withMeta(item);onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
-                      style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`})}>Use</button>
+                    {/* F072 S1: Use = commit this BC item; ALT = manage this item's alternate
+                        suppliers. B055 guard: flexShrink:0 on both so neither is squeezed off-screen. */}
+                    <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center"}}>
+                      <button onClick={e=>{e.stopPropagation();const it=_withMeta(item);onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
+                        style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`,flexShrink:0})}>Use</button>
+                      <button title="Manage alternate suppliers for this item" onClick={e=>{e.stopPropagation();openAltModal(item);}}
+                        style={btn("#2a1a40","#a78bfa",{fontSize:11,padding:"3px 10px",border:"1px solid #a78bfa55",flexShrink:0})}>ALT</button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -25122,6 +25288,39 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             {loading?"Loading…":"Load More"}
           </button>
         )}
+        {/* F072 S4 — unified secondary-source selector. Shows how to source the focused item:
+            ① Primary (Item Card vendor, non-selectable) · ② user Alternates (editable) · ②-b BC
+            Purchase-Price vendors (read-only, "from BC") · ③ cross-ref parts ("CROSS"). Selecting
+            ②/②-b applies an ARC-side manual secondary (no BC write); ③ reuses the cross flow.
+            flexShrink:0 + capped scroll so it never squeezes the results table or overflows. */}
+        {(selectorItem||selUserAlts.length||selBcVendors.length||selCrossRefs.length)?(
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:10,flexShrink:0,maxHeight:220,overflow:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>SECONDARY SOURCES</span>
+              {selectorItem&&<span style={{fontSize:11,color:C.sub,fontFamily:"monospace"}}>{selectorItem.number||selectorItem.partNumber}</span>}
+              {selectorItem&&selectorItem.number&&<button onClick={()=>openAltModal(selectorItem)} style={btn("#2a1a40","#a78bfa",{fontSize:11,padding:"2px 10px",border:"1px solid #a78bfa55",marginLeft:"auto"})}>✎ Manage alternates</button>}
+            </div>
+            <SourceOptionList groups={[
+              {label:"Primary supplier",rows:selPrimaryVendor?[{id:"primary",title:selPrimaryVendor,sub:"BC Item Card vendor (auto-selected)",selectable:false,check:true}]:[]},
+              {label:"Your alternates",rows:selUserAlts.map((a,i)=>({id:"ua"+i,title:a.supplier,
+                sub:[a.price!=null?`$${(+a.price).toFixed(2)}`:null,a.leadTimeDays!=null?`${a.leadTimeDays}d lead`:null].filter(Boolean).join(" · ")||"no price / lead set",
+                selectable:true,
+                onSelect:()=>{onApplySecondary&&onApplySecondary({kind:"secondary",supplier:a.supplier,price:a.price,leadTimeDays:a.leadTimeDays});},
+                onEdit:()=>openAltModal(selectorItem)}))},
+              {label:"BC vendors",rows:selBcVendors.map((v,i)=>({id:"bv"+i,title:v.vendorName,
+                sub:v.price!=null?`$${(+v.price).toFixed(2)}${v.uom?" / "+v.uom:""}`:"",tag:"from BC",
+                selectable:true,
+                onSelect:()=>{onApplySecondary&&onApplySecondary({kind:"secondary",supplier:v.vendorName,vendorNo:v.vendorNo,price:v.price,leadTimeDays:null});}}))},
+              {label:"Cross-referenced parts",rows:selCrossRefs.map((a,i)=>({id:"cr"+i,title:a.replacement.partNumber,
+                sub:a.replacement.description||"substitute part",tag:"CROSS",
+                selectable:true,
+                onSelect:()=>{onApplySecondary&&onApplySecondary({kind:"cross",partNumber:a.replacement.partNumber,description:a.replacement.description,unitCost:a.replacement.unitCost});}}))},
+            ]}/>
+            {!(selPrimaryVendor||selUserAlts.length||selBcVendors.length||selCrossRefs.length)&&(
+              <div style={{fontSize:11,color:C.muted,padding:"2px 2px"}}>No secondary sources yet. Click <b style={{color:"#a78bfa"}}>ALT</b> on a search result to add alternate suppliers.</div>
+            )}
+          </div>
+        ):null}
         {/* Drawing reference — full-width strip at bottom.
             DECISION(v1.19.801): flexShrink:0 prevents the strip from interacting with the
             flex:1 results table and causing the modal to overflow the viewport. */}
@@ -25196,6 +25395,47 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           style={{position:"absolute",right:0,bottom:0,width:18,height:18,cursor:"nwse-resize",userSelect:"none",zIndex:10,
             background:"linear-gradient(135deg, transparent 0%, transparent 45%, "+C.muted+" 45%, "+C.muted+" 55%, transparent 55%, transparent 75%, "+C.muted+" 75%, "+C.muted+" 85%, transparent 85%)"}}
         />
+        {/* F072 S2 — Alternates entry modal (own portal, zIndex:320 over the browser's 300).
+            Multi-row {Supplier, Price, Lead Time}. NO MFR field (identical product = same MFR).
+            ARC-side only; NOT gated by bcCommitGate (no BC write). */}
+        {altModalItem&&ReactDOM.createPortal(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+            onMouseDown={e=>{if(e.target===e.currentTarget)setAltModalItem(null);}}>
+            <div style={{...card(),width:"100%",maxWidth:560,maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onMouseDown={e=>e.stopPropagation()}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,gap:12,flexShrink:0}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:16,fontWeight:700}}>Manage Alternate Suppliers</div>
+                  <div style={{fontSize:12,color:C.sub,marginTop:2,fontFamily:"monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{altModalItem.number}{altModalItem.displayName?` — ${altModalItem.displayName}`:""}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:6,lineHeight:1.4}}>A different SUPPLIER for the IDENTICAL product (e.g. an online retailer when the local supplier can't get it). For a substitute PART#, use Cross-Reference instead.</div>
+                </div>
+                <button onClick={()=>setAltModalItem(null)} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",flexShrink:0}}>✕</button>
+              </div>
+              <div style={{flex:1,minHeight:0,overflow:"auto"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 92px 92px 30px",gap:6,alignItems:"center",marginBottom:6}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.5}}>SUPPLIER</div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.5}}>PRICE</div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LEAD (days)</div>
+                  <div/>
+                </div>
+                {altRows.map((r,i)=>(
+                  <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 92px 92px 30px",gap:6,alignItems:"center",marginBottom:6}}>
+                    <input value={r.supplier} onChange={e=>updateAltRow(i,"supplier",e.target.value)} placeholder="Supplier name" style={{...inp({fontSize:12})}}/>
+                    <input value={r.price} inputMode="decimal" onChange={e=>updateAltRow(i,"price",e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" style={{...inp({fontSize:12})}}/>
+                    <input value={r.leadTimeDays} inputMode="numeric" onChange={e=>updateAltRow(i,"leadTimeDays",e.target.value.replace(/[^0-9]/g,''))} placeholder="—" style={{...inp({fontSize:12})}}/>
+                    <button onClick={()=>setAltRows(rows=>rows.filter((_,j)=>j!==i))} title="Delete row" style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,cursor:"pointer",padding:"5px 0",fontSize:12}}>✕</button>
+                  </div>
+                ))}
+                <button onClick={()=>setAltRows(rows=>[...rows,{supplier:"",price:"",leadTimeDays:""}])} style={btn(C.border,C.sub,{fontSize:12,marginTop:4})}>+ Add alternate</button>
+              </div>
+              {altErr&&<div style={{color:C.red,fontSize:12,marginTop:8,flexShrink:0}}>{altErr}</div>}
+              <div style={{display:"flex",justifyContent:"flex-end",gap:8,marginTop:12,flexShrink:0}}>
+                <button onClick={()=>setAltModalItem(null)} style={btn(C.border,C.sub,{fontSize:13})}>Cancel</button>
+                <button disabled={altSaving} onClick={saveAltRows} style={btn(C.accent,"#fff",{fontSize:13,fontWeight:700,opacity:altSaving?0.5:1})}>{altSaving?"Saving…":"Save"}</button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
       </div>
     </div>,
     document.body
@@ -29362,6 +29602,42 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       commitBcItem(targetId,bcItem,false);
     }
   }
+  // F072 S5 — apply a SECONDARY SUPPLIER (F072 user alternate OR a BC Purchase-Price vendor) to a
+  // BOM row. ARC-side ONLY — NO BC write-back (not on the F071 commit-gate path). RMW the row:
+  //   · vendor: bcVendorName (free-text supplier), + bcVendorNo only when the source resolves one
+  //     (BC PP vendors carry a Vendor_No; free-text user alternates do not — v2 will resolve those).
+  //   · price: unitPrice + priceSource:"manual" + priceDate + _priceStamp() (only when a price given).
+  //   · lead:  leadTimeDays + leadTimeSource:"manual" (only when a lead time given).
+  //   · guard: vendorSource:"manual-secondary" — provenance so a FUTURE auto-reprice / vendor-auto-
+  //     assign skips this explicit pick (mirrors the priceSource:"manual" skip pattern). Additive
+  //     field; the save path preserves unknown row fields (Data-Retention rule 4), so it survives.
+  // Cross-ref PART picks (kind:"cross") are NOT routed here — the parent reuses applyBcItem/commitBcItem.
+  async function applySecondary(bomRowId,pick){
+    if(!pick)return;
+    const live=latestPanelRef.current||panel;
+    const row=(live.bom||[]).find(r=>r.id===bomRowId);
+    if(!row)return;
+    const now=Date.now();
+    const bom=(live.bom||[]).map(r=>{
+      if(r.id!==bomRowId)return r;
+      const u={...r,vendorSource:"manual-secondary"};
+      // Coach must-fix: a free-text alt supplier (no vendorNo) must CLEAR any stale primary bcVendorNo,
+      // else name/number mismatch feeds wrong data to RFQ routing + PO creation. BC-PP picks carry a real Vendor_No.
+      if(pick.supplier){u.bcVendorName=pick.supplier;u.bcVendorNo=pick.vendorNo||"";}
+      else if(pick.vendorNo)u.bcVendorNo=pick.vendorNo;
+      // price>0 guard (Coach): a $0 BC PurchasePrice record shouldn't stamp priceSource:"manual" and leave the row red.
+      if(pick.price!=null&&!isNaN(+pick.price)&&+pick.price>0){u.unitPrice=+pick.price;u.priceSource="manual";u.priceDate=now;Object.assign(u,_priceStamp());}
+      if(pick.leadTimeDays!=null&&!isNaN(+pick.leadTimeDays)){u.leadTimeDays=+pick.leadTimeDays;u.leadTimeSource="manual";u.leadTimeUpdatedAt=now;u.leadTimeEstimated=false;}
+      // Preserve any active ECO tag on an untagged base row edited in ECO scope (mirrors commitBcItem).
+      const _ecoTag=_ecoTagForEdit(r);
+      if(_ecoTag)Object.assign(u,_ecoTag);
+      return u;
+    });
+    const updated={...live,bom};
+    latestPanelRef.current=updated;
+    onUpdate(updated);
+    try{saveProjectPanel(uid,projectId,panel.id,updated,true).catch(e=>console.warn("applySecondary save failed:",e));}catch(e){}
+  }
   // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
   // Confirmed (push to BC Item Card + Purchase Price) or Budgetary (BOM only, no BC, no priceDate).
   // DECISION(v1.19.405): Price validation — reject negative, warn on high values.
@@ -32969,6 +33245,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             if(bcBrowserTarget){
               applyBcItem(bcBrowserTarget,item);
               if(item._created)setBcNewlyCreated(prev=>{const s=new Set(prev);s.add(bcBrowserTarget);return s;});
+            }
+            setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");
+          }}
+          onApplySecondary={pick=>{
+            // F072 — a secondary SUPPLIER pick applies ARC-side (applySecondary, no BC write); a
+            // cross-ref PART pick reuses the existing cross flow (applyBcItem → cross/correct prompt).
+            if(bcBrowserTarget){
+              if(pick&&pick.kind==="cross"){
+                applyBcItem(bcBrowserTarget,{number:pick.partNumber,displayName:pick.description||"",unitCost:pick.unitCost,_vendorItemNo:pick.partNumber});
+              }else{
+                applySecondary(bcBrowserTarget,pick);
+              }
             }
             setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");
           }}
