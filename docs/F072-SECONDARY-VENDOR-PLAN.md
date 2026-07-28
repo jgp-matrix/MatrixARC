@@ -2,7 +2,21 @@
 
 **Coach scope · 2026-07-27 · base v1.24.41 · `src/app.jsx`.** Read-only design. Money-path (changes row `unitPrice`/vendor/lead-time) → Coach review + regression + Jon gate required.
 
-> **SCOPE LOCKED (Jon 2026-07-27):** Primary auto-select (BC Item Card `Vendor_No`) is ALREADY correct behavior — OUT OF SCOPE, untouched. F072 = give the user the ability to **view, manage, and select SECONDARY vendors/suppliers (+ alternate source/MFR)** for a BOM item. Jon: *"#1 is how ARC and BC behave. The only thing we dont have is the ability to manage and select secondary vendors/suppliers."*
+> **SCOPE LOCKED (Jon 2026-07-27):** Primary auto-select (BC Item Card `Vendor_No`) is ALREADY correct behavior — OUT OF SCOPE, untouched. F072 = give the user the ability to **view, manage, and select SECONDARY suppliers** for a BOM item. Jon: *"#1 is how ARC and BC behave. The only thing we dont have is the ability to manage and select secondary vendors/suppliers."*
+
+## Two features, one surface (Jon 2026-07-27 — the unifying model)
+The BC Item Browser becomes the one place a user finds a Part# and chooses **how to source it**, combining two DISTINCT features:
+
+| | **Cross-Reference** (EXISTING — `config/alternates`) | **Alternates** (F072 — NEW) |
+|---|---|---|
+| What varies | a **different Part#** (substitute product) | a **different Supplier** (same product) |
+| Meaning | "this OTHER part can be used in its place" | "buy the IDENTICAL product from another source (e.g. online retailer when the local supplier can't get it)" |
+| MFR | may differ (it's a different part) | **same** (identical product) → no MFR field |
+| Applied | ARC auto-selects standard crosses | user picks a secondary supplier |
+
+For any found Part#, the Browser lets the user choose: **① Primary supplier** (Item Card `Vendor_No`, auto-selected) · **② Secondary supplier** — an F072 user-entered Alternate OR a BC Purchase Price vendor · **③ Cross-Referenced Part** — a substitute part# from the existing Cross-Reference DB. F072 builds ② and surfaces all three together in one selector.
+
+Jon: *"We have the Cross-Reference feature… allows ARC to automatically select standard crossed items. This Alternates feature… allows the User to choose from alternate Suppliers for an identical product (i.e. Online Retailer if our local supplier cannot get it). These features work together in this BC Item Browser list to allow the User to find a Part# and choose if they want to buy from the Primary supplier, a secondary supplier, or select a Cross-Referenced Part that can be used in its place."*
 
 ## 1. Current state (grounded)
 - **Primary vendor (leave alone):** `bcGetItemVendorNo(itemNo)` `:6967` reads ItemCard `Vendor_No`; callers stamp `row.bcVendorNo`/`row.bcVendorName`. Auto-selected primary — correct.
@@ -38,8 +52,8 @@
 3. **BC write-back?** — ✅ **LOCKED: ARC-side-only v1** (off the BC-integrity path; no catalog re-poison).
 4. ~~**Persist to a learning DB?**~~ — ✅ **RESOLVED: yes** — new additive `config/itemAlternates` (no cap, preserve-on-save).
 5. **Fold shared chrome with F010?** — *rec: build the ALT/alternates UI reusably but ship F072 first*; F010 (alternate PARTS) adopts the same surface later.
-6. **⏳ NEEDS JON — MFR field in the ALT modal?** Your original request #2 said "alternate **source and MFR**," but the ALT modal as described lists Supplier/Price/Lead-Time. *Rec: add an optional **MFR** field per alternate row* (captures the full cross-ref). Confirm.
-7. **⏳ NEEDS JON — also auto-list BC Purchase Price vendors?** Besides user-entered alternates, should the Browser ALSO auto-show the item's existing BC Purchase Price vendors as read-only secondaries? *Rec: yes — show both (user-entered = editable, BC-derived = read-only), all selectable*, so the user sees every source without re-typing what BC already knows. Or user-entered-only if you want it purely manual.
+6. ~~**MFR field in the ALT modal?**~~ — ✅ **RESOLVED: NO MFR field.** Jon (2026-07-27): an F072 alternate is a different **supplier for the IDENTICAL product**, so MFR is unchanged. The MFR/different-part dimension is the separate **Cross-Reference** feature (see §Two-features below). ALT modal = Supplier / Price / Lead Time only.
+7. ~~**Also auto-list BC Purchase Price vendors?**~~ — ✅ **RESOLVED: SHOW BOTH** (Jon 2026-07-27). Browser lists user-entered alternates (editable) AND the item's BC Purchase Price vendors (read-only, auto-discovered via `bcFetchPurchasePricesMultiVendor`) — all selectable as secondaries.
 
 ## 5. Stakes / acceptance / gates
 - **Money-path: YES** → Coach review + regression + Jon gate. Not trivial.
