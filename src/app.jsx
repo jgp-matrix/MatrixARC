@@ -430,14 +430,224 @@ let _bcLast401At=0;
 // self-healing transient) — see the bcGatedFetch 401 branch below.
 let _bcHealthState='green';
 const _bcHealthSubs=new Set();
+// F071 — commit-gate settle clock + cold-boot verification flag (consumed by _bcCommitBlocked below).
+//   _bcRedSinceAt : ms timestamp stamped when health transitions INTO 'red' (0 while not red). The
+//     commit-gate treats BC as "disconnected" only AFTER red has persisted past _BC_COMMIT_GRACE_MS,
+//     so a self-healing 401 blip (which resolves entirely in amber, never reaching red) never blocks
+//     a commit. A recovery back to amber/green clears the clock.
+//   _bcVerifiedOnce : flips true on the first successful BC round-trip this session (r.ok in
+//     bcGatedFetch). Guards the cold-boot window where _bcHealthState defaults to 'green' before
+//     anything has actually confirmed BC is reachable — commits stay blocked ('unverified') until proven.
+let _bcRedSinceAt=0;
+let _bcVerifiedOnce=false;
 function _setBcHealth(state){
   if(state===_bcHealthState)return; // transition-only — no churn on the common green→green path
+  if(state==='red')_bcRedSinceAt=Date.now(); // F071 — start the settle clock on entering red
+  else _bcRedSinceAt=0;                       // any recovery (amber/green) clears it
   _bcHealthState=state;
   _bcHealthSubs.forEach(fn=>{try{fn(state);}catch(_){}});
+}
+// F071 — flip the cold-boot verification flag on the FIRST confirmed-reachable BC call. A green→green
+// _setBcHealth is a no-op (transition-only), so the flip is broadcast here explicitly so the commit-gate
+// mirror releases out of 'unverified' the moment BC is first proven reachable — without waiting for a
+// state transition that may never come on an already-green session.
+function _markBcVerified(){
+  if(_bcVerifiedOnce)return;
+  _bcVerifiedOnce=true;
+  _bcHealthSubs.forEach(fn=>{try{fn(_bcHealthState);}catch(_){}});
 }
 // DEBUG (B013-2 manual verification): drive the pill directly to eyeball all three states + the
 // bcOnline side-effects without a real BC round-trip. e.g. window._arcBcHealth('amber').
 try{if(typeof window!=="undefined")window._arcBcHealth=function(s){if(s==='green'||s==='amber'||s==='red')_setBcHealth(s);};}catch(_){}
+// ── B064 — STRUCTURAL-404 FAULT RECORDER (SSOT) ──────────────────────────────
+// A 404 from BC has two very different meanings:
+//   (a) NORMAL — an existence probe for a legitimately-absent keyed row (a task or
+//       line ARC hasn't created yet). Expected; must NOT alarm.
+//   (b) STRUCTURAL — a broken/unpublished web service OR a PERSISTENT wrong-key
+//       request (the Ryan case: ARC asks for a non-existent Job_Task_No every sync,
+//       so the same 404 recurs forever and the panel never reaches BC).
+// Body text ALONE can't discriminate: a missing keyed record returns the SAME
+// "Resource not found for the segment" / BadRequest_ResourceNotFound body as a
+// broken service (Freddy live-verified on the Ryan case). So a fault is treated as
+// STRUCTURAL only after it PERSISTS — N>=_BC_FAULT_THRESHOLD faults on the same
+// endpoint/segment within a session. This mirrors the _bcHealth pub-sub so the
+// toolbar can render an amber advisory chip WITHOUT flipping the (green) connection
+// pill: a 404 means BC is UP but one endpoint is broken — reconnecting won't help.
+const _BC_FAULT_THRESHOLD=2; // faults on one endpoint/session before it's "structural"
+const _bcEndpointFaults=new Map(); // segment -> {count,firstAt,lastAt,env,sampleBody,broken,loggedOnce}
+const _bcEndpointFaultSubs=new Set();
+function _bcAnyStructuralFault(){for(const e of _bcEndpointFaults.values())if(e&&e.broken)return true;return false;}
+function _bcFaultNotify(){const broken=_bcAnyStructuralFault();_bcEndpointFaultSubs.forEach(fn=>{try{fn(broken);}catch(_){}});}
+// Parse the OData/API path segment (the published web-service NAME) out of a BC URL
+// so every keyed call to the same service coalesces onto ONE fault entry.
+function _bcEndpointSeg(url){
+  try{
+    const s=String(url);
+    const m=s.match(/\/ODataV4\/(?:Company\([^)]*\)\/)?([^(/?#]+)/i);
+    if(m&&m[1])return decodeURIComponent(m[1]);
+    const m2=s.match(/\/api\/v2\.0\/(?:companies\([^)]*\)\/)?([^(/?#]+)/i);
+    if(m2&&m2[1])return decodeURIComponent(m2[1]);
+    return s.split(/[?#]/)[0].slice(-60);
+  }catch(_){return"unknown";}
+}
+// TRUE only for a body shaped like a resource-not-found segment error. NOTE (Ryan
+// case): a missing KEYED record returns this SAME body, so callers must ALSO require
+// persistence (>=_BC_FAULT_THRESHOLD) before treating it as structural — body alone
+// is not sufficient. That persistence gate lives in _recordBcEndpointFault.
+function _isStructural404(status,bodyText){
+  if(status!==404)return false;
+  const b=String(bodyText||"");
+  return /Resource not found for the segment/i.test(b)||/BadRequest_ResourceNotFound/i.test(b)||/BadRequest_NotFound/i.test(b);
+}
+// TRUE when the URL is a single-entity KEYED GET — the entity set is immediately followed by a
+// (…key…) predicate, e.g. ProjectPlanningLines(Project_No='..',Project_Task_No='..',Line_No=10000).
+// Coach CHANGES-REQUIRED (B064 review): a benign ABSENT keyed row returns the SAME "Resource not
+// found for the segment" body as a genuinely-down endpoint, and the patch fns burst-fire up to 4
+// same-segment keyed GETs (Line_No 10000/30000/40000/50000) on project open → 4 hits/call would
+// cross the N=2 threshold and false-trip the "BC degraded" chip (and F071's commit-block) on a
+// HEALTHY endpoint. So keyed GETs are EXCLUDED from structural-fault recording. A collection /
+// $filter read, by contrast, 404s ONLY when the web service is genuinely unpublished (a $filter
+// no-match returns 200-with-empty-value, never 404) → false-positive-free structural signal.
+// (The wrong-TASK case, e.g. Ryan's task 20510, is DELIBERATELY not caught here — a persistence
+// heuristic can't separate "wrong task" from "lines not yet created"; that's B065's durable-binding job.)
+function _bcUrlIsKeyed(url){
+  try{
+    let s=String(url).split(/[?#]/)[0]; // drop query/hash first
+    // Neutralize the company CONTAINER predicate so its () isn't mistaken for an entity key.
+    s=s.replace(/\/Company\([^)]*\)/i,'/Company').replace(/\/companies\([^)]*\)/i,'/companies');
+    return /\([^)]*\)\/?$/.test(s); // last path segment carries a (...) key predicate
+  }catch(_){return false;}
+}
+// Record a segment-not-found 404 against its endpoint. Increments the per-endpoint
+// counter and, once persistence crosses the threshold, marks the endpoint broken +
+// broadcasts + logs ONE honest debugLog (deduped once/endpoint/session). This recorder
+// must NEVER emit a debugLog per 404 — that per-404 write was the B016 write-exhaustion
+// amplifier behind the 522-entry storm. Non-structural-bodied 404s are ignored.
+function _recordBcEndpointFault(url,bodyText){
+  try{
+    if(!_isStructural404(404,bodyText))return; // only "resource not found for segment"-shaped 404s count
+    if(_bcUrlIsKeyed(url))return; // EXCLUDE single-entity keyed GETs — absent-row 404 ≠ endpoint-down (Coach B064)
+    const seg=_bcEndpointSeg(url);
+    const now=Date.now();
+    let e=_bcEndpointFaults.get(seg);
+    if(!e){e={count:0,firstAt:now,lastAt:now,env:_bcConfig.env,sampleBody:String(bodyText||"").slice(0,300),broken:false,loggedOnce:false};_bcEndpointFaults.set(seg,e);}
+    e.count++;e.lastAt=now;
+    if(!e.sampleBody&&bodyText)e.sampleBody=String(bodyText).slice(0,300);
+    const wasBroken=e.broken;
+    if(e.count>=_BC_FAULT_THRESHOLD)e.broken=true;
+    if(e.broken&&!e.loggedOnce){
+      e.loggedOnce=true; // dedupe: exactly one debugLog per endpoint per session (aggregator consumes this)
+      try{
+        if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+          window.logDebugEntry({severity:"error",source:"bcStructuralFault",message:`BC endpoint '${seg}' returned ${e.count} structural 404s this session — the web service is unavailable OR ARC is requesting a key that does not exist in BC; ARC↔BC sync for this endpoint is silently failing`,extra:{
+            endpoint:seg,
+            faultCount:e.count,
+            firstAt:new Date(e.firstAt).toISOString(),
+            lastAt:new Date(e.lastAt).toISOString(),
+            env:_bcConfig.env,
+            companyName:_bcConfig.companyName,
+            userUpn:_bcUserUpn(),
+            urlPattern:seg,
+            status:404,
+            responseExcerpt:e.sampleBody,
+            isTestEnv:IS_TEST_ENV,
+          }});
+        }
+      }catch(_){}
+    }
+    if(e.broken&&!wasBroken)_bcFaultNotify(); // broadcast only on the healthy->broken transition
+  }catch(_){}
+}
+// Clear the fault for an endpoint once a call to it SUCCEEDS (routed through the
+// bcGatedFetch ok-path). Removes the entry + broadcasts if the broken set changed.
+function _clearBcEndpointFault(url){
+  try{
+    if(_bcEndpointFaults.size===0)return; // fast common path — nothing recorded
+    const seg=_bcEndpointSeg(url);
+    const e=_bcEndpointFaults.get(seg);
+    if(!e)return;
+    const wasBroken=e.broken;
+    _bcEndpointFaults.delete(seg);
+    if(wasBroken)_bcFaultNotify();
+  }catch(_){}
+}
+// ★ Queryable predicates for F071 (the commit-gate, scoped in parallel) + the chip.
+function _bcEndpointBroken(seg){
+  if(!seg)return _bcAnyStructuralFault();
+  const e=_bcEndpointFaults.get(seg);
+  return !!(e&&e.broken);
+}
+function _bcBrokenEndpoints(){const out=[];for(const [seg,e] of _bcEndpointFaults.entries())if(e&&e.broken)out.push(seg);return out;}
+try{if(typeof window!=="undefined"){
+  window._bcHasStructuralFault=_bcAnyStructuralFault; // F071 commit-gate consumes this
+  window._bcEndpointBroken=_bcEndpointBroken;
+  window._bcBrokenEndpoints=_bcBrokenEndpoints;
+}}catch(_){}
+// ── F071 — BC COMMIT-GATE (SSOT predicate + React mirror) ────────────────────────
+// Blocks money-path COMMITS to BC when BC isn't usable, while leaving all reads + Firestore-only
+// edits fully available (queued editing continues uninterrupted). This is the ENFORCEMENT consumer
+// of the B013 health pub-sub + B064 structural-fault recorder — it does not DETECT, it REACTS.
+// Factor the RULE here once; every call site (module commit fn AND JSX button) consumes this one
+// predicate, so "what counts as blocked" can never drift across sites. Posture (Jon-locked):
+// block-commits-allow-queued-editing.
+const _BC_COMMIT_GRACE_MS=8000; // sustained-RED settle window before commits block (Jon-locked 8s)
+// Returns {blocked:true,reason}|null. reason ∈ {'unverified','endpoint','disconnected'}.
+//   'unverified'   — cold boot: no successful BC round-trip yet this session (green-by-default guard).
+//   'endpoint'     — a BC web service this action needs is structurally 404ing (B064, needs N>=2).
+//   'disconnected' — no token, OR health has been RED continuously past the grace window.
+// Anti-lockout is by construction: transient blips resolve in amber and never reach red; a lone
+// probe-404 never trips endpoint (N>=2); reads are never routed here; and the gate self-clears the
+// instant health returns green (via the _bcHealthSubs subscriber in useBcCommitGate).
+function _bcCommitBlocked(){
+  try{
+    if(!_bcVerifiedOnce)return{blocked:true,reason:'unverified'};
+    if(typeof window!=="undefined"&&window._bcEndpointBroken&&window._bcEndpointBroken())return{blocked:true,reason:'endpoint'};
+    if(!_bcToken)return{blocked:true,reason:'disconnected'};
+    if(_bcHealthState==='red'&&_bcRedSinceAt&&(Date.now()-_bcRedSinceAt)>=_BC_COMMIT_GRACE_MS)return{blocked:true,reason:'disconnected'};
+    return null;
+  }catch(_){return null;} // never let the gate itself throw and wedge a commit path
+}
+try{if(typeof window!=="undefined")window._bcCommitBlocked=_bcCommitBlocked;}catch(_){} // debug/repro hook
+// User-facing copy (owner-priority idiom). tier 'A' → hard-block wording; tier 'B' → soft "saved,
+// will sync" wording (Tier-B enqueues rather than hard-blocks).
+function _bcCommitBlockMsg(reason,tier){
+  if(reason==='endpoint'){
+    let seg='';try{const b=(window._bcBrokenEndpoints&&window._bcBrokenEndpoints())||[];seg=b[0]||'';}catch(_){}
+    return `A Business Central service this action needs is unavailable${seg?` (endpoint '${seg}')`:''}. Notify your admin — reconnecting won't fix it.`;
+  }
+  if(reason==='unverified')return "Business Central hasn't been verified yet this session. Give it a moment, then try again.";
+  return tier==='B'
+    ? "BC is offline. Your edits are saved and will sync when BC reconnects."
+    : "BC is offline — this can't be sent until BC reconnects. Click the BC status pill to reconnect.";
+}
+function _fireBcCommitBlockedAlert(reason){arcAlert(_bcCommitBlockMsg(reason,'A'));}
+// React mirror: subscribe to the health pub-sub + the structural-fault pub-sub, and schedule ONE
+// re-evaluation at grace-window expiry so a sustained outage flips the gate live (no user action).
+// Returns {blocked,reason}|null. Consumed as the `bcCommitGate` prop, threaded ALONGSIDE
+// `ownerPriorityActive` (owner-priority alert takes precedence where both apply).
+function useBcCommitGate(){
+  const [gate,setGate]=useState(()=>_bcCommitBlocked());
+  useEffect(()=>{
+    let graceTimer=null;
+    const recompute=()=>{
+      setGate(_bcCommitBlocked());
+      if(graceTimer){clearTimeout(graceTimer);graceTimer=null;}
+      // If RED but still inside the settle window, re-check once at expiry so the button
+      // disables the instant the grace passes (health won't re-broadcast on its own).
+      if(_bcHealthState==='red'&&_bcRedSinceAt){
+        const remaining=_BC_COMMIT_GRACE_MS-(Date.now()-_bcRedSinceAt);
+        if(remaining>0)graceTimer=setTimeout(recompute,remaining+50);
+      }
+    };
+    const hfn=()=>recompute();
+    const ffn=()=>recompute();
+    _bcHealthSubs.add(hfn);
+    _bcEndpointFaultSubs.add(ffn);
+    recompute();
+    return()=>{_bcHealthSubs.delete(hfn);_bcEndpointFaultSubs.delete(ffn);if(graceTimer)clearTimeout(graceTimer);};
+  },[]);
+  return gate;
+}
 const _bcSemaphore={inflight:0,max:6,queue:[]};
 function _bcRelease(){
   _bcSemaphore.inflight--;
@@ -496,6 +706,19 @@ async function bcGatedFetch(url,options){
       window._arcForceBc401--;
       r=new Response('{"error":{"message":"forced 401 (debug hook)"}}',{status:401,headers:{"Content-Type":"application/json"}});
     }
+    // DEBUG (B064 manual verification): window._arcForceBc404="<Segment>" synthesizes EVERY BC
+    // response whose URL contains that segment as a structural 404 (segment-not-found body) until
+    // Jon clears the global. Persistent (not a one-shot counter like _arcForceBc401) BY DESIGN —
+    // the structural detector needs N>=2 faults to trip, so a persistent force lets Jon repro the
+    // amber "endpoint degraded" chip by re-running the sync. NOTE: the recorder only counts
+    // COLLECTION / $filter reads (keyed single-entity GETs are excluded — see _bcUrlIsKeyed), so
+    // force a segment that ARC hits via a collection read, e.g.
+    // window._arcForceBc404="ProjectPlanningLines"; then push a panel twice — the $filter
+    // existing-lines read in bcSyncPanelPlanningLines is the collection call that trips it.
+    if(typeof window!=="undefined"&&window._arcForceBc404&&String(url).includes(window._arcForceBc404)){
+      const _seg=window._arcForceBc404;
+      r=new Response(JSON.stringify({error:{code:"BadRequest_ResourceNotFound",message:`No HTTP resource was found that matches the request URI. Resource not found for the segment '${_seg}'.`}}),{status:404,headers:{"Content-Type":"application/json"}});
+    }
     if(r.status===429){
       if(depth>=3){console.warn("bcGatedFetch: 429 retry limit (3) reached, returning 429 response");return r;}
       depth++;
@@ -530,9 +753,18 @@ async function bcGatedFetch(url,options){
       _setBcHealth('red'); // B013-2 — silent refresh has ALREADY failed → flip the pill red immediately
       return r;
     }
+    // B064 — a 404 is BC-is-up-but-endpoint-broken, NOT a dead token (the pill stays green).
+    // Feed it to the structural-fault recorder, which discriminates a normal missing-row probe
+    // from a persistent structural fault (threshold N>=2). Clone so the caller's response stream
+    // stays intact (callers read r.text()/r.json() below). Only segment-not-found bodies count.
+    if(r.status===404){
+      try{const _bt=await r.clone().text();_recordBcEndpointFault(url,_bt);}catch(_){}
+      return r;
+    }
     // B013-2 — a 2xx proves the current token is VALID → clear any amber/red degradation signal.
-    // Guarded on r.ok so a non-auth error (400/403/404/5xx) doesn't falsely report "connected".
-    if(r.ok)_setBcHealth('green');
+    // Guarded on r.ok so a non-auth error (400/403/5xx) doesn't falsely report "connected".
+    // B064 — a success to a previously-faulting endpoint also clears its amber degraded chip.
+    if(r.ok){_markBcVerified();_setBcHealth('green');_clearBcEndpointFault(url);}
     return r;
   }
 }
@@ -3649,7 +3881,9 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
   const taskFilterUrl=`${BC_ODATA_BASE}/${taskPage}?$filter=${FT_NO} eq '${encodeURIComponent(projectNumber)}' and ${FT_TASK_NO} eq '${encodeURIComponent(taskNo)}'`;
   let taskExists=false;
   try{
-    const r=await fetch(taskFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    // B064 — route the probe through bcGatedFetch (401 refresh + structural-404 recording if the
+    // task web service itself is broken). Semantics unchanged: ok→parse, 400→Job_ fallback below.
+    const r=await bcGatedFetch(taskFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(r.ok){const d=await r.json();taskExists=(d.value||[]).length>0;}
     else if(r.status===400){
       // Try Job_ fallback for the task page
@@ -3692,7 +3926,8 @@ async function bcSyncServiceCardTask(projectNumber,serviceCard){
   const lineFilterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and Line_No eq 10000`;
   let lineExists=false;
   try{
-    const r=await fetch(lineFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    // B064 — route the probe through bcGatedFetch (401 refresh + structural-404 recording).
+    const r=await bcGatedFetch(lineFilterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
     if(r.ok){const d=await r.json();lineExists=(d.value||[]).length>0;}
   }catch(e){console.warn("bcSyncServiceCardTask: line lookup failed",e.message);}
 
@@ -3811,6 +4046,211 @@ async function bcSyncPanelTaskDescriptions(projectNumber, panelIndex, panel, pro
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// B065 — DURABLE ARC↔BC BINDINGS (kill the positional-mapping class)
+// ────────────────────────────────────────────────────────────────────────
+// ROOT fix for the positional-drift class (Ryan's 20510 404 storm, the
+// wrong-line-overwrite money risk, the relink off-by-one). ARC historically
+// computed every BC Job_Task_No (20000+panelIndex*100+10) and every BOM
+// Line_No (60000+rowIndex*10000) by ARRAY POSITION and recomputed them on
+// every op — so any panel/row add/delete/reorder (ARC side) or task renumber
+// (BC side) silently slid the mapping onto the wrong or a non-existent
+// record.
+//
+// The durable-binding pattern already exists in-codebase for service cards
+// (allocateServiceCardBcSlot / createServiceCard persist bcProjectTaskNo and
+// bcSyncServiceCardTask READS it). These primitives extend the same pattern
+// to panels (panel.bcTaskNo — the 20N10 posting slot) and BOM rows
+// (row.bcLineNo — the BC Line_No), both written only after a confirmed 2xx.
+//
+// DATA-RETENTION (CLAUDE.md rule 4): panel.bcTaskNo and row.bcLineNo are
+// ADDITIVE metadata. They survive save-reload automatically — saveProject
+// spreads the whole panel/row object and strips ONLY page.dataUrl. They are
+// CLEARED on Copy (createProjectCopy — fresh BC project) and Relink
+// (relinkToBC — new BC project). Migration/discovery is additive-only:
+// NEVER delete or renumber a binding during discovery.
+//
+// ★ ROLLOUT — THIS PASS shipped the B065 FOUNDATION (Marc, on branch
+//   claude/b065-durable-binding):
+//     • the storage contract + preserve-on-save (verified) + these helpers,
+//     • the read-only resolver (F070's read path — mode:'audit'),
+//     • the money-path DELETE part-identity guard on BOTH sync loops
+//       (base + ECO) + a DELETE failure arm feeding result.failed,
+//     • relink off-by-one fix + relink/copy binding hygiene.
+//   ★ DEFERRED to the tested follow-up (needs live-BC verification — a bug in
+//   the read authority breaks EVERY sync): the resolve-don't-compute READ
+//   path (assign Line_No from row.bcLineNo; resolve taskNo from BC instead of
+//   :3834/:4094), populating bindings at create (S2), the lazy migration with
+//   the ambiguity guard + project.bcBindingUnresolved destructive-write block
+//   (S6), and converting all ~27 positional call sites to pass the panel
+//   OBJECT (S4). See docs/B065-DURABLE-BINDING-PLAN.md.
+// ════════════════════════════════════════════════════════════════════════
+
+// Lowest-unused 20N10 posting-task slot for a panel add. Mirrors
+// allocateServiceCardBcSlot. `panels` = current panel list (each may carry a
+// persisted bcTaskNo); returns the posting-task number string (20N10) for the
+// first panel-index N whose slot is unused — so a mid-list insert gets a
+// FRESH number instead of a positional collision. Returns null if exhausted.
+function allocatePanelBcTaskNo(panels){
+  const used=new Set((panels||[]).filter(p=>p&&p.bcTaskNo).map(p=>String(p.bcTaskNo)));
+  for(let n=1;n<=999;n++){
+    const slot=String(20000+n*100+10); // 20110, 20210, … 201010 (N=10)
+    if(!used.has(slot))return slot;
+  }
+  return null;
+}
+
+// Lowest-unused 60000+ BOM Line_No within a panel/task. `rows` = rows already
+// assigned a bcLineNo (persisted bindings); `alsoUsed` = Line_Nos already
+// claimed in the in-flight desired set + BC's existing set. Returns the next
+// free multiple of 10000 at/above 60000 so an inserted row never collides
+// with a bound row's line. Returns null if exhausted.
+function allocateRowBcLineNo(rows,alsoUsed){
+  const used=new Set();
+  (rows||[]).forEach(r=>{if(r&&r.bcLineNo!=null)used.add(Number(r.bcLineNo));});
+  (alsoUsed||[]).forEach(v=>used.add(Number(v)));
+  for(let ln=60000;ln<=60000+10000*5000;ln+=10000){
+    if(!used.has(ln))return ln;
+  }
+  return null;
+}
+
+// Thin synchronous read authority for a panel's BC posting task number.
+// Prefers the durable binding (panel.bcTaskNo); falls back to the positional
+// compute for panels not yet migrated. NOTE (follow-up): callers that MUTATE
+// BC (PATCH/DELETE) must ALSO honor project.bcBindingUnresolved (block
+// destructive writes on an ambiguous project) once the S6 migration lands.
+function resolvePanelTaskNo(project,panel,panelIndex){
+  if(panel&&panel.bcTaskNo)return String(panel.bcTaskNo);
+  let n=panelIndex;
+  if(n==null&&project&&Array.isArray(project.panels)){const idx=project.panels.indexOf(panel);if(idx>=0)n=idx+1;}
+  if(n!=null&&n>=1)return String(20000+n*100+10);
+  return null;
+}
+
+// ── Shared read-only resolver (B065 primitive + F070's read path) ──────────
+// The single BC read that both the durable-binding migration (mode:'resolve')
+// and the F070 mismatch detector (mode:'audit') build on. Does 1 GET for the
+// project's tasks + 1 GET for all its planning lines, then for each ARC panel
+// resolves its BC posting task (stored panel.bcTaskNo → task-Description match
+// → positional fallback) and for each BOM row resolves its BC line (stored
+// row.bcLineNo → part# + Description + residual-order discovery). It NEVER
+// writes — it returns a plan the caller can persist (resolve) or count
+// (audit). The ambiguity flag (duplicate panel discriminators / task-count ≠
+// panel-count) is the signal a caller must NOT auto-PATCH/DELETE on.
+//
+// Returns {ok, reason?, tasks, lines, panels:[{panelIndex,panel,taskNo,
+//   taskSource:'stored'|'description'|'positional'|'missing', ambiguousTask,
+//   rows:[{row,lineNo,lineSource:'stored'|'discovered'|'unbound',
+//   ambiguousLine}]}], ambiguous, unresolvedReason}.
+async function resolveBcBindings(projectNumber, panels, opts){
+  const mode=(opts&&opts.mode)||"audit";
+  panels=Array.isArray(panels)?panels:[];
+  const out={ok:false,mode,tasks:[],lines:[],panels:[],ambiguous:false,unresolvedReason:null};
+  if(!projectNumber){out.reason="missing-project-number";return out;}
+  if(typeof _bcToken==="undefined"||!_bcToken){out.reason="no-bc-token";return out;}
+
+  const allPages=await bcDiscoverODataPages();
+  const taskPage=allPages.find(p=>/^project.?task/i.test(p))||allPages.find(p=>/job.?task/i.test(p))||null;
+  const planPage=allPages.find(p=>/^project.?planning/i.test(p))||allPages.find(p=>/job.?planning/i.test(p))||null;
+  if(!taskPage||!planPage){out.reason="no-odata-page";return out;}
+
+  // Field-name probe (Project_ vs Job_) — reuse the per-session cache the sync
+  // path populates.
+  let FP_NO="Project_No",FP_TASK_NO="Project_Task_No";
+  const cacheKey=`${BC_ODATA_BASE}::${planPage}`;
+  if(typeof window!=="undefined"&&window._bcPlanFieldsCache&&window._bcPlanFieldsCache[cacheKey]){
+    FP_NO=window._bcPlanFieldsCache[cacheKey].FP_NO;FP_TASK_NO=window._bcPlanFieldsCache[cacheKey].FP_TASK_NO;
+  }else{
+    try{
+      const pr=await bcGatedFetch(`${BC_ODATA_BASE}/${planPage}?$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      if(pr.ok){const pd=await pr.json();const rec=(pd.value||[])[0];if(rec&&"Job_No"in rec&&!("Project_No"in rec)){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";}}
+    }catch(_){}
+  }
+
+  // GET 1 — all tasks for the project.
+  try{
+    const tf=`${BC_ODATA_BASE}/${taskPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}'`;
+    const tr=await bcGatedFetch(tf,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(tr.ok)out.tasks=(await tr.json()).value||[];
+  }catch(e){out.reason="task-get-failed:"+(e&&e.message||e);}
+  // GET 2 — all planning lines for the project.
+  try{
+    const lf=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}'`;
+    const lr=await bcGatedFetch(lf,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+    if(lr.ok)out.lines=(await lr.json()).value||[];
+  }catch(e){out.reason="line-get-failed:"+(e&&e.message||e);}
+
+  // Index BC posting tasks (20N10) by task# and by a normalized Description
+  // discriminator (leading drawing#).
+  const taskNoField=("Job_No"===FP_NO)?"Job_Task_No":"Project_Task_No";
+  const _taskNoOf=t=>String(t[taskNoField]!=null?t[taskNoField]:(t.Project_Task_No!=null?t.Project_Task_No:t.Job_Task_No));
+  const postingTasks=out.tasks.filter(t=>/^20\d+10$/.test(_taskNoOf(t)));
+  const taskByNo=new Map(out.tasks.map(t=>[_taskNoOf(t),t]));
+  const _leadToken=s=>String(s||"").trim().split(/\s+/)[0].toLowerCase();
+  // Count leading-token collisions among posting tasks (ambiguity signal).
+  const descTokenCounts={};
+  postingTasks.forEach(t=>{const k=_leadToken(t.Description);if(k)descTokenCounts[k]=(descTokenCounts[k]||0)+1;});
+
+  const linesByTask={};
+  out.lines.forEach(l=>{const k=String(l[taskNoField]!=null?l[taskNoField]:(l.Project_Task_No!=null?l.Project_Task_No:l.Job_Task_No));(linesByTask[k]=linesByTask[k]||[]).push(l);});
+
+  const structuralMismatch=postingTasks.length>0&&postingTasks.length!==panels.length;
+  const usedTaskNos=new Set();
+
+  panels.forEach((panel,i)=>{
+    const panelIndex=i+1;
+    const positional=String(20000+panelIndex*100+10);
+    let taskNo=null,taskSource="missing",ambiguousTask=false;
+    // 1) stored binding
+    if(panel&&panel.bcTaskNo&&taskByNo.has(String(panel.bcTaskNo))){taskNo=String(panel.bcTaskNo);taskSource="stored";}
+    // 2) Description match (Jon-locked primary): match on leading drawing#.
+    if(!taskNo){
+      const disc=_leadToken(panel&&(panel.drawingNo||panel.drawingDesc||panel.name));
+      if(disc){
+        const cands=postingTasks.filter(t=>_leadToken(t.Description)===disc&&!usedTaskNos.has(_taskNoOf(t)));
+        if(cands.length===1){taskNo=_taskNoOf(cands[0]);taskSource="description";}
+        else if(cands.length>1){ambiguousTask=true;} // non-unique — do NOT auto-bind
+      }
+    }
+    // 3) positional fallback (only if that task actually exists in BC)
+    if(!taskNo&&!ambiguousTask&&taskByNo.has(positional)&&!usedTaskNos.has(positional)){taskNo=positional;taskSource="positional";}
+    if(taskNo)usedTaskNos.add(taskNo);
+    if(ambiguousTask||structuralMismatch)out.ambiguous=true;
+
+    // Row resolution within the resolved task.
+    const taskLines=(taskNo&&linesByTask[taskNo])||[];
+    const bomRows=((panel&&panel.bom)||[]).filter(r=>r&&!r.isLaborRow&&!r.ecoTag);
+    const usedLineNos=new Set();
+    const rows=bomRows.map(row=>{
+      let lineNo=null,lineSource="unbound",ambiguousLine=false;
+      if(row.bcLineNo!=null&&taskLines.some(l=>Number(l.Line_No)===Number(row.bcLineNo))){lineNo=Number(row.bcLineNo);lineSource="stored";}
+      if(lineNo==null){
+        const pn=_bcNo(row);
+        const cands=taskLines.filter(l=>l.No===pn&&Number(l.Line_No)>=60000&&!usedLineNos.has(Number(l.Line_No)));
+        if(cands.length===1){lineNo=Number(cands[0].Line_No);lineSource="discovered";}
+        else if(cands.length>1){
+          // part# alone not unique — tiebreak on Description, then residual order.
+          const desc=(row.description||"").slice(0,100);
+          const byDesc=cands.filter(l=>(l.Description||"")===desc);
+          const pick=(byDesc.length===1?byDesc[0]:cands[0]);
+          lineNo=Number(pick.Line_No);lineSource="discovered";ambiguousLine=byDesc.length!==1;
+        }
+      }
+      if(lineNo!=null)usedLineNos.add(lineNo);
+      if(ambiguousLine)out.ambiguous=true;
+      return {row,lineNo,lineSource,ambiguousLine};
+    });
+
+    out.panels.push({panelIndex,panel,taskNo,taskSource,ambiguousTask,rows});
+  });
+
+  if(out.ambiguous)out.unresolvedReason=structuralMismatch?`task-count ${postingTasks.length} ≠ panel-count ${panels.length}`:"duplicate discriminator / non-unique line match";
+  out.ok=true;
+  return out;
+}
+if(typeof window!=="undefined"){window.resolveBcBindings=resolveBcBindings;}
+
 async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projectName, opts){
   // Full sync of BC Job Planning Lines for task 20N10 (where N = panelIndex, 1-based).
   // Strategy: delete all existing lines for the task, then recreate from current ARC state.
@@ -3855,7 +4295,9 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
     let detected=false;
     try{
       const probeUrl=`${BC_ODATA_BASE}/${planPage}?$top=1`;
-      const pr=await fetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
+      // B064 — route the field-detection probe through bcGatedFetch (401 refresh + structural-404
+      // recording if the planning web service is broken). $metadata fallback below stays raw.
+      const pr=await bcGatedFetch(probeUrl,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});
       if(pr.ok){
         const pd=await pr.json();
         const rec=(pd.value||[])[0];
@@ -3888,7 +4330,10 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
 
   // Step 1: fetch existing planning lines for this task (for incremental sync)
   const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}'`;
-  const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // B064 — route the existing-lines read through bcGatedFetch (401 refresh + structural-404
+  // recording — this is where a broken planning web service surfaces). Diff semantics below
+  // (gr.ok?...:[]) unchanged; this read feeds the money-path diff, so ONLY the fetch wrapper changed.
+  const gr=await bcGatedFetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   const existingLines=gr.ok?(await gr.json()).value||[]:[];
   const existingByLineNo=Object.fromEntries(existingLines.map(l=>[l.Line_No,l]));
 
@@ -4060,12 +4505,36 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // Delete BC lines that are no longer in ARC (e.g. BOM rows removed)
   // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop DELETE calls were
   // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
+  // ★ B065 MONEY-PATH GUARD: DELETE a BC line ONLY when it is a genuine orphan —
+  // no live ARC row is BOUND to it (row.bcLineNo) AND its part# (No) matches no
+  // live BOM row. Under the (interim) positional Line_No scheme a row
+  // insert/delete/reorder shifts every downstream Line_No, so a still-live part's
+  // BC line can land outside the recomputed desired set and — pre-B065 — was
+  // DELETEd as an "orphan" = silent dropped part / wrong order (the headline
+  // money-path risk). The guard trades that SILENT drop for a VISIBLE transient
+  // duplicate (kept old line + new positional line); the duplicate disappears
+  // once the follow-up stable-binding read path (assign Line_No from
+  // row.bcLineNo) removes the churn, and F070's detector surfaces it meanwhile.
+  const _b065LiveParts=new Set(lines.map(l=>l.No).filter(Boolean)); // desired-set part#s (incl. live BOM rows)
+  const _b065RowBound=(ln)=>(panel&&Array.isArray(panel.bom)?panel.bom:[]).some(r=>r&&r.bcLineNo!=null&&Number(r.bcLineNo)===Number(ln));
   for(const ex of existingLines){
     if(!desiredLineNos.has(ex.Line_No)){
+      // B065 guard — skip DELETE if a live row is bound to this line or its part# is still live.
+      if(_b065RowBound(ex.Line_No)||(ex.No&&_b065LiveParts.has(ex.No))){
+        console.warn(`bcSyncPlanningLines: B065 guard — SKIP delete of line ${ex.Line_No} (No='${ex.No}'): part still live or row-bound`);
+        continue;
+      }
       await sleep(100);
       const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
       const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
       if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncPlanningLines: DELETED orphan line ${ex.Line_No}`);}
+      else{
+        // B065/B067: surface DELETE failures into result.failed so a failed
+        // orphan-delete can't be masked as a clean sync (feeds the honest hash).
+        const dtxt=await dr.text().catch(()=>"");
+        failedRows.push({partNumber:ex.No||"",description:`orphan-delete line ${ex.Line_No}`,rowId:null,lineNo:ex.Line_No,status:dr.status,error:dtxt,op:"delete"});
+        console.warn(`bcSyncPlanningLines: orphan DELETE line ${ex.Line_No} failed (${dr.status}):`,dtxt);
+      }
     }
   }
 
@@ -4153,7 +4622,8 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
 
   // Fetch existing 60000+ lines for this ECO task
   const filterUrl=`${BC_ODATA_BASE}/${planPage}?$filter=${FP_NO} eq '${encodeURIComponent(projectNumber)}' and ${FP_TASK_NO} eq '${encodeURIComponent(taskNo)}' and Line_No ge 60000`;
-  const gr=await fetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // B064 — route the existing-lines read through bcGatedFetch (401 refresh + structural-404 recording).
+  const gr=await bcGatedFetch(filterUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   const existingLines=gr.ok?(await gr.json()).value||[]:[];
   const existingByLineNo=Object.fromEntries(existingLines.map(l=>[l.Line_No,l]));
 
@@ -4215,12 +4685,28 @@ async function bcSyncEcoPanelPlanningLines(projectNumber, panelIndex, ecoNumber,
   // Delete BC lines that are no longer referenced by ARC (e.g. row reverted)
   // FIX(F-2d.1): Converted from direct fetch() to bcGatedFetch — inner-loop DELETE calls were
   // bypassing the 6-concurrent semaphore, causing 429 storms on busy BC tenants.
+  // ★ B065 MONEY-PATH GUARD (ECO path — same rule as the base sync loop): only
+  // DELETE a genuine orphan — no live ECO row is bound to the line AND its part#
+  // matches no live ECO row. Prevents a still-live ECO part being dropped as an
+  // "orphan" when its positional Line_No shifts.
+  const _b065EcoLiveParts=new Set(lines.map(l=>l.No).filter(Boolean));
+  const _b065EcoRowBound=(ln)=>(panel&&Array.isArray(panel.bom)?panel.bom:[]).some(r=>r&&r.bcLineNo!=null&&Number(r.bcLineNo)===Number(ln));
   for(const ex of existingLines){
     if(!desiredLineNos.has(ex.Line_No)){
+      if(_b065EcoRowBound(ex.Line_No)||(ex.No&&_b065EcoLiveParts.has(ex.No))){
+        console.warn(`bcSyncEcoPlanningLines: B065 guard — SKIP delete of line ${ex.Line_No} (No='${ex.No}'): part still live or row-bound`);
+        continue;
+      }
       await sleep(100);
       const delUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${ex.Line_No})`;
       const dr=await bcGatedFetch(delUrl,{method:"DELETE",headers:{"Authorization":`Bearer ${_bcToken}`,"If-Match":"*"}});
       if(dr.ok||dr.status===204){deleted++;console.log(`bcSyncEcoPlanningLines: DELETED orphan line ${ex.Line_No}`);}
+      else{
+        // B065/B067: surface DELETE failures into result.failed (honest hash).
+        const dtxt=await dr.text().catch(()=>"");
+        failedRows.push({partNumber:ex.No||"",description:`ECO orphan-delete line ${ex.Line_No}`,rowId:null,lineNo:ex.Line_No,status:dr.status,error:dtxt,op:"delete"});
+        console.warn(`bcSyncEcoPlanningLines: orphan DELETE line ${ex.Line_No} failed (${dr.status}):`,dtxt);
+      }
     }
   }
 
@@ -4307,6 +4793,9 @@ function _quoteHeadingLabel(project){
 }
 
 async function bcCreateProject(displayName, customerNumber, customerProjectNumber){
+  // F071 Tier-A HARD-BLOCK (never queue — a queued create risks minting a duplicate BC job).
+  // Defense-in-depth: the UI disables the create/relink buttons, this backstops any programmatic caller.
+  {const _g=_bcCommitBlocked();if(_g)throw new Error(_bcCommitBlockMsg(_g.reason,'A'));}
   if(!_bcToken)throw new Error("Not connected to Business Central");
   if(!customerNumber)throw new Error("A customer must be selected");
   const compId=await bcGetCompanyId();
@@ -6262,35 +6751,14 @@ async function bcPatchProgressBillingLine(projectNumber,taskNo,unitPrice){
   if(!meta)return;
   const {planPage,FP_NO,FP_TASK_NO}=meta;
   const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
-  const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-  if(!gr.ok){
-    // DECISION(v1.19.984, BC 404 diagnostic): When the GET fails for a
-    // non-admin user but works for the admin (real failure case: Noah's
-    // session showed 404 here while Jon's didn't), capture the full BC
-    // request context to debug logs — including the MSAL user identity
-    // tied to the BC token. BC commonly returns 404 (instead of 403) for
-    // resources the calling user lacks permissions on, so per-user 404
-    // divergence usually means per-user BC permissions divergence.
-    let bodyExcerpt='';
-    try{bodyExcerpt=(await gr.text()).slice(0,300);}catch(_){}
-    console.warn("bcPatchProgressBilling: GET failed",gr.status);
-    try{
-      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"&&gr.status===404){
-        window.logDebugEntry({severity:"warn",source:"bcPatchProgressBilling",message:`GET 404 — planning line not visible to this user (admin can see it); likely BC permissions or company/env mismatch`,extra:{
-          status:gr.status,
-          projectNumber,taskNo,
-          planPage,FP_NO,FP_TASK_NO,
-          bcOdataBase:BC_ODATA_BASE,
-          bcEnv:_bcConfig.env,
-          bcCompanyName:_bcConfig.companyName,
-          bcUserUpn:_bcUserUpn(),
-          urlPattern:`${planPage}(...,Line_No=10000)`,
-          responseExcerpt:bodyExcerpt,
-        }});
-      }
-    }catch(_){}
-    return;
-  }
+  // B064 — route the etag-GET through bcGatedFetch: a 401 now silent-refreshes + flips the
+  // health pill, and a structural 404 is recorded (deduped, honest message, N>=2 persistence)
+  // by the shared fault recorder inside the gate. This REPLACES the old inline per-404
+  // logDebugEntry that guessed "likely BC permissions" (wrong — the Ryan root cause is a
+  // non-existent Job_Task_No) and storm-wrote 522 near-identical entries (the B016 amplifier).
+  // Data flow below (etag → conditional If-Match PATCH) is byte-identical — observability only.
+  const gr=await bcGatedFetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  if(!gr.ok){console.warn("bcPatchProgressBilling: GET failed",gr.status);return;}
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
   const pr=await bcGatedFetch(lineUrl,{
@@ -6327,27 +6795,12 @@ async function bcPatchLaborPlanningLines(projectNumber,panelIndex,panel){
   for(const {lineNo,qty,label} of patches){
     try{
       const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=${lineNo})`;
-      const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(!gr.ok){
-        let bodyExcerpt='';
-        try{bodyExcerpt=(await gr.text()).slice(0,300);}catch(_){}
-        console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);
-        try{
-          if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"&&gr.status===404){
-            window.logDebugEntry({severity:"warn",source:"bcPatchLaborPlanningLines",message:`GET 404 on ${label} line ${lineNo} — line not visible to this user (admin can see it); likely BC permissions or company/env mismatch`,extra:{
-              status:gr.status,
-              projectNumber,taskNo,lineNo,label,
-              planPage,FP_NO,FP_TASK_NO,
-              bcOdataBase:BC_ODATA_BASE,
-              bcEnv:_bcConfig.env,
-              bcCompanyName:_bcConfig.companyName,
-              bcUserUpn:_bcUserUpn(),
-              responseExcerpt:bodyExcerpt,
-            }});
-          }
-        }catch(_){}
-        continue;
-      }
+      // B064 — route the etag-GET through bcGatedFetch (401 refresh + structural-404 recording via
+      // the shared recorder, deduped once/endpoint/session). Replaces the old inline per-404
+      // logDebugEntry that guessed "BC permissions" and storm-wrote (the 522-entry amplifier).
+      // etag → conditional PATCH + skip-if-correct data flow below is unchanged.
+      const gr=await bcGatedFetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!gr.ok){console.warn(`bcPatchLabor ${label}: GET failed`,gr.status);continue;}
       const rec=await gr.json();
       if(rec.Quantity===qty){console.log(`bcPatchLabor ${label}: already ${qty}, skip`);continue;}
       const etag=rec["@odata.etag"];
@@ -6372,7 +6825,8 @@ async function bcPatchPanelEndDate(projectNumber,panelIndex,endDate){
   if(!meta)return;
   const {planPage,FP_NO,FP_TASK_NO}=meta;
   const lineUrl=`${BC_ODATA_BASE}/${planPage}(${FP_NO}='${encodeURIComponent(projectNumber)}',${FP_TASK_NO}='${encodeURIComponent(taskNo)}',Line_No=10000)`;
-  const gr=await fetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+  // B064 — route the etag-GET through bcGatedFetch (401 refresh + structural-404 recording).
+  const gr=await bcGatedFetch(lineUrl,{headers:{"Authorization":`Bearer ${_bcToken}`}});
   if(!gr.ok){console.warn("bcPatchPanelEndDate: GET failed",gr.status);return;}
   const rec=await gr.json();
   const etag=rec["@odata.etag"];
@@ -10028,6 +10482,9 @@ async function saveProject(uid,project){
   // Don't store page images in Firestore — strip dataUrls from panels
   // DECISION(v1.19.421): Include updatedBy (uid) so concurrent editing detection can
   // distinguish own saves from other users' saves.
+  // DATA-RETENTION (B065): panel.bcTaskNo and row.bcLineNo are additive durable
+  // BC bindings — the panel/row spreads below preserve them; ONLY page.dataUrl is
+  // stripped. Do NOT add these (or any metadata flag) to a strip list.
   data.qvHistory=_mergeQvHistory(project.id,data,_curDoc&&_curDoc.exists?_curDoc.data():null);
   const stripped={...data,updatedBy:uid,updatedAt:Date.now(),panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   const toSave=JSON.parse(JSON.stringify(stripped));
@@ -11480,7 +11937,10 @@ async function copyProject(uid,sourceProject,onProgress){
     return{
       id:"panel-"+(i+1),
       name:panel.name,
-      bom:panel.bom,
+      // B065: strip row-level BC bindings — a copy is a FRESH BC project, so
+      // carrying row.bcLineNo would point the copy's rows at the source's BC
+      // lines. (panel.bcTaskNo is already excluded by this include-list.)
+      bom:(panel.bom||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;}),
       pages:newPages,
       laborData:panel.laborData,
       validation:panel.validation,
@@ -21175,7 +21635,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
 // project" — it hands the uploaded metadata back OUT via onDone (initial PO submit) or
 // onSavePoDoc (attaching a doc to an already-recorded PO), and the render site folds it
 // into the single existing saveProject call keyed off projectRef.current.
-function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc}){
+function PoReceivedModal({project,bcProjectNumber,uid,bcCommitGate,onClose,onDone,onSavePoDoc}){
   const panels=project.panels||[];
   // Snapshot at open: was a PO already recorded? Drives the "View PO" panel vs the
   // fresh-entry form. bcPoNumber is only set alongside wonAt, so this is the won state.
@@ -21294,6 +21754,9 @@ function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc
   async function handleSubmit(){
     if(!poNumber.trim()){arcAlert("Please enter a PO number.");return;}
     if(!bcProjectNumber){arcAlert("No BC Project Number on this project. Cannot write to BC.");return;}
+    // F071 Tier-A HARD-BLOCK — PO submit writes the customer PO + ship dates straight to the BC job
+    // (header patch + per-panel end dates + attachment). Never do that against an unusable BC.
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     setSaving(true);setErrors([]);
     const errs=[];
     try{
@@ -21431,8 +21894,9 @@ function PoReceivedModal({project,bcProjectNumber,uid,onClose,onDone,onSavePoDoc
             )}
             <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
               <button onClick={onClose} disabled={saving} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"7px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>Cancel</button>
-              <button onClick={handleSubmit} disabled={saving||!poNumber.trim()} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"7px 20px",borderRadius:6,cursor:saving?"not-allowed":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:saving||!poNumber.trim()?0.6:1}}>{saving?"Writing to BC…":"Submit PO"}</button>
+              <button onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):handleSubmit} disabled={saving||!poNumber.trim()||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} style={{background:"#0d2010",border:"1px solid #4ade80",color:"#4ade80",padding:"7px 20px",borderRadius:6,cursor:(saving||bcCommitGate)?"not-allowed":"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700,opacity:(saving||!poNumber.trim()||bcCommitGate)?0.6:1}}>{saving?"Writing to BC…":bcCommitGate?"Submit PO (BC offline)":"Submit PO"}</button>
             </div>
+            {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4,marginTop:8,textAlign:"right"}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
           </>
         )}
       </div>
@@ -23701,6 +24165,7 @@ function _saveBcBrowserSize(w,h){
   try{localStorage.setItem(_BC_BROWSER_SIZE_KEY,JSON.stringify({w:Math.round(w),h:Math.round(h)}));}catch(e){}
 }
 function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
+  const bcCommitGate=useBcCommitGate(); // F071 Tier-A — "Create in BC" writes an item + Purchase Price to BC
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
   const [results,setResults]=useState([]);
@@ -24433,6 +24898,9 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             </div>
             <div style={{display:"flex",alignItems:"center",gap:10}}>
               <button disabled={creating||!createNumber.trim()} onClick={async()=>{
+                // F071 Tier-A HARD-BLOCK — this writes a new Item Card + Purchase Price to BC; never
+                // push a stale cost while BC is down/unverified. Backstops the disabled button below.
+                if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
                 setCreating(true);setCreateErr("");
                 try{
                   const created=await bcCreateItem({number:createNumber.trim(),displayName:createName.trim(),unitCost:createCost||undefined,itemCategoryCode:createCategory||undefined,baseUnitOfMeasureCode:createUom||undefined,vendorNo:createVendor||undefined,genProdPostingGroup:createGenProd||undefined,inventoryPostingGroup:createInvPosting||undefined,manufacturerCode:createMfr||undefined});
@@ -24452,11 +24920,12 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                   onSelect(customerSupplied?{...created,_created:true,_vendorName:vendorName,..._cLtAttach,unitCost:0,_customerSupplied:true}:{...created,_created:true,_vendorName:vendorName,..._cLtAttach});
                 }catch(e){setCreateErr(e.message||"Failed to create item");}
                 finally{setCreating(false);}
-              }} disabled={creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting?0.5:1})}>
-                {creating?"Creating…":!dropdownsLoaded?"Loading…":"Create in BC"}
+              }} disabled={creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} style={btn("#166534","#4ade80",{padding:"8px 20px",fontWeight:700,fontSize:13,opacity:creating||!dropdownsLoaded||!createNumber.trim()||!createGenProd||!createInvPosting||bcCommitGate?0.5:1,cursor:bcCommitGate?"not-allowed":undefined})}>
+                {creating?"Creating…":!dropdownsLoaded?"Loading…":bcCommitGate?"Create in BC (BC offline)":"Create in BC"}
               </button>
               <button onClick={()=>{setShowCreate(false);setCreateErr("");}}
                 style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,textDecoration:"underline"}}>Cancel</button>
+              {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4,flex:1,minWidth:180}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
               {createErr&&<div style={{color:C.red,fontSize:12,flex:1}}>{createErr}</div>}
             </div>
           </div>
@@ -25345,7 +25814,7 @@ function DvHistoryModal({history,loading,onClose}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,bcCommitGate,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -28970,6 +29439,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
   async function applyConfirmedPrice(){
     if(!priceConfirmPending)return;
+    // F071 Tier-A HARD-BLOCK — Item Card + Purchase Price push. When BC isn't usable, don't push
+    // (and don't silently no-op): steer the user to the Budgetary option, which saves BOM-only.
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     const{id,partNumber,price}=priceConfirmPending;
     const vendorName=priceConfirmVendor.trim();
     // Confirmed: update BOM with priceDate, push to BC Item Card + Purchase Price
@@ -32705,10 +33177,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     {priceConfirmVendors.map(v=><option key={v.number} value={v.displayName}>{v.displayName} ({v.number})</option>)}
                   </select>
                 </div>
-                <button onClick={applyConfirmedPrice}
-                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:"pointer",width:"100%"}}>
+                <button onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):applyConfirmedPrice}
+                  disabled={!!bcCommitGate}
+                  title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""}
+                  style={{padding:"8px 16px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:bcCommitGate?"not-allowed":"pointer",width:"100%",opacity:bcCommitGate?0.45:1}}>
                   ✓ Confirm & Push to BC
                 </button>
+                {bcCommitGate&&<div style={{fontSize:10,color:"#fca5a5",lineHeight:1.4,marginTop:6}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')} Use <b>Budgetary Estimate</b> above to save the price locally.</div>}
               </div>
             </div>
             {/* DECISION(v1.19.903): Renamed Cancel → Discard with destructive
@@ -35429,7 +35904,7 @@ function createBomApprovalTokenDoc(project,barId,sentTo){
 // ── PANEL LIST VIEW ──
 // DECISION(v1.19.338): Extracted as a proper component (not IIFE) because React hooks require
 // a function component context. Supports "New Email" and "Reply to Thread" modes.
-function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive}){
+function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,ownerPriorityActive,bcCommitGate}){
   function persistProject(upd){const{_noBumpWrite,...clean}=upd;onUpdate(clean);return safeSave(uid,_noBumpWrite?{...clean,_noBumpWrite:true}:clean);} // B041: _noBumpWrite (if set) reaches saveProject via safeSave but is stripped from onUpdate so it never pollutes React state (Rule 3 safe)
   // F020 (Option A): live edit of the inline Payment Terms / Shipping Method fields.
   // Mirrors QuoteTab.setQ (onUpdate only, no per-keystroke Firestore write) — the parent
@@ -35513,10 +35988,14 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   const _redCount=_anyRed?_countRedRows(project):0;
   const _isMgr=isManager();
   const _redHardBlocks=_anyRed&&!_isMgr; // non-managers: red disables Send
-  const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive;
+  // F071 Tier-A HARD-BLOCK — Send Quote to customer is blocked when BC isn't usable (Jon-locked:
+  // never send stale/unreconciled pricing to a customer while BC is down). Folds into sendBlocked so
+  // the buttons disable; owner-priority alert still takes precedence in handleSend.
+  const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive||!!bcCommitGate;
   async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     const m=modalData;
     // Incomplete-items / owner-priority hard block applies to everyone (managers included —
     // the F044 override is red-row-only, never for missing pricing/verification/tech-review).
@@ -35858,8 +36337,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <div style={{marginTop:12,padding:"10px 12px",background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,flexShrink:0}}>
             <div style={{fontSize:12,fontWeight:700,color:C.yellow,marginBottom:6,display:"flex",alignItems:"center",gap:6}}>
               <span>⚠</span>
-              <span>Send disabled{_hasVerifyBlock?" — BOM verification required":""}{_hasTechReviewBlock?(_hasVerifyBlock?" + ":" — ")+_trLineCount+" line"+(_trLineCount>1?"s":"")+" need Technical Review":""}{_pricingIssueCount>0?((_hasVerifyBlock||_hasTechReviewBlock)?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
+              <span>Send disabled{bcCommitGate?" — Business Central unavailable":""}{_hasVerifyBlock?" — BOM verification required":""}{_hasTechReviewBlock?(_hasVerifyBlock?" + ":" — ")+_trLineCount+" line"+(_trLineCount>1?"s":"")+" need Technical Review":""}{_pricingIssueCount>0?((_hasVerifyBlock||_hasTechReviewBlock)?" + ":` — `)+_pricingIssueCount+" item"+(_pricingIssueCount>1?"s":"")+" incomplete":""}</span>
             </div>
+            {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.5,marginBottom:6}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
             <div style={{fontSize:11,color:"#fde68a",lineHeight:1.5,maxHeight:140,overflow:"auto"}}>
               {incompleteItems.slice(0,8).map((i,k)=>(
                 <div key={k} style={{padding:"2px 0"}}>
@@ -35879,7 +36359,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
           <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked||_redHardBlocks}
-            title={sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF only"}
+            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF only"}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
             {sending?"Sending…":(sendBlocked||_redHardBlocks)?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
@@ -35887,7 +36367,7 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
               BOM Report PDF (spreadsheet-style listing of every panel's BOM
               with ARC Item # / Ref Dwg # / Qty / Description / MFR). */}
           <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked||_redHardBlocks}
-            title={sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
+            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
             style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
             {sending?"Sending…":"✉ Send w/BOM"}
           </button>
@@ -36162,7 +36642,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,bcCommitGate,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -36192,6 +36672,9 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [bomSending,setBomSending]=useState(false);     // in-flight guard — prevents double-send
   async function handleBomSend(){
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
+    // F071 Tier-A HARD-BLOCK (Jon 2026-07-27) — customer-facing pricing must not go out while BC is
+    // down, same rationale as Send Quote (even though this is a Graph email touching no BC directly).
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
     const m=bomSendModal;
     if(!m||bomSending)return;
     const verifyBlocks=findIncompleteQuoteItems(project).filter(i=>i.isVerificationBlock);
@@ -37869,6 +38352,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   quoteRev={project.quoteRev||0}
                   readOnly={readOnly}
                   ownerPriorityActive={ownerPriorityActive}
+                  bcCommitGate={bcCommitGate}
                   remoteEditor={(() => {
                     // DECISION(v1.19.614): REVERTED v1.19.608 broadening. Only grey out the
                     // specific panel whose bg task matches (panel.id or panel.id+'_bcsync').
@@ -38858,7 +39342,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
       onUpdate:updated=>onUpdate({...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)}),
       onSave:updated=>{const proj={...project,panels:(project.panels||[]).map(p=>p.id===updated.id?updated:p)};saveProject(uid,proj);},
       onClose:()=>setEqModalPanelId(null),memberMap:null}):null;})()}
-    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive}/>}
+    {quoteSendModalPLV&&<QuoteSendModal project={project} uid={uid} modalData={quoteSendModalPLV} setModalData={setQuoteSendModalPLV} onUpdate={onUpdate} onClose={()=>setQuoteSendModalPLV(null)} ownerPriorityActive={ownerPriorityActive} bcCommitGate={bcCommitGate}/>}
     {/* #133 Change 3: standalone Send Quoted BOM modal. Lighter than QuoteSendModal —
         no reply-to-thread, no BOM toggle, no print. Purple accent distinguishes it
         from the blue quote send. */}
@@ -38886,7 +39370,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
             <button onClick={()=>setBomSendModal(null)} disabled={bomSending} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`,opacity:bomSending?0.5:1})}>Cancel</button>
-            <button onClick={handleBomSend} disabled={bomSending} title="Email the quoted BOM to the customer for review/approval" style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:bomSending?0.5:1,cursor:bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":"Send Quoted BOM"}</button>
+            <button onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):handleBomSend} disabled={bomSending||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):"Email the quoted BOM to the customer for review/approval"} style={btn("#1a0c33","#c084fc",{fontSize:13,fontWeight:700,border:"1px solid #c084fc",opacity:(bomSending||bcCommitGate)?0.5:1,cursor:bcCommitGate?"not-allowed":bomSending?"wait":"pointer"})}>📋 {bomSending?"Sending…":bcCommitGate?"Send Quoted BOM (BC offline)":"Send Quoted BOM"}</button>
           </div>
         </div>
       </div>
@@ -39421,6 +39905,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   // owner is present. Non-owners see banner + chime; 14 destructive actions are disabled.
   // See docs/superpowers/specs/2026-04-23-owner-priority-mode-design.md
   const [ownerPriorityActive,setOwnerPriorityActive]=useState(false);
+  // F071 — BC commit-gate mirror ({blocked,reason}|null). Threaded as `bcCommitGate` alongside
+  // `ownerPriorityActive` into PanelListView/PanelCard/QuoteSendModal/PoReceivedModal. SSOT predicate
+  // is `_bcCommitBlocked()`; owner-priority takes precedence where both apply.
+  const bcCommitGate=useBcCommitGate();
   const [takeoverActive,setTakeoverActive]=useState(null);
   const [showTakeoverModal,setShowTakeoverModal]=useState(false);
   // B012 editing lease (P1): leaseReadOnly is the authoritative "someone else holds it" flag,
@@ -40366,6 +40854,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!hasBom)return;
     const t=setTimeout(()=>{
       if(bcOpenSyncRan.current||!_bcToken)return;
+      // B016 Fix C: don't spin the on-open re-sync on a planning endpoint we already know is
+      // structurally down (B064). A persistently-failing planning web service never converges
+      // — a failed sync never stamps bomSyncHash, so this effect re-fires + re-writes the
+      // bomSyncPending markers on EVERY open, forever, piling whole-doc marker writes onto the
+      // same gRPC WriteStream the BC failures are already stressing (the write-exhaustion
+      // amplifier). Scope the skip to a PLANNING-shaped broken segment only, so an unrelated
+      // broken endpoint never suppresses a HEALTHY planning sync. The fault clears the moment a
+      // call to that endpoint succeeds, so the next open re-syncs normally once BC recovers.
+      try{
+        if(typeof _bcBrokenEndpoints==="function"&&_bcBrokenEndpoints().some(seg=>/planning/i.test(seg))){
+          console.log("[OPEN BC SYNC] skipped — planning endpoint is structurally broken (B064); not re-attempting/re-writing markers until it clears");
+          return;
+        }
+      }catch(_){}
       bcOpenSyncRan.current=true;
       (async()=>{
         let synced=0;
@@ -40410,18 +40912,31 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           try{
             // Write pending marker before sync
             await saveProjectPanel(uid,projectId,p.id,{...p,bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true},true); // B041: open BC-sync marker — no bump/unlock
-            await bcSyncPanelPlanningLines(bcNum,i+1,p,projectName);
+            const _syncRes=await bcSyncPanelPlanningLines(bcNum,i+1,p,projectName);
             synced++;
-            // FIX(F-2d.3): Re-enable hash save-back (disabled in v1.20.65 #65b).
-            // Safe now: v1.20.71 replaced stale init.panels with projectRef.current.
-            // Write hash + clear marker atomically in one Firestore write.
-            const syncHash=computePanelBomHash(p);
-            const hashed={...p,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
-            await saveProjectPanel(uid,projectId,p.id,{...hashed,_noBumpWrite:true},true); // B041: open BC-sync hash marker — no bump/unlock
-            // Update React state so manual sync sees the new hash
-            const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?hashed:cp);
-            const upd={...projectRef.current,panels:updPanels};
-            setProject(upd);projectRef.current=upd;onChange(upd);
+            // B067: bcSyncPanelPlanningLines does NOT throw on per-line 404/400 — it
+            // collects them into result.failed. Only stamp bomSyncHash + clear the
+            // pending marker on a CLEAN sync (zero failed lines). Stamping the hash on a
+            // partial/total failure records a divergence as "synced" → hashMatch true
+            // next open → it NEVER retries (precisely how Ryan's 404s stayed masked for
+            // 5 weeks). On failure: skip the hash write entirely, leaving the pre-sync
+            // pending marker in place (mirrors the manual syncPlanningLinesToBC path) so
+            // the next open re-syncs. No extra write — the existing marker write is just
+            // conditioned.
+            if(_syncRes&&_syncRes.failed&&_syncRes.failed.length===0){
+              // FIX(F-2d.3): Re-enable hash save-back (disabled in v1.20.65 #65b).
+              // Safe now: v1.20.71 replaced stale init.panels with projectRef.current.
+              // Write hash + clear marker atomically in one Firestore write.
+              const syncHash=computePanelBomHash(p);
+              const hashed={...p,bomSyncHash:syncHash,bomSyncPending:false,bomSyncStartedAt:null};
+              await saveProjectPanel(uid,projectId,p.id,{...hashed,_noBumpWrite:true},true); // B041: open BC-sync hash marker — no bump/unlock
+              // Update React state so manual sync sees the new hash
+              const updPanels=(projectRef.current.panels||[]).map((cp,j)=>j===i?hashed:cp);
+              const upd={...projectRef.current,panels:updPanels};
+              setProject(upd);projectRef.current=upd;onChange(upd);
+            }else{
+              console.warn("[OPEN BC SYNC] panel",i+1,"— "+((_syncRes&&_syncRes.failed&&_syncRes.failed.length)||"?")+" line(s) failed; NOT stamping bomSyncHash so it retries next open");
+            }
           }catch(e){
             console.warn("Open BC sync panel",i+1,"failed:",e);
             // Clear marker on failure — don't leave it stuck
@@ -40549,6 +41064,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   const [relinkMsg,setRelinkMsg]=useState(null);
   async function relinkToBC(){
     if(!_bcToken){arcAlert("Connect to Business Central first.");return;}
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;} // F071 Tier-A — relink creates a new BC project
     if(!(await arcConfirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?",{kind:"warning",okLabel:"Re-link"})))return;
     setRelinking(true);setRelinkMsg("Creating BC project…");
     try{
@@ -40558,11 +41074,22 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
       for(let i=0;i<panels.length;i++){
         setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
-        await bcSyncPanelPlanningLines(bc.number,i,panels[i],project.name).catch(e=>console.warn("Relink planning lines error panel",i,e));
+        // B065 C1 FIX: pass the 1-based panel number (i+1). This call previously
+        // passed the 0-based `i` while task structure was built 1-based (:3253)
+        // and every other caller uses i+1 → relinked projects wrote planning
+        // lines onto the wrong tasks + minted a phantom 20010 block.
+        await bcSyncPanelPlanningLines(bc.number,i+1,panels[i],project.name).catch(e=>console.warn("Relink planning lines error panel",i,e));
       }
       const updated={...projectRef.current,bcProjectNumber:bc.number,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
-      // Reset per-panel bc attachment flags
-      if(updated.panels)updated.panels=updated.panels.map(pan=>({...pan,bcPdfAttached:false,bcPdfFileName:null}));
+      // Reset per-panel bc attachment flags + CLEAR durable BC bindings (B065):
+      // relink creates a NEW BC project, so any stored panel.bcTaskNo / row.bcLineNo
+      // point at the OLD project and MUST be dropped so they re-bind against the
+      // new one.
+      if(updated.panels)updated.panels=updated.panels.map(pan=>{
+        const {bcTaskNo,...panRest}=pan||{};
+        return {...panRest,bcPdfAttached:false,bcPdfFileName:null,
+          bom:((pan&&pan.bom)||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;})};
+      });
       setProject(updated);projectRef.current=updated;onChange(updated);
       await saveProject(uid,updated);
       setRelinkMsg("✓ Re-linked to "+bc.number);
@@ -41725,6 +42252,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             viewers={viewers}
             projectRemoteTasks={projectRemoteTasks}
             ownerPriorityActive={ownerPriorityActive}
+            bcCommitGate={bcCommitGate}
             autoOpenCustomerReview={autoOpenCustomerReview}
             onCustomerReviewOpened={onCustomerReviewOpened}
             activeScope={activeScope}
@@ -41966,7 +42494,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
             }catch(e){console.warn("[API] Failed to fetch vendors for alternate pricing:",e.message);}
           }}/>}
           {showRfqHistory&&<RfqHistoryModal uid={uid} projectId={project.id} onClose={()=>setShowRfqHistory(false)}/>}
-          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} uid={uid} onClose={()=>setShowPoModal(false)} onDone={async(poNum,poDocMeta)=>{
+          {showPoModal&&<PoReceivedModal project={project} bcProjectNumber={project.bcProjectNumber||""} uid={uid} bcCommitGate={bcCommitGate} onClose={()=>setShowPoModal(false)} onDone={async(poNum,poDocMeta)=>{
             setShowPoModal(false);
             const firstPanel=(projectRef.current.panels||[])[0];
             const dueDate=firstPanel?.requestedShipDate||"";
@@ -42213,13 +42741,23 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                             try{
                               // F-2d.3: Write pending marker before sync (awaited per review)
                               await saveProjectPanel(uid,proj.id,proj.panels[i].id,{...proj.panels[i],bomSyncPending:true,bomSyncStartedAt:Date.now()},true);
-                              await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
-                              // F-2d.3: Set bomSyncHash + clear pending marker after successful sync
-                              const hashed={...proj.panels[i],bomSyncHash:curHash,bomSyncPending:false,bomSyncStartedAt:null};
-                              const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?hashed:p);
-                              const upd={...projectRef.current,panels:updPanels};
-                              setProject(upd);projectRef.current=upd;onChange(upd);
-                              saveProjectPanel(uid,proj.id,proj.panels[i].id,hashed,true).catch(()=>{});
+                              const _syncRes=await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);
+                              // B067: only stamp bomSyncHash + clear the pending marker on a
+                              // CLEAN sync. bcSyncPanelPlanningLines collects per-line 404/400 into
+                              // result.failed instead of throwing; stamping on failure records the
+                              // divergence as "synced" and it never retries (the 5-week Ryan masker).
+                              // On failure: skip the hash write, leaving the pre-sync pending marker so
+                              // the next open re-syncs. No extra write — the marker write is conditioned.
+                              if(_syncRes&&_syncRes.failed&&_syncRes.failed.length===0){
+                                // F-2d.3: Set bomSyncHash + clear pending marker after successful sync
+                                const hashed={...proj.panels[i],bomSyncHash:curHash,bomSyncPending:false,bomSyncStartedAt:null};
+                                const updPanels=(projectRef.current.panels||[]).map((p,j)=>j===i?hashed:p);
+                                const upd={...projectRef.current,panels:updPanels};
+                                setProject(upd);projectRef.current=upd;onChange(upd);
+                                saveProjectPanel(uid,proj.id,proj.panels[i].id,hashed,true).catch(()=>{});
+                              }else{
+                                console.warn("Pre-print sync panel",i+1,"— "+((_syncRes&&_syncRes.failed&&_syncRes.failed.length)||"?")+" line(s) failed; NOT stamping bomSyncHash");
+                              }
                             }catch(e){
                               console.warn("Pre-print sync panel",i+1,"failed:",e);
                               // F-2d.3: Clear marker on failure
@@ -45643,6 +46181,7 @@ function DeleteConfirmModal({projectName,bcProjectNumber,isAdmin,project,onConfi
 
 // ── NEW PROJECT MODAL ──
 function NewProjectModal({uid,onCreated,onClose}){
+  const bcCommitGate=useBcCommitGate(); // F071 Tier-A — New BC project create hard-blocks when BC unusable
   const [name,setName]=useState("");
   const [custProjNum,setCustProjNum]=useState(""); // F021: CUSTOMER's project # → BC External Document No.
   const [panelCount,setPanelCount]=useState(1);
@@ -45797,6 +46336,8 @@ function NewProjectModal({uid,onCreated,onClose}){
   async function create(e){
     e.preventDefault();
     if(!name.trim()||!selectedCustomer)return;
+    // F071 Tier-A HARD-BLOCK — never queue a BC project create (a queued create risks a duplicate job).
+    if(bcCommitGate){setCreateErr(_bcCommitBlockMsg(bcCommitGate.reason,'A'));return;}
     setLoading(true);setCreateErr("");
     const trimmed=name.trim();
     if(!_bcToken){setBcStatus("connecting");await acquireBcToken(true);}
@@ -46022,10 +46563,11 @@ function NewProjectModal({uid,onCreated,onClose}){
           {bcStatus==="taskwarn"&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>Project created — task structure pending (see error below)</div>}
           {createErr&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{createErr}</div>}
           {!selectedCustomer&&name.trim()&&<div style={{fontSize:12,color:C.yellow,marginBottom:10}}>A customer is required to create a project.</div>}
+          {bcCommitGate&&<div style={{fontSize:12,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:8,padding:"10px 12px",marginBottom:12}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
           <div style={{display:"flex",gap:10,marginTop:4}}>
             <button type="button" onClick={onClose} style={btn(C.border,C.sub,{flex:1})}>Cancel</button>
-            <button type="submit" disabled={!name.trim()||!selectedCustomer||loading} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||!selectedCustomer||loading?0.5:1})}>
-              {loading?"Creating…":"Create Project"}
+            <button type="submit" disabled={!name.trim()||!selectedCustomer||loading||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} style={btn(C.accent,"#fff",{flex:2,opacity:!name.trim()||!selectedCustomer||loading||bcCommitGate?0.5:1,cursor:bcCommitGate?"not-allowed":undefined})}>
+              {loading?"Creating…":bcCommitGate?"Create Project (BC offline)":"Create Project"}
             </button>
           </div>
         </form>
@@ -50438,6 +50980,7 @@ function App({user}){
   const [memberMap,setMemberMap]=useState({}); // uid → {email, firstName}
   const [bcOnline,setBcOnline]=useState(!!_bcToken);
   const [bcHealth,setBcHealth]=useState(_bcHealthState); // B013-2 — 'green'|'amber'|'red' degradation signal for the pill
+  const [bcFaultBroken,setBcFaultBroken]=useState(_bcAnyStructuralFault()); // B064 — a BC endpoint is structurally 404ing (amber advisory chip, pill stays green)
   const [bcLostAlert,setBcLostAlert]=useState(false);
   const bcOnlinePrev=useRef(!!_bcToken);
   const [bcQueueCount,setBcQueueCount]=useState(()=>_bcQGet().length);
@@ -51381,6 +51924,16 @@ INSTRUCTIONS:
     return()=>{_bcHealthSubs.delete(fn);};
   },[]);
 
+  // B064 — subscribe to the structural-404 fault detector so the amber "endpoint degraded"
+  // advisory chip appears/clears live (distinct from the connection pill — a 404 means BC is
+  // up but an endpoint is broken; reconnecting won't help). Mirrors the _bcHealthSubs effect.
+  useEffect(()=>{
+    const fn=(broken)=>setBcFaultBroken(broken);
+    _bcEndpointFaultSubs.add(fn);
+    setBcFaultBroken(_bcAnyStructuralFault()); // sync in case a fault tripped before mount
+    return()=>{_bcEndpointFaultSubs.delete(fn);};
+  },[]);
+
   // Poll BC every 5 minutes and import any projects not yet in ARC
   useEffect(()=>{
     if(!user?.uid)return;
@@ -51740,6 +52293,21 @@ INSTRUCTIONS:
               <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:C_.dot,boxShadow:`0 0 5px ${C_.dot}`,animation:st==='amber'?"pulse 2s ease-in-out infinite":undefined}}/>
               <span style={{fontSize:12,fontWeight:600,color:C_.tx,whiteSpace:"nowrap"}}>{C_.label}</span>
             </div>);
+          })()}
+          {/* B064 — amber "endpoint degraded" advisory chip. Distinct from the connection pill:
+              the pill can be green (BC is up) while a specific web service / keyed request 404s
+              persistently, silently failing planning-line sync. Clears when that endpoint next
+              succeeds (routed through bcGatedFetch's ok-path). */}
+          {bcFaultBroken&&(()=>{
+            const segs=_bcBrokenEndpoints();
+            const seg=segs[0]||"endpoint";
+            const many=segs.length>1;
+            const tip=`BC is connected, but ${many?"endpoints":"an endpoint"} ARC needs (${segs.join(", ")||seg}) returned repeated structural 404s — planning-line sync for ${many?"these":"this"} is likely failing silently. Notify your admin; reconnecting will NOT help.`;
+            return(
+              <div title={tip} style={{display:"flex",alignItems:"center",gap:5,padding:"0 10px",height:36,borderRadius:10,flexShrink:0,background:"#3a1f0044",border:"1px solid #f59e0b66"}}>
+                <div style={{width:8,height:8,borderRadius:"50%",flexShrink:0,background:C.yellow,boxShadow:`0 0 5px ${C.yellow}`,animation:"pulse 2s ease-in-out infinite"}}/>
+                <span style={{fontSize:12,fontWeight:600,color:"#fcd34d",whiteSpace:"nowrap"}}>⚠ BC sync degraded — endpoint '{seg}'{many?` +${segs.length-1} more`:""} unavailable</span>
+              </div>);
           })()}
           {bcQueueCount>0&&(
             <div title={`${bcQueueCount} BC operation${bcQueueCount>1?'s':''} pending — will retry when connected`}

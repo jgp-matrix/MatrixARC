@@ -2,7 +2,31 @@
 
 **By:** Freddy (Marc-lane read-only) · **Date:** 2026-07-27 · Evidence: PROD `companies/{cid}/debugLogs` (400 most-recent, span 2026-07-21 → 2026-07-27), read live from Jon's admin session.
 
-## Verdict — NOT the B013 Mode-A (MSAL token expiry) hypothesis
+## ★★ FINAL ROOT CAUSE (corrected 2026-07-27 via live BC OData probes) — WRONG Job_Task_No
+The BC web service is **fine** (published; unkeyed + keyed GETs for real records return 200 — Jon confirmed publication). The failure is that **ARC requests PRJ402141's planning lines under `Job_Task_No = "20510"`, which does not exist in BC.** Live-verified against `MATR_SndBx_01152026`:
+- PRJ402141 has **121 planning lines** under tasks **`20110, 20210, 20310, 20410, 20610`**.
+- **`20510` = 0 lines (not a real task).** ARC keys its planning-line reads/writes to `(Job_No='PRJ402141', Job_Task_No='20510', Line_No=…)` → **404 on every one** → silent (404 doesn't flip the pill) → retry/revert churn → Firestore write-exhaustion → Ryan's session stalls ("disconnecting").
+- The real tasks **skip 20510 and add 20610** → BC's task numbering was **renumbered/shifted** (a task removed/inserted), so ARC's stored **panel→BC `Job_Task_No` mapping went stale.** This is an **ARC bug** (trusting a stale/computed task number instead of re-resolving from BC) + a BC data change (task renumber, likely around the ~June-22 window).
+- **Evidence chain (corrected twice as probes came in):** "web service unpublished" ✗ (Jon: it's published) → "OData key-structure/Page-vs-Query mismatch" ✗ (keyed GET on a real record = 200) → **"ARC's Job_Task_No 20510 doesn't exist; real is 20110–20610" ✓.**
+
+**NEW work item B065 [BUG · HIGH]:** ARC's panel→BC-task-number mapping for a project can go stale (BC task renumber) → planning-line 404 storm. Fix = re-resolve the actual `Job_Task_No` from BC per panel (don't trust a stored/computed increment), + fail loudly on task-not-found (ties to B064). The B064/B016/F069 hardening items remain valid defense-in-depth; **B065 is the actual root-cause bug.**
+
+## ✅ UNBLOCKED (2026-07-27) — one-off manual reconciliation
+Jon (prod, editable) nudged panel-5's BOM qty to dirty its sync-hash → clicked ⇅ Sync BC → ARC's own sync back-filled the missing task block **AND** posted the lines. **Verified live in BC (`MATR_SndBx_01152026`):** task block `20500` Begin / `20510` Posting ("CSW1952-121 C Rev B") / `20520` eng / `20599` End all present; **12 planning lines under 20510** (PROGRESS BILLING 10000 + CUT/LAYOUT/WIRE 30/40/50000 + BOM rows 60000+). Descriptions are the real source-of-truth values (ARC generated them, not a placeholder). **404 source resolved → the storm + Firestore write-exhaustion stop → Ryan unblocked** (hard-reload his session). NOTE: the direct BC-write route was blocked by the harness safety classifier (external-system write) — the app-sync route was used instead and is the safer, more complete fix. **This is a one-off; the DURABLE fix so it can't recur = B065 (durable task/line binding + self-heal) + B067 (honest sync-hash).**
+
+**Superseded hypotheses below are kept for the record but are NOT the cause.**
+
+## ★★★ DELETE TRACE (2026-07-27) — how BC lost task 20510 (Ryan did NOT delete anything)
+ARC has **6 panels/lines** for PRJ402141; BC has **5 tasks** (20110/20210/20310/20410/20610 — 20510 missing). Ryan reports he only ADDED lines (created with 1, added 5 more). Trace of `companies/{cid}/debugLogs` for this project (id `5x0jfFr6m6pP9wAZ5oN6`):
+- **19× `SAVE BLOCKED: would reduce panels from N to M`** (severity error), 2026-07-20 17:14→17:43 (as Ryan added panels 3→4→5→6, repeated 6→5/6→4/6→3 attempts), again 07-20 23:43, and **again 07-25 22:40** (6→5, 6→4). All by Ryan.
+- **Interpretation:** a **spurious panel-REDUCTION write bug** (B016 write-race / stale-state class) repeatedly tried to shrink the project. ARC's data-safety guard **blocked every one on the ARC/Firestore side** (why ARC still has all 6). But **the guard does NOT cover BC** → the reduction **leaked to BC as the deletion of task 20510** (no BC-delete error logged → it succeeded silently). Result: ARC=6 / BC=5, ARC still computes/references task 20510 → 404 storm. **NOT a user delete.**
+- **Corroborating:** the project's 6 panels have **duplicate names** (two "Panel 2", two "Panel 4") + **no stored per-panel task number** → ARC **computes** Job_Task_No by panel position, so a broken panel-add/duplication flow both (a) drives the spurious reductions and (b) misaligns the computed task numbers.
+- **B065 reframed:** root cause is the **panel-reduction write bug leaking a BC task delete** + ARC computing task#s by position (no durable panel↔BC-task link). Fix spans B016 (stop the spurious reduction / write-race) AND a durable panel↔BC-task binding + self-heal on task-not-found (404) instead of trusting a computed number.
+
+## Drawings not attached to BC (Jon observation 2026-07-27) → B066
+Jon: no scanned drawings appear in BC for this job. Trace: ARC-side extraction ran fine (`addFiles` → 18 pages, `extractBomBatch` 4/4 ok, `extractBomPage` completions) but **ZERO BC document-attachment operations are logged** for the project (no `bcAttachPdfToJob`/`documentAttachments`). Inconclusive from logs alone (a silent success wouldn't log) → **verify directly against BC** (`companies(id)/projects(jobId)/documentAttachments` for PRJ402141). If empty, the BC attach-on-scan step isn't firing / fails silently = **B066 [BUG]**. Likely same silent-failure family as B064 (BC write failures not surfaced).
+
+## (SUPERSEDED) Earlier framing — NOT the B013 Mode-A (MSAL token expiry) hypothesis
 Ryan has **zero** token/401/ssoSilent entries. His "disconnecting" is two real, distinct problems:
 
 ### 1. BC ENVIRONMENT problem (primary) — 32 events
@@ -35,6 +59,20 @@ BC planning-line reads/writes fail (404, sandbox), and the repeated failures chu
 1. **Is prod ARC supposed to be on the BC SANDBOX `MATR_SndBx_01152026`?** (Company config currently is.) If it should be production BC, fix `companies/{cid}/config/bcEnvironment` to the correct env (where `Project_Planning_Lines_Excel` is published + PRJ402141's records live).
 2. **If the sandbox is intended (pre-launch):** publish the `Project_Planning_Lines_Excel` OData web service in `MATR_SndBx_01152026`, and confirm PRJ402141 was synced under that same env (check the project's `bcEnv` stamp vs the company config — `_bcEnvMismatched`).
 3. **Firestore write-exhaustion (B012/B016):** the burst-write amplifier is live and hitting multiple users — the failing BC ops make it worse. Fix the 404 source first (removes the burst), then the durable fix is the B016 await/confirm-per-mutation + churn reduction.
+
+## ★ TIMING — this is CHRONIC, not new (answers "why now?")
+Scanned 1800 recent logs (window 2026-06-20 → 07-27). `Project_Planning_Lines_Excel` 404s total **522**, spanning **~June 22 → today, essentially every day**. June 20–21 show ZERO planning-404s then June 22 onward is heavy → likely a change ~**June 22** (logs don't retain earlier, so can't see before 06-20). **It is NOT Ryan-specific:** recent window = **jon@matrixpci.com 63, Ryan 32**. It went unnoticed for ~5 weeks because a **404 does not flip the BC health pill** (only 401 does, per B013) → the planning-line sync failed **silently**. Ryan surfaced it now only because the failures also trigger the Firestore write-exhaustion that visibly **stalls his session**.
+
+**Not an ARC-side change:** no BC/planning commits around June 22; `_planPageCache`/page-discovery logic unchanged since v1.19.x. ARC discovers the planning page from BC's published web services (`allPages.find(/^project.?planning/i)`, `src/app.jsx:3528/3630`) then queries it. A **404 "Resource not found for the segment"** = the `Project_Planning_Lines_Excel` web service **no longer resolves** in `MATR_SndBx_01152026` despite being set up months ago → **BC-side.** Likely an **orphaned web-service publication after a sandbox refresh/recreate ~June 22** (the Web Services record survives → discovery finds the name → but its target page/query object is gone → query 404s). **BC-admin action (Jon):** verify/republish `Project_Planning_Lines_Excel` in the sandbox; check whether the sandbox was refreshed ~June 22.
+
+## Env-match reconciliation (re: "no user should be on an env ≠ Settings")
+The evidence shows **no env mismatch across users** — every user (Jon + Ryan) is on `MATR_SndBx_01152026`, which **matches** the company Settings config (`companies/{cid}/config/bcEnvironment.env`). This is a **broken web service in the correct, matched env**, not a user on the wrong env. A hard env-match guard (F069) is good defense-in-depth but would NOT fix these 404s.
+
+## Resulting work items (Jon: "all of the above")
+- **B064** — BC connection failures that bypass the honest pill (404 "segment not found" on a discovered web service; also the raw-fetch 401 family per B013 G1) must SURFACE, not fail silently. Add an admin-visible signal + a persistently-failing-endpoint alert so a 5-week silent breakage can't recur. Extends **B013**.
+- **B016 / B012 (write-exhaustion amplifier)** — failing BC ops churn writes → `resource-exhausted` / max-backoff → session stalls (the actual "disconnect"). Harden per B016 (await/confirm per mutation + churn reduction); scope now.
+- **F069** — hard guard: block any BC op when the user's/project's env ≠ Settings env (build on `_bcEnvMismatched` + per-project `bcEnv`). Defense-in-depth (not the cause here).
+- **BC-admin (Jon):** verify/republish `Project_Planning_Lines_Excel` in `MATR_SndBx_01152026`.
 
 ## Follow-ups
 - Confirm Ryan's BC pill color at a "disconnect" moment (expected: GREEN, since 404≠401) — proves it's the freeze/404, not a token drop.
