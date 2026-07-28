@@ -89,3 +89,16 @@ All work inside `BCItemBrowserModal` (`:24167`) + one new learning-DB helper pai
 **Gates:** `node validate_jsx.js` → Coach code-review (money-path) → `deploy-test.sh` → Jon verify on `matrix-arc-test.web.app` → prod.
 
 **Files:** `src/app.jsx` only (S1 `:25001`, S2 nested modal, S4 `~:25022`, S3 helpers `~:2725`, S5 `~:29163`, preservation list). No functions/rules, no `APP_SCHEMA_VERSION` bump.
+
+---
+
+# ⚠ VERIFICATION NOTES (Jon 2026-07-28) — F072-as-built (Test V.063) does NOT match intent → RE-SCOPE + REBUILD
+
+Jon's Test-V.063 review revealed the locked "ARC-side-only" scope was wrong for his intent. F072 is a **BC-integrated vendor-catalog editor**, not an ARC-side alternates list. The four notes:
+
+1. **Supplier = a BC Vendor (dropdown + "Create New"), BC is source of truth.** The ALT ("Manage Alternate Suppliers") modal must present a **BC-vendor dropdown** + a **"Create New"** option using the SAME rules as the other places that create/pick a BC vendor (`bcCreateVendor` + the existing vendor-picker). Selecting a supplier ALWAYS links to a BC Vendor (or creates one). **Reverses locked decision Q3/#4 free-text-supplier.**
+2. **No MTX-###### references.** The modal currently shows the internal BC item No ("MTX-######") where it should show the **Supplier Part #**. Remove all MTX-number references from the modal; reference the part# the user recognizes.
+3. **Saving an alternate WRITES to BC** (Jon's expectation → now a requirement): populate the BC **Purchase Price** card (Vendor + Price + Price Date) via `bcPushPurchasePrice` AND the **Item Vendor Catalog** card (Vendor + Lead Time) via `bcUpsertItemVendorLeadTime`. **This reverses the locked "ARC-side-only, no BC write-back" decision** → F072 is now ON the BC-write path (F071 commit-gate applies; uses the hardened B057 `bcPushPurchasePrice` + existing `bcUpsertItemVendorLeadTime`; user-initiated, not auto — distinct from the disabled auto-pricing).
+4. **BC VENDORS group → PRIMARY (green) vs Secondary Vendors.** In the selector's BC-vendor list: if a vendor IS the item's primary (Item Card `Vendor_No`), show its pill as **"PRIMARY" in green** (non-selectable). Other vendors are selectable as **SECONDARY**. Rename the "YOUR ALTERNATES" group to **"Secondary Vendors"** — the user-entered alternates ARE the secondary vendors (now BC-linked per #1/#3).
+
+**Impact:** the ARC-side-only build (v1.24.43 Test V.063, branch `claude/f072-alternates`) is superseded — do NOT ship it. Re-scope to the BC-write model (pending Jon's explicit confirm of the #3 pivot given the BC-integrity/pricing-emergency history), then rebuild. Good news: every BC write helper already exists and is hardened (`bcCreateVendor`, `bcPushPurchasePrice` [B057-rebuilt], `bcUpsertItemVendorLeadTime`).
