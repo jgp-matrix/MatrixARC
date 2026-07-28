@@ -24756,7 +24756,7 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
       const vendorNo=(r.vendorNo||"").trim();
       if(!vendorNo)continue; // silently skip rows with no vendor chosen
       const price=(r.price===""||r.price==null)?null:+r.price;
-      if(price==null||isNaN(price)||price<0){setAltErr(`Row ${i+1}: enter a price of 0 or greater.`);return;}
+      if(price==null||isNaN(price)||price<=0){setAltErr(`Row ${i+1}: enter a price greater than 0.`);return;} // M1: reject $0 — never post a junk $0 Purchase Price to BC (matches applySecondary px>0 guard)
       const lt=(r.leadTimeDays===""||r.leadTimeDays==null)?null:parseInt(r.leadTimeDays,10);
       if(lt!=null&&(isNaN(lt)||lt<0)){setAltErr(`Row ${i+1}: lead time must be a whole number of days (0+).`);return;}
       jobs.push({idx:i,vendorNo,vendorName:r.vendorName||"",price,lt});
