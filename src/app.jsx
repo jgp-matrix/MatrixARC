@@ -2649,6 +2649,15 @@ async function _readSupplierConfig(uid,docName){
   }catch(e){console.warn(`[supplier-config:${docName}/user]`,e.message);return{data:{},source:"user"};}
 }
 
+// ── F072 SECONDARY VENDORS — BC is the single source of truth ──
+// F072 (BC-write model, 2026-07-28) manages an item's SECONDARY vendors directly in Business
+// Central: the ALT ("Manage Alternate Suppliers") modal writes a BC Purchase Price (vendor +
+// price + date) via bcPushPurchasePrice and an Item Vendor Catalog record (vendor + lead time)
+// via bcUpsertItemVendorLeadTime. An item's "Secondary Vendors" list is therefore its BC
+// Purchase-Price records (read via bcFetchPurchasePricesMultiVendor), minus the primary.
+// The superseded ARC-side `config/itemAlternates` learning DB was DROPPED (SSOT — avoid two-source
+// drift); its loadItemAlternates/saveItemAlternates/_itemAltCache helpers were removed here.
+
 // DECISION(v1.19.996, audit Item D follow-up): rfq_history collection
 // migration. Writes go to the company-shared collection; reads merge both
 // company-shared and legacy user-shared collections so existing per-user
@@ -6980,6 +6989,25 @@ async function bcGetItemVendorNo(itemNo){
   }catch(e){return"";}
 }
 
+// F072 — item's BASE Unit of Measure from ItemCard. Purchase-Price writes MUST carry a concrete
+// UoM (a blank UoM makes bcPushPurchasePrice's supersede no-op → a duplicate PP lane). Caller
+// falls back to "EA" only when this returns "" (BC offline / item missing / no base UoM set).
+async function bcGetItemBaseUom(itemNo){
+  if(!_bcToken||!itemNo)return"";
+  try{
+    let r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Base_Unit_of_Measure_Code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(r.status===401){
+      _bcToken=await acquireBcToken(false)||null;
+      if(!_bcToken)return"";
+      r=await bcGatedFetch(`${BC_ODATA_BASE}/ItemCard?$filter=No eq '${encodeURIComponent(itemNo)}'&$select=No,Base_Unit_of_Measure_Code`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    }
+    if(!r.ok)return"";
+    const d=await r.json();
+    const rec=(d.value||[])[0];
+    return rec?.Base_Unit_of_Measure_Code||"";
+  }catch(e){return"";}
+}
+
 // Resolve vendor number to display name — uses v2.0 vendors API directly
 async function bcGetVendorName(vendorNo){
   if(!_bcToken||!vendorNo)return"";
@@ -7153,6 +7181,9 @@ function analyzeBomForVendorAutoAssign(project,mfrMap){
     const bom=panel.bom||[];
     for(const row of bom){
       if(row.isLaborRow)continue;
+      // F072 guard: never propose auto-reassigning a vendor the user explicitly picked as a secondary
+      // (mirrors the priceSource:"manual" skip). Durable even if bcVendorName is somehow blank.
+      if(row.vendorSource==="manual-secondary")continue;
       if(row.bcVendorName&&String(row.bcVendorName).trim())continue;
       if((row.qty||0)===0)continue;
       const mfrRaw=row.manufacturer&&String(row.manufacturer).trim();
@@ -24164,7 +24195,44 @@ function _loadBcBrowserSize(){
 function _saveBcBrowserSize(w,h){
   try{localStorage.setItem(_BC_BROWSER_SIZE_KEY,JSON.stringify({w:Math.round(w),h:Math.round(h)}));}catch(e){}
 }
-function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
+// F072 — reusable source-option list (Primary / secondary alternates / BC vendors / cross-ref
+// parts). Presentational only; the parent builds `groups` + wires each row's onSelect/onEdit.
+// Built reusable so F010 (part-axis alternate PARTS picker) can adopt the same chrome later.
+// groups: [{label, rows:[{id,title,sub,tag,selectable,check,onSelect,onEdit}]}]. Empty groups drop.
+function SourceOptionList({groups}){
+  const shown=(groups||[]).filter(g=>g&&(g.rows||[]).length);
+  if(!shown.length)return null;
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:8}}>
+      {shown.map((g,gi)=>(
+        <div key={gi}>
+          <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:0.5,textTransform:"uppercase",marginBottom:4}}>{g.label}</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {g.rows.map((r,ri)=>(
+              <div key={r.id||ri} style={{display:"flex",alignItems:"center",gap:8,background:"#0a0a14",border:`1px solid ${C.border}`,borderRadius:6,padding:"5px 10px"}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,color:C.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.title||"—"}</div>
+                  {r.sub&&<div style={{fontSize:11,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.sub}</div>}
+                </div>
+                {r.tag&&<span style={{fontSize:10,color:C.muted,flexShrink:0,padding:"1px 6px",border:`1px solid ${C.border}`,borderRadius:4,whiteSpace:"nowrap"}}>{r.tag}</span>}
+                {r.onEdit&&<button title="Edit this vendor's price / lead time" onClick={r.onEdit} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,padding:"1px 6px",fontSize:10,color:C.muted,cursor:"pointer",flexShrink:0}}>✎</button>}
+                {r.pill?(
+                  <span style={{fontSize:10,fontWeight:800,letterSpacing:0.5,color:"#052e16",background:"#4ade80",borderRadius:4,padding:"2px 8px",flexShrink:0}} title="Primary supplier (BC Item Card vendor — auto-selected)">{r.pill}</span>
+                ):r.selectable?(
+                  <button onClick={r.onSelect} style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`,flexShrink:0})}>Select</button>
+                ):r.check?(
+                  <span style={{color:"#4ade80",fontSize:13,flexShrink:0}} title="Primary supplier (auto-selected)">✓</span>
+                ):null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targetRow,pages,syncError,h5PageIds}){
   const bcCommitGate=useBcCommitGate(); // F071 Tier-A — "Create in BC" writes an item + Purchase Price to BC
   const [query,setQuery]=useState(initialQuery||"");
   const [field,setField]=useState("both");
@@ -24232,6 +24300,33 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
   const _ltObserverRef=useRef(null);
   const _ltRowItems=useRef(new WeakMap());    // row <tr> element -> its item (for the observer callback)
   const [customerSupplied,setCustomerSupplied]=useState(false);
+  // F072 (BC-write model) — manage/select an item's SECONDARY vendors directly in BC + selector.
+  // ALT entry modal (S2): altModalItem=the item being managed (null=closed). Each altRow links a BC
+  // vendor (vendorNo, via dropdown + Create-New) with a price + lead time; Save WRITES BC Purchase
+  // Price + Item Vendor Catalog per row (S3). altStatus[i] = {ok,msg} per-row write outcome.
+  const [altModalItem,setAltModalItem]=useState(null);
+  const [altRows,setAltRows]=useState([]); // [{vendorNo,vendorName,price,leadTimeDays}]
+  const [altStatus,setAltStatus]=useState({}); // {rowIdx:{ok:boolean,msg:string}}
+  const [altSaving,setAltSaving]=useState(false);
+  const [altErr,setAltErr]=useState("");
+  // ALT-modal inline Create-New-Vendor form (mirrors the create-item vendor form). altNewVendorForRow
+  // = the altRow index awaiting a freshly-created vendor (null = form closed).
+  const [altNewVendorForRow,setAltNewVendorForRow]=useState(null);
+  const [altNewVendorName,setAltNewVendorName]=useState("");
+  const [altNewVendorPhone,setAltNewVendorPhone]=useState("");
+  const [altNewVendorEmail,setAltNewVendorEmail]=useState("");
+  const [altNewVendorGenBus,setAltNewVendorGenBus]=useState("TRADE");
+  const [altNewVendorPostGroup,setAltNewVendorPostGroup]=useState("PARTS");
+  const [altNewVendorTaxArea,setAltNewVendorTaxArea]=useState("NONTAXABLE");
+  const [altCreatingVendor,setAltCreatingVendor]=useState(false);
+  const [altNewVendorErr,setAltNewVendorErr]=useState("");
+  // Unified selector (S4): selectorItem = the focused BC item whose sources show. Seeded from the
+  // targetRow so the item's BC secondary vendors re-list on a fresh BOM with that item.
+  const [selectorItem,setSelectorItem]=useState(()=>targetRow&&(targetRow.bcNo||targetRow.partNumber)?{number:targetRow.bcNo||"",displayName:targetRow.description||"",partNumber:targetRow.partNumber||"",_vendorItemNo:targetRow.partNumber||""}:null);
+  const [selBcVendors,setSelBcVendors]=useState([]); // ② Secondary Vendors (BC Purchase-Price vendors minus primary): [{vendorNo,vendorName,price,uom,leadTimeDays}]
+  const [selPrimaryVendor,setSelPrimaryVendor]=useState(""); // ① Item Card vendor name (green PRIMARY pill, non-selectable)
+  const [selCrossRefs,setSelCrossRefs]=useState([]); // ③ cross-ref parts (existing config/alternates)
+  const [selRefreshTick,setSelRefreshTick]=useState(0); // bump to force a BC re-read of the secondary list after a write
   const [editVendorItem,setEditVendorItem]=useState(null); // item.number being edited
   const [editVendorNo,setEditVendorNo]=useState("");
   const [savingVendor,setSavingVendor]=useState(false);
@@ -24631,6 +24726,113 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
     }
     setSavingVendor(false);
   }
+
+  // ── F072 Secondary-Vendor handlers (BC-write model) ────────────────────────
+  // Open the ALT modal for a BC item + focus the selector on it. seedRow (optional) pre-fills a
+  // single row when editing an existing secondary vendor via the selector's ✎ button.
+  function openAltModal(item,seedRow){
+    setSelectorItem(item);
+    setAltErr("");setAltStatus({});
+    setAltNewVendorForRow(null);setAltNewVendorErr("");setAltNewVendorName("");setAltNewVendorPhone("");setAltNewVendorEmail("");
+    setAltModalItem(item);
+    setAltRows(seedRow?[{vendorNo:seedRow.vendorNo||"",vendorName:seedRow.vendorName||"",price:seedRow.price==null?"":String(seedRow.price),leadTimeDays:seedRow.leadTimeDays==null?"":String(seedRow.leadTimeDays)}]
+      :[{vendorNo:"",vendorName:"",price:"",leadTimeDays:""}]);
+  }
+  function updateAltRow(i,field,val){setAltRows(rows=>rows.map((r,j)=>j===i?{...r,[field]:val}:r));}
+  // Save (S3) — WRITES to BC per row: Purchase Price (bcPushPurchasePrice) + Item Vendor Catalog
+  // (bcUpsertItemVendorLeadTime). F071 Tier-A HARD-BLOCK when BC is unverified/down (catalog
+  // integrity — never push a stale cost while BC can't be reached). No silent success: gate BEFORE
+  // calling (bcPushPurchasePrice returns {ok:true} on a missing token), check res.ok / outcome, mark
+  // each row, keep the modal open on any failure, and only refresh + close when ALL rows succeed.
+  async function saveAltRows(){
+    if(!altModalItem)return;
+    setAltErr("");setAltStatus({});
+    // F071 Tier-A HARD-BLOCK — writes Purchase Price + Item Vendor Catalog to BC.
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
+    // Validate every non-blank row up front (all-or-nothing on validation; writes still per-row).
+    const jobs=[]; // {idx,vendorNo,vendorName,price,lt}
+    for(let i=0;i<altRows.length;i++){
+      const r=altRows[i];
+      const vendorNo=(r.vendorNo||"").trim();
+      if(!vendorNo)continue; // silently skip rows with no vendor chosen
+      const price=(r.price===""||r.price==null)?null:+r.price;
+      if(price==null||isNaN(price)||price<=0){setAltErr(`Row ${i+1}: enter a price greater than 0.`);return;} // M1: reject $0 — never post a junk $0 Purchase Price to BC (matches applySecondary px>0 guard)
+      const lt=(r.leadTimeDays===""||r.leadTimeDays==null)?null:parseInt(r.leadTimeDays,10);
+      if(lt!=null&&(isNaN(lt)||lt<0)){setAltErr(`Row ${i+1}: lead time must be a whole number of days (0+).`);return;}
+      jobs.push({idx:i,vendorNo,vendorName:r.vendorName||"",price,lt});
+    }
+    if(!jobs.length){setAltErr("Choose a BC vendor and enter a price for at least one row.");return;}
+    setAltSaving(true);
+    const itemNo=altModalItem.number;
+    const vendorItemNo=altModalItem._vendorItemNo||"";
+    // Concrete base UoM (LOCKED: fetch ItemCard base UoM; "EA" only if unavailable). Never blank.
+    const uom=(await bcGetItemBaseUom(itemNo))||"EA";
+    const status={};let allOk=true;
+    for(const j of jobs){
+      // Purchase Price FIRST (the price is the money-path record); LT only if PP succeeds + LT>0.
+      const ppRes=await bcPushPurchasePrice(itemNo,j.vendorNo,j.price,Date.now(),uom);
+      if(!ppRes||!ppRes.ok){allOk=false;status[j.idx]={ok:false,msg:`Purchase Price write failed${ppRes&&ppRes.reason?` (${ppRes.reason})`:""}.`};continue;}
+      if(j.lt!=null&&j.lt>0){
+        const ltRes=await bcUpsertItemVendorLeadTime({partNumber:itemNo,vendorNo:j.vendorNo,vendorName:j.vendorName,vendorItemNo,leadTimeDays:j.lt,projectId:null,uid:_appCtx.uid,cid:_appCtx.companyId});
+        if(!ltRes||(ltRes.outcome!=="updated"&&ltRes.outcome!=="created")){allOk=false;status[j.idx]={ok:false,msg:`Price saved, but lead time write failed${ltRes&&ltRes.error?`: ${ltRes.error}`:""}.`};continue;}
+      }
+      status[j.idx]={ok:true,msg:j.lt!=null&&j.lt>0?"Saved to BC (price + lead time).":"Saved to BC (price)."};
+    }
+    setAltStatus(status);
+    setAltSaving(false);
+    if(allOk){
+      setSelRefreshTick(t=>t+1); // re-read the secondary list from BC
+      setAltModalItem(null);
+    }else{
+      setAltErr("Some rows did not save to BC. Fix the flagged rows and try again — nothing was silently skipped.");
+    }
+  }
+
+  // Load the source groups whenever the focused item changes (or a write bumps selRefreshTick).
+  // BC is the source of truth: ① PRIMARY = Item Card Vendor_No; ② SECONDARY VENDORS = the item's BC
+  // Purchase-Price vendors MINUS the primary, with per-vendor lead time from the Item Vendor Catalog;
+  // ③ cross-ref parts from the existing config/alternates DB. ①/② are lazy + skipped when BC is
+  // offline (!_bcToken). All reads only — no writes here.
+  useEffect(()=>{
+    if(!selectorItem){setSelBcVendors([]);setSelPrimaryVendor("");setSelCrossRefs([]);return;}
+    let cancelled=false;
+    const itemNo=selectorItem.number||"";
+    const pn=selectorItem.partNumber||"";
+    // ① primary vendor (Item Card Vendor_No) — reuse enriched name if present, else lazy fetch.
+    // primaryNoP resolves the vendor NUMBER too so ② can exclude it from the secondary list.
+    const known=vendorNames[itemNo];
+    let primaryNoP=Promise.resolve("");
+    if(itemNo&&_bcToken){
+      primaryNoP=bcGetItemVendorNo(itemNo);
+      primaryNoP.then(vNo=>vNo?bcGetVendorName(vNo):(known||"")).then(nm=>{if(!cancelled)setSelPrimaryVendor(nm||known||"");}).catch(()=>{if(!cancelled)setSelPrimaryVendor(known||"");});
+    }else{setSelPrimaryVendor(known||"");}
+    // ② SECONDARY VENDORS — every BC Purchase-Price vendor for this item MINUS the primary, with
+    // each vendor's lead time resolved from the Item Vendor Catalog. Lazy; skipped when BC offline.
+    if(itemNo&&_bcToken){
+      Promise.all([bcFetchPurchasePricesMultiVendor([itemNo]),primaryNoP]).then(async([map,primaryNo])=>{
+        const out=[];
+        for(const [key,val] of map.entries()){
+          if(!key.startsWith(itemNo+":"))continue;
+          const vendorNo=key.slice(itemNo.length+1);
+          if(!vendorNo)continue;
+          if(primaryNo&&vendorNo===primaryNo)continue; // exclude the primary — it shows in group ①
+          const nm=await bcGetVendorName(vendorNo);
+          let ltDays=null;try{const lt=await bcLookupItemVendorLeadTime(itemNo,vendorNo);if(lt!=null)ltDays=lt;}catch(_){}
+          out.push({vendorNo,vendorName:nm||vendorNo,price:val.directUnitCost,uom:val.uom,leadTimeDays:ltDays});
+        }
+        if(!cancelled)setSelBcVendors(out);
+      }).catch(()=>{if(!cancelled)setSelBcVendors([]);});
+    }else setSelBcVendors([]);
+    // ③ cross-ref parts (existing config/alternates) filtered to this part number
+    if(pn){
+      loadAlternates(_appCtx.uid).then(alts=>{
+        const norm=normPart(pn);
+        const matches=(alts||[]).filter(a=>a&&a.replacement&&a.replacement.partNumber&&normPart(a.originalPN)===norm);
+        if(!cancelled)setSelCrossRefs(matches);
+      }).catch(()=>{if(!cancelled)setSelCrossRefs([]);});
+    }else setSelCrossRefs([]);
+    return()=>{cancelled=true;};
+  },[selectorItem&&selectorItem.number,selectorItem&&selectorItem.partNumber,selRefreshTick]);
 
   const backdropMdRef=useRef(false);
   return ReactDOM.createPortal(
@@ -25102,8 +25304,14 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
                     {purchaseData[item.number]?.postingDate?fmtDate(purchaseData[item.number].postingDate):(purchaseData[item.number]===null?"No POs":"…")}
                   </td>
                   <td style={{padding:"7px 10px",textAlign:"center"}}>
-                    <button onClick={e=>{e.stopPropagation();const it=_withMeta(item);onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
-                      style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`})}>Use</button>
+                    {/* F072 S1: Use = commit this BC item; ALT = manage this item's alternate
+                        suppliers. B055 guard: flexShrink:0 on both so neither is squeezed off-screen. */}
+                    <div style={{display:"flex",gap:6,justifyContent:"center",alignItems:"center"}}>
+                      <button onClick={e=>{e.stopPropagation();const it=_withMeta(item);onSelect(customerSupplied?{...it,unitCost:0,_customerSupplied:true}:it);}}
+                        style={btn(C.accentDim,C.accent,{fontSize:11,padding:"3px 12px",border:`1px solid ${C.accent}55`,flexShrink:0})}>Use</button>
+                      <button title="Manage alternate suppliers for this item" onClick={e=>{e.stopPropagation();openAltModal(item);}}
+                        style={btn("#2a1a40","#a78bfa",{fontSize:11,padding:"3px 10px",border:"1px solid #a78bfa55",flexShrink:0})}>ALT</button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -25122,6 +25330,36 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
             {loading?"Loading…":"Load More"}
           </button>
         )}
+        {/* F072 S4 — unified source selector (BC-write model). How to source the focused item:
+            ① PRIMARY (Item Card Vendor_No, green pill, non-selectable) · ② SECONDARY VENDORS (BC
+            Purchase-Price vendors minus primary, price + lead time, selectable + ✎ edit) · ③ cross-ref
+            parts ("CROSS"). Selecting ② points the row at that vendor AND re-writes its BC PP + lead
+            time; ③ reuses the cross flow (no catalog write). Header shows the Supplier Part # (never
+            the internal MTX item No). flexShrink:0 + capped scroll so it never squeezes the table. */}
+        {(selectorItem||selBcVendors.length||selCrossRefs.length)?(
+          <div style={{borderTop:`1px solid ${C.border}`,marginTop:10,paddingTop:10,flexShrink:0,maxHeight:220,overflow:"auto"}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+              <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:0.5}}>SELECT A SOURCE</span>
+              {selectorItem&&<span style={{fontSize:11,color:C.sub,fontFamily:"monospace"}}>{selectorItem._vendorItemNo||selectorItem.partNumber||""}</span>}
+              {selectorItem&&selectorItem.number&&<button onClick={()=>openAltModal(selectorItem)} style={btn("#2a1a40","#a78bfa",{fontSize:11,padding:"2px 10px",border:"1px solid #a78bfa55",marginLeft:"auto"})}>+ Add secondary vendor</button>}
+            </div>
+            <SourceOptionList groups={[
+              {label:"Primary vendor",rows:selPrimaryVendor?[{id:"primary",title:selPrimaryVendor,sub:"BC Item Card vendor (auto-selected)",pill:"PRIMARY"}]:[]},
+              {label:"Secondary Vendors",rows:selBcVendors.map((v,i)=>({id:"sv"+i,title:v.vendorName,
+                sub:[v.price!=null?`$${(+v.price).toFixed(2)}${v.uom?" / "+v.uom:""}`:null,v.leadTimeDays!=null?`${v.leadTimeDays}d lead`:null].filter(Boolean).join(" · ")||"no price / lead set",
+                selectable:true,
+                onSelect:()=>{onApplySecondary&&onApplySecondary({kind:"secondary",itemNo:selectorItem&&selectorItem.number,vendorItemNo:selectorItem&&(selectorItem._vendorItemNo||selectorItem.partNumber),supplier:v.vendorName,vendorNo:v.vendorNo,price:v.price,leadTimeDays:v.leadTimeDays,uom:v.uom});},
+                onEdit:()=>openAltModal(selectorItem,{vendorNo:v.vendorNo,vendorName:v.vendorName,price:v.price,leadTimeDays:v.leadTimeDays})}))},
+              {label:"Cross-referenced parts",rows:selCrossRefs.map((a,i)=>({id:"cr"+i,title:a.replacement.partNumber,
+                sub:a.replacement.description||"substitute part",tag:"CROSS",
+                selectable:true,
+                onSelect:()=>{onApplySecondary&&onApplySecondary({kind:"cross",partNumber:a.replacement.partNumber,description:a.replacement.description,unitCost:a.replacement.unitCost});}}))},
+            ]}/>
+            {!(selPrimaryVendor||selBcVendors.length||selCrossRefs.length)&&(
+              <div style={{fontSize:11,color:C.muted,padding:"2px 2px"}}>No secondary vendors yet. Click <b style={{color:"#a78bfa"}}>ALT</b> on a search result (or <b style={{color:"#a78bfa"}}>+ Add secondary vendor</b>) to add one in Business Central.</div>
+            )}
+          </div>
+        ):null}
         {/* Drawing reference — full-width strip at bottom.
             DECISION(v1.19.801): flexShrink:0 prevents the strip from interacting with the
             flex:1 results table and causing the modal to overflow the viewport. */}
@@ -25196,6 +25434,107 @@ function BCItemBrowserModal({onSelect,onClose,initialQuery,targetRow,pages,syncE
           style={{position:"absolute",right:0,bottom:0,width:18,height:18,cursor:"nwse-resize",userSelect:"none",zIndex:10,
             background:"linear-gradient(135deg, transparent 0%, transparent 45%, "+C.muted+" 45%, "+C.muted+" 55%, transparent 55%, transparent 75%, "+C.muted+" 75%, "+C.muted+" 85%, transparent 85%)"}}
         />
+        {/* F072 S2/S3 — Manage Alternate Suppliers modal (own portal, zIndex:320 over the browser's
+            300). Each row links a BC VENDOR (dropdown + Create-New) to a Price + Lead Time; Save
+            WRITES BC Purchase Price + Item Vendor Catalog per row. NO MFR field (identical product =
+            same MFR). References the Supplier Part # — never the internal MTX item No. F071 Tier-A
+            HARD-BLOCK: Save + Create-New are disabled when BC is unverified/down. */}
+        {altModalItem&&ReactDOM.createPortal((()=>{
+          const _partLabel=altModalItem._vendorItemNo||altModalItem.partNumber||"";
+          return(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:320,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}
+            onMouseDown={e=>{if(e.target===e.currentTarget)setAltModalItem(null);}}>
+            <div style={{...card(),width:"100%",maxWidth:620,maxHeight:"85vh",display:"flex",flexDirection:"column",overflow:"hidden"}} onMouseDown={e=>e.stopPropagation()}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,gap:12,flexShrink:0}}>
+                <div style={{minWidth:0}}>
+                  <div style={{fontSize:16,fontWeight:700}}>Manage Alternate Suppliers</div>
+                  <div style={{fontSize:12,color:C.sub,marginTop:2,fontFamily:"monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{_partLabel||"—"}{altModalItem.displayName?` — ${altModalItem.displayName}`:""}</div>
+                  <div style={{fontSize:11,color:C.muted,marginTop:6,lineHeight:1.4}}>Add a secondary BC vendor for the IDENTICAL product (e.g. an online retailer when the local supplier can't get it). Saving writes each vendor's <b>Purchase Price</b> and <b>lead time</b> to Business Central. For a substitute PART#, use Cross-Reference instead.</div>
+                </div>
+                <button onClick={()=>setAltModalItem(null)} style={{background:"none",border:"none",color:C.muted,fontSize:18,cursor:"pointer",flexShrink:0}}>✕</button>
+              </div>
+              {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4,marginBottom:10,flexShrink:0,background:"#3a0a0a",border:"1px solid #ef444455",borderRadius:6,padding:"7px 10px"}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
+              <div style={{flex:1,minHeight:0,overflow:"auto"}}>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 92px 92px 30px",gap:6,alignItems:"center",marginBottom:6}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.5}}>BC VENDOR</div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.5}}>PRICE</div>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,letterSpacing:0.5}}>LEAD (days)</div>
+                  <div/>
+                </div>
+                {altRows.map((r,i)=>(
+                  <div key={i} style={{marginBottom:6}}>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 92px 92px 30px",gap:6,alignItems:"center"}}>
+                      <select value={r.vendorNo||""} onChange={e=>{const val=e.target.value;
+                        if(val==="__NEW__"){setAltNewVendorForRow(i);setAltNewVendorErr("");setAltNewVendorName("");setAltNewVendorPhone("");setAltNewVendorEmail("");}
+                        else{const v=bcVendors.find(x=>x.number===val);setAltRows(rows=>rows.map((rr,j)=>j===i?{...rr,vendorNo:val,vendorName:v?v.displayName:""}:rr));}
+                      }} style={{background:"#0a0a12",border:"1px solid #6060a0",borderRadius:8,padding:"7px 8px",color:C.text,fontSize:12,width:"100%",boxSizing:"border-box"}}>
+                        <option value="">— Select vendor —</option>
+                        {bcVendors.map(v=><option key={v.number} value={v.number}>{v.displayName} ({v.number})</option>)}
+                        <option value="__NEW__">+ Create New Vendor…</option>
+                      </select>
+                      <input value={r.price} inputMode="decimal" onChange={e=>updateAltRow(i,"price",e.target.value.replace(/[^0-9.]/g,''))} placeholder="0.00" style={{...inp({fontSize:12})}}/>
+                      <input value={r.leadTimeDays} inputMode="numeric" onChange={e=>updateAltRow(i,"leadTimeDays",e.target.value.replace(/[^0-9]/g,''))} placeholder="—" style={{...inp({fontSize:12})}}/>
+                      <button onClick={()=>{setAltRows(rows=>rows.filter((_,j)=>j!==i));setAltStatus(s=>{const n={...s};delete n[i];return n;});}} title="Delete row" style={{background:"none",border:`1px solid ${C.border}`,borderRadius:4,color:C.muted,cursor:"pointer",padding:"5px 0",fontSize:12}}>✕</button>
+                    </div>
+                    {altStatus[i]&&<div style={{fontSize:11,color:altStatus[i].ok?"#4ade80":C.red,marginTop:3,paddingLeft:2}}>{altStatus[i].ok?"✓ ":"✕ "}{altStatus[i].msg}</div>}
+                    {altNewVendorForRow===i&&(
+                      <div style={{border:"1px solid #6060a0",borderRadius:8,padding:10,marginTop:6,background:"#0a0a12"}}>
+                        <div style={{fontSize:11,fontWeight:700,color:"#a78bfa",marginBottom:6}}>Create New BC Vendor</div>
+                        <input value={altNewVendorName} onChange={e=>setAltNewVendorName(e.target.value)} placeholder="Vendor name" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                        <input value={altNewVendorPhone} onChange={e=>setAltNewVendorPhone(e.target.value)} placeholder="Phone (optional)" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                        <input value={altNewVendorEmail} onChange={e=>setAltNewVendorEmail(e.target.value)} placeholder="Email (optional)" style={{...inp({marginBottom:6,fontSize:12})}}/>
+                        <div style={{display:"flex",gap:4,marginBottom:6}}>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:9,color:C.muted,marginBottom:2}}>Gen. Bus. Post. Group</div>
+                            <select value={altNewVendorGenBus} onChange={e=>setAltNewVendorGenBus(e.target.value)} style={{...inp({fontSize:11,padding:"5px 6px",width:"100%",boxSizing:"border-box"})}}>
+                              <option value="TRADE">TRADE</option><option value="DOMESTIC">DOMESTIC</option><option value="FOREIGN">FOREIGN</option>
+                            </select>
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:9,color:C.muted,marginBottom:2}}>Vendor Post. Group</div>
+                            <select value={altNewVendorPostGroup} onChange={e=>setAltNewVendorPostGroup(e.target.value)} style={{...inp({fontSize:11,padding:"5px 6px",width:"100%",boxSizing:"border-box"})}}>
+                              <option value="PARTS">PARTS</option><option value="TRADE">TRADE</option><option value="SERVICES">SERVICES</option>
+                            </select>
+                          </div>
+                          <div style={{flex:1}}>
+                            <div style={{fontSize:9,color:C.muted,marginBottom:2}}>Tax Area Code</div>
+                            <select value={altNewVendorTaxArea} onChange={e=>setAltNewVendorTaxArea(e.target.value)} style={{...inp({fontSize:11,padding:"5px 6px",width:"100%",boxSizing:"border-box"})}}>
+                              <option value="NONTAXABLE">NONTAXABLE</option><option value="">— None —</option>
+                            </select>
+                          </div>
+                        </div>
+                        {altNewVendorErr&&<div style={{fontSize:11,color:C.red,marginBottom:6}}>{altNewVendorErr}</div>}
+                        <div style={{display:"flex",gap:6}}>
+                          <button type="button" onClick={()=>{setAltNewVendorForRow(null);setAltNewVendorErr("");}} style={btn(C.border,C.sub,{flex:1,fontSize:11,padding:"5px 8px"})}>Cancel</button>
+                          <button type="button" disabled={!altNewVendorName.trim()||altCreatingVendor||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""} onClick={async()=>{
+                            // F071 Tier-A HARD-BLOCK — creating a vendor writes to BC.
+                            if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
+                            setAltCreatingVendor(true);setAltNewVendorErr("");
+                            try{
+                              const v=await bcCreateVendor(altNewVendorName.trim(),altNewVendorPhone.trim(),altNewVendorEmail.trim(),{genBusPostGroup:altNewVendorGenBus,vendorPostGroup:altNewVendorPostGroup,taxAreaCode:altNewVendorTaxArea});
+                              setBcVendors(prev=>[...prev,v].sort((a,b)=>(a.displayName||"").localeCompare(b.displayName||"")));
+                              setAltRows(rows=>rows.map((rr,j)=>j===altNewVendorForRow?{...rr,vendorNo:v.number,vendorName:v.displayName}:rr));
+                              setAltNewVendorForRow(null);setAltNewVendorName("");setAltNewVendorPhone("");setAltNewVendorEmail("");
+                            }catch(e){setAltNewVendorErr(e.message||"Failed");}
+                            setAltCreatingVendor(false);
+                          }} style={btn(C.accent,"#fff",{flex:2,fontSize:11,padding:"5px 8px",opacity:!altNewVendorName.trim()||altCreatingVendor||bcCommitGate?0.5:1,cursor:bcCommitGate?"not-allowed":undefined})}>{altCreatingVendor?"Creating…":bcCommitGate?"Create (BC offline)":"Create in BC"}</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                <button onClick={()=>setAltRows(rows=>[...rows,{vendorNo:"",vendorName:"",price:"",leadTimeDays:""}])} style={btn(C.border,C.sub,{fontSize:12,marginTop:4})}>+ Add vendor</button>
+              </div>
+              {altErr&&<div style={{color:C.red,fontSize:12,marginTop:8,flexShrink:0}}>{altErr}</div>}
+              <div style={{display:"flex",justifyContent:"flex-end",alignItems:"center",gap:8,marginTop:12,flexShrink:0}}>
+                <button onClick={()=>setAltModalItem(null)} style={btn(C.border,C.sub,{fontSize:13})}>Cancel</button>
+                <button disabled={altSaving||!!bcCommitGate} title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):"Write these vendors' price + lead time to Business Central"} onClick={saveAltRows} style={btn("#166534","#4ade80",{fontSize:13,fontWeight:700,opacity:altSaving||bcCommitGate?0.5:1,cursor:bcCommitGate?"not-allowed":undefined})}>{altSaving?"Saving to BC…":bcCommitGate?"Save to BC (offline)":"Save to BC"}</button>
+              </div>
+            </div>
+          </div>);
+        })(),
+          document.body
+        )}
       </div>
     </div>,
     document.body
@@ -29362,6 +29701,67 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       commitBcItem(targetId,bcItem,false);
     }
   }
+  // F072 S5 (BC-write model) — select a SECONDARY VENDOR (a BC Purchase-Price vendor) for a BOM row.
+  // TWO effects: (1) point the row's purchasing at that vendor + adopt its price/lead time (RMW), and
+  // (2) RE-WRITE the vendor's BC Purchase Price + Item Vendor Catalog at select-time (refresh, so BC
+  // stays the source of truth). Row stamp:
+  //   · vendor: bcVendorName + bcVendorNo (a BC secondary vendor always carries a real Vendor_No).
+  //   · price: unitPrice + priceSource:"manual" + priceDate + _priceStamp() (only when price > 0).
+  //   · lead:  leadTimeDays + leadTimeSource:"manual" (only when a lead time is given).
+  //   · guard: vendorSource:"manual-secondary" — provenance so a FUTURE auto-reprice / vendor-auto-
+  //     assign skips this explicit pick (mirrors priceSource:"manual"). Additive field; preserved on save.
+  // F071 Tier-A HARD-BLOCK when BC is unverified/down (LOCKED: no local-only stamp — block the whole
+  // action). No silent success: gate BEFORE writing (bcPushPurchasePrice returns {ok:true} on a missing
+  // token) and surface any BC write failure. Cross-ref PART picks (kind:"cross") are handled by the
+  // parent (applyBcItem/commitBcItem) and never reach here.
+  async function applySecondary(bomRowId,pick){
+    if(!pick)return;
+    // F071 Tier-A HARD-BLOCK — select-secondary writes PP + IVC to BC. Block the whole action when BC
+    // is unverified/down; do NOT fall back to a local-only row stamp (LOCKED decision, 2026-07-28).
+    if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;}
+    const live=latestPanelRef.current||panel;
+    const row=(live.bom||[]).find(r=>r.id===bomRowId);
+    if(!row)return;
+    const now=Date.now();
+    const bom=(live.bom||[]).map(r=>{
+      if(r.id!==bomRowId)return r;
+      const u={...r,vendorSource:"manual-secondary"};
+      if(pick.supplier){u.bcVendorName=pick.supplier;u.bcVendorNo=pick.vendorNo||"";}
+      else if(pick.vendorNo)u.bcVendorNo=pick.vendorNo;
+      // price>0 guard (Coach): a $0 BC PurchasePrice record shouldn't stamp priceSource:"manual" and leave the row red.
+      if(pick.price!=null&&!isNaN(+pick.price)&&+pick.price>0){u.unitPrice=+pick.price;u.priceSource="manual";u.priceDate=now;Object.assign(u,_priceStamp());}
+      if(pick.leadTimeDays!=null&&!isNaN(+pick.leadTimeDays)){u.leadTimeDays=+pick.leadTimeDays;u.leadTimeSource="manual";u.leadTimeUpdatedAt=now;u.leadTimeEstimated=false;}
+      // Preserve any active ECO tag on an untagged base row edited in ECO scope (mirrors commitBcItem).
+      const _ecoTag=_ecoTagForEdit(r);
+      if(_ecoTag)Object.assign(u,_ecoTag);
+      return u;
+    });
+    const updated={...live,bom};
+    latestPanelRef.current=updated;
+    onUpdate(updated);
+    try{saveProjectPanel(uid,projectId,panel.id,updated,true).catch(e=>console.warn("applySecondary save failed:",e));}catch(e){}
+    // (2) RE-WRITE BC: refresh the selected vendor's Purchase Price + Item Vendor Catalog at select-time.
+    const itemNo=(pick.itemNo||"").trim();
+    const vendorNo=(pick.vendorNo||"").trim();
+    if(itemNo&&vendorNo){
+      try{
+        // Reuse the PP record's own UoM (keeps the exact price lane); fall back to the item's base UoM,
+        // then "EA" — NEVER blank (a blank UoM no-ops the supersede → a duplicate PP lane).
+        let uom=(pick.uom||"").trim();
+        if(!uom)uom=(await bcGetItemBaseUom(itemNo))||"EA";
+        const px=+pick.price;
+        if(px>0){
+          const ppRes=await bcPushPurchasePrice(itemNo,vendorNo,px,now,uom);
+          if(!ppRes||!ppRes.ok)arcAlert(`The vendor was selected for this row, but refreshing its Purchase Price in Business Central failed${ppRes&&ppRes.reason?` (${ppRes.reason})`:""}.`);
+        }
+        const lt=+pick.leadTimeDays;
+        if(lt>0){
+          const ltRes=await bcUpsertItemVendorLeadTime({partNumber:itemNo,vendorNo,vendorName:pick.supplier||"",vendorItemNo:pick.vendorItemNo||"",leadTimeDays:lt,projectId,uid,cid:_appCtx.companyId});
+          if(!ltRes||(ltRes.outcome!=="updated"&&ltRes.outcome!=="created"))arcAlert(`The vendor was selected for this row, but refreshing its lead time in Business Central failed${ltRes&&ltRes.error?`: ${ltRes.error}`:""}.`);
+        }
+      }catch(e){console.warn("applySecondary BC re-write error:",e&&e.message);arcAlert("The vendor was selected for this row, but the Business Central refresh failed. Check the BC connection.");}
+    }
+  }
   // DECISION(v1.19.376): Manual price entry shows a confirmation popup asking if the cost is
   // Confirmed (push to BC Item Card + Purchase Price) or Budgetary (BOM only, no BC, no priceDate).
   // DECISION(v1.19.405): Price validation — reject negative, warn on high values.
@@ -32969,6 +33369,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             if(bcBrowserTarget){
               applyBcItem(bcBrowserTarget,item);
               if(item._created)setBcNewlyCreated(prev=>{const s=new Set(prev);s.add(bcBrowserTarget);return s;});
+            }
+            setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");
+          }}
+          onApplySecondary={pick=>{
+            // F072 (BC-write model) — a SECONDARY VENDOR pick points the row at that vendor AND
+            // re-writes its BC Purchase Price + lead time (applySecondary, F071-gated); a cross-ref
+            // PART pick reuses the existing cross flow (applyBcItem → cross/correct prompt, no catalog write).
+            if(bcBrowserTarget){
+              if(pick&&pick.kind==="cross"){
+                applyBcItem(bcBrowserTarget,{number:pick.partNumber,displayName:pick.description||"",unitCost:pick.unitCost,_vendorItemNo:pick.partNumber});
+              }else{
+                applySecondary(bcBrowserTarget,pick);
+              }
             }
             setBcBrowserOpen(false);setBcBrowserTarget(null);setBcBrowserQuery("");
           }}
