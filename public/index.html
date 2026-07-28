@@ -308,6 +308,53 @@ function addBreadcrumb(type,message,data){
     while(_debugBreadcrumbs.length>DEBUG_BREADCRUMB_MAX)_debugBreadcrumbs.shift();
   }catch(e){}
 }
+// ── DEBUG-WRITE RATE LIMITER (B016 Fix D — the self-amplifier) ──
+// A BC error storm produces many DISTINCT console.error messages → distinct 60s dedup
+// keys → a burst of debugLogs.add() writes onto the SAME single gRPC WriteStream the BC
+// failures are already stressing. That burst is the self-amplifier that can tip the
+// stream into RESOURCE_EXHAUSTED / "maximum backoff" (the session-freeze "disconnecting").
+// We do NOT drop captures — entries are buffered and flushed at a BOUNDED rate with a cap
+// on concurrent in-flight writes, so debug logging can never itself saturate the write
+// stream. The entry SHAPE is unchanged (the B064 aggregator + admin Debug Logs viewer
+// consume these docs). Under normal use (a lone occasional error) the queue holds one item
+// and flushes within ~1s — effectively unchanged behavior.
+const _debugWriteQueue=[];
+const _DEBUG_WRITE_FLUSH_MS=1000;      // flush cadence
+const _DEBUG_WRITE_MAX_PER_FLUSH=3;    // at most N adds dispatched per flush tick
+const _DEBUG_WRITE_MAX_INFLIGHT=3;     // cap concurrent outstanding adds
+const _DEBUG_WRITE_QUEUE_CAP=500;      // memory guard — pathological unbounded storm only
+let _debugWriteInflight=0;
+let _debugFlushTimer=null;
+function _debugFlushTick(){
+  // Stop the timer once fully drained (no queued + none in flight).
+  if(!_debugWriteQueue.length&&_debugWriteInflight===0){clearInterval(_debugFlushTimer);_debugFlushTimer=null;return;}
+  // Brake active (a debug write itself just failed) → hold, don't dispatch. Entries stay
+  // queued and flush once the 30s brake clears; nothing is dropped.
+  if(_debugSelfError)return;
+  let dispatched=0;
+  while(_debugWriteQueue.length&&dispatched<_DEBUG_WRITE_MAX_PER_FLUSH&&_debugWriteInflight<_DEBUG_WRITE_MAX_INFLIGHT){
+    const item=_debugWriteQueue.shift();
+    dispatched++;_debugWriteInflight++;
+    fbDb.collection(item.path).add(item.entry).then(()=>{
+      _debugWriteInflight--;
+    }).catch((e)=>{
+      _debugWriteInflight--;
+      // Same brake as before: a failing debug write pauses ALL debug writes for 30s so we
+      // never pile more writes onto an already-failing stream.
+      _debugSelfError=true;
+      setTimeout(()=>{_debugSelfError=false;},30000);
+      _origConsoleWarn('Debug log emit failed:',e.message);
+    });
+  }
+}
+function _enqueueDebugWrite(path,entry){
+  _debugWriteQueue.push({path,entry});
+  // Memory guard: under a pathological unbounded storm, cap the buffer by dropping the
+  // OLDEST queued entry. Normal storms (tens of distinct messages) never reach this cap,
+  // so no captures are lost in practice.
+  if(_debugWriteQueue.length>_DEBUG_WRITE_QUEUE_CAP)_debugWriteQueue.shift();
+  if(!_debugFlushTimer)_debugFlushTimer=setInterval(_debugFlushTick,_DEBUG_WRITE_FLUSH_MS);
+}
 async function logDebugEntry(opts){
   if(_debugSelfError)return;
   if(!fbAuth.currentUser)return; // drop pre-auth events (writes would fail rules anyway)
@@ -331,11 +378,11 @@ async function logDebugEntry(opts){
       extra:opts.extra||null,
     };
     const path=_appCtx&&_appCtx.companyId?`companies/${_appCtx.companyId}/debugLogs`:`users/${uid}/debugLogs`;
-    await fbDb.collection(path).add(entry);
+    // B016 Fix D: enqueue for rate-limited write instead of an immediate per-error add().
+    // Throttles the WRITE rate only — the capture is preserved (buffered, then flushed).
+    _enqueueDebugWrite(path,entry);
   }catch(e){
-    _debugSelfError=true;
-    setTimeout(()=>{_debugSelfError=false;},30000);
-    _origConsoleWarn('Debug log emit failed:',e.message);
+    _origConsoleWarn('Debug log build failed:',e.message);
   }
 }
 function _debugEmit(source,message,stack){

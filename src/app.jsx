@@ -40596,6 +40596,20 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!hasBom)return;
     const t=setTimeout(()=>{
       if(bcOpenSyncRan.current||!_bcToken)return;
+      // B016 Fix C: don't spin the on-open re-sync on a planning endpoint we already know is
+      // structurally down (B064). A persistently-failing planning web service never converges
+      // — a failed sync never stamps bomSyncHash, so this effect re-fires + re-writes the
+      // bomSyncPending markers on EVERY open, forever, piling whole-doc marker writes onto the
+      // same gRPC WriteStream the BC failures are already stressing (the write-exhaustion
+      // amplifier). Scope the skip to a PLANNING-shaped broken segment only, so an unrelated
+      // broken endpoint never suppresses a HEALTHY planning sync. The fault clears the moment a
+      // call to that endpoint succeeds, so the next open re-syncs normally once BC recovers.
+      try{
+        if(typeof _bcBrokenEndpoints==="function"&&_bcBrokenEndpoints().some(seg=>/planning/i.test(seg))){
+          console.log("[OPEN BC SYNC] skipped — planning endpoint is structurally broken (B064); not re-attempting/re-writing markers until it clears");
+          return;
+        }
+      }catch(_){}
       bcOpenSyncRan.current=true;
       (async()=>{
         let synced=0;
