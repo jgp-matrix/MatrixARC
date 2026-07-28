@@ -108,3 +108,45 @@ Jon's Test-V.063 review revealed the locked "ARC-side-only" scope was wrong for 
 2. **Select-secondary also writes.** Selecting a SECONDARY vendor in the BC Item Browser ALSO pushes/refreshes that vendor's Purchase Price + lead time in BC at select-time (not only in the ALT modal), in addition to pointing the BOM row's purchasing at that vendor.
 
 **Architectural consequence:** BC is now the source of truth for secondary vendors → an item's "Secondary Vendors" list ≈ its BC Purchase Price records (read via `bcFetchPurchasePricesMultiVendor`), minus the primary. The ARC-side `config/itemAlternates` learning DB from the superseded build is likely REDUNDANT (Coach to confirm during re-scope — may drop it entirely). All F072 writes are **user-initiated + F071-gated + use the hardened B057 helpers** (distinct from the disabled auto-pricing). Re-scope → Coach build-ready plan → rebuild.
+
+---
+
+# Build-ready re-scope (Coach, 2026-07-28 · BC-write model · base v1.24.43 · `src/app.jsx` only)
+
+**HIGH stakes — writes Purchase Price + ItemVendorCatalog (the pricing-emergency cards).** Helpers all exist + hardened.
+
+## Grounding
+- **BC-vendor picker + Create-New:** `bcListVendors()` :6896; `bcCreateVendor(name,phone,email,opts)` :5046 (throws on fail); reuse the inline `__NEW__`-in-dropdown pattern :25031-25065 (defaults TRADE/PARTS/NONTAXABLE).
+- **`bcPushPurchasePrice(itemNo,vendorNo,unitCost,startingDate,uom)`** :6039 → `{ok,reason}`, never throws (B057-hardened). ⚠ returns `{ok:true}` when `!_bcToken` :6040 (silent-success trap → gate BC first). Blank UoM no-ops the supersede :6067 → MUST pass a concrete UoM.
+- **`bcUpsertItemVendorLeadTime({partNumber,vendorNo,vendorName,vendorItemNo,leadTimeDays,projectId,uid,cid})`** :5212 → auditEntry `{outcome}`; HARD-REJECT blank partNumber :5226; needs vendorNo + LT>0 + token; audit → `bcLeadTimeWrites`. `partNumber` = BC **Item_No** (`item.number`), not the display part#.
+- **`bcGetItemVendorNo(itemNo)`** :6967 = PRIMARY vendor. **`bcFetchPurchasePricesMultiVendor`** :6446 = Secondary Vendors source (minus primary). `bcLookupItemVendorLeadTime(pn,vendorNo)` :5323 for each secondary's LT. `bcGetVendorName` :6984.
+- **Item shape:** `item.number` = internal BC No ("MTX-######", write key); `item._vendorItemNo` :5404 = **Supplier Part #** (display, req #2). No base UoM on item → fetch ItemCard `Base_Unit_of_Measure_Code` or default "EA".
+- **F071 gate:** `_bcCommitBlocked()` :601 / `useBcCommitGate()` :628 (already in modal :24168); hard-block pattern :24903/:24923.
+
+## Reuse vs rewrite vs DROP
+- **REUSE:** `SourceOptionList`, ALT button placement, ALT modal portal shell, selector insertion point, `onApplySecondary` wiring.
+- **REWRITE (guts ARC-side→BC-write):** (1) supplier free-text → BC-vendor dropdown+Create-New; (2) Save → `bcPushPurchasePrice`+`bcUpsertItemVendorLeadTime` per row; (3) "Your alternates" → "Secondary Vendors" from `bcFetchPurchasePricesMultiVendor` minus primary + green PRIMARY pill; (4) `applySecondary` → row-stamp + BC re-write; (5) modal shows `_vendorItemNo`/part#, never MTX.
+- **DROP:** `config/itemAlternates` + helpers (`loadItemAlternates`/`saveItemAlternates`/`_itemAltCache`, ~:2652) — redundant under BC-source-of-truth (avoids two-source drift, per CLAUDE.md SSOT principle).
+
+## Steps
+- **S1** ALT button (keep) — violet, next to USE, `e.stopPropagation`, flexShrink.
+- **S2** ALT modal "Manage Alternate Suppliers": multi-row {Supplier=BC-vendor dropdown+`__NEW__`(→`bcCreateVendor`, store `vendorNo`), Price≥0, LT int≥0}; title/labels show `_vendorItemNo||partNumber` (NO MTX). BC-write → F071-gated.
+- **S3** Save → per row: (1) `bcPushPurchasePrice(item.number,vendorNo,price,Date.now(),uom)` [uom=base UoM or "EA", never blank]; (2) if LT>0 `bcUpsertItemVendorLeadTime({partNumber:item.number,vendorNo,vendorName,vendorItemNo:item._vendorItemNo,leadTimeDays,projectId,uid,cid})`. PP first; on `ok:false` surface + don't claim success; per-row red status; keep modal open on any failure; refresh Secondary list on full success. **No silent success.**
+- **S4** Selector: ① Primary (`bcGetItemVendorNo`→name) green **PRIMARY** pill non-selectable; ② **Secondary Vendors** (`bcFetchPurchasePricesMultiVendor` minus primary, names+LT resolved), selectable + ✎ edit; ③ cross-ref (unchanged). Lazy, skip ①② when `!_bcToken`.
+- **S5** `applySecondary`: row-stamp (`bcVendorNo`/`bcVendorName`, `unitPrice`+`priceSource:"manual"`+`priceDate`+`_priceStamp()` [price>0], `leadTimeDays`+`leadTimeSource:"manual"`, `vendorSource:"manual-secondary"`, preserve ECO tag; save) **+ BC re-write** (`bcPushPurchasePrice`+`bcUpsertItemVendorLeadTime`, same failure-surfacing). F071-gated. Cross-ref → `applyBcItem` (no catalog write).
+- **S6** Remove `config/itemAlternates` block + `selUserAlts` state/effect.
+- **S7** F071 gate all writes — **HARD-BLOCK (Tier-A)** ALT-Save, Create-New, select-secondary BC write (catalog integrity; do NOT enqueue). 
+- **S8** Add `vendorSource` to row-field preservation list; `APP_SCHEMA_VERSION` unchanged.
+- **S9** Gates: validate_jsx → Coach review → deploy-test → Jon Test-verify (**network-trace the PP + IVC writes**; watch Test phantom-write on the PP POST path :6107 which — unlike the PATCH path :6143 — doesn't catch `_testEnvBlocked`) → prod.
+
+## Safeguards (writes the emergency's cards — all present)
+User-initiated (not the disabled auto-pricing) · F071 hard-block when BC unverified/down · hardened B057 `bcPushPurchasePrice` + `bcUpsertItemVendorLeadTime` (HARD-REJECT blank part#, audit trail) · validation (price≥0/>0, LT int, supplier=resolved BC vendorNo never free-text) · failure-surfacing (no silent success; defuse the `{ok:true}`-on-missing-token trap by gating first) · concrete UoM always.
+
+## Open decisions (Coach rec)
+1. **UoM:** fetch item base UoM (+1 read, accurate) vs default "EA" (wrong for LF/C items → parallel PP lane). *Rec: fetch base UoM.*
+2. **Select-secondary when BC down:** hard-block the whole action (*Rec, simplest/safest*) vs allow ARC row-stamp + "BC push deferred" notice.
+3. **Drop `config/itemAlternates`:** *Rec: yes* (redundant; SSOT).
+4. **Re-write on select always vs on-change:** *Rec: always (idempotent same-day update; accept audit noise).*
+
+## Acceptance
+Modal shows Supplier Part# (never MTX) + working BC-vendor dropdown/Create-New · Save writes PP + IVC (network-trace verified, failures surface) · selector = green PRIMARY (non-selectable) + Secondary Vendors (selectable, price+LT) · select-secondary stamps row + re-writes BC · all writes F071-gated · itemAlternates removed · vendorSource survives save-reload · schema unchanged.
