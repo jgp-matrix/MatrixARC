@@ -6157,6 +6157,12 @@ const AUTO_BC_REPRICE_ENABLED=false;
 // "Get New Pricing" / "Refresh All" buttons. RFQ, portal apply, and manual per-row price entry still work.
 // The F050 read-only plausibility sweep still uses estimatePrices (it reads, never sets a price).
 const AUTO_PRICING_ENABLED=false;
+// F075 (2026-07-29) — API-only pricing RE-ENABLED. Gates a dedicated manual "Get Prices" button
+// (runApiPricingOnPanel) that fetches from Mouser + DigiKey ONLY — the two legitimate structured-price
+// APIs. It NEVER calls the scrapers (Codale/Royal/custom), AI-estimate (estimatePrices), searchVendorPricing,
+// BC-reprice, or runPricingOnPanel — those stay OFF under the three kill-switches above (they caused the
+// $0.71 junk-price incident). Client-side row apply only (NO scraper→BC writeback); preserves priceSource:"manual".
+const API_PRICING_ENABLED=true;
 // G019 — Engineering Questions feature hidden until developed out; flip to true to restore intact.
 // DISPLAY-ONLY flag: extraction still populates panel.engineeringQuestions, saves still persist it,
 // mergeEngineeringQuestions is unchanged. This only gates the UI surfaces so the feature is fully reversible.
@@ -30936,6 +30942,103 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(_isStandalonePricing){const _t=_bgTasks[_bgId];if(_t&&_t.status==="running")bgError(_bgId,"Pricing ended unexpectedly");}
     }
   }
+  // F075 (2026-07-29) — DEDICATED API-only pricing. Fetches Mouser + DigiKey ONLY (the two legitimate
+  // structured-price APIs), merges the best (lowest) price, and applies it to the row CLIENT-SIDE.
+  // Mirrors the RFQ-send apiGroups merge (searchVendorBatch @~:21548 + merge @~:21587) and the onApiPriced
+  // client-apply (@~:43109). HARD INVARIANTS (the $0.71 incident guard):
+  //   • Calls ONLY digikeySearch / mouserSearch — NEVER codaleTestScrape, customScraperBatch,
+  //     estimatePrices (AI), searchVendorPricing, or runPricingOnPanel.
+  //   • NO BC write of any kind (no bcPushPurchasePrice / no scraper→BC writeback) — client-side row
+  //     apply only; the user reviews, then the existing manual/BC-write flow handles any push to BC.
+  //   • PRESERVES priceSource:"manual" rows (never overwritten).
+  async function runApiPricingOnPanel(bomOverride,panelOverride,opts={}){
+    if(!API_PRICING_ENABLED)return;
+    const forceFresh=!!(opts&&opts.forceFresh);
+    const panelBase=panelOverride||panelRef.current||panel;
+    const bom=bomOverride||panelBase.bom||[];
+    if(!bom.length||!_apiKey)return;
+    // Eligible = priceable rows only: non-blank partNumber, not labor / _isExcludedFromPriceCheck, not manual.
+    // Default mode → rows needing a price ($0 or stale); forceFresh → every eligible row (mirrors the old
+    // button's two-mode behavior).
+    const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
+    const eligible=bom.filter(r=>{
+      if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
+      if(!(r.partNumber||"").trim())return false;
+      if(r.priceSource==="manual")return false; // preserved — never fetched/overwritten
+      if(forceFresh)return true;
+      if(!(r.unitPrice>0))return true;
+      if(!r.priceDate||(Date.now()-r.priceDate)>=staleMs)return true;
+      return false;
+    });
+    if(eligible.length===0){arcAlert("All priceable rows already have a current price. Use the ▾ to force-refresh every row from Mouser + DigiKey.");return;}
+    const _pp=(o)=>{setPricingProgress(o);};
+    if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
+    setAiPricing(true);
+    _pp({msg:`Getting prices for ${eligible.length} item${eligible.length!==1?"s":""} (Mouser + DigiKey)…`,pct:10});
+    // Snapshot before apply so the user can revert (mirrors runPricingOnPanel).
+    saveSnapshot(uid,projectId,panelBase,"Before Get Prices (Mouser+DigiKey)").catch(()=>{});
+    try{
+      // Batched callable — mirrors searchVendorBatch (@~:21548). digikeySearch / mouserSearch ONLY.
+      const _apiSearchBatch=async(fnName,items)=>{
+        const fn=firebase.functions().httpsCallable(fnName,{timeout:120000});
+        const BATCH=10;const results=[];
+        for(let i=0;i<items.length;i+=BATCH){
+          const batch=items.slice(i,i+BATCH);
+          try{const r=await fn({items:batch});results.push(...(r.data.results||r.data||[]));}
+          catch(e){batch.forEach(b=>results.push({partNumber:b.partNumber,found:false,error:e.message}));}
+        }
+        return results;
+      };
+      const items=eligible.map(i=>({partNumber:(i.partNumber||"").trim(),manufacturer:i.manufacturer||""}));
+      _pp({msg:"Searching DigiKey…",pct:30});
+      const dkResults=await _apiSearchBatch("digikeySearch",items);
+      _pp({msg:"Cross-checking Mouser…",pct:60});
+      const mResults=await _apiSearchBatch("mouserSearch",items);
+      // Merge: best (lowest) price wins; fill gaps from whichever source found it (mirrors :21587-21612).
+      const dkMap={},mMap={};
+      dkResults.forEach(r=>{dkMap[(r.partNumber||"").trim().toUpperCase()]={...r,source:"DigiKey"};});
+      mResults.forEach(r=>{mMap[(r.partNumber||"").trim().toUpperCase()]={...r,source:"Mouser"};});
+      const finalResults=[];
+      items.forEach(i=>{
+        const pn=i.partNumber.toUpperCase();
+        const dk=dkMap[pn],m=mMap[pn];
+        const dkOk=dk&&dk.found&&dk.price>0;
+        const mOk=m&&m.found&&m.price>0;
+        if(dkOk&&mOk){finalResults.push(m.price<dk.price?{...m,partNumber:i.partNumber,source:m.source}:{...dk,partNumber:i.partNumber,source:dk.source});}
+        else if(dkOk){finalResults.push({...dk,partNumber:i.partNumber,source:dk.source});}
+        else if(mOk){finalResults.push({...m,partNumber:i.partNumber,source:m.source});}
+        else finalResults.push({partNumber:i.partNumber,found:false,price:0,source:"none"});
+      });
+      const priced=finalResults.filter(r=>r.found&&r.price>0);
+      _pp({msg:`Applying ${priced.length} price${priced.length!==1?"s":""}…`,pct:85});
+      // Apply CLIENT-SIDE, mirroring onApiPriced (@~:43109). priceSource:"bc" matches onApiPriced for
+      // row-color / BC+ pill consistency. Preserve priceSource:"manual" (never clobber). NO BC write.
+      let applied=0;
+      const updatedBom=(panelBase.bom||[]).map(r=>{
+        if(r.isLaborRow)return r;
+        const pn=(r.partNumber||"").trim().toUpperCase();
+        const match=priced.find(res=>(res.partNumber||"").trim().toUpperCase()===pn);
+        if(match&&match.price>0){
+          if(r.priceSource==="manual"){return{...r,bcVendorName:match.source||r.bcVendorName};}
+          applied++;
+          return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source,bcVendorNo:r.bcVendorNo||"",..._priceStamp()};
+        }
+        return r;
+      });
+      const updated={...panelBase,bom:updatedBom,status:"costed"};
+      onUpdate(updated);
+      try{await onSaveImmediate(updated);}catch(e){console.warn("[F075] save failed:",e?.message);}
+      const failCount=eligible.length-applied;
+      _pp({msg:`✓ ${applied} of ${eligible.length} priced via Mouser + DigiKey${failCount>0?` (${failCount} not found)`:""}.`,pct:100});
+      setAiPricing(false);
+      pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
+    }catch(e){
+      console.error("[F075] API pricing failed:",e);
+      try{setAiPricing(false);}catch(_){}
+      _pp({msg:`Pricing error: ${((e&&e.message)||"failed").slice(0,60)}`,pct:0,isError:true});
+      pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},6000);
+    }
+  }
   async function validatePanel(){
     if(!_apiKey)return;
     setValidatingPanel(true);
@@ -31857,23 +31960,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </button>
               );
             })()}
-            {/* G020 (2026-07-24): "Get New Pricing" / "Refresh All" are no-ops while auto-pricing is
-               off (AUTO_PRICING_ENABLED=false) — they just alert "send an RFQ". Hide them behind the
-               same gate so they REAPPEAR automatically when auto-pricing is re-enabled (reversible;
-               display-only). Manual per-row entry, BC Item Browser, portal/RFQ, DigiKey/Mouser
-               paths are unaffected. */}
-            {AUTO_PRICING_ENABLED&&!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
+            {/* F075 (2026-07-29): Manual "Get Prices" button — RE-ENABLED for API sources ONLY.
+               Gated on API_PRICING_ENABLED (NOT AUTO_PRICING_ENABLED, which stays off). Fetches Mouser +
+               DigiKey ONLY via runApiPricingOnPanel — NOT the scrapers (Codale/Royal/custom), NOT AI-estimate,
+               NOT BC-reprice, NOT runPricingOnPanel (those caused the $0.71 junk-price incident and stay OFF).
+               Client-side row apply only (no BC write); preserves manually-entered prices. Manual per-row
+               entry, BC Item Browser, and portal/RFQ paths are unaffected. */}
+            {API_PRICING_ENABLED&&!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <div style={{position:"relative",display:"inline-flex"}}>
-                <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Refresh pricing — skips items priced within threshold"}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}runPricingOnPanel();}}
+                <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Get prices from Mouser + DigiKey (API only — no scrapers/AI/BC-reprice). Skips items already priced within the stale threshold. Applies to rows only; does not write to BC."}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>runApiPricingOnPanel(panel.bom,panel,{})}
                   disabled={aiPricing||ownerPriorityActive}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"6px 0 0 6px"})}>
-                  {aiPricing?"Refreshing…":"↻ Get New Pricing"}
+                  {aiPricing?"Getting prices…":"📥 Get Prices"}
                 </button>
                 <button disabled={aiPricing||ownerPriorityActive}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}if(await arcConfirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item.",{kind:"warning",okLabel:"Refresh All"}))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(await arcConfirm("Force refresh ALL prices from Mouser + DigiKey? This ignores stale thresholds and re-prices every item (manually-entered rows are preserved).",{kind:"warning",okLabel:"Refresh All"}))runApiPricingOnPanel(panel.bom,panel,{forceFresh:true});}}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
-                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices — ignores stale thresholds"}>▾</button>
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices from Mouser + DigiKey — ignores stale thresholds"}>▾</button>
               </div>
             )}
             {/* DECISION(v1.19.694): Push Lead Times to BC — bulk writeback of every qualifying
