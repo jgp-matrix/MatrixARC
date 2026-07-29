@@ -21,7 +21,7 @@
 
 ---
 
-_(No items awaiting triage — all promoted to TODO.md as of 2026-07-10.)_
+- [2026-07-29] FEAT — "New-API-source BC-vendor check" — When a new API pricing source is added (e.g. RS-Online, coming soon), ARC should verify that source's Vendor exists in BC before use, or bring up the create-vendor modal (same family as the v1.24.49 BC MFR/Vendor list-mismatch guard, applied to pricing sources). Jon will test this when RS-Online API is added. — reported via Intake (source: Jon)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
