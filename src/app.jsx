@@ -4337,6 +4337,17 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
         }
       }catch(e){/* metadata probe failed — keep defaults */}
     }
+    // Tier 3 (empty-table robust) — a FILTERED probe reveals the field naming even with ZERO rows and
+    // unreadable $metadata. The fresh migration sandbox has an EMPTY planning table AND its page
+    // (NAV.Project_Planning_Lines_Excel) exposes the LEGACY Job_No/Job_Task_No naming, so tiers 1-2
+    // found nothing and we'd keep the wrong Project_No default → every line POST 400s ("property
+    // 'Project_No' does not exist"). Testing the field directly is decisive: a valid field returns 200
+    // (an empty result set is fine); an invalid one returns 400 "property … does not exist".
+    if(!detected){
+      const _probeField=async(f)=>{try{const r=await fetch(`${BC_ODATA_BASE}/${planPage}?$filter=${f} eq 'zzz'&$top=1`,{headers:{"Authorization":`Bearer ${_bcToken}`,"Accept":"application/json"}});return r.ok;}catch(e){return false;}};
+      if(await _probeField("Job_No")){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";detected=true;}
+      else if(await _probeField("Project_No")){FP_NO="Project_No";FP_TASK_NO="Project_Task_No";detected=true;}
+    }
     window._bcPlanFieldsCache[cacheKey]={FP_NO,FP_TASK_NO,detected};
     console.log(`bcSyncPlanningLines: detected ${FP_NO}/${FP_TASK_NO} for '${planPage}'${detected?"":" (defaults — neither probe succeeded)"}`);
   }
