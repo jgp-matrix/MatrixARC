@@ -1308,22 +1308,32 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     // (rank 0 = top trust). Part#→MTX resolution is expensive (a BC lookup each), so the index is BUILT on
     // the first slice (offset 0) and cached in config/bcRfqPriceIndex; later slices read it. Legacy RFQs
     // lacking companyId are not swept (documented limit).
-    let rfqQuotes = 0, rfqResolved = 0, rfqUnresolved = 0, rfqInjected = 0;
+    const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' }; // needed by Phase 1b (RFQ resolve) — declared before use
+    let rfqQuotes = 0, rfqResolved = 0, rfqUnresolved = 0, rfqInjected = 0, rfqDocs = 0;
+    let rfqStatusCounts = {};
     const idxRef = db.doc(`companies/${companyId}/config/bcRfqPriceIndex`);
     let rfqIndex = [];
     if (offset === 0) {
       const partToMtx = {};
-      const rfqSnap = await db.collection('rfqUploads').where('companyId', '==', companyId).get().catch(() => ({ docs: [] }));
+      // Gather this company's RFQ docs via BOTH companyId AND each member's uid — legacy pre-v1.19.994
+      // docs carry only `uid` (no companyId), so a companyId-only query misses them (the app's OR-fallback).
+      const seen = {}; const docs = [];
+      const addDocs = (snap) => { for (const dd of ((snap && snap.docs) || [])) { if (!seen[dd.id]) { seen[dd.id] = 1; docs.push(dd); } } };
+      addDocs(await db.collection('rfqUploads').where('companyId', '==', companyId).get().catch(() => null));
+      const memSnap = await db.collection(`companies/${companyId}/members`).get().catch(() => null);
+      for (const m of ((memSnap && memSnap.docs) || [])) addDocs(await db.collection('rfqUploads').where('uid', '==', m.id).get().catch(() => null));
+      rfqDocs = docs.length;
       const raw = [];
-      for (const d of rfqSnap.docs) {
+      for (const d of docs) {
         const rd = d.data() || {};
-        if (rd.status !== 'submitted') continue;              // only supplier-responded quotes
-        if (rd.isTest) continue;                              // skip test-env submissions
+        const st = rd.status || '(none)'; rfqStatusCounts[st] = (rfqStatusCounts[st] || 0) + 1; // diagnostic
+        if (rd.isTest) continue;                                 // skip test-env submissions
+        if (st === 'dismissed' || st === 'pending') continue;    // pending=not-yet-quoted; dismissed=discarded
         const vno = (rd.vendorNumber || '').toString().trim();
         const date = _cfPriceMs(rd.sentAt);
         for (const li of (rd.lineItems || [])) {
           if (!li || li.cannotSupply) continue;
-          const p = Number(li.unitPrice);
+          const p = Number(li.unitPrice);                        // supplier's quoted price (not our referencePrice)
           const part = (li.partNumber || '').toString().trim();
           if (!part || !(p > 0) || !vno) continue;
           rfqQuotes++;
@@ -1339,7 +1349,7 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
         if (mtx) { rfqResolved++; rfqIndex.push({ mtx, vendorNo: item.vendorNo, price: item.price, date: item.date }); }
         else rfqUnresolved++;
       }
-      await idxRef.set({ builtAt: Date.now(), by: uid, quotes: rfqQuotes, resolved: rfqResolved, unresolved: rfqUnresolved, index: rfqIndex.slice(0, 5000) }).catch(() => {});
+      await idxRef.set({ builtAt: Date.now(), by: uid, rfqDocs, statusCounts: rfqStatusCounts, quotes: rfqQuotes, resolved: rfqResolved, unresolved: rfqUnresolved, index: rfqIndex.slice(0, 5000) }).catch(() => {});
     } else {
       const idxDoc = await idxRef.get().catch(() => null);
       if (idxDoc && idxDoc.exists) rfqIndex = (idxDoc.data() || {}).index || [];
@@ -1375,7 +1385,6 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     const slice = keys.slice(offset, offset + limit);
 
     const baseUrl = `${bcODataBase}/PurchasePrices`;
-    const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
     const postHeaders = Object.assign({}, bcHeaders, { 'Content-Type': 'application/json' });
     const q = (s) => String(s == null ? '' : s).replace(/'/g, "''");
     const sdf = (r) => r.Starting_Date ? String(r.Starting_Date).slice(0, 10) : '';
@@ -1449,7 +1458,7 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     await Promise.all(Array.from({ length: Math.min(CONC, slice.length || 1) }, worker));
 
     const nextOffset = (offset + limit < total) ? (offset + limit) : null;
-    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, rfqQuotes, rfqResolved, rfqUnresolved, rfqInjected, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, junkZeroed, junkNoBc, keptBc, bySource, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 1000), junkList: junkList.slice(0, 300), failures: failures.slice(0, 50), nextOffset };
+    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, rfqDocs, rfqStatusCounts, rfqQuotes, rfqResolved, rfqUnresolved, rfqInjected, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, junkZeroed, junkNoBc, keptBc, bySource, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 1000), junkList: junkList.slice(0, 300), failures: failures.slice(0, 50), nextOffset };
     if (!forceDry) {
       const ts = Date.now();
       // B1: `rollback` (uncapped, <= slice size) is the reversal map — old→new per live update/create/junk-zero.
