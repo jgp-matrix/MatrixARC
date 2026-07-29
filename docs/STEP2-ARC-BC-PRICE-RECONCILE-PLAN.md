@@ -1,7 +1,7 @@
 # STEP 2 — ARC→BC One-Time Price Reconcile — Design & Decisions
 
 **Author:** Sam Wize (Coach) · Read-only trace, no code changed · 2026-07-29
-**Status:** DESIGN — awaiting Jon's decisions (§8) before any build. No writes proposed yet.
+**Status:** DESIGN COMPLETE — all 6 decisions LOCKED by Jon 2026-07-29 (§8). Holding for Jon's explicit "build it" go before any code (Jon chose design-only). No writes yet.
 
 ## 0. Executive summary
 Step 1 (the `loadBcPurchasePrices` bulk load) populated BC `PurchasePrices.Direct_Unit_Cost` from the Excel Item Master at `Starting_Date 2026-01-01`. Step 2 is a **second, one-time reconcile**: for every priceable BOM row across all projects, compare ARC's price to the BC price for that item+vendor and, where they differ, PATCH BC to ARC's value (ARC = source of truth, this once). The single hard problem is **N-to-1 collision**: one BC item+vendor can appear in many BOMs at different ARC prices, but BC holds one catalog value per item+vendor. That collision rule is the decision Jon must make (§3, §8). Everything else reuses proven F072 / `loadBcPurchasePrices` mechanics.
@@ -52,12 +52,12 @@ In scope = real BC item + resolvable vendor + valid ARC price: (1) `_hasBcBindin
 - **Audit = rollback map:** persist `{bcNo, vendorNo, oldBcCost, newArcCost, arcSource}` to `companies/{cid}/bcPpReconcileRuns/{ts}` (re-push `oldBcCost` to reverse).
 - **After Step 2:** BC = source of truth; ARC = initial-write + future-change via existing F072 `bcPushPurchasePrice`. One-shot; guard re-run with a `bcPpReconcileStatus` doc.
 
-## 8. Open decisions for Jon (answer before build)
-1. **Collision rule (§3) — the big one:** A / B / C / **D (Coach rec: source-priority + newest, + mandatory conflict list)**.
-2. **Match tolerance (§4):** exact / **±$0.005 (rec)** / % band.
-3. **ARC price field (§1):** confirm reconcile uses **`unitPrice`** (row cost), not a marked-up/sell figure. (Coach confident; needs explicit OK — name misleads.)
-4. **$0 / missing-vendor rows:** confirm **skip + report** (never push $0, never guess a vendor).
-5. **Vendor scope:** reconcile **only the row's `bcVendorNo`** lane (Coach: skip+report no-vendor rows).
-6. **Starting_Date:** reuse Step-1's **`2026-01-01`** for the same-day PATCH (rec) / stamp today.
+## 8. Decisions — LOCKED (Jon 2026-07-29)
+1. **Collision rule (§3):** ✅ **D — source-priority + recency.** Rank `manual`/`bc`/`supplier` above `scraper`/`ai`, then newest `_effectivePriceDate` within the top rank. Any item+vendor whose top-rank rows still disagree beyond tolerance is a **conflict → surfaced in the dry-run, NOT pushed**.
+2. **Match tolerance (§4):** ✅ **±$0.005** (half-cent) — no PATCH if within.
+3. **ARC price field (§1):** ✅ **`unitPrice`** (row per-unit cost), never a marked-up/sell figure.
+4. **$0 / missing rows:** ✅ **skip + report** — never push $0, never guess a vendor.
+5. **Vendor scope (§5):** ✅ reconcile **only the row's own `bcVendorNo`** lane; no-vendor rows reported, never pushed.
+6. **Starting_Date (§7):** ✅ **reuse `2026-01-01`** → same-day PATCH-in-place of `Direct_Unit_Cost` (no new price lines).
 
-No build recommended yet — design + the six decisions above for approval.
+**Build gate:** design complete; Jon chose design-only → **holding for Jon's explicit "build it" go** before writing the CF. When greenlit: build the server-walk reconcile CF (Path 1, §6) → Coach review → dry-run preview (every delta + conflict list) → Jon go → live in slices → verify + audit to `bcPpReconcileRuns`.
