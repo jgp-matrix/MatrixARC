@@ -1216,6 +1216,169 @@ exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: 
   }
 });
 
+// ── reconcileArcBcPrices — STEP 2: one-time ARC→BC price reconcile ────────────────────────────────
+// Design + locked decisions: docs/STEP2-ARC-BC-PRICE-RECONCILE-PLAN.md (Jon 2026-07-29).
+// Walks every project's BOM rows, computes the winning ARC price per (bcNo, vendorNo), compares it to
+// BC's current PurchasePrices Direct_Unit_Cost, and where they differ pushes ARC's value (ARC = source
+// of truth, this once). Reuses the Step-1 write core (_cfPpKeyUrl + _cfPatchFreshEtag + $0-expire).
+//   Collision rule (D): rank manual/bc/supplier ABOVE scraper/ai/'' ; within the top rank present, if the
+//     prices agree (spread <= tolerance) the NEWEST wins; if they DISAGREE beyond tolerance → CONFLICT
+//     (reported, NOT pushed). Item+vendors with ONLY low-source rows → low-source-only (reported, NOT pushed).
+//   Match tolerance: |arc - bc| <= tolerance (default 0.005) → already matches, skip.
+//   Field: row.unitPrice (the per-unit COST). $0/missing price → skip+report; missing vendor → skip+report.
+//   Write: same-day PATCH-in-place of the 2026-01-01 record (Step 1 wrote it); if no such record exists for
+//     a priced item+vendor (not in the Excel load), POST it + expire any $0 placeholder. Fresh-etag PATCH
+//     (this NAV tenant 409s on stale/`*` etag). dryRun DEFAULT TRUE; resumable slices; audit = rollback map.
+const _cfPriceMs = (d) => {
+  if (d == null) return 0;
+  if (typeof d === 'number') return d;
+  if (typeof d === 'string') { const t = Date.parse(d); return isNaN(t) ? 0 : t; }
+  if (typeof d === 'object') { if (typeof d.toMillis === 'function') { try { return d.toMillis(); } catch (_) {} } if (typeof d.seconds === 'number') return d.seconds * 1000; }
+  return 0;
+};
+// Mirror app.jsx _effectivePriceDate (:17496): bcPoDate for priceSource 'bc', else priceDate.
+const _cfEffectivePriceMs = (r) => _cfPriceMs(((r.priceSource || '').toLowerCase() === 'bc' && r.bcPoDate) ? r.bcPoDate : r.priceDate);
+const _cfPriceRank = (src) => { const s = (src || '').toLowerCase(); return (s === 'manual' || s === 'bc' || s === 'supplier') ? 0 : 1; }; // 0=trusted, 1=low(scraper/ai/'')
+
+exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: '512MB', maxInstances: 1 }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const uid = context.auth.uid;
+  const profileSnap = await db.doc(`users/${uid}/config/profile`).get();
+  const companyId = profileSnap.exists ? profileSnap.data().companyId : null;
+  if (!companyId) throw new functions.https.HttpsError('failed-precondition', 'No company workspace for caller');
+  const memberSnap = await db.doc(`companies/${companyId}/members/${uid}`).get();
+  if (!memberSnap.exists || memberSnap.data().role !== 'admin') throw new functions.https.HttpsError('permission-denied', 'Admin only');
+
+  const { bcToken, bcODataBase } = data || {};
+  if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+  assertBcODataBase(bcODataBase);
+
+  const companySnap = await db.doc(`companies/${companyId}`).get();
+  const isTestCompany = !!(companySnap.exists && companySnap.data() && companySnap.data().isTestCompany);
+  const dryRun = !(data && data.dryRun === false);
+  const forceDry = dryRun || isTestCompany || !!(data && data.isTest === true);
+
+  const startingDate = (data && typeof data.startingDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.startingDate)) ? data.startingDate : '2026-01-01';
+  const _pd = new Date(startingDate + 'T00:00:00Z'); _pd.setUTCDate(_pd.getUTCDate() - 1);
+  const expireDate = _pd.toISOString().slice(0, 10);
+  const TOL = (data && data.tolerance != null && !isNaN(+data.tolerance)) ? Math.abs(+data.tolerance) : 0.005;
+  const offset = Math.max(0, parseInt((data && data.offset) || 0, 10) || 0);
+  const limit = Math.min(2000, Math.max(1, parseInt((data && data.limit) || 1000, 10) || 1000));
+
+  const statusRef = db.doc(`companies/${companyId}/config/bcPpReconcileStatus`);
+  const startedAt = Date.now();
+  await statusRef.set({ status: 'running', dryRun: forceDry, startingDate, tolerance: TOL, offset, limit, startedAt, by: uid }, { merge: true });
+
+  try {
+    // Non-item exclusion — same idiom as reconcileBcNos _cfIsNonItem (labor/customer-supplied/contingency/
+    // Matrix Systems/buyoff/crate are not priceable BC catalog items).
+    const CONTINGENCY_PNS = new Set(['CONTINGENCY', 'BOM CONTINGENCY', 'WIRE & CONSUMABLES']);
+    const _isBuyoffOrCrate = (r) => { const pn = (r.partNumber || '').toLowerCase(), desc = (r.description || '').toLowerCase(), cf = (r.crossedFrom || '').toLowerCase(); return /buyoff/i.test(pn) || /buyoff/i.test(desc) || /buyoff/i.test(cf) || /crat(e|ing)/i.test(pn) || /crat(e|ing)/i.test(desc) || /crat(e|ing)/i.test(cf); };
+    const _isNonItem = (r) => { const isC = r.isContingency || CONTINGENCY_PNS.has((r.partNumber || '').trim().toUpperCase()); return !!r.isLaborRow || !!r.customerSupplied || isC || /matrix\s*systems/i.test(r.bcVendorName || '') || _isBuyoffOrCrate(r); };
+
+    // ── Phase 1 (READ-ONLY): walk projects → group priced rows by (bcNo, vendorNo) ──
+    const snap = await db.collection(`companies/${companyId}/projects`).get();
+    const groups = new Map();
+    let scanRows = 0, skipZero = 0, noVendor = 0, noBcNo = 0;
+    for (const d of snap.docs) {
+      const pd = d.data() || {};
+      for (const panel of (pd.panels || [])) {
+        for (const row of (panel.bom || [])) {
+          if (!row || row.isLaborRow || _isNonItem(row)) continue;
+          const bcNo = ((row.bcNo) || '').toString().trim();
+          if (!bcNo) { noBcNo++; continue; }
+          const price = Number(row.unitPrice);
+          if (!(price > 0)) { skipZero++; continue; }
+          const vendorNo = ((row.bcVendorNo) || '').toString().trim();
+          if (!vendorNo) { noVendor++; continue; }
+          scanRows++;
+          const key = bcNo + ' ' + vendorNo;
+          let g = groups.get(key);
+          if (!g) { g = { bcNo, vendorNo, rows: [] }; groups.set(key, g); }
+          g.rows.push({ price, rank: _cfPriceRank(row.priceSource), date: _cfEffectivePriceMs(row), source: (row.priceSource || '').toLowerCase() });
+        }
+      }
+    }
+
+    // Collision rule D — winning ARC price per group (or conflict / low-source-only).
+    const resolve = (g) => {
+      const best = Math.min(...g.rows.map((r) => r.rank));
+      if (best !== 0) return { action: 'low-source-only' };
+      const cand = g.rows.filter((r) => r.rank === 0);
+      const prices = cand.map((r) => r.price);
+      if (Math.max(...prices) - Math.min(...prices) > TOL) return { action: 'conflict', spread: [Math.min(...prices), Math.max(...prices)] };
+      cand.sort((a, b) => b.date - a.date); // newest first
+      return { action: 'resolved', winner: cand[0].price, source: cand[0].source };
+    };
+
+    const keys = [...groups.keys()].sort();
+    const total = keys.length;
+    const slice = keys.slice(offset, offset + limit);
+
+    const baseUrl = `${bcODataBase}/PurchasePrices`;
+    const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
+    const postHeaders = Object.assign({}, bcHeaders, { 'Content-Type': 'application/json' });
+    const q = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+    const sdf = (r) => r.Starting_Date ? String(r.Starting_Date).slice(0, 10) : '';
+
+    let matched = 0, updated = 0, created = 0, expired = 0, expireFailed = 0, conflicts = 0, lowSourceOnly = 0, failed = 0;
+    const samples = [], conflictList = [], failures = [];
+
+    async function processGroup(key) {
+      const g = groups.get(key);
+      const res = resolve(g);
+      if (res.action === 'low-source-only') { lowSourceOnly++; if (conflictList.length < 200) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'low-source-only (scraper/ai/untagged only)' }); return; }
+      if (res.action === 'conflict') { conflicts++; if (conflictList.length < 200) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'trusted prices disagree', spread: res.spread }); return; }
+      const arc = res.winner;
+      // Current BC record(s) for this item+vendor.
+      const gr = await fetch(`${baseUrl}?$filter=${encodeURIComponent(`Item_No eq '${q(g.bcNo)}' and Vendor_No eq '${q(g.vendorNo)}'`)}&$select=Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date`, { headers: bcHeaders });
+      if (!gr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `GET existing ${gr.status}` }); return; }
+      const existing = ((await gr.json()).value || []);
+      const scopedSameDay = existing.find((r) => sdf(r) === startingDate && (r.Currency_Code || '') === '' && (r.Variant_Code || '') === '' && (Number(r.Minimum_Quantity) || 0) === 0);
+      const bcCost = scopedSameDay ? Number(scopedSameDay.Direct_Unit_Cost) : null;
+      if (scopedSameDay && Math.abs(arc - bcCost) <= TOL) { matched++; return; } // already matches → skip
+      if (samples.length < 60) samples.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, arc, bc: bcCost, src: res.source, act: scopedSameDay ? 'update' : 'create' });
+      if (forceDry) { if (scopedSameDay) updated++; else created++; return; }
+      // LIVE
+      if (scopedSameDay) {
+        const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo: g.bcNo, vendorNo: g.vendorNo, currencyCode: '', startingDate, variantCode: '', uom: scopedSameDay.Unit_of_Measure_Code || '', minQty: 0 });
+        const pr = await _cfPatchFreshEtag(keyUrl, { Direct_Unit_Cost: arc }, bcHeaders);
+        if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `PATCH ${pr.status}` }); return; }
+        updated++;
+      } else {
+        // Priced in ARC but no 2026-01-01 BC record (item+vendor not in the Step-1 Excel load) → POST it.
+        const payload = { Item_No: g.bcNo, Vendor_No: g.vendorNo, Starting_Date: startingDate, Direct_Unit_Cost: arc, Unit_of_Measure_Code: 'EA' };
+        const cr = await fetch(baseUrl, { method: 'POST', headers: postHeaders, body: JSON.stringify(payload) });
+        if (!cr.ok) { const t = await cr.text().catch(() => ''); failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `POST ${cr.status} ${t.slice(0, 100)}` }); return; }
+        created++;
+        for (const r of existing) { // retire any $0 placeholder (older, active)
+          if (Number(r.Direct_Unit_Cost) !== 0) continue; const rsd = sdf(r);
+          if (!rsd || rsd >= startingDate || !(_cfDateUnset(r.Ending_Date) || String(r.Ending_Date).slice(0, 10) >= startingDate)) continue;
+          const ku = _cfPpKeyUrl(baseUrl, { itemNo: g.bcNo, vendorNo: g.vendorNo, currencyCode: r.Currency_Code || '', startingDate: rsd, variantCode: r.Variant_Code || '', uom: r.Unit_of_Measure_Code || '', minQty: Number(r.Minimum_Quantity) || 0 });
+          const er = await _cfPatchFreshEtag(ku, { Ending_Date: expireDate }, bcHeaders);
+          if (er.ok) { expired++; } else { expireFailed++; }
+        }
+      }
+    }
+
+    const CONC = 6; let idx = 0;
+    const worker = async () => { while (idx < slice.length) { const my = idx++; try { await processGroup(slice[my]); } catch (e) { failed++; failures.push({ error: (e && e.message) || String(e) }); } } };
+    await Promise.all(Array.from({ length: Math.min(CONC, slice.length || 1) }, worker));
+
+    const nextOffset = (offset + limit < total) ? (offset + limit) : null;
+    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 200), failures: failures.slice(0, 50), nextOffset };
+    if (!forceDry) {
+      const ts = Date.now();
+      await db.doc(`companies/${companyId}/bcPpReconcileRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, tolerance: TOL, offset, limit, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, samples: samples.slice(0, 150), failures: failures.slice(0, 100) });
+    }
+    await statusRef.set({ status: 'done', dryRun: forceDry, startingDate, tolerance: TOL, offset, limit, total, finishedAt: Date.now(), by: uid, report: result }, { merge: true });
+    return result;
+  } catch (err) {
+    await statusRef.set({ status: 'error', finishedAt: Date.now(), error: (err && err.message) || String(err) }, { merge: true }).catch(() => {});
+    throw err;
+  }
+});
+
 // ── TEAM MANAGEMENT ──
 
 exports.inviteTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
