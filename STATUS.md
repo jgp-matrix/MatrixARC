@@ -5,7 +5,10 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-29 · prod v1.24.49 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze · migration PAUSED for Geoffrey data-load
+## Current — 🟢 2026-07-29 · prod v1.24.50 · RFQ-only pricing (auto-pricing intentionally OFF) · no freeze · migration: Manufacturers table LOADED, per-item codes + catalog + prices still pending Geoff
+
+> ## ✅ DEPLOYED prod v1.24.50 (2026-07-29) — Bug 1b shipped; Manufacturers table load verified.
+> **Geoff loaded the Manufacturers table** → read-only probe of the new sandbox (controlled tab, prod ARC): **87 records incl. PHX/AB/SIEMENS ✓**. BUT **per-item `Manufacturer_Code` still 0/150** (table Code→Name is in; per-item assignments not yet — still part of Geoff's remaining work under gap #1). So MANUAL MFR pick now persists to BC (guard won't false-fire) + Bug 1b is verifiable; AUTO-populate still waits on per-item codes. Jon chose "deploy Bug 1b now + re-test manual pick." Merged `claude/mfr-carry-withmeta` → master `4c4c6771` (==origin, tag v1.24.50) → prod. **Bug 1b** = `_withMeta` (:24834) now bridges `mfrCodes[item.number]`→`_mfrCode` so a manually-picked MFR carries from the Item Browser to the BOM row (was dropped on USE). All 4 migration-prep fixes now shipped (guard + Bug 2 + customer pre-check @ v1.24.49; Bug 1b @ v1.24.50). **⏳ NEXT:** Jon re-tests manual MFR pick on prod (hard-refresh) → then still waiting on Geoff for per-item `Manufacturer_Code` + Item Vendor Catalog + Purchase Prices before the full MFR/LT/price re-test + resuming the migration.
 
 > ## ✅ DEPLOYED prod v1.24.49 (2026-07-29) — 3 safe fixes shipped while migration paused for Geoffrey.
 > Jon chose "deploy the 3 data-independent fixes now" (hold Bug 1b for MFR-data verification). Merged to master (`e5fe9bc7`, master==origin, tag v1.24.49) + deployed to prod hosting. Contents:
