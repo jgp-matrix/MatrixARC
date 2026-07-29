@@ -7,6 +7,10 @@
 
 ## Current — 🟢 2026-07-29 · prod v1.24.51 · RFQ-only pricing (auto-pricing intentionally OFF) · Sales in UAT · Step-2 price reconcile CF in DRY-RUN (not live)
 
+> ## 🟡 F075 — "Get Prices" button RESTORED (Mouser/DigiKey only), on TEST V.070 awaiting Jon verify.
+> Jon: "we removed the Get Prices button. We will need this back so Users can manually initiate the Get Prices from Mouser and Digi-Key." Built **Option B** (branch `claude/f075-get-prices`, commit `6bd011ee`; master/prod UNTOUCHED). New `API_PRICING_ENABLED=true` flag (kill-switches all stay `false`) + dedicated `runApiPricingOnPanel` (:30945-31040) that fetches ONLY `digikeySearch`+`mouserSearch`, lower-price-wins, applies client-side, preserves manual rows, NO scraper/AI/BC-write. Panel button re-gated → **📥 Get Prices** (▾ = force-refresh all). **Coach: APPROVE** (1 cosmetic nit, matches proven `onApiPriced`; hard invariant + manual-preserve + no-BC-write all confirmed). **Deployed Test V.070** (matrix-arc-test.web.app). **⏳ NEXT:** Jon verifies on Test (disposable project — Test writes real prod Firestore) → then merge master + prod on his go. F076 (portal manual-entry) still parked.
+
+
 > ## 🔧 STEP-2 ARC↔BC PRICE RECONCILE — CF built + enhanced, DRY-RUN stage (2026-07-29). NO live writes yet.
 > `reconcileArcBcPrices` CF (functions/index.js) — design `docs/STEP2-ARC-BC-PRICE-RECONCILE-PLAN.md`, Coach APPROVE-WITH-NITS (B1 rollback-map fix applied). Then extended per Jon's live findings:
 > - **Junk $0.71 (PRJ402119 residue) data-safety fix:** dry-run caught that the naive rule would ZERO good BC prices ($10.33/$42.81/$120) just because ARC had 0.71. Corrected: $0.71 dropped from ARC candidacy; zero+reset ONLY where **BC ITSELF is $0.71** with no better price. keptBc counter protects good values. (Jon: junk items → zero + re-price at quote time; no accurate cost for them.)
