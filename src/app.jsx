@@ -4410,22 +4410,32 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // Phase 2.1 B2: Exclude restoreSkipped rows — these have invalid part numbers
   // that would produce 400 errors from BC. For non-restore callers, restoreSkipped
   // is undefined/null so the filter passes through unchanged.
-  const bomRows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.ecoTag&&!r.restoreSkipped);
+  //
+  // #163/migration: push ONLY rows COMMITTED to BC — i.e. with a real `bcNo` binding (the MTX
+  // surrogate set by commitBcItem/reconcile). A row with no `bcNo` is "not in BC" — the SAME state
+  // the BOM already shows as a RED BC circle (an unidentified item awaiting a user, or a pseudo-part
+  // like CRATE/CONTINGENCY that will never be a BC item). It has no valid BC item to key on, so a
+  // planning-line POST on its part# 400s. The old Text-fallback tried to represent it as a
+  // Type:"Text" comment line, but BC forbids Type:"Text" on a Line_Type:"Budget" line ("Type must
+  // not be Text") — the fallback was structurally invalid and is removed. Such rows simply don't
+  // belong in BC until a user commits them (then they gain a `bcNo` and sync on the next relink), so
+  // they are SKIPPED here — consistent with the red-circle UI — and their count is reported, never
+  // silently dropped. SSOT: "has a `bcNo`" is the same commit signal `_bcNo`/the BC circle rely on.
+  const _pushable=r=>!r.isLaborRow&&!r.ecoTag&&!r.restoreSkipped;
+  const _hasBcBinding=r=>!!(r&&r.bcNo&&String(r.bcNo).trim());
+  const bomRows=(panel.bom||[]).filter(r=>_pushable(r)&&_hasBcBinding(r));
+  const skippedNotInBc=(panel.bom||[]).filter(r=>_pushable(r)&&!_hasBcBinding(r)&&(r.partNumber||"").trim())
+    .map(r=>({partNumber:r.partNumber,description:(r.description||"").slice(0,60)}));
   let lineNo=60000;
   for(const row of bomRows){
     const desc=(row.description||"").slice(0,100);
-    const fallbackDesc=`${row.partNumber||""} - ${(row.description||"").slice(0,90)}`.slice(0,100).trim();
     lines.push({[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
       Line_Type:"Budget",Type:"Item",No:_bcNo(row),
       Description:desc,
       // DECISION(v1.19.462): Push Unit_Cost from ARC so BC planning lines reflect ARC's costing.
       // Unit_Price is NOT set (caused BC rejection errors on Budget/Item lines).
       Quantity:(row.qty||1)*lineQty,Unit_Cost:row.unitPrice||0,Location_Code:"MAIN",
-      _row:row,
-      _fallback:{[FP_NO]:projectNumber,[FP_TASK_NO]:taskNo,Line_No:lineNo,Planning_Date:today,
-        Line_Type:"Budget",Type:"Text",
-        Description:fallbackDesc,
-        Quantity:(row.qty||1)*lineQty}});
+      _row:row});
     lineNo+=10000;
   }
 
@@ -4585,7 +4595,7 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   }
 
   console.log(`bcSyncPlanningLines: ${created} created, ${updated} updated, ${skipped} unchanged, ${deleted} deleted${failedRows.length?`, ${failedRows.length} FAILED`:""}${_ff&&_ff.aborted?" [ABORTED — fail-fast]":""}`,failedRows);
-  return{created,updated,skipped,deleted,total:lines.length,failed:failedRows,aborted:!!(_ff&&_ff.aborted)};
+  return{created,updated,skipped,deleted,total:lines.length,failed:failedRows,skippedNotInBc,aborted:!!(_ff&&_ff.aborted)};
 }
 
 // DECISION(v1.19.879, ECO Stage D): Sync ECO-tagged BOM rows for a single
@@ -41599,14 +41609,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           continue;
         }
         const _f=(res&&res.failed)||[];
+        const _skip=(res&&res.skippedNotInBc)||[];
         if(_f.length){
-          _panelOutcomes.push({panel:i+1,ok:false,failed:_f.map(f=>({partNumber:f.partNumber||"",lineNo:f.lineNo,status:f.status,error:(f.error||"").slice(0,400)}))});
+          _panelOutcomes.push({panel:i+1,ok:false,failed:_f.map(f=>({partNumber:f.partNumber||"",lineNo:f.lineNo,status:f.status,error:(f.error||"").slice(0,400)})),skippedNotInBc:_skip});
         }else{
-          _panelOutcomes.push({panel:i+1,ok:true,created:res?res.created:0});
+          _panelOutcomes.push({panel:i+1,ok:true,created:res?res.created:0,skippedNotInBc:_skip});
         }
         if(res&&res.aborted)_relinkAborted=true;
       }
       const _failedPanels=_panelOutcomes.filter(o=>!o.ok);
+      // Not-in-BC rows are SKIPPED by design (no bcNo = red-circle, not yet committed to BC) — reported,
+      // never a "failure". Surface the count + a small sample so the operator knows what didn't transfer.
+      const _skippedRows=_panelOutcomes.flatMap(o=>o.skippedNotInBc||[]);
+      const _skipLine=_skippedRows.length?`\n\n${_skippedRows.length} row(s) not in BC were skipped (not yet committed — they show a red BC circle and will sync once added to BC): ${_skippedRows.slice(0,6).map(r=>r.partNumber).join(", ")}${_skippedRows.length>6?` +${_skippedRows.length-6} more`:""}`:"";
 
       // WS2 — keep ARC's number (do NOT set bcProjectNumber=bc.number).
       const updated={...projectRef.current,bcProjectNumber:_bindNumber,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
@@ -41631,14 +41646,15 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       if(_relinkAborted){
         console.error("Relink ABORTED (fail-fast) — panel outcomes:",_panelOutcomes);
         setRelinkMsg(`⚠ Re-link ABORTED after ${_failFast.consecutive} consecutive BC errors — BOM NOT fully synced`);
-        arcAlert(`Re-link to ${_bindNumber} was ABORTED after ${_failFast.consecutive} consecutive Business Central line errors — the BOM did NOT fully transfer. No renumber occurred (ARC stays ${_bindNumber}).${_errLine}`,{kind:"error"});
+        arcAlert(`Re-link to ${_bindNumber} was ABORTED after ${_failFast.consecutive} consecutive Business Central line errors — the BOM did NOT fully transfer. No renumber occurred (ARC stays ${_bindNumber}).${_errLine}${_skipLine}`,{kind:"error"});
       }else if(_failedPanels.length){
         console.error("Relink completed WITH FAILURES — panel outcomes:",_panelOutcomes);
         const _detail=_failedPanels.slice(0,4).map(o=>o.failed?`panel ${o.panel}: ${o.failed.slice(0,3).map(f=>`${f.partNumber||"?"} (line ${f.lineNo}, ${f.status})`).join(", ")}${o.failed.length>3?` +${o.failed.length-3} more`:""}`:`panel ${o.panel}: ${o.error}`).join("\n");
         setRelinkMsg(`⚠ Re-linked to ${_bindNumber} — ${_failedPanels.length} panel(s) had line failures`);
-        arcAlert(`Re-linked to ${_bindNumber}, but some planning lines failed to sync:\n\n${_detail}${_errLine}\n\nARC's number was preserved (no renumber). Review before relying on the BC BOM.`,{kind:"warning"});
+        arcAlert(`Re-linked to ${_bindNumber}, but some planning lines failed to sync:\n\n${_detail}${_errLine}${_skipLine}\n\nARC's number was preserved (no renumber). Review before relying on the BC BOM.`,{kind:"warning"});
       }else{
         setRelinkMsg("✓ Re-linked to "+_bindNumber);
+        if(_skipLine)arcAlert(`✓ Re-linked to ${_bindNumber} — all in-BC items synced.${_skipLine}`,{kind:"success"});
       }
       setTimeout(()=>setRelinkMsg(null),(_relinkAborted||_failedPanels.length)?15000:3000);
     }catch(e){
