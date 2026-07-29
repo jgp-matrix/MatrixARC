@@ -24767,6 +24767,13 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
     if(vn)it={...it,_vendorName:vn};
     const lt=leadTimeData[item.number];
     if(lt&&lt.days!=null)it={...it,_leadTimeDays:lt.days,_leadTimeSource:lt.source||"bc_item"};
+    // Bug 1b (2026-07-29): bridge the MFR from the `mfrCodes` state map (populated by the async ItemCard
+    // fetch AND by the user's manual pick/create-assign) into `_mfrCode`, which commitBcItem's synchronous
+    // row write honors (:29578, `if(bcItem._mfrCode)…`). Without this, a manually-selected manufacturer
+    // shows in the browser but is DROPPED on USE — it lived only in `mfrCodes` and never reached the item
+    // object handed to commitBcItem. Matches the existing auto-fetch behavior (row MFR = the code).
+    const mc=mfrCodes[item.number];
+    if(mc)it={...it,_mfrCode:mc};
     return it;
   }
 
