@@ -43228,7 +43228,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     return{...r,bcVendorName:match.source||vendorName,bcVendorNo:vendorNo};
                   }
                   applied++;
-                  return{...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo,..._priceStamp()};
+                  // Hotfix (F075 finding #2): this is a fresh API web-price, NOT a BC purchase-order.
+                  // The row may still carry a stale bcPoDate from a prior BC price, and the Priced
+                  // column / red-flag / send-gate all read _effectivePriceDate, which returns bcPoDate
+                  // for priceSource:"bc" rows. Strip the stale bcPoDate key so it falls through to the
+                  // fresh priceDate — otherwise the date "stays a May date" (Jon, live test 2026-07-29).
+                  const _apiRow={...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",bcVendorName:match.source||vendorName,bcVendorNo:vendorNo,..._priceStamp()};
+                  delete _apiRow.bcPoDate;
+                  return _apiRow;
                 }
                 return r;
               });
