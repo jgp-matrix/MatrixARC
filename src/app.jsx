@@ -12452,9 +12452,15 @@ const CONTINGENCY_PNS=new Set([...CONTINGENCY_ITEMS.map(c=>c.partNumber.toUpperC
 // stay at the end in their existing order — preserved for stable UX.
 function sortBomByDrawingPosition(bom){
   if(!Array.isArray(bom)||bom.length<2)return bom;
-  const positioned=[],unpositioned=[];
+  const positioned=[],unpositioned=[],bottomPinned=[];
   for(const r of bom){
-    if(r.isLaborRow||r.isContingency){unpositioned.push(r);continue;}
+    // Contingency / Crate / Buyoff ALWAYS sink to the very bottom (Jon: these must be the bottom
+    // rows regardless of additions). Checked FIRST — before position/labor — so even a crate/buyoff
+    // that somehow carries a y_top or is manually added still pins to the bottom. `_isBuyoffOrCrate`
+    // (hoisted, :17384) catches the broad real-world forms (crossed-to "BUYOFF", "Crate & Pack", etc.)
+    // that the old isContingency-only check missed.
+    if(_isBottomPinnedRow(r)){bottomPinned.push(r);continue;}
+    if(r.isLaborRow){unpositioned.push(r);continue;}
     if(typeof r.y_top==="number"&&!isNaN(r.y_top)){positioned.push(r);}
     else{unpositioned.push(r);}
   }
@@ -12465,7 +12471,9 @@ function sortBomByDrawingPosition(bom){
     if(Math.abs(yDiff)>0.002)return yDiff;
     return (a.x_left||0)-(b.x_left||0);
   });
-  return [...positioned,...unpositioned];
+  // Order: positioned (drawing order) → other unpositioned (manual adds, labor) → pinned bottom
+  // (Contingency/Crate/Buyoff), which are ALWAYS last so new additions land above them.
+  return [...positioned,...unpositioned,...bottomPinned];
 }
 
 function appendDefaultBomItems(bom){
@@ -17384,6 +17392,17 @@ function _hasPrice(r){return r.unitPrice!=null&&+r.unitPrice>0;}
 function _isBuyoffOrCrate(r){
   const pn=(r.partNumber||"").toLowerCase(),desc=(r.description||"").toLowerCase(),cf=(r.crossedFrom||"").toLowerCase();
   return /buyoff/i.test(pn)||/buyoff/i.test(desc)||/buyoff/i.test(cf)||/crat(e|ing)/i.test(pn)||/crat(e|ing)/i.test(desc)||/crat(e|ing)/i.test(cf);
+}
+// DECISION(Bug 2, 2026-07-29): SSOT for "row that must PIN to the bottom of the BOM" — Contingency,
+// Crate, and Buyoff (Jon: these are always the bottom rows, regardless of new additions). Factored
+// from ~half-a-dozen drifted inline copies of `/^job.?buyoff$/i` + `/^crat(e|ing)$/i` + CONTINGENCY_PNS
+// that missed the broad real-world forms (crossed-to "BUYOFF", "Crate & Pack", partNumber "CRATE") —
+// reuses the broad _isBuyoffOrCrate. Used by sortBomByDrawingPosition + the add-row insertion points so
+// a newly-added item always lands ABOVE these three. (Quote/print grouping sites keep their own
+// tail-vs-bottom split for now — separate concern.)
+function _isBottomPinnedRow(r){
+  if(!r)return false;
+  return !!r.isContingency||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())||_isBuyoffOrCrate(r);
 }
 function _isExcludedFromPriceCheck(r){
   const pn=(r.partNumber||"").toLowerCase(),desc=(r.description||"").toLowerCase();
@@ -29397,7 +29416,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     const bom=[...(panel.bom||[])];
     // Insert before JOB BUYOFF / Crate rows (always keep them at the end)
-    const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())));
+    const tailIdx=bom.findIndex(r=>!r.isLaborRow&&_isBottomPinnedRow(r)); // Bug 2: broad pin predicate (was a narrow regex that missed crossed-to BUYOFF / "Crate & Pack" etc.)
     if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
     const updated={...panel,bom};
     onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}
@@ -29468,7 +29487,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // If row not found (stale ref from addBomRow race), find it in any panel version
     if(!liveBom.some(r=>r.id===bomRowId)){
       // Row was added by addBomRow but latestPanelRef hasn't caught up — insert it
-      const tailIdx=liveBom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())));
+      const tailIdx=liveBom.findIndex(r=>!r.isLaborRow&&_isBottomPinnedRow(r)); // Bug 2: broad pin predicate (also now includes contingency, which this site previously omitted)
       const newRow={id:bomRowId,qty:1,partNumber:"",description:"",manufacturer:"",notes:""};
       // ECO Stage B: orphan-insertion path needs the same ecoTag treatment that
       // addBomRow applies, otherwise the BC-committed row falls through as
@@ -43202,7 +43221,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                               const panel=(projectRef.current.panels||[])[0];
                               if(panel){
                                 const bom=[...(panel.bom||[])];
-                                const tailIdx=bom.findIndex(r=>!r.isLaborRow&&(/^job.?buyoff$/i.test(r.partNumber)||/^crat(e|ing)$/i.test((r.description||"").trim())||CONTINGENCY_PNS.has((r.partNumber||"").trim().toUpperCase())));
+                                const tailIdx=bom.findIndex(r=>!r.isLaborRow&&_isBottomPinnedRow(r)); // Bug 2: broad pin predicate (was a narrow regex that missed crossed-to BUYOFF / "Crate & Pack" etc.)
                                 if(tailIdx>=0)bom.splice(tailIdx,0,newRow);else bom.push(newRow);
                                 const updatedPanel={...panel,bom};
                                 const updatedPanels=(projectRef.current.panels||[]).map(p=>p.id===panel.id?updatedPanel:p);
