@@ -24830,7 +24830,8 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
       setVendorNames(prev=>({...prev,[itemNo]:name}));
       setEditVendorItem(null);
     }catch(e){
-      setVendorSaveErr(e.message||"Failed to update vendor");
+      // Concise inline flag; the modal below carries the full explanation (avoids double-messaging).
+      setVendorSaveErr("Not applied — see message");
       // Same list-mismatch guard as the MFR picker (Jon 2026-07-29): BC rejected the vendor (e.g.
       // Vendor_No not in BC's Vendor table after a migration). vendorNames was NOT set (the await threw
       // before it), so the row stays unpopulated; surface the clear "lists out of sync" warning.
@@ -25293,11 +25294,9 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
                               const r=await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
                               if(!r.ok){const txt=await r.text();throw new Error(txt.slice(0,120));}
                               _bcManufacturers=null;const fresh=await bcFetchManufacturers();setBcManufacturers(fresh);
-                              // Now assign it to the item
-                              const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-                              if(iPage){const gr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${item.number}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                                if(gr.ok){const rec=((await gr.json()).value||[])[0];if(rec){const etag=rec["@odata.etag"]||"*";
-                                  await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}('${item.number}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});}}}
+                              // Now assign it to the item — checked write (throws on non-ok), so a failed
+                              // assign surfaces via the catch instead of silently mirroring to local state.
+                              await bcPatchItemOData(item.number,{Manufacturer_Code:code});
                               setMfrCodes(prev=>({...prev,[item.number]:code}));
                               setInlineMfrCreate(null);
                             }catch(e){setInlineMfrErr(e.message||"Failed");}
