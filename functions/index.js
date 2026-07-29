@@ -1051,7 +1051,7 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
       alreadyExists: Object.keys(existing).length,
       ambiguous: ambiguousList.length,
       missing: missing.length,
-      wouldCreate: forceDry ? toCreate.length : undefined,
+      wouldCreate: forceDry ? toCreate.length : null, // null (not undefined) — Firestore rejects undefined in the status-doc write
       created: forceDry ? 0 : createdCount,
       createErrors,
       missingOverflow,
