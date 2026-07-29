@@ -347,7 +347,7 @@ const _BC_DEFAULTS={env:"MATR_SndBx_01152026",companyName:"Matrix Systems LLC",c
 // sandbox env (real, isolated round-trip); a mutating request to any OTHER (production) env is
 // no-op'd by the bcGatedFetch belt (§4). URL-based check = authoritative for where the write lands.
 // Extend this list if the sandbox is re-provisioned under a new name.
-const _BC_SANDBOX_ENVS=["MATR_SndBx_01152026"];
+const _BC_SANDBOX_ENVS=["MATR_SndBx_01152026","MATR_SndBx_UAT_070926"];
 let _bcConfig={..._BC_DEFAULTS};
 // Legacy constants — computed from _bcConfig, used throughout the codebase
 function _bcApiBase(){return`https://api.businesscentral.dynamics.com/v2.0/${BC_TENANT}/${_bcConfig.env}/api/v2.0`;}
