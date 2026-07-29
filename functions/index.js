@@ -1323,12 +1323,16 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
 
     let matched = 0, updated = 0, created = 0, expired = 0, expireFailed = 0, conflicts = 0, lowSourceOnly = 0, failed = 0;
     const samples = [], conflictList = [], failures = [];
+    // B1 (Coach): rollback map — EVERY live update/create records old→new so the run is reversible.
+    // Uncapped: bounded per-call by the slice (<= limit <= 2000), well under the 1MB Firestore doc cap.
+    // Distinct from `samples` (60-cap display preview).
+    const rollback = [];
 
     async function processGroup(key) {
       const g = groups.get(key);
       const res = resolve(g);
-      if (res.action === 'low-source-only') { lowSourceOnly++; if (conflictList.length < 200) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'low-source-only (scraper/ai/untagged only)' }); return; }
-      if (res.action === 'conflict') { conflicts++; if (conflictList.length < 200) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'trusted prices disagree', spread: res.spread }); return; }
+      if (res.action === 'low-source-only') { lowSourceOnly++; if (conflictList.length < 1000) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'low-source-only (scraper/ai/untagged only)' }); return; }
+      if (res.action === 'conflict') { conflicts++; if (conflictList.length < 1000) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'trusted prices disagree', spread: res.spread }); return; }
       const arc = res.winner;
       // Current BC record(s) for this item+vendor.
       const gr = await fetch(`${baseUrl}?$filter=${encodeURIComponent(`Item_No eq '${q(g.bcNo)}' and Vendor_No eq '${q(g.vendorNo)}'`)}&$select=Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date`, { headers: bcHeaders });
@@ -1345,12 +1349,14 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
         const pr = await _cfPatchFreshEtag(keyUrl, { Direct_Unit_Cost: arc }, bcHeaders);
         if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `PATCH ${pr.status}` }); return; }
         updated++;
+        rollback.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, old: bcCost, new: arc, src: res.source, act: 'update' }); // B1 rollback map
       } else {
         // Priced in ARC but no 2026-01-01 BC record (item+vendor not in the Step-1 Excel load) → POST it.
         const payload = { Item_No: g.bcNo, Vendor_No: g.vendorNo, Starting_Date: startingDate, Direct_Unit_Cost: arc, Unit_of_Measure_Code: 'EA' };
         const cr = await fetch(baseUrl, { method: 'POST', headers: postHeaders, body: JSON.stringify(payload) });
         if (!cr.ok) { const t = await cr.text().catch(() => ''); failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `POST ${cr.status} ${t.slice(0, 100)}` }); return; }
         created++;
+        rollback.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, old: null, new: arc, src: res.source, act: 'create' }); // B1 rollback map (no prior BC record)
         for (const r of existing) { // retire any $0 placeholder (older, active)
           if (Number(r.Direct_Unit_Cost) !== 0) continue; const rsd = sdf(r);
           if (!rsd || rsd >= startingDate || !(_cfDateUnset(r.Ending_Date) || String(r.Ending_Date).slice(0, 10) >= startingDate)) continue;
@@ -1366,10 +1372,11 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     await Promise.all(Array.from({ length: Math.min(CONC, slice.length || 1) }, worker));
 
     const nextOffset = (offset + limit < total) ? (offset + limit) : null;
-    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 200), failures: failures.slice(0, 50), nextOffset };
+    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 1000), failures: failures.slice(0, 50), nextOffset };
     if (!forceDry) {
       const ts = Date.now();
-      await db.doc(`companies/${companyId}/bcPpReconcileRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, tolerance: TOL, offset, limit, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, samples: samples.slice(0, 150), failures: failures.slice(0, 100) });
+      // B1: `rollback` (uncapped, <= slice size) is the reversal map — old→new per live update/create.
+      await db.doc(`companies/${companyId}/bcPpReconcileRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, tolerance: TOL, offset, limit, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, rollback, conflictList: conflictList.slice(0, 1000), failures: failures.slice(0, 100) });
     }
     await statusRef.set({ status: 'done', dryRun: forceDry, startingDate, tolerance: TOL, offset, limit, total, finishedAt: Date.now(), by: uid, report: result }, { merge: true });
     return result;
