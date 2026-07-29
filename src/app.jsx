@@ -49898,7 +49898,15 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       {/* BC-disconnected ⚠ — a flex sibling (row is alignItems:center) so it stays vertically centered
           with the PRJ# text at any size; sized 28 (2× the 14px PRJ#) per Jon. flexShrink:0 keeps it from
           being squeezed; lineHeight:1 stops the tall glyph from inflating the row. */}
-      {bcDisconnected&&<span style={{fontSize:28,lineHeight:1,color:C.yellow,fontWeight:600,flexShrink:0}} title={`Disconnected — Old BC Environment. This project was linked to ${p.bcEnv}, current environment is ${_bcConfig.env||"none"}. Column placement may be stale. Restore or re-link to bring it current.`}>⚠</span>}
+      {bcDisconnected&&<span title={`Disconnected — Old BC Environment. This project was linked to ${p.bcEnv}, current environment is ${_bcConfig.env||"none"}. Column placement may be stale. Restore or re-link to bring it current.`} style={{display:"flex",alignItems:"center",flexShrink:0}}>
+        {/* Crisp inline SVG warning triangle (was the chunky/inconsistent ⚠ emoji glyph). Thin
+            stroke, C.yellow, ~26px — clean + legible at the doubled size. */}
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke={C.yellow} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </span>}
       <div style={{flex:1,minWidth:0}}/>
       {(()=>{
         // DECISION(v1.19.602): If a teammate is in this project right now, replace the
