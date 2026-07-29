@@ -4348,8 +4348,12 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
       if(await _probeField("Job_No")){FP_NO="Job_No";FP_TASK_NO="Job_Task_No";detected=true;}
       else if(await _probeField("Project_No")){FP_NO="Project_No";FP_TASK_NO="Project_Task_No";detected=true;}
     }
-    window._bcPlanFieldsCache[cacheKey]={FP_NO,FP_TASK_NO,detected};
-    console.log(`bcSyncPlanningLines: detected ${FP_NO}/${FP_TASK_NO} for '${planPage}'${detected?"":" (defaults — neither probe succeeded)"}`);
+    // Cache ONLY a CONFIRMED detection (Coach C-review NIT, 2026-07-28). A transient non-schema 400 /
+    // network blip during the first probe of a session could otherwise pin the wrong default field for
+    // the whole session (every later line 400s, no re-probe). Caching only when detected===true means a
+    // transient failure just retries the (cheap) probe next call.
+    if(detected)window._bcPlanFieldsCache[cacheKey]={FP_NO,FP_TASK_NO,detected};
+    console.log(`bcSyncPlanningLines: detected ${FP_NO}/${FP_TASK_NO} for '${planPage}'${detected?"":" (defaults — neither probe succeeded; not cached, will re-probe)"}`);
   }
 
   // Step 1: fetch existing planning lines for this task (for incremental sync)
@@ -4411,21 +4415,26 @@ async function bcSyncPanelPlanningLines(projectNumber, panelIndex, panel, projec
   // that would produce 400 errors from BC. For non-restore callers, restoreSkipped
   // is undefined/null so the filter passes through unchanged.
   //
-  // #163/migration: push ONLY rows COMMITTED to BC — i.e. with a real `bcNo` binding (the MTX
-  // surrogate set by commitBcItem/reconcile). A row with no `bcNo` is "not in BC" — the SAME state
-  // the BOM already shows as a RED BC circle (an unidentified item awaiting a user, or a pseudo-part
-  // like CRATE/CONTINGENCY that will never be a BC item). It has no valid BC item to key on, so a
-  // planning-line POST on its part# 400s. The old Text-fallback tried to represent it as a
-  // Type:"Text" comment line, but BC forbids Type:"Text" on a Line_Type:"Budget" line ("Type must
-  // not be Text") — the fallback was structurally invalid and is removed. Such rows simply don't
-  // belong in BC until a user commits them (then they gain a `bcNo` and sync on the next relink), so
-  // they are SKIPPED here — consistent with the red-circle UI — and their count is reported, never
-  // silently dropped. SSOT: "has a `bcNo`" is the same commit signal `_bcNo`/the BC circle rely on.
+  // MIGRATION-SCOPED skip (opts.skipUnbound — ONLY relinkToBC passes it). During the #163 re-link to a
+  // fresh sandbox, a row with no `bcNo` after the reconcile is one the reconcile could NOT map to an
+  // MTX item by Vendor_Item_No — i.e. not yet identified in the new sandbox (a crate whose ARC desc
+  // doesn't match BC's crate naming, or an unidentified "Unkown"). Its `_bcNo` would fall back to the
+  // ARC part#, which can't match an MTX-##### item → 400. So the re-link SKIPS such rows (reported via
+  // skippedNotInBc, never silently dropped); a user identifies them later and they sync on the next
+  // re-link once they gain a `bcNo`. The old Text-fallback (Type:"Text" on a Budget line) is REMOVED
+  // for ALL callers — BC forbids that combination ("Type must not be Text"), so it never succeeded.
+  // NORMAL callers (⇅ Sync BC, quote-send, pre-print — everything except relink) DO NOT pass
+  // skipUnbound → they push every row via `No:_bcNo(row)` EXACTLY as before, so an in-BC-but-no-`bcNo`
+  // row (e.g. one priced via applyConfirmedPrice: priceSource="bc"/bcVerify in-bc, no bcNo) is NOT
+  // dropped on the live/current env where its part# still matches the catalog No. (Coach C-review
+  // finding #1/#4, 2026-07-28 — scope the skip to migration; don't regress normal syncs.)
+  const _skipUnbound=!!(opts&&opts.skipUnbound);
   const _pushable=r=>!r.isLaborRow&&!r.ecoTag&&!r.restoreSkipped;
   const _hasBcBinding=r=>!!(r&&r.bcNo&&String(r.bcNo).trim());
-  const bomRows=(panel.bom||[]).filter(r=>_pushable(r)&&_hasBcBinding(r));
-  const skippedNotInBc=(panel.bom||[]).filter(r=>_pushable(r)&&!_hasBcBinding(r)&&(r.partNumber||"").trim())
-    .map(r=>({partNumber:r.partNumber,description:(r.description||"").slice(0,60)}));
+  const bomRows=(panel.bom||[]).filter(r=>_pushable(r)&&(!_skipUnbound||_hasBcBinding(r)));
+  const skippedNotInBc=_skipUnbound
+    ?(panel.bom||[]).filter(r=>_pushable(r)&&!_hasBcBinding(r)&&(r.partNumber||"").trim()).map(r=>({partNumber:r.partNumber,description:(r.description||"").slice(0,60)}))
+    :[];
   let lineNo=60000;
   for(const row of bomRows){
     const desc=(row.description||"").slice(0,100);
@@ -41602,7 +41611,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // lines onto the wrong tasks + minted a phantom 20010 block.
         let res=null;
         try{
-          res=await bcSyncPanelPlanningLines(bc.number,i+1,panels[i],project.name,{failFast:_failFast});
+          res=await bcSyncPanelPlanningLines(bc.number,i+1,panels[i],project.name,{failFast:_failFast,skipUnbound:true});
         }catch(e){
           console.warn("Relink planning lines error panel",i,e);
           _panelOutcomes.push({panel:i+1,ok:false,error:(e&&e.message)||String(e)});
