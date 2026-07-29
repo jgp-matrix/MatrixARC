@@ -20,22 +20,40 @@
 
 ---
 
-## Category A — clear ARC-side data / pseudo rows (NO BC hunt needed)
+## Category A — REVISED after reading actual row data (2026-07-28)
 
-These almost certainly won't exist in the new sandbox as-is — they're formatting errors,
-placeholders, or custom/one-off rows. Recommend fixing ARC-side or leaving them flagged.
+> **Correction:** my first pass mis-categorized 3 real, priced items as "garbage." Reading the
+> live Firestore rows moved them to Category B (real → check in BC). What remains in A splits into
+> **A1 (truly non-BC → Text-line is correct, no data fix)** and **A2 (real part, broken part# →
+> needs a correct value only Jon/the drawing can supply)**.
 
-| # | Value in ARC | Mfr | Description | Note |
+### A1 — truly non-BC (relink correctly degrades to a descriptive Text line; NO fix needed)
+
+| # | Value in ARC | Mfr | Description | Row state |
 |---|---|---|---|---|
-| 6 | `Unkown` | Nvent Hoffman | Side mounted exhaust | Literal typo "Unkown" — no real part# |
-| 33 | `EVMFL8551G321DC24/DCK` | *(none)* | *(desc == value)* | Garbled paste, no mfr |
-| 35 | `1492-D2Cxxx` | Allen-Bradley | Mini Breaker - DC | Literal `xxx` placeholder |
-| 7 | `Custom Bracket` | Precision Digital | Custom mounting bracket | Freeform, custom-fabricated |
-| 8 | `679031` | OVIVO PROPRIETARY TAG | Enclosure nameplate | Proprietary tag |
-| 56 | `GRAVORY ULTRA` | GRAVOGRAPH | Door operator tag | Engraving stock, not a stock item |
-| 29 | `TP-1X4` | Matrix Systems | Panel Tag Plate 1x4, custom text | Own-vendor tag plate |
-| 45 | `TYO1CPW6` | T&B by ABB | Companion of TYD1X3MWP6 (accessory) | Accessory/companion pseudo-row |
-| 47 | `TYO2CPW6` | T&B by ABB | Companion of TYO2X3MWP6 (accessory) | Accessory/companion pseudo-row |
+| 7 | `Custom Bracket` | Precision Digital | Custom mounting bracket (×2 rows) | qty 1, no BC item — custom-fabricated |
+| 8 | `679031` | OVIVO PROPRIETARY TAG | Enclosure nameplate | qty 1 — proprietary |
+| 56 | `GRAVORY ULTRA` | GRAVOGRAPH | Door operator tag | qty 1 — engraving stock |
+| 29 | `TP-1X4` | Matrix Systems | Panel Tag Plate 1x4, custom text | qty 2 @ $3.50 — in-house tag |
+
+### A2 — real part, broken part# (needs correct value; can't be invented)
+
+> **Jon ruling (2026-07-28): LEAVE AS-IS for now** — "I haven't defined what these need to be yet."
+> They ride as descriptive Text lines at Re-link (qty + description, no BC item link, no cost in the
+> BC budget) until Jon defines the correct part#. Not a blocker for the migration.
+
+| # | Value in ARC | Mfr | Description | Row state |
+|---|---|---|---|---|
+| 35 | `1492-D2Cxxx` | Allen-Bradley | DC mini breaker | **qty 26**, PRJ402142 — `xxx`=missing amp code; Jon crossed another instance → `2907662` in F068 |
+| 6 | `Unkown` | Nvent Hoffman | Side mounted exhaust | qty 1 @ $35 (PRJ402108) + qty 1 (PRJ402111) — literal typo |
+
+### Moved A → B (real, priced items — check in BC)
+
+| Was # | Value | Mfr | Row state — why it's real |
+|---|---|---|---|
+| 33 | `EVMFL8551G321DC24/DCK` | ASCO (Royal Wholesale) | qty 2 @ **$1033**, `priceSource: bc` — 25-char part# vs `_bcNo` 20-char truncation = formatting miss |
+| 45 | `TYO1CPW6` | T&B by ABB | qty 1 @ $18 — real duct **cover** |
+| 47 | `TYO2CPW6` | T&B by ABB | qty 1 @ $25 — real duct **cover** |
 
 ## Category B — real catalog parts to check in BC (your worklist)
 
