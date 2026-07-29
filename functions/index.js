@@ -1101,6 +1101,19 @@ function _cfPpKeyUrl(baseUrl, k) {
   return `${baseUrl}(Item_No='${q(k.itemNo)}',Vendor_No='${q(k.vendorNo)}',Currency_Code='${q(k.currencyCode)}',Starting_Date=${k.startingDate},Variant_Code='${q(k.variantCode)}',Unit_of_Measure_Code='${q(k.uom)}',Minimum_Quantity=${Number(k.minQty) || 0})`;
 }
 const _cfDateUnset = (d) => !d || String(d).slice(0, 10) === '0001-01-01';
+// Mirror app.jsx _bcPatchWithFreshEtag (:6261): this NAV tenant 409s on If-Match:* AND on a stale
+// list-metadata etag — so read a FRESH etag via a keyed GET immediately before the PATCH. (The 10-item
+// CF spot-check 2026-07-29 confirmed the list etag → 409 on the expire PATCH; POST/create is unaffected.)
+async function _cfPatchFreshEtag(keyUrl, body, bcHeaders) {
+  let etag = '';
+  try {
+    const gr = await fetch(keyUrl, { headers: bcHeaders });
+    if (gr.ok) { let gb = null; try { gb = await gr.json(); } catch (_) {} etag = (gb && gb['@odata.etag']) || (gr.headers && gr.headers.get && gr.headers.get('ETag')) || ''; }
+  } catch (_) {}
+  if (!etag) return { ok: false, status: 0 };
+  const pr = await fetch(keyUrl, { method: 'PATCH', headers: Object.assign({}, bcHeaders, { 'Content-Type': 'application/json', 'If-Match': etag }), body: JSON.stringify(body) });
+  return { ok: pr.ok, status: pr.status };
+}
 
 exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: '512MB', maxInstances: 1 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
@@ -1163,8 +1176,8 @@ exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: 
       // LIVE — write the cost record first (POST new, or PATCH the same-day record in place).
       if (scopedSameDay) {
         const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo, vendorNo, currencyCode: '', startingDate, variantCode: '', uom, minQty: 0 });
-        const pr = await fetch(keyUrl, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': scopedSameDay['@odata.etag'] || '*' }), body: JSON.stringify({ Direct_Unit_Cost: cost }) });
-        if (!pr.ok) { const t = await pr.text().catch(() => ''); failed++; failures.push({ itemNo, vendorNo, error: `same-day PATCH ${pr.status} ${t.slice(0, 80)}` }); return; }
+        const pr = await _cfPatchFreshEtag(keyUrl, { Direct_Unit_Cost: cost }, bcHeaders);
+        if (!pr.ok) { failed++; failures.push({ itemNo, vendorNo, error: `same-day PATCH ${pr.status}` }); return; }
         updated++;
       } else {
         const payload = { Item_No: itemNo, Vendor_No: vendorNo, Starting_Date: startingDate, Direct_Unit_Cost: cost };
@@ -1178,7 +1191,7 @@ exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: 
       // non-fatal (matches bcPushPurchasePrice — never leave the item price-less over a cleanup miss).
       for (const r of wouldExpire) {
         const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo, vendorNo, currencyCode: r.Currency_Code || '', startingDate: sd(r), variantCode: r.Variant_Code || '', uom: r.Unit_of_Measure_Code || '', minQty: Number(r.Minimum_Quantity) || 0 });
-        const er = await fetch(keyUrl, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': r['@odata.etag'] || '*' }), body: JSON.stringify({ Ending_Date: expireDate }) });
+        const er = await _cfPatchFreshEtag(keyUrl, { Ending_Date: expireDate }, bcHeaders);
         if (er.ok) { expired++; } else { expireFailed++; failures.push({ itemNo, vendorNo, error: `expire PATCH ${er.status} (non-fatal — price written)` }); }
       }
     }
