@@ -1085,6 +1085,124 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
   }
 });
 
+// ── loadBcPurchasePrices — one-time bulk load of Item purchase costs into BC PurchasePrices ────────
+// Reads the bundled ppPurchasePriceData.json (rows exported from the MTX-keyed Item Master:
+// {no: MTX item No., vendorNo, uom, cost}) and, per item+vendor, mirrors the app's proven
+// bcPushPurchasePrice (F072): writes a Direct_Unit_Cost record at startingDate (default 2026-01-01)
+// and expires the pre-existing $0 placeholder line (Ending_Date = startingDate-1) — exactly the
+// mechanism validated live on the 10-item pilot (2026-07-29). Admin-gated; dryRun DEFAULT TRUE;
+// processes a slice [offset, offset+limit) so the client drives it in chunks within the 540s window;
+// concurrency-limited; idempotent on re-run (a same-day record is PATCHed, not duplicated).
+// isTestCompany forces dry. Data rides in the deploy bundle → no fragile client-side transport.
+// The Starting_Date OData key order (Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,
+// Unit_of_Measure_Code,Minimum_Quantity) was verified live against MATR_SndBx_UAT_070926.
+function _cfPpKeyUrl(baseUrl, k) {
+  const q = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+  return `${baseUrl}(Item_No='${q(k.itemNo)}',Vendor_No='${q(k.vendorNo)}',Currency_Code='${q(k.currencyCode)}',Starting_Date=${k.startingDate},Variant_Code='${q(k.variantCode)}',Unit_of_Measure_Code='${q(k.uom)}',Minimum_Quantity=${Number(k.minQty) || 0})`;
+}
+const _cfDateUnset = (d) => !d || String(d).slice(0, 10) === '0001-01-01';
+
+exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: '512MB', maxInstances: 1 }).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  const uid = context.auth.uid;
+  const profileSnap = await db.doc(`users/${uid}/config/profile`).get();
+  const companyId = profileSnap.exists ? profileSnap.data().companyId : null;
+  if (!companyId) throw new functions.https.HttpsError('failed-precondition', 'No company workspace for caller');
+  const memberSnap = await db.doc(`companies/${companyId}/members/${uid}`).get();
+  if (!memberSnap.exists || memberSnap.data().role !== 'admin') throw new functions.https.HttpsError('permission-denied', 'Admin only');
+
+  const { bcToken, bcODataBase } = data || {};
+  if (!bcToken || !bcODataBase) throw new functions.https.HttpsError('invalid-argument', 'bcToken and bcODataBase required');
+  assertBcODataBase(bcODataBase);
+
+  const companySnap = await db.doc(`companies/${companyId}`).get();
+  const isTestCompany = !!(companySnap.exists && companySnap.data() && companySnap.data().isTestCompany);
+  const dryRun = !(data && data.dryRun === false);
+  const forceDry = dryRun || isTestCompany || !!(data && data.isTest === true);
+
+  const startingDate = (data && typeof data.startingDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.startingDate)) ? data.startingDate : '2026-01-01';
+  const _pd = new Date(startingDate + 'T00:00:00Z'); _pd.setUTCDate(_pd.getUTCDate() - 1);
+  const expireDate = _pd.toISOString().slice(0, 10);
+
+  const PP_DATA = require('./ppPurchasePriceData.json'); // lazy (cached) — only this fn loads the 650KB list
+  const total = PP_DATA.length;
+  const offset = Math.max(0, parseInt((data && data.offset) || 0, 10) || 0);
+  const limit = Math.min(2000, Math.max(1, parseInt((data && data.limit) || 1000, 10) || 1000));
+  const slice = PP_DATA.slice(offset, offset + limit);
+
+  const statusRef = db.doc(`companies/${companyId}/config/bcPpLoadStatus`);
+  const startedAt = Date.now();
+  await statusRef.set({ status: 'running', dryRun: forceDry, startingDate, offset, limit, total, startedAt, by: uid }, { merge: true });
+
+  try {
+    const baseUrl = `${bcODataBase}/PurchasePrices`;
+    const bcHeaders = { 'Authorization': `Bearer ${bcToken}`, 'Accept': 'application/json' };
+    const postHeaders = Object.assign({}, bcHeaders, { 'Content-Type': 'application/json' });
+    const q = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+    const sd = (r) => r.Starting_Date ? String(r.Starting_Date).slice(0, 10) : '';
+
+    let created = 0, updated = 0, expired = 0, failed = 0, skipped = 0;
+    const failures = [];
+
+    async function processOne(rec) {
+      const itemNo = String(rec.no || '').trim();
+      const vendorNo = String(rec.vendorNo || '').trim();
+      const uom = String(rec.uom || '').trim();
+      const cost = Number(rec.cost);
+      if (!itemNo || !vendorNo || !(cost > 0)) { skipped++; return; }
+      // Read existing PurchasePrices rows for this item+vendor (default metadata → carries @odata.etag).
+      const filter = `Item_No eq '${q(itemNo)}' and Vendor_No eq '${q(vendorNo)}'`;
+      const gr = await fetch(`${baseUrl}?$filter=${encodeURIComponent(filter)}&$select=Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date`, { headers: bcHeaders });
+      if (!gr.ok) { failed++; failures.push({ itemNo, vendorNo, error: `GET existing ${gr.status}` }); return; }
+      const existing = ((await gr.json()).value || []);
+      // Scoped lane (mirror bcPushPurchasePrice F1): our default write lane = matching UoM + Currency''
+      // + Variant'' + MinQty 0. A same-day record in that lane is UPDATED in place (never duplicated).
+      const scopedSameDay = existing.find((r) => sd(r) === startingDate && (r.Unit_of_Measure_Code || '') === uom && (r.Currency_Code || '') === '' && (r.Variant_Code || '') === '' && (Number(r.Minimum_Quantity) || 0) === 0);
+      const wouldExpire = existing.filter((r) => Number(r.Direct_Unit_Cost) === 0 && sd(r) && sd(r) < startingDate && (_cfDateUnset(r.Ending_Date) || String(r.Ending_Date).slice(0, 10) >= startingDate));
+      if (forceDry) { if (scopedSameDay) updated++; else created++; expired += wouldExpire.length; return; }
+      // LIVE — write the cost record first (POST new, or PATCH the same-day record in place).
+      if (scopedSameDay) {
+        const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo, vendorNo, currencyCode: '', startingDate, variantCode: '', uom, minQty: 0 });
+        const pr = await fetch(keyUrl, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': scopedSameDay['@odata.etag'] || '*' }), body: JSON.stringify({ Direct_Unit_Cost: cost }) });
+        if (!pr.ok) { const t = await pr.text().catch(() => ''); failed++; failures.push({ itemNo, vendorNo, error: `same-day PATCH ${pr.status} ${t.slice(0, 80)}` }); return; }
+        updated++;
+      } else {
+        const payload = { Item_No: itemNo, Vendor_No: vendorNo, Starting_Date: startingDate, Direct_Unit_Cost: cost };
+        if (uom) payload.Unit_of_Measure_Code = uom;
+        const cr = await fetch(baseUrl, { method: 'POST', headers: postHeaders, body: JSON.stringify(payload) });
+        if (!cr.ok) { const t = await cr.text().catch(() => ''); failed++; failures.push({ itemNo, vendorNo, error: `POST ${cr.status} ${t.slice(0, 100)}` }); return; }
+        created++;
+      }
+      // Best-effort: retire the pre-existing $0 placeholder line(s) (older + still active). `existing`
+      // was read before the POST, so it never includes the record we just wrote. An expire failure is
+      // non-fatal (matches bcPushPurchasePrice — never leave the item price-less over a cleanup miss).
+      for (const r of wouldExpire) {
+        const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo, vendorNo, currencyCode: r.Currency_Code || '', startingDate: sd(r), variantCode: r.Variant_Code || '', uom: r.Unit_of_Measure_Code || '', minQty: Number(r.Minimum_Quantity) || 0 });
+        const er = await fetch(keyUrl, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': r['@odata.etag'] || '*' }), body: JSON.stringify({ Ending_Date: expireDate }) });
+        if (er.ok) expired++;
+      }
+    }
+
+    // Bounded concurrency over the slice.
+    const CONC = 6;
+    let idx = 0;
+    const worker = async () => { while (idx < slice.length) { const my = idx++; try { await processOne(slice[my]); } catch (e) { failed++; failures.push({ error: (e && e.message) || String(e) }); } } };
+    await Promise.all(Array.from({ length: Math.min(CONC, slice.length || 1) }, worker));
+
+    const nextOffset = (offset + limit < total) ? (offset + limit) : null;
+    const result = { dryRun: forceDry, total, offset, limit, processed: slice.length, created, updated, expired, failed, skipped, failures: failures.slice(0, 50), nextOffset };
+    if (!forceDry) {
+      const ts = Date.now();
+      await db.doc(`companies/${companyId}/bcPpLoadRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, offset, limit, created, updated, expired, failed, skipped, failures: failures.slice(0, 100) });
+    }
+    await statusRef.set({ status: 'done', dryRun: forceDry, startingDate, offset, limit, total, finishedAt: Date.now(), by: uid, report: result }, { merge: true });
+    return result;
+  } catch (err) {
+    await statusRef.set({ status: 'error', finishedAt: Date.now(), error: (err && err.message) || String(err) }, { merge: true }).catch(() => {});
+    throw err;
+  }
+});
+
 // ── TEAM MANAGEMENT ──
 
 exports.inviteTeamMember = functions.runWith({ maxInstances: 10 }).https.onCall(async (data, context) => {
