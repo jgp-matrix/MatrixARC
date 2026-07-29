@@ -1279,25 +1279,30 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     const _isNonItem = (r) => { const isC = r.isContingency || CONTINGENCY_PNS.has((r.partNumber || '').trim().toUpperCase()); return !!r.isLaborRow || !!r.customerSupplied || isC || /matrix\s*systems/i.test(r.bcVendorName || '') || _isBuyoffOrCrate(r); };
 
     // ── Phase 1 (READ-ONLY): walk projects → group priced rows by (bcNo, vendorNo) ──
-    const snap = await db.collection(`companies/${companyId}/projects`).get();
+    const buildIndex = !!(data && data.buildIndex); // PRE-PASS mode: build RFQ price index only, no reconcile
     const groups = new Map();
     let scanRows = 0, skipZero = 0, noVendor = 0, noBcNo = 0;
-    for (const d of snap.docs) {
-      const pd = d.data() || {};
-      for (const panel of (pd.panels || [])) {
-        for (const row of (panel.bom || [])) {
-          if (!row || row.isLaborRow || _isNonItem(row)) continue;
-          const bcNo = ((row.bcNo) || '').toString().trim();
-          if (!bcNo) { noBcNo++; continue; }
-          const price = Number(row.unitPrice);
-          if (!(price > 0)) { skipZero++; continue; }
-          const vendorNo = ((row.bcVendorNo) || '').toString().trim();
-          if (!vendorNo) { noVendor++; continue; }
-          scanRows++;
-          const key = bcNo + ' ' + vendorNo;
-          let g = groups.get(key);
-          if (!g) { g = { bcNo, vendorNo, rows: [] }; groups.set(key, g); }
-          g.rows.push({ price, rank: _cfPriceRank(row.priceSource), date: _cfEffectivePriceMs(row), source: (row.priceSource || '').toLowerCase() });
+    if (!buildIndex) {
+      const snap = await db.collection(`companies/${companyId}/projects`).get();
+      for (const d of snap.docs) {
+        const pd = d.data() || {};
+        const projNum = pd.bcProjectNumber || pd.number || d.id; // provenance for failure/diagnostic reporting
+        for (const panel of (pd.panels || [])) {
+          for (const row of (panel.bom || [])) {
+            if (!row || row.isLaborRow || _isNonItem(row)) continue;
+            const bcNo = ((row.bcNo) || '').toString().trim();
+            if (!bcNo) { noBcNo++; continue; }
+            const price = Number(row.unitPrice);
+            if (!(price > 0)) { skipZero++; continue; }
+            const vendorNo = ((row.bcVendorNo) || '').toString().trim();
+            if (!vendorNo) { noVendor++; continue; }
+            scanRows++;
+            const key = bcNo + ' ' + vendorNo;
+            let g = groups.get(key);
+            if (!g) { g = { bcNo, vendorNo, rows: [], projects: new Set() }; groups.set(key, g); }
+            g.projects.add(projNum);
+            g.rows.push({ price, rank: _cfPriceRank(row.priceSource), date: _cfEffectivePriceMs(row), source: (row.priceSource || '').toLowerCase() });
+          }
         }
       }
     }
@@ -1313,7 +1318,7 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     let rfqStatusCounts = {};
     const idxRef = db.doc(`companies/${companyId}/config/bcRfqPriceIndex`);
     let rfqIndex = [];
-    if (offset === 0) {
+    if (buildIndex) {
       const partToMtx = {};
       // Gather this company's RFQ docs via BOTH companyId AND each member's uid — legacy pre-v1.19.994
       // docs carry only `uid` (no companyId), so a companyId-only query misses them (the app's OR-fallback).
@@ -1350,10 +1355,13 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
         else rfqUnresolved++;
       }
       await idxRef.set({ builtAt: Date.now(), by: uid, rfqDocs, statusCounts: rfqStatusCounts, quotes: rfqQuotes, resolved: rfqResolved, unresolved: rfqUnresolved, index: rfqIndex.slice(0, 5000) }).catch(() => {});
-    } else {
-      const idxDoc = await idxRef.get().catch(() => null);
-      if (idxDoc && idxDoc.exists) rfqIndex = (idxDoc.data() || {}).index || [];
+      // PRE-PASS complete: index staged. No reconcile/writes in this mode — return so write-slices run separately.
+      await statusRef.set({ status: 'done', mode: 'buildIndex', rfqDocs, quotes: rfqQuotes, resolved: rfqResolved, unresolved: rfqUnresolved, statusCounts: rfqStatusCounts, finishedAt: Date.now(), by: uid }, { merge: true });
+      return { mode: 'buildIndex', rfqDocs, rfqQuotes, rfqResolved, rfqUnresolved, rfqStatusCounts };
     }
+    // Reconcile mode: ALWAYS read the cached index (built by a prior pre-pass) — never rebuild in a write slice.
+    { const idxDoc = await idxRef.get().catch(() => null);
+      if (idxDoc && idxDoc.exists) rfqIndex = (idxDoc.data() || {}).index || []; }
     // Merge RFQ quotes into the groups as rank-0 'supplier' rows (creates a group if the item+vendor
     // isn't in any current BOM — an RFQ price is still accurate and worth reconciling to BC).
     for (const qr of rfqIndex) {
@@ -1369,11 +1377,13 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     // A winning price that IS the junk signature ($0.71) → junkZero (zero the BC record + re-price, never push).
     const JUNK = new Set([0.71]); // PRJ402119 junk-price signature (Jon 2026-07-29)
     const resolve = (g) => {
-      const best = Math.min(...g.rows.map((r) => r.rank));
+      // N1 (Coach): drop $0.71 junk BEFORE ranking, so a junk row in a higher tier can't mask a real price
+      // in a lower trusted tier. $0.71 is never a valid winner.
+      const usable = g.rows.filter((r) => !JUNK.has(r.price));
+      if (!usable.length) return { action: 'noRealArc' }; // all rows junk → BC state decides
+      const best = Math.min(...usable.map((r) => r.rank));
       if (best === 3) return { action: 'low-source-only' };
-      // $0.71 is never a valid winner — drop it from candidacy (data-safety: ARC junk must not drive a write).
-      const cand = g.rows.filter((r) => r.rank === best && !JUNK.has(r.price));
-      if (!cand.length) return { action: 'noRealArc' }; // top trusted tier is all junk → BC state decides
+      const cand = usable.filter((r) => r.rank === best);
       const prices = cand.map((r) => r.price);
       if (Math.max(...prices) - Math.min(...prices) > TOL) return { action: 'conflict', spread: [Math.min(...prices), Math.max(...prices)] };
       cand.sort((a, b) => b.date - a.date); // newest first
@@ -1405,7 +1415,7 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
       if (res.action === 'conflict') { conflicts++; if (conflictList.length < 1000) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'trusted prices disagree', spread: res.spread }); return; }
       // Current BC record(s) for this item+vendor.
       const gr = await fetch(`${baseUrl}?$filter=${encodeURIComponent(`Item_No eq '${q(g.bcNo)}' and Vendor_No eq '${q(g.vendorNo)}'`)}&$select=Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date`, { headers: bcHeaders });
-      if (!gr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `GET existing ${gr.status}` }); return; }
+      if (!gr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, projects: g.projects ? [...g.projects] : [], error: `GET existing ${gr.status}` }); return; }
       const existing = ((await gr.json()).value || []);
       const scopedSameDay = existing.find((r) => sdf(r) === startingDate && (r.Currency_Code || '') === '' && (r.Variant_Code || '') === '' && (Number(r.Minimum_Quantity) || 0) === 0);
       const bcCost = scopedSameDay ? Number(scopedSameDay.Direct_Unit_Cost) : null;
@@ -1419,7 +1429,7 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
           if (forceDry) return;
           const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo: g.bcNo, vendorNo: g.vendorNo, currencyCode: '', startingDate, variantCode: '', uom: scopedSameDay.Unit_of_Measure_Code || '', minQty: 0 });
           const pr = await _cfPatchFreshEtag(keyUrl, { Direct_Unit_Cost: 0 }, bcHeaders);
-          if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `junk-zero PATCH ${pr.status}` }); return; }
+          if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, projects: g.projects ? [...g.projects] : [], error: `junk-zero PATCH ${pr.status}` }); return; }
           rollback.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, old: bcCost, new: 0, src: 'bc-junk', act: 'junk-zero' });
         } else { keptBc++; } // BC has a real (or $0) price + no better ARC → leave it untouched
         return;
@@ -1433,14 +1443,14 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
       if (scopedSameDay) {
         const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo: g.bcNo, vendorNo: g.vendorNo, currencyCode: '', startingDate, variantCode: '', uom: scopedSameDay.Unit_of_Measure_Code || '', minQty: 0 });
         const pr = await _cfPatchFreshEtag(keyUrl, { Direct_Unit_Cost: arc }, bcHeaders);
-        if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `PATCH ${pr.status}` }); return; }
+        if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, projects: g.projects ? [...g.projects] : [], error: `PATCH ${pr.status}` }); return; }
         updated++;
         rollback.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, old: bcCost, new: arc, src: res.source, act: 'update' }); // B1 rollback map
       } else {
         // Priced in ARC but no 2026-01-01 BC record (item+vendor not in the Step-1 Excel load) → POST it.
         const payload = { Item_No: g.bcNo, Vendor_No: g.vendorNo, Starting_Date: startingDate, Direct_Unit_Cost: arc, Unit_of_Measure_Code: 'EA' };
         const cr = await fetch(baseUrl, { method: 'POST', headers: postHeaders, body: JSON.stringify(payload) });
-        if (!cr.ok) { const t = await cr.text().catch(() => ''); failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `POST ${cr.status} ${t.slice(0, 100)}` }); return; }
+        if (!cr.ok) { const t = await cr.text().catch(() => ''); failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, projects: g.projects ? [...g.projects] : [], error: `POST ${cr.status} ${t.slice(0, 100)}` }); return; }
         created++;
         rollback.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, old: null, new: arc, src: res.source, act: 'create' }); // B1 rollback map (no prior BC record)
         for (const r of existing) { // retire any $0 placeholder (older, active)
