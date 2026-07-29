@@ -1097,7 +1097,7 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
 // The Starting_Date OData key order (Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,
 // Unit_of_Measure_Code,Minimum_Quantity) was verified live against MATR_SndBx_UAT_070926.
 function _cfPpKeyUrl(baseUrl, k) {
-  const q = (s) => String(s == null ? '' : s).replace(/'/g, "''");
+  const q = (s) => encodeURIComponent(String(s == null ? '' : s).replace(/'/g, "''")); // parity with app _bcPpKeyUrl
   return `${baseUrl}(Item_No='${q(k.itemNo)}',Vendor_No='${q(k.vendorNo)}',Currency_Code='${q(k.currencyCode)}',Starting_Date=${k.startingDate},Variant_Code='${q(k.variantCode)}',Unit_of_Measure_Code='${q(k.uom)}',Minimum_Quantity=${Number(k.minQty) || 0})`;
 }
 const _cfDateUnset = (d) => !d || String(d).slice(0, 10) === '0001-01-01';
@@ -1141,7 +1141,7 @@ exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: 
     const q = (s) => String(s == null ? '' : s).replace(/'/g, "''");
     const sd = (r) => r.Starting_Date ? String(r.Starting_Date).slice(0, 10) : '';
 
-    let created = 0, updated = 0, expired = 0, failed = 0, skipped = 0;
+    let created = 0, updated = 0, expired = 0, expireFailed = 0, failed = 0, skipped = 0;
     const failures = [];
 
     async function processOne(rec) {
@@ -1179,7 +1179,7 @@ exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: 
       for (const r of wouldExpire) {
         const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo, vendorNo, currencyCode: r.Currency_Code || '', startingDate: sd(r), variantCode: r.Variant_Code || '', uom: r.Unit_of_Measure_Code || '', minQty: Number(r.Minimum_Quantity) || 0 });
         const er = await fetch(keyUrl, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': r['@odata.etag'] || '*' }), body: JSON.stringify({ Ending_Date: expireDate }) });
-        if (er.ok) expired++;
+        if (er.ok) { expired++; } else { expireFailed++; failures.push({ itemNo, vendorNo, error: `expire PATCH ${er.status} (non-fatal — price written)` }); }
       }
     }
 
@@ -1190,10 +1190,10 @@ exports.loadBcPurchasePrices = functions.runWith({ timeoutSeconds: 540, memory: 
     await Promise.all(Array.from({ length: Math.min(CONC, slice.length || 1) }, worker));
 
     const nextOffset = (offset + limit < total) ? (offset + limit) : null;
-    const result = { dryRun: forceDry, total, offset, limit, processed: slice.length, created, updated, expired, failed, skipped, failures: failures.slice(0, 50), nextOffset };
+    const result = { dryRun: forceDry, total, offset, limit, processed: slice.length, created, updated, expired, expireFailed, failed, skipped, failures: failures.slice(0, 50), nextOffset };
     if (!forceDry) {
       const ts = Date.now();
-      await db.doc(`companies/${companyId}/bcPpLoadRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, offset, limit, created, updated, expired, failed, skipped, failures: failures.slice(0, 100) });
+      await db.doc(`companies/${companyId}/bcPpLoadRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, offset, limit, created, updated, expired, expireFailed, failed, skipped, failures: failures.slice(0, 100) });
     }
     await statusRef.set({ status: 'done', dryRun: forceDry, startingDate, offset, limit, total, finishedAt: Date.now(), by: uid, report: result }, { merge: true });
     return result;
