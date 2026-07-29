@@ -73,3 +73,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.068 | v1.24.44-T068 | 56f6bb78 | (no description) | 2026-07-28 |
 | V.069 | v1.24.44-T069 | ea0c6fe6 | (no description) | 2026-07-28 |
 | V.070 | v1.24.51-T070 | 6bd011ee | (no description) | 2026-07-29 |
+| V.070 | v1.24.52-T070 | 535a012d | F075 Phase 2 — Get-Prices Confirmed/Budgetary gate + opt-in record-as-optional to BC | 2026-07-29 |
