@@ -29386,6 +29386,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(pn&&ld>0&&cid&&!row.isLaborRow&&!_isExcludedFromPriceCheck(row)){
         _leadTimeBcQueue.current.pending.set(id,{
           rowId:id,
+          // #163 surrogate-key: the flush addresses BC's ItemVendorCatalog via _bcNo(entry),
+          // which is `bcNo || partNumber.slice(0,20)`. Post-migration the BC item No. is the
+          // MTX surrogate (real part# lives in Vendor_Item_No), so we MUST snapshot bcNo here —
+          // otherwise _bcNo() falls back to the raw partNumber, which is no longer a valid BC
+          // item No., and the write fails (the working "Push Lead Times to BC" path passes the
+          // full row, which carries bcNo — this queue only snapshots a subset of fields).
+          bcNo:(row.bcNo||"").trim(),
           partNumber:pn,
           vendorNo:(row.bcVendorNo||"").trim(),
           vendorName:row.bcVendorName||"",
