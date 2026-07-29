@@ -701,7 +701,12 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
     const pd = d.data() || {};
     for (const panel of (pd.panels || [])) {
       for (const row of (panel.bom || [])) {
-        if (!row || _cfIsNonItem(row)) continue;
+        // Jon 2026-07-28: crate / contingency / buyoff / wire&consumables have a Part# in BC "just
+        // like everything else" — they're merely NON-INVENTORY items. So map EVERY non-labor row by
+        // Vendor_Item_No; do NOT pre-exclude the price-check pseudo-parts (the old _cfIsNonItem gate
+        // wrongly skipped real BC items, e.g. BOM CONTINGENCY → MTX-114570). Labor rows are Resource
+        // lines (not items) and are handled separately below.
+        if (!row || row.isLaborRow) continue;
         const v = ((row.bcNo || row.partNumber) || '').toString().trim();
         if (!v || MTX_RE.test(v)) continue;
         uniqueVals.add(v);
@@ -748,10 +753,12 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
         const raw = ((row && (row.bcNo || row.partNumber)) || '').toString().trim();
         if (!raw) { laborOrNull++; continue; }
         if (MTX_RE.test(raw)) { alreadyMtx++; continue; }
-        // Non-item pseudo-parts (contingency/crate/buyoff/customer-supplied/Matrix-vendor) are not
-        // real BC items — bucket as nonItem so they don't pollute unresolvable. (SSOT: app.jsx
-        // _isExcludedFromPriceCheck.) Left untouched by the rewrite.
-        if (_cfIsNonItem(row)) { nonItem++; continue; }
+        // Jon 2026-07-28: crate/contingency/buyoff/wire&cons are real BC items (Non-Inventory), so they
+        // are NO LONGER bucketed out as "nonItem" — every non-labor row flows through the resolver and
+        // is mapped (e.g. BOM CONTINGENCY → MTX-114570) or flagged unresolvable if its Vendor_Item_No
+        // doesn't match (e.g. a crate whose ARC description differs from the BC crate naming → a user
+        // identifies it, like any unmatched part). The `nonItem` counter is retained (now ~0) for the
+        // report's shape/back-compat.
         const mtx = oldToMtx[raw];
         if (mtx) {
           resolvable++;
