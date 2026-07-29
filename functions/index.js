@@ -517,11 +517,11 @@ async function _cfResolveVendorItemNo(v, bcODataBase, bcHeaders) {
   let sawNon2xx = false, ambiguous = false;
   try {
     // 1. exact — ORIGINAL behavior byte-for-byte: $top=1, take value[0] unconditionally.
-    const r1 = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${q(v)}'&$select=No,Vendor_Item_No&$top=1`, { headers: bcHeaders });
+    const r1 = await fetch(`${bcODataBase}/ItemCard?$filter=${encodeURIComponent(`Vendor_Item_No eq '${q(v)}'`)}&$select=No,Vendor_Item_No&$top=1`, { headers: bcHeaders });
     if (r1.ok) { const row = ((await r1.json()).value || [])[0]; if (row && row.No) return { mtx: String(row.No).trim(), ambiguous: false, sawNon2xx }; }
     else sawNon2xx = true;
     // 2. single-hit startswith on the RAW value — ORIGINAL truncation fallback ($top=2, single-hit; >1 ambiguous).
-    const r2 = await fetch(`${bcODataBase}/ItemCard?$filter=startswith(Vendor_Item_No,'${q(v)}')&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
+    const r2 = await fetch(`${bcODataBase}/ItemCard?$filter=${encodeURIComponent(`startswith(Vendor_Item_No,'${q(v)}')`)}&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
     if (r2.ok) { const vals = (await r2.json()).value || []; if (vals.length === 1 && vals[0].No) return { mtx: String(vals[0].No).trim(), ambiguous: false, sawNon2xx }; if (vals.length > 1) ambiguous = true; }
     else sawNon2xx = true;
     // 3. normalized-eq RESCUES — reached ONLY if 1 & 2 miss; additive, never overrides an earlier hit.
@@ -530,7 +530,7 @@ async function _cfResolveVendorItemNo(v, bcODataBase, bcHeaders) {
     const stripSuf = v.replace(/\s*\(.*?\)\s*$/, '').replace(/\s+(CS|cs)$/, '').trim();
     for (const cand of [noSpace, dash, stripSuf]) {
       if (!cand || cand === v) continue;
-      const g = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${q(cand)}'&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
+      const g = await fetch(`${bcODataBase}/ItemCard?$filter=${encodeURIComponent(`Vendor_Item_No eq '${q(cand)}'`)}&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
       if (!g.ok) { sawNon2xx = true; continue; }
       const vals = (await g.json()).value || [];
       if (vals.length === 1 && vals[0].No) return { mtx: String(vals[0].No).trim(), ambiguous: false, sawNon2xx };
@@ -556,7 +556,7 @@ async function _cfCreateBcItem(fullPN, meta, compId, bcApiBase, bcODataBase, bcH
   const q = (s) => String(s).replace(/'/g, "''");
   const postHeaders = Object.assign({}, bcHeaders, { 'Content-Type': 'application/json' });
   const findExisting = async () => {
-    const r = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${q(fullPN)}'&$select=No&$top=1`, { headers: bcHeaders });
+    const r = await fetch(`${bcODataBase}/ItemCard?$filter=${encodeURIComponent(`Vendor_Item_No eq '${q(fullPN)}'`)}&$select=No&$top=1`, { headers: bcHeaders });
     if (!r.ok) return null;
     const row = ((await r.json()).value || [])[0];
     return row && row.No ? String(row.No).trim() : null;
@@ -598,7 +598,7 @@ async function _cfCreateBcItem(fullPN, meta, compId, bcApiBase, bcODataBase, bcH
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await sleep(4000);
       try {
-        const gr = await fetch(`${bcODataBase}/ItemCard?$filter=No eq '${q(assignedNo)}'`, { headers: bcHeaders });
+        const gr = await fetch(`${bcODataBase}/ItemCard?$filter=${encodeURIComponent(`No eq '${q(assignedNo)}'`)}`, { headers: bcHeaders });
         if (!gr.ok) { if (attempt === 2) return false; continue; }
         const rec = ((await gr.json()).value || [])[0];
         const etag = rec && rec['@odata.etag'];
