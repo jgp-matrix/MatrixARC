@@ -4872,15 +4872,18 @@ async function bcCreateProject(displayName, customerNumber, customerProjectNumbe
   // with an actionable message and NO job created (nothing to roll back). Only blocks on a DEFINITIVE
   // miss (GET ok + zero rows); a GET error is non-blocking (let the normal path proceed + surface any
   // real problem downstream). Happy path (customer present) is one cheap extra GET.
-  if(customerNumber){
-    try{
-      const _escC=String(customerNumber).replace(/'/g,"''");
-      const _cc=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${_escC}'&$top=1&$select=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-      if(_cc.ok&&(((await _cc.json()).value)||[]).length===0){
-        throw new Error(`Customer "${customerNumber}" is not in this Business Central environment — add the customer in BC (or load the sandbox's customer list), then re-link. No BC project was created.`);
-      }
-    }catch(_ce){ if(/is not in this Business Central environment/i.test((_ce&&_ce.message)||''))throw _ce; }
-  }
+  // (customerNumber is guaranteed truthy — the guard above throws when it's blank.) Rethrow keys on a
+  // typed flag (_customerMissing), not the message text, so rewording the copy can't silently turn a
+  // definitive miss into a non-blocking pass. (Coach NITs N1/N2, 2026-07-28.)
+  try{
+    const _escC=String(customerNumber).replace(/'/g,"''");
+    const _cc=await bcGatedFetch(`${BC_API_BASE}/companies(${compId})/customers?$filter=number eq '${_escC}'&$top=1&$select=number`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
+    if(_cc.ok&&(((await _cc.json()).value)||[]).length===0){
+      const _e=new Error(`Customer "${customerNumber}" is not in this Business Central environment — add the customer in BC (or load the sandbox's customer list), then re-link. No BC project was created.`);
+      _e._customerMissing=true;
+      throw _e;
+    }
+  }catch(_ce){ if(_ce&&_ce._customerMissing)throw _ce; /* GET error (timeout/network/non-ok) — non-blocking, let the normal path proceed */ }
   // WS1 (BC-sandbox migration, KEYSTONE) — Re-link-scoped caller-supplied No.
   // When opts.projectNumber is provided (ONLY relinkToBC passes it), BC must carry the
   // ARC number so ARC is never renumbered AND the import-sync matches it (no shadow doc).
