@@ -894,6 +894,13 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
   // are idempotent (pre-POST Vendor_Item_No dedup + adopt) and rows are rewritten as each item lands,
   // so a re-run resumes where the last left off. missingOverflow is logged, never silently dropped.
   const MAX_CREATE = Math.min(Number(data && data.maxCreate) || 100, 120);
+  // excludeValues — explicit skip-list of Part#/bcNo values that must NOT be created (nor row-mapped).
+  // The CF resolves purely against BC and can't know a human disposition, so the dry-run surfaced that
+  // the raw "missing" set includes non-catalog / bad-data rows the team already decided to leave as
+  // Re-link Text lines (e.g. "Custom Bracket", "Unkown", the "1492-D2Cxxx" placeholder). Passing them
+  // here keeps the create set to genuine catalog parts only. Excluded values are reported, never
+  // silently dropped, and their rows are left untouched (they ride as Text lines at Re-link).
+  const excludeSet = new Set((Array.isArray(data && data.excludeValues) ? data.excludeValues : []).map((s) => String(s).trim()).filter(Boolean));
 
   const statusRef = db.doc(`companies/${companyId}/config/bcItemCreateStatus`);
   const startedAt = Date.now();
@@ -956,7 +963,9 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
     const existing = {};        // v -> MTX (already in BC → map, don't create)
     const ambiguousList = [];   // >1 hit — skip create (it exists), Jon disambiguates
     const missing = [];         // v with no match → create
+    const excludedList = [];    // v in the explicit skip-list — not created, not row-mapped
     for (const v of uniqueVals) {
+      if (excludeSet.has(v)) { excludedList.push(v); continue; } // explicit skip — no create, no map, no resolve
       const res = await _cfResolveVendorItemNo(v, bcODataBase, bcHeaders);
       if (res.mtx) existing[v] = res.mtx;
       else if (res.ambiguous) ambiguousList.push({ value: v, description: (meta[v] && meta[v].description) || null, manufacturer: (meta[v] && meta[v].manufacturer) || null });
@@ -1033,11 +1042,12 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
     }
 
     const missingList = toCreate.map((v) => ({ value: v, description: (meta[v] && meta[v].description) || null, manufacturer: (meta[v] && meta[v].manufacturer) || null, unitCost: (meta[v] && meta[v].unitCost) || null }));
-    console.log(`[createMissingBcItems] company=${companyId} dryRun=${forceDry} candidates=${uniqueVals.size} alreadyExists=${Object.keys(existing).length} ambiguous=${ambiguousList.length} missing=${missing.length} created=${createdCount} appliedRows=${appliedRows}`);
+    console.log(`[createMissingBcItems] company=${companyId} dryRun=${forceDry} candidates=${uniqueVals.size} excluded=${excludedList.length} alreadyExists=${Object.keys(existing).length} ambiguous=${ambiguousList.length} missing=${missing.length} created=${createdCount} appliedRows=${appliedRows}`);
 
     const result = {
       dryRun: forceDry,
       candidates: uniqueVals.size,
+      excluded: excludedList.length,
       alreadyExists: Object.keys(existing).length,
       ambiguous: ambiguousList.length,
       missing: missing.length,
@@ -1049,7 +1059,7 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
     };
     await statusRef.set({
       status: 'done', dryRun: forceDry, startedAt, finishedAt: Date.now(), by: uid,
-      report: Object.assign({}, result, { missingList, ambiguousList, createdPairs: forceDry ? null : created }),
+      report: Object.assign({}, result, { missingList, ambiguousList, excludedList, createdPairs: forceDry ? null : created }),
     }, { merge: true });
     return result;
   } catch (err) {
