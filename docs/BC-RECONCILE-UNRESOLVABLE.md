@@ -118,3 +118,41 @@ missing hyphen, truncation, or distributor #). Please confirm/correct in BC.
 
 *(Note: `1002` appears in both the unresolvable and ambiguous buckets across different rows —
 same generic value, different match outcomes per project.)*
+
+---
+
+## Smart matching pass (2026-07-28) — read-only re-probe of the new sandbox
+
+Ran normalized ItemCard probes (strip spaces / trailing " CS" / parentheticals, dash-tighten,
+`startswith`, `contains`) against `MATR_SndBx_UAT_070926` for all 50 Category-B parts.
+Endpoint verified healthy (control `MTX-110296` → 200/found; `startswith(No,'MTX-')` → found).
+
+| Outcome | Count | Action |
+|---|---:|---|
+| ✅ Formatting fix (auto-resolvable) | 1 | `1032264 CS` → `MTX-110296` (strip " CS") — fold into reconcile |
+| ~ Ambiguous (exists, 2 candidates) | 1 | `1002` Hubbell locknut — **Jon picks** the MTX# |
+| ❌ Confirmed MISSING from new sandbox | **48** | **must be created as new BC items** |
+
+**Confirms Jon's read:** these 48 are items added to the old sandbox *after* the export that
+seeded the copy. Standard-catalog parts (Saginaw / Siemens / ABB / Rockwell / Harting / Phoenix /
+IDEC) all returned 200-with-zero-results — genuinely absent, not a formatting miss.
+
+## Plan — bulk "Create Missing Items in BC" tool
+
+**Reuses `bcCreateItem` (app.jsx:5800), which already does #163 correctly:** POST omits `No.` →
+BC No.-Series auto-assigns `MTX-#####`; full part# written to `Vendor_Item_No` via follow-up PATCH;
+pre-create dedup by `Vendor_Item_No` (idempotent — safe to re-run). The tool is a thin bulk wrapper:
+for each confirmed-missing part → gather canonical ARC row data → create → capture MTX# → rewrite
+every ARC BOM row's `bcNo` → MTX# (same field-level RMW as `reconcileBcNos`) → audit.
+
+**Data-grounded field defaults (from the 20-item sample of existing MTX items):**
+`Base_Unit_of_Measure = EA` · `Gen_Prod_Posting_Group = INVENTORY` · `Inventory_Posting_Group = RAW MAT` ·
+`Item_Category_Code = PARTS`.
+
+**Guardrails:** dry-run default (lists what would be created, no writes) · F071 commit-gate ·
+dedup via `bcCreateItem` · verify first 1-2 creations before the full 48 · audit each creation ·
+Coach review + Test + Jon sign-off before any real run (money-path BC write, even in a fresh sandbox).
+
+**Open decisions (Jon):** (1) vendor handling on create — skip vs best-effort `bcVendorName`→`Vendor_No`
+map; (2) build vehicle + sequencing — CF targeting the new-env base pre-flip (so all prep finishes
+before the flip) vs client tool post-flip.
