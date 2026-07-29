@@ -503,45 +503,38 @@ exports.stampProjectsBcEnv = functions.runWith({ maxInstances: 1 }).https.onCall
 
 // ── Shared BC #No. resolver (used by reconcileBcNos + createMissingBcItems) ──────────────
 // Resolve an old Part#/bcNo value → the new sandbox's MTX "No." via ItemCard Vendor_Item_No.
-// Strategy order is PRECEDENCE-PRESERVING and ADDITIVE: (1) exact eq, then (2) single-hit
-// startswith (truncation fallback — old bcNo may be 20-char capped, new Vendor_Item_No is full),
-// then (3) normalized-eq RESCUES (strip spaces / tighten " - "→"-" / strip trailing " CS" or a
-// parenthetical) for formatting-only variants. The rescues run LAST so they can NEVER override an
-// exact/prefix hit — reconcileBcNos's proven mappings are byte-for-byte unchanged; normalization
-// only resolves values that would otherwise be unresolvable (e.g. "1032264 CS" → the item stored
-// under Vendor_Item_No "1032264"). NEVER guesses: any >1-hit filter marks the value ambiguous
-// (unresolvable), it is not silently picked. Returns { mtx, ambiguous, sawNon2xx, error }.
+// STRICT SUPERSET of reconcileBcNos's original resolver: steps 1 & 2 are byte-for-byte the original
+// (1 = exact eq `$top=1`, take value[0] unconditionally; 2 = single-hit startswith on the RAW value,
+// `$top=2`, accept iff exactly one else mark ambiguous) — so every value that resolved before still
+// resolves to the SAME MTX#, and the proven 1844 mappings are unchanged (Coach C-review finding #2,
+// 2026-07-28). Step 3 adds normalized-eq RESCUES (strip spaces / tighten " - "→"-" / strip trailing
+// " CS" or a parenthetical) reached ONLY when 1 & 2 both miss — these can never override an earlier
+// hit; they only rescue formatting-only variants that were previously unresolvable (e.g. "1032264 CS"
+// → the item stored under Vendor_Item_No "1032264"). NEVER guesses: any >1-hit filter marks the value
+// ambiguous (unresolvable), it is not silently picked. Returns { mtx, ambiguous, sawNon2xx, error }.
 async function _cfResolveVendorItemNo(v, bcODataBase, bcHeaders) {
   const q = (s) => String(s).replace(/'/g, "''");
-  const eq = async (val) => {
-    const r = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${q(val)}'&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
-    if (!r.ok) return { ok: false, vals: [] };
-    return { ok: true, vals: (await r.json()).value || [] };
-  };
   let sawNon2xx = false, ambiguous = false;
   try {
-    // 1. exact
-    let g = await eq(v);
-    if (!g.ok) sawNon2xx = true;
-    if (g.vals.length === 1 && g.vals[0].No) return { mtx: String(g.vals[0].No).trim(), ambiguous: false, sawNon2xx };
-    if (g.vals.length > 1) ambiguous = true;
-    // 2. single-hit startswith (truncation fallback)
-    const dash = v.replace(/\s*-\s*/g, '-').trim();
-    const sw = await fetch(`${bcODataBase}/ItemCard?$filter=startswith(Vendor_Item_No,'${q(dash)}')&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
-    if (!sw.ok) sawNon2xx = true; else {
-      const vals = (await sw.json()).value || [];
-      if (vals.length === 1 && vals[0].No) return { mtx: String(vals[0].No).trim(), ambiguous: false, sawNon2xx };
-      if (vals.length > 1) ambiguous = true;
-    }
-    // 3. normalized-eq rescues — LAST resort, never overrides an exact/prefix hit above
+    // 1. exact — ORIGINAL behavior byte-for-byte: $top=1, take value[0] unconditionally.
+    const r1 = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${q(v)}'&$select=No,Vendor_Item_No&$top=1`, { headers: bcHeaders });
+    if (r1.ok) { const row = ((await r1.json()).value || [])[0]; if (row && row.No) return { mtx: String(row.No).trim(), ambiguous: false, sawNon2xx }; }
+    else sawNon2xx = true;
+    // 2. single-hit startswith on the RAW value — ORIGINAL truncation fallback ($top=2, single-hit; >1 ambiguous).
+    const r2 = await fetch(`${bcODataBase}/ItemCard?$filter=startswith(Vendor_Item_No,'${q(v)}')&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
+    if (r2.ok) { const vals = (await r2.json()).value || []; if (vals.length === 1 && vals[0].No) return { mtx: String(vals[0].No).trim(), ambiguous: false, sawNon2xx }; if (vals.length > 1) ambiguous = true; }
+    else sawNon2xx = true;
+    // 3. normalized-eq RESCUES — reached ONLY if 1 & 2 miss; additive, never overrides an earlier hit.
     const noSpace = v.replace(/\s+/g, '');
+    const dash = v.replace(/\s*-\s*/g, '-').trim();
     const stripSuf = v.replace(/\s*\(.*?\)\s*$/, '').replace(/\s+(CS|cs)$/, '').trim();
     for (const cand of [noSpace, dash, stripSuf]) {
       if (!cand || cand === v) continue;
-      g = await eq(cand);
+      const g = await fetch(`${bcODataBase}/ItemCard?$filter=Vendor_Item_No eq '${q(cand)}'&$select=No,Vendor_Item_No&$top=2`, { headers: bcHeaders });
       if (!g.ok) { sawNon2xx = true; continue; }
-      if (g.vals.length === 1 && g.vals[0].No) return { mtx: String(g.vals[0].No).trim(), ambiguous: false, sawNon2xx };
-      if (g.vals.length > 1) ambiguous = true;
+      const vals = (await g.json()).value || [];
+      if (vals.length === 1 && vals[0].No) return { mtx: String(vals[0].No).trim(), ambiguous: false, sawNon2xx };
+      if (vals.length > 1) ambiguous = true;
     }
   } catch (e) {
     return { mtx: null, ambiguous, sawNon2xx: true, error: e && e.message };
@@ -557,7 +550,8 @@ async function _cfResolveVendorItemNo(v, bcODataBase, bcHeaders) {
 // RFQ / F072 flow. IDEMPOTENT: a pre-POST Vendor_Item_No dedup + adopt-if-exists means a re-run or
 // partial-run never spawns a duplicate (Vendor_Item_No is not unique-constrained, so we guard it
 // ourselves — mirrors bcCreateItem's #163/B038 handling). B038 transient empty-No. retry ported.
-// Returns the assigned MTX "No." (string) or null. Writes are the caller's gated (dryRun=false) path.
+// Returns { no, vinWritten }: `no` = assigned MTX "No." (string) or null on total POST failure;
+// `vinWritten` = whether the Vendor_Item_No dedup key landed (false ⇒ caller records the orphan No.).
 async function _cfCreateBcItem(fullPN, meta, compId, bcApiBase, bcODataBase, bcHeaders, sleep) {
   const q = (s) => String(s).replace(/'/g, "''");
   const postHeaders = Object.assign({}, bcHeaders, { 'Content-Type': 'application/json' });
@@ -568,7 +562,7 @@ async function _cfCreateBcItem(fullPN, meta, compId, bcApiBase, bcODataBase, bcH
     return row && row.No ? String(row.No).trim() : null;
   };
   const pre = await findExisting();
-  if (pre) return pre; // already exists — adopt, never duplicate
+  if (pre) return { no: pre, vinWritten: true }; // already exists (found BY Vendor_Item_No) — adopt, never duplicate
 
   const body = { displayName: String(meta.description || fullPN).slice(0, 100), itemCategoryCode: 'PARTS', baseUnitOfMeasureCode: 'EA' };
   const _isTransientEmptyNo = (txt) => /Internal_DataNotFoundFilter/i.test(txt || '') && /No\.:\s*''/.test(txt || '');
@@ -581,31 +575,43 @@ async function _cfCreateBcItem(fullPN, meta, compId, bcApiBase, bcODataBase, bcH
     if (r.ok) { const it = await r.json(); assignedNo = it && it.number ? String(it.number).trim() : null; break; }
     const txt = await r.text().catch(() => '');
     if (_isTransientEmptyNo(txt)) {
-      const adopt = await findExisting(); if (adopt) return adopt; // partial persist → adopt
+      const adopt = await findExisting(); if (adopt) return { no: adopt, vinWritten: true }; // partial persist → adopt
       if (tryN < MAX - 1) continue;
       throw new Error('BC empty-No. auto-numbering failed after retries');
     }
-    if ((r.status === 409 || r.status === 400) && /already exists|duplicate/i.test(txt)) { const adopt = await findExisting(); if (adopt) return adopt; }
+    if ((r.status === 409 || r.status === 400) && /already exists|duplicate/i.test(txt)) { const adopt = await findExisting(); if (adopt) return { no: adopt, vinWritten: true }; }
     throw new Error(txt || `BC item POST returned ${r.status}`);
   }
-  if (!assignedNo) return null;
+  if (!assignedNo) return { no: null, vinWritten: false };
 
-  // PATCH the full Part# into Vendor_Item_No + posting groups (item needs a moment to index).
-  await sleep(3000);
-  const patch = { Vendor_Item_No: fullPN, Gen_Prod_Posting_Group: 'INVENTORY', Inventory_Posting_Group: 'RAW MAT' };
-  for (let attempt = 0; attempt < 3; attempt++) {
-    if (attempt > 0) await sleep(4000);
-    try {
-      const gr = await fetch(`${bcODataBase}/ItemCard?$filter=No eq '${q(assignedNo)}'`, { headers: bcHeaders });
-      if (!gr.ok) throw new Error(`ItemCard GET ${gr.status}`);
-      const rec = ((await gr.json()).value || [])[0];
-      const etag = rec && rec['@odata.etag'];
-      const pr = await fetch(`${bcODataBase}/ItemCard('${q(assignedNo)}')`, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': etag || '*' }), body: JSON.stringify(patch) });
-      if (pr.ok || pr.status === 204) break;
-      if (attempt === 2) throw new Error(`ItemCard PATCH ${pr.status}`);
-    } catch (e) { if (attempt === 2) throw e; }
-  }
-  return assignedNo;
+  // The item now exists in BC under `assignedNo`. The full Part# → Vendor_Item_No is the DEDUP KEY,
+  // so write it in its OWN retried PATCH FIRST (must-succeed for idempotency). Posting groups go in a
+  // SEPARATE best-effort PATCH so a bad posting-group code can never block the Vendor_Item_No write.
+  // (Coach C-review finding #1, 2026-07-28: the old combined PATCH threw on any 400 → left the item
+  // with an auto-No. but NO Vendor_Item_No, so a re-run couldn't find it → duplicate creation.)
+  // NEITHER patch throws: on POST success the item is committed; we return its No. so the caller maps
+  // the ARC row to it (Re-link keys planning lines on No., not Vendor_Item_No). vinWritten=false is
+  // surfaced by the caller into createErrors WITH the No. so the orphan is cleaned up by No., never
+  // blind-recreated.
+  await sleep(3000); // newly-created item needs a moment to index before OData PATCH
+  const patchItem = async (fields) => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await sleep(4000);
+      try {
+        const gr = await fetch(`${bcODataBase}/ItemCard?$filter=No eq '${q(assignedNo)}'`, { headers: bcHeaders });
+        if (!gr.ok) { if (attempt === 2) return false; continue; }
+        const rec = ((await gr.json()).value || [])[0];
+        const etag = rec && rec['@odata.etag'];
+        const pr = await fetch(`${bcODataBase}/ItemCard('${q(assignedNo)}')`, { method: 'PATCH', headers: Object.assign({}, postHeaders, { 'If-Match': etag || '*' }), body: JSON.stringify(fields) });
+        if (pr.ok || pr.status === 204) return true;
+        if (attempt === 2) return false;
+      } catch (e) { if (attempt === 2) return false; }
+    }
+    return false;
+  };
+  const vinWritten = await patchItem({ Vendor_Item_No: fullPN });                                  // critical (dedup key)
+  await patchItem({ Gen_Prod_Posting_Group: 'INVENTORY', Inventory_Posting_Group: 'RAW MAT' });    // best-effort
+  return { no: assignedNo, vinWritten };
 }
 
 // ── reconcileBcNos — #163 BC-sandbox migration reconciliation ────────────────────────────
@@ -882,7 +888,12 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
   const isTestCompany = !!(companySnap.exists && companySnap.data() && companySnap.data().isTestCompany);
   const dryRun = !(data && data.dryRun === false);
   const forceDry = dryRun || isTestCompany || !!(data && data.isTest === true);
-  const MAX_CREATE = Math.min(Number(data && data.maxCreate) || 200, 500); // safety cap on creates/run
+  // Safety cap on creates/run. Each create carries a hard ~3s pre-PATCH index wait (+ fetches/retries),
+  // so ~100 creates ≈ the 540s process ceiling (Coach finding #3). Default 100, hard ceiling 120. The
+  // real backlog is ~48 (one run). Larger backlogs are split across invocations — safe because creates
+  // are idempotent (pre-POST Vendor_Item_No dedup + adopt) and rows are rewritten as each item lands,
+  // so a re-run resumes where the last left off. missingOverflow is logged, never silently dropped.
+  const MAX_CREATE = Math.min(Number(data && data.maxCreate) || 100, 120);
 
   const statusRef = db.doc(`companies/${companyId}/config/bcItemCreateStatus`);
   const startedAt = Date.now();
@@ -962,9 +973,20 @@ exports.createMissingBcItems = functions.runWith({ timeoutSeconds: 540, memory: 
     if (!forceDry) {
       for (const v of toCreate) {
         try {
-          const mtx = await _cfCreateBcItem(v, meta[v] || {}, compId, bcApiBase, bcODataBase, bcHeaders, sleep);
-          if (mtx) { created[v] = mtx; createdCount++; }
-          else createErrors.push({ value: v, error: 'no No. returned' });
+          const res = await _cfCreateBcItem(v, meta[v] || {}, compId, bcApiBase, bcODataBase, bcHeaders, sleep);
+          if (res && res.no) {
+            created[v] = res.no; createdCount++;
+            // vinWritten=false ⇒ item created but the Vendor_Item_No dedup key didn't land. The ARC
+            // row IS still mapped to res.no below (Re-link works), but record the orphan No. so it can
+            // be cleaned up by No. and never blind-recreated (Coach C-review finding #1).
+            if (!res.vinWritten) createErrors.push({ value: v, no: res.no, error: 'created but Vendor_Item_No PATCH failed — row mapped; clean up orphan by No.' });
+          } else {
+            createErrors.push({ value: v, error: 'no No. returned' });
+          }
+          // Incremental persist (Coach finding #3): a 540s process-kill mid-loop must not lose the
+          // created→MTX map. Every 5 creates, checkpoint it to the status doc so a re-run/human can
+          // recover; the re-run itself is idempotent (findExisting adopts by the now-written VIN).
+          if (createdCount % 5 === 0) await statusRef.set({ status: 'running', progress: { attempted: createdCount, total: toCreate.length }, partialCreated: created }, { merge: true }).catch(() => {});
         } catch (e) {
           createErrors.push({ value: v, error: (e && e.message) || String(e) });
         }
