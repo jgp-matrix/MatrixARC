@@ -2178,6 +2178,27 @@ function arcPrompt(message,opts){
 // can call them too without importing.
 window.arcAlert=arcAlert;window.arcConfirm=arcConfirm;window.arcPrompt=arcPrompt;
 
+// ── BC list-mismatch guard (Jon 2026-07-29) ─────────────────────────────────
+// The Item Browser's Manufacturer / Vendor pickers can offer a code that exists in ARC's fallback
+// list (e.g. BC_MFR_MAP) but NOT in BC's own Manufacturer/Vendor table — e.g. after a sandbox
+// migration where that master-data table didn't come across. BC is the source of truth: when a
+// picked code is rejected by BC we must NOT populate the BOM row, and must tell the user the lists
+// are out of sync so an admin can reconcile BC. Detects BC's InvalidTableRelation signature to give
+// the precise "out of sync" message; falls back to a generic reject notice for other BC errors.
+// Either way the caller leaves the row unchanged (this only warns).
+function _warnBcListMismatch(kind,code,err){
+  if(typeof arcAlert!=="function")return;
+  var msg=(err&&err.message)||String(err||"");
+  var low=(kind||"").toLowerCase();
+  var mismatch=/InvalidTableRelation|cannot be found in the related table|does not exist|not exist in table/i.test(msg);
+  if(mismatch){
+    arcAlert(kind+' “'+code+'” is in ARC’s list but is NOT in Business Central — the ARC and BC '+low+' lists are out of sync. BC is the source of truth, so the '+low+' was NOT applied and the BOM row was left unchanged. Please contact your BC admin to reconcile the '+low+' list in BC.',{kind:"error",title:kind+" not in Business Central"});
+  }else{
+    arcAlert('Business Central rejected the '+low+(code?' “'+code+'”':"")+': '+(msg||"unknown error").slice(0,160)+'. The BOM row was left unchanged.',{kind:"error",title:"BC "+low+" update failed"});
+  }
+}
+window._warnBcListMismatch=_warnBcListMismatch;
+
 // DECISION(v1.20.001): Popup-blocked detection + helpful modal. Real failure
 // case — Noah had Chrome's popup blocker enabled for matrix-arc.web.app and
 // every PDF / supplier portal / external link silently failed (window.open
@@ -24847,7 +24868,12 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
       setVendorNames(prev=>({...prev,[itemNo]:name}));
       setEditVendorItem(null);
     }catch(e){
-      setVendorSaveErr(e.message||"Failed to update vendor");
+      // Concise inline flag; the modal below carries the full explanation (avoids double-messaging).
+      setVendorSaveErr("Not applied — see message");
+      // Same list-mismatch guard as the MFR picker (Jon 2026-07-29): BC rejected the vendor (e.g.
+      // Vendor_No not in BC's Vendor table after a migration). vendorNames was NOT set (the await threw
+      // before it), so the row stays unpopulated; surface the clear "lists out of sync" warning.
+      _warnBcListMismatch("Vendor",vendorNo,e);
     }
     setSavingVendor(false);
   }
@@ -25306,11 +25332,9 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
                               const r=await bcGatedFetch(`${BC_ODATA_BASE}/${mPage}`,{method:"POST",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json"},body:JSON.stringify({Code:code,Name:name})});
                               if(!r.ok){const txt=await r.text();throw new Error(txt.slice(0,120));}
                               _bcManufacturers=null;const fresh=await bcFetchManufacturers();setBcManufacturers(fresh);
-                              // Now assign it to the item
-                              const iPage=allPages.find(n=>/^ItemCard$/i.test(n));
-                              if(iPage){const gr=await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}?$filter=No eq '${item.number}'`,{headers:{"Authorization":`Bearer ${_bcToken}`}});
-                                if(gr.ok){const rec=((await gr.json()).value||[])[0];if(rec){const etag=rec["@odata.etag"]||"*";
-                                  await bcGatedFetch(`${BC_ODATA_BASE}/${iPage}('${item.number}')`,{method:"PATCH",headers:{"Authorization":`Bearer ${_bcToken}`,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});}}}
+                              // Now assign it to the item — checked write (throws on non-ok), so a failed
+                              // assign surfaces via the catch instead of silently mirroring to local state.
+                              await bcPatchItemOData(item.number,{Manufacturer_Code:code});
                               setMfrCodes(prev=>({...prev,[item.number]:code}));
                               setInlineMfrCreate(null);
                             }catch(e){setInlineMfrErr(e.message||"Failed");}
@@ -25328,14 +25352,22 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
                             var code=e.target.value;
                             if(code==="__NEW__"){setEditMfrItem(null);setInlineMfrCreate(item.number);setInlineMfrCode("");setInlineMfrName("");setInlineMfrErr("");return;}
                             setEditMfrCode(code);setSavingMfr(true);
-                            try{var allPages=await bcDiscoverODataPages();var iPage=allPages.find(function(n){return /^ItemCard$/i.test(n);});
-                              if(iPage){var gr=await fetch(BC_ODATA_BASE+"/"+iPage+"?$filter=No eq '"+item.number+"'",{headers:{"Authorization":"Bearer "+_bcToken}});
-                                if(gr.ok){var gd=await gr.json();var rec=(gd.value||[])[0];if(rec){var etag=rec["@odata.etag"]||"*";
-                                  await bcGatedFetch(BC_ODATA_BASE+"/"+iPage+"('"+item.number+"')",{method:"PATCH",headers:{"Authorization":"Bearer "+_bcToken,"Content-Type":"application/json","If-Match":etag},body:JSON.stringify({Manufacturer_Code:code})});
-                                }}}
+                            try{
+                              // Push to BC via the shared helper (throws on any non-ok — including the
+                              // InvalidTableRelation BC returns when the code isn't in its Manufacturers
+                              // table). Only mirror into local state AFTER BC accepts it, so a code that
+                              // BC rejects never reaches the BOM row.
+                              await bcPatchItemOData(item.number,{Manufacturer_Code:code});
                               setMfrCodes(function(prev){var n=Object.assign({},prev);n[item.number]=code;return n;});
-                            }catch(ex){console.warn("MFR save failed:",ex);}
-                            setSavingMfr(false);setEditMfrItem(null);
+                              setEditMfrItem(null);
+                            }catch(ex){
+                              console.warn("MFR save failed:",ex);
+                              // BC rejected it → ARC/BC manufacturer lists are out of sync. Revert the
+                              // picker, leave the row unpopulated, and warn the user to contact the admin.
+                              setEditMfrCode(mfrCodes[item.number]||"");
+                              _warnBcListMismatch("Manufacturer",code,ex);
+                            }
+                            setSavingMfr(false);
                           },
                           onBlur:function(){if(!savingMfr)setEditMfrItem(null);},
                           style:{background:"#0a0a12",border:"1px solid "+C.accent,borderRadius:6,padding:"3px 6px",color:C.text,fontSize:11,width:"100%",opacity:savingMfr?0.6:1}},
