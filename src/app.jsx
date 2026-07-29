@@ -49894,8 +49894,11 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
-        {bcDisconnected&&<span style={{fontSize:14,color:C.yellow,fontWeight:600,marginLeft:4,verticalAlign:"middle"}} title={`Disconnected — Old BC Environment. This project was linked to ${p.bcEnv}, current environment is ${_bcConfig.env||"none"}. Column placement may be stale. Restore or re-link to bring it current.`}>⚠</span>}
       </div>
+      {/* BC-disconnected ⚠ — a flex sibling (row is alignItems:center) so it stays vertically centered
+          with the PRJ# text at any size; sized 28 (2× the 14px PRJ#) per Jon. flexShrink:0 keeps it from
+          being squeezed; lineHeight:1 stops the tall glyph from inflating the row. */}
+      {bcDisconnected&&<span style={{fontSize:28,lineHeight:1,color:C.yellow,fontWeight:600,flexShrink:0}} title={`Disconnected — Old BC Environment. This project was linked to ${p.bcEnv}, current environment is ${_bcConfig.env||"none"}. Column placement may be stale. Restore or re-link to bring it current.`}>⚠</span>}
       <div style={{flex:1,minWidth:0}}/>
       {(()=>{
         // DECISION(v1.19.602): If a teammate is in this project right now, replace the
