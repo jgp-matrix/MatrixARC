@@ -1238,7 +1238,9 @@ const _cfPriceMs = (d) => {
 };
 // Mirror app.jsx _effectivePriceDate (:17496): bcPoDate for priceSource 'bc', else priceDate.
 const _cfEffectivePriceMs = (r) => _cfPriceMs(((r.priceSource || '').toLowerCase() === 'bc' && r.bcPoDate) ? r.bcPoDate : r.priceDate);
-const _cfPriceRank = (src) => { const s = (src || '').toLowerCase(); return (s === 'manual' || s === 'bc' || s === 'supplier') ? 0 : 1; }; // 0=trusted, 1=low(scraper/ai/'')
+// Price-source trust ranking (Jon 2026-07-29): supplier(RFQ quotes) > manual > bc (carries the PRJ402119
+// $0.71 junk residue) > scraper/ai/'' (never auto-pushed). Lower = more trusted.
+const _cfPriceRank = (src) => { const s = (src || '').toLowerCase(); if (s === 'supplier') return 0; if (s === 'manual') return 1; if (s === 'bc') return 2; return 3; };
 
 exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: '512MB', maxInstances: 1 }).https.onCall(async (data, context) => {
   if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
@@ -1300,11 +1302,68 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
       }
     }
 
-    // Collision rule D — winning ARC price per group (or conflict / low-source-only).
+    // ── Phase 1b: fold in accurate RFQ quotes (Jon 2026-07-29) ──────────────────────────────────
+    // Supplier-quoted prices aren't tagged on BOM rows, so mine the submitted rfqUploads directly:
+    // each line's supplier unitPrice is a real quote. Key by (part#→MTX, vendorNumber), source 'supplier'
+    // (rank 0 = top trust). Part#→MTX resolution is expensive (a BC lookup each), so the index is BUILT on
+    // the first slice (offset 0) and cached in config/bcRfqPriceIndex; later slices read it. Legacy RFQs
+    // lacking companyId are not swept (documented limit).
+    let rfqQuotes = 0, rfqResolved = 0, rfqUnresolved = 0, rfqInjected = 0;
+    const idxRef = db.doc(`companies/${companyId}/config/bcRfqPriceIndex`);
+    let rfqIndex = [];
+    if (offset === 0) {
+      const partToMtx = {};
+      const rfqSnap = await db.collection('rfqUploads').where('companyId', '==', companyId).get().catch(() => ({ docs: [] }));
+      const raw = [];
+      for (const d of rfqSnap.docs) {
+        const rd = d.data() || {};
+        if (rd.status !== 'submitted') continue;              // only supplier-responded quotes
+        if (rd.isTest) continue;                              // skip test-env submissions
+        const vno = (rd.vendorNumber || '').toString().trim();
+        const date = _cfPriceMs(rd.sentAt);
+        for (const li of (rd.lineItems || [])) {
+          if (!li || li.cannotSupply) continue;
+          const p = Number(li.unitPrice);
+          const part = (li.partNumber || '').toString().trim();
+          if (!part || !(p > 0) || !vno) continue;
+          rfqQuotes++;
+          raw.push({ part, vendorNo: vno, price: p, date });
+        }
+      }
+      for (const item of raw) {
+        if (!(item.part in partToMtx)) {
+          const res = await _cfResolveVendorItemNo(item.part, bcODataBase, bcHeaders);
+          partToMtx[item.part] = (res && res.mtx) || null;
+        }
+        const mtx = partToMtx[item.part];
+        if (mtx) { rfqResolved++; rfqIndex.push({ mtx, vendorNo: item.vendorNo, price: item.price, date: item.date }); }
+        else rfqUnresolved++;
+      }
+      await idxRef.set({ builtAt: Date.now(), by: uid, quotes: rfqQuotes, resolved: rfqResolved, unresolved: rfqUnresolved, index: rfqIndex.slice(0, 5000) }).catch(() => {});
+    } else {
+      const idxDoc = await idxRef.get().catch(() => null);
+      if (idxDoc && idxDoc.exists) rfqIndex = (idxDoc.data() || {}).index || [];
+    }
+    // Merge RFQ quotes into the groups as rank-0 'supplier' rows (creates a group if the item+vendor
+    // isn't in any current BOM — an RFQ price is still accurate and worth reconciling to BC).
+    for (const qr of rfqIndex) {
+      const key = qr.mtx + ' ' + qr.vendorNo;
+      let g = groups.get(key);
+      if (!g) { g = { bcNo: qr.mtx, vendorNo: qr.vendorNo, rows: [] }; groups.set(key, g); }
+      g.rows.push({ price: Number(qr.price), rank: 0, date: qr.date || 0, source: 'supplier' });
+      rfqInjected++;
+    }
+
+    // Collision rule D (re-ranked 2026-07-29) — take the BEST trusted tier present (supplier>manual>bc);
+    // within it, disagreement>TOL = conflict; else newest wins. Rank-3-only (scraper/ai/'') = low-source.
+    // A winning price that IS the junk signature ($0.71) → junkZero (zero the BC record + re-price, never push).
+    const JUNK = new Set([0.71]); // PRJ402119 junk-price signature (Jon 2026-07-29)
     const resolve = (g) => {
       const best = Math.min(...g.rows.map((r) => r.rank));
-      if (best !== 0) return { action: 'low-source-only' };
-      const cand = g.rows.filter((r) => r.rank === 0);
+      if (best === 3) return { action: 'low-source-only' };
+      // $0.71 is never a valid winner — drop it from candidacy (data-safety: ARC junk must not drive a write).
+      const cand = g.rows.filter((r) => r.rank === best && !JUNK.has(r.price));
+      if (!cand.length) return { action: 'noRealArc' }; // top trusted tier is all junk → BC state decides
       const prices = cand.map((r) => r.price);
       if (Math.max(...prices) - Math.min(...prices) > TOL) return { action: 'conflict', spread: [Math.min(...prices), Math.max(...prices)] };
       cand.sort((a, b) => b.date - a.date); // newest first
@@ -1322,7 +1381,9 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     const sdf = (r) => r.Starting_Date ? String(r.Starting_Date).slice(0, 10) : '';
 
     let matched = 0, updated = 0, created = 0, expired = 0, expireFailed = 0, conflicts = 0, lowSourceOnly = 0, failed = 0;
-    const samples = [], conflictList = [], failures = [];
+    let junkZeroed = 0, junkNoBc = 0, keptBc = 0; // junk-$0.71 handling (Jon 2026-07-29): zero BC-junk / no-BC / kept-good-BC
+    const bySource = { supplier: 0, manual: 0, bc: 0 }; // recovery report: which trusted source filled each reconciled price
+    const samples = [], conflictList = [], failures = [], junkList = [];
     // B1 (Coach): rollback map — EVERY live update/create records old→new so the run is reversible.
     // Uncapped: bounded per-call by the slice (<= limit <= 2000), well under the 1MB Firestore doc cap.
     // Distinct from `samples` (60-cap display preview).
@@ -1333,14 +1394,30 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
       const res = resolve(g);
       if (res.action === 'low-source-only') { lowSourceOnly++; if (conflictList.length < 1000) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'low-source-only (scraper/ai/untagged only)' }); return; }
       if (res.action === 'conflict') { conflicts++; if (conflictList.length < 1000) conflictList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, reason: 'trusted prices disagree', spread: res.spread }); return; }
-      const arc = res.winner;
       // Current BC record(s) for this item+vendor.
       const gr = await fetch(`${baseUrl}?$filter=${encodeURIComponent(`Item_No eq '${q(g.bcNo)}' and Vendor_No eq '${q(g.vendorNo)}'`)}&$select=Item_No,Vendor_No,Currency_Code,Starting_Date,Variant_Code,Unit_of_Measure_Code,Minimum_Quantity,Direct_Unit_Cost,Ending_Date`, { headers: bcHeaders });
       if (!gr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `GET existing ${gr.status}` }); return; }
       const existing = ((await gr.json()).value || []);
       const scopedSameDay = existing.find((r) => sdf(r) === startingDate && (r.Currency_Code || '') === '' && (r.Variant_Code || '') === '' && (Number(r.Minimum_Quantity) || 0) === 0);
       const bcCost = scopedSameDay ? Number(scopedSameDay.Direct_Unit_Cost) : null;
-      if (scopedSameDay && Math.abs(arc - bcCost) <= TOL) { matched++; return; } // already matches → skip
+      // No usable ARC price (top tier all junk). Only zero when BC ITSELF is the junk $0.71 (Jon's
+      // directive) → re-prices at quote time. A real/zero BC price is LEFT — never destroy a good value.
+      if (res.action === 'noRealArc') {
+        if (!scopedSameDay) { junkNoBc++; return; }        // no BC record → already unpriced → re-prices
+        if (JUNK.has(Number(bcCost))) {                    // BC is $0.71 junk with no better ARC price → zero it
+          if (junkList.length < 1000) junkList.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, bc: bcCost });
+          junkZeroed++;
+          if (forceDry) return;
+          const keyUrl = _cfPpKeyUrl(baseUrl, { itemNo: g.bcNo, vendorNo: g.vendorNo, currencyCode: '', startingDate, variantCode: '', uom: scopedSameDay.Unit_of_Measure_Code || '', minQty: 0 });
+          const pr = await _cfPatchFreshEtag(keyUrl, { Direct_Unit_Cost: 0 }, bcHeaders);
+          if (!pr.ok) { failed++; failures.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, error: `junk-zero PATCH ${pr.status}` }); return; }
+          rollback.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, old: bcCost, new: 0, src: 'bc-junk', act: 'junk-zero' });
+        } else { keptBc++; } // BC has a real (or $0) price + no better ARC → leave it untouched
+        return;
+      }
+      const arc = res.winner;
+      if (scopedSameDay && Math.abs(arc - bcCost) <= TOL) { matched++; if (res.source && bySource[res.source] != null) bySource[res.source]++; return; } // already matches → skip
+      if (res.source && bySource[res.source] != null) bySource[res.source]++; // recovery: which source filled this price
       if (samples.length < 60) samples.push({ bcNo: g.bcNo, vendorNo: g.vendorNo, arc, bc: bcCost, src: res.source, act: scopedSameDay ? 'update' : 'create' });
       if (forceDry) { if (scopedSameDay) updated++; else created++; return; }
       // LIVE
@@ -1372,11 +1449,11 @@ exports.reconcileArcBcPrices = functions.runWith({ timeoutSeconds: 540, memory: 
     await Promise.all(Array.from({ length: Math.min(CONC, slice.length || 1) }, worker));
 
     const nextOffset = (offset + limit < total) ? (offset + limit) : null;
-    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 1000), failures: failures.slice(0, 50), nextOffset };
+    const result = { dryRun: forceDry, startingDate, tolerance: TOL, total, offset, limit, processed: slice.length, scanRows, skipZero, noVendor, noBcNo, rfqQuotes, rfqResolved, rfqUnresolved, rfqInjected, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, junkZeroed, junkNoBc, keptBc, bySource, failed, samples: samples.slice(0, 60), conflictList: conflictList.slice(0, 1000), junkList: junkList.slice(0, 300), failures: failures.slice(0, 50), nextOffset };
     if (!forceDry) {
       const ts = Date.now();
-      // B1: `rollback` (uncapped, <= slice size) is the reversal map — old→new per live update/create.
-      await db.doc(`companies/${companyId}/bcPpReconcileRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, tolerance: TOL, offset, limit, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, failed, rollback, conflictList: conflictList.slice(0, 1000), failures: failures.slice(0, 100) });
+      // B1: `rollback` (uncapped, <= slice size) is the reversal map — old→new per live update/create/junk-zero.
+      await db.doc(`companies/${companyId}/bcPpReconcileRuns/${ts}`).set({ ts, runAt: admin.firestore.FieldValue.serverTimestamp(), by: uid, startingDate, tolerance: TOL, offset, limit, matched, updated, created, expired, expireFailed, conflicts, lowSourceOnly, junkZeroed, junkNoBc, keptBc, bySource, failed, rollback, conflictList: conflictList.slice(0, 1000), junkList: junkList.slice(0, 1000), failures: failures.slice(0, 100) });
     }
     await statusRef.set({ status: 'done', dryRun: forceDry, startingDate, tolerance: TOL, offset, limit, total, finishedAt: Date.now(), by: uid, report: result }, { merge: true });
     return result;
