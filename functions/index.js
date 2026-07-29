@@ -730,6 +730,16 @@ exports.reconcileBcNos = functions.runWith({ timeoutSeconds: 540, memory: '512MB
     if (res.error) resolveErrors.push({ value: v, error: res.error });
     if (res.sawNon2xx) await sleep(15); // back off ONLY after an error response — successful runs stay fast
   }
+  // manualMap — operator-supplied {oldValue: 'MTX-#####'} overrides for rows that cannot auto-resolve by
+  // Vendor_Item_No but whose correct BC item the operator has identified (e.g. crate/contingency whose ARC
+  // description differs from the BC item naming: Jon 2026-07-28 CRATE→MTX-114825, CONTINGENCY→MTX-114763).
+  // Only accept explicit MTX-prefixed targets (guard against typos); these seed oldToMtx so Phase 2 rewrites
+  // those rows exactly like an auto-resolved one, and they land in the audit pairs.
+  const manualMap = (data && data.manualMap && typeof data.manualMap === 'object') ? data.manualMap : {};
+  for (const k of Object.keys(manualMap)) {
+    const tgt = String(manualMap[k] || '').trim();
+    if (MTX_RE.test(tgt)) oldToMtx[k] = tgt;
+  }
 
   // ── Phase 2: classify + report every row; apply field-level RMW when live ──
   let total = 0, resolvable = 0, alreadyMtx = 0, laborOrNull = 0, nonItem = 0, unresolvable = 0;
