@@ -41589,7 +41589,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         }
         const _f=(res&&res.failed)||[];
         if(_f.length){
-          _panelOutcomes.push({panel:i+1,ok:false,failed:_f.map(f=>({partNumber:f.partNumber||"",lineNo:f.lineNo,status:f.status}))});
+          _panelOutcomes.push({panel:i+1,ok:false,failed:_f.map(f=>({partNumber:f.partNumber||"",lineNo:f.lineNo,status:f.status,error:(f.error||"").slice(0,400)}))});
         }else{
           _panelOutcomes.push({panel:i+1,ok:true,created:res?res.created:0});
         }
@@ -41611,16 +41611,21 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       setProject(updated);projectRef.current=updated;onChange(updated);
       await saveProject(uid,updated);
 
-      // WS3 — surface the itemized outcome; NEVER a bare "✓ Re-linked" when anything failed.
+      // WS3 — surface the itemized outcome INCLUDING the real BC error text; NEVER a bare "✓ Re-linked"
+      // when anything failed. (Prior copy guessed "#163 not run" — misleading when the reconciliation
+      // HAS run and the real cause is BC-side, e.g. missing task/resource/location/posting setup in a
+      // freshly-seeded sandbox. Show BC's actual first rejection so the operator can act on it.)
+      const _firstErr=(()=>{for(const o of _panelOutcomes){if(o&&o.failed){for(const f of o.failed){if(f&&f.error)return{lineNo:f.lineNo,partNumber:f.partNumber,status:f.status,error:f.error};}}}return null;})();
+      const _errLine=_firstErr?`\n\nFirst BC error (line ${_firstErr.lineNo}${_firstErr.partNumber?", "+_firstErr.partNumber:""}, HTTP ${_firstErr.status}):\n${_firstErr.error}`:"";
       if(_relinkAborted){
         console.error("Relink ABORTED (fail-fast) — panel outcomes:",_panelOutcomes);
         setRelinkMsg(`⚠ Re-link ABORTED after ${_failFast.consecutive} consecutive BC errors — BOM NOT fully synced`);
-        arcAlert(`Re-link to ${_bindNumber} was ABORTED after ${_failFast.consecutive} consecutive Business Central line errors — the BOM did NOT fully transfer. This usually means the #163 bcNo→MTX reconciliation has not been run against this sandbox. No renumber occurred (ARC stays ${_bindNumber}).`,{kind:"error"});
+        arcAlert(`Re-link to ${_bindNumber} was ABORTED after ${_failFast.consecutive} consecutive Business Central line errors — the BOM did NOT fully transfer. No renumber occurred (ARC stays ${_bindNumber}).${_errLine}`,{kind:"error"});
       }else if(_failedPanels.length){
         console.error("Relink completed WITH FAILURES — panel outcomes:",_panelOutcomes);
         const _detail=_failedPanels.slice(0,4).map(o=>o.failed?`panel ${o.panel}: ${o.failed.slice(0,3).map(f=>`${f.partNumber||"?"} (line ${f.lineNo}, ${f.status})`).join(", ")}${o.failed.length>3?` +${o.failed.length-3} more`:""}`:`panel ${o.panel}: ${o.error}`).join("\n");
         setRelinkMsg(`⚠ Re-linked to ${_bindNumber} — ${_failedPanels.length} panel(s) had line failures`);
-        arcAlert(`Re-linked to ${_bindNumber}, but some planning lines failed to sync:\n\n${_detail}\n\nARC's number was preserved (no renumber). Review before relying on the BC BOM.`,{kind:"warning"});
+        arcAlert(`Re-linked to ${_bindNumber}, but some planning lines failed to sync:\n\n${_detail}${_errLine}\n\nARC's number was preserved (no renumber). Review before relying on the BC BOM.`,{kind:"warning"});
       }else{
         setRelinkMsg("✓ Re-linked to "+_bindNumber);
       }
