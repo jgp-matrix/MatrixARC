@@ -6157,6 +6157,12 @@ const AUTO_BC_REPRICE_ENABLED=false;
 // "Get New Pricing" / "Refresh All" buttons. RFQ, portal apply, and manual per-row price entry still work.
 // The F050 read-only plausibility sweep still uses estimatePrices (it reads, never sets a price).
 const AUTO_PRICING_ENABLED=false;
+// F075 (2026-07-29) — API-only pricing RE-ENABLED. Gates a dedicated manual "Get Prices" button
+// (runApiPricingOnPanel) that fetches from Mouser + DigiKey ONLY — the two legitimate structured-price
+// APIs. It NEVER calls the scrapers (Codale/Royal/custom), AI-estimate (estimatePrices), searchVendorPricing,
+// BC-reprice, or runPricingOnPanel — those stay OFF under the three kill-switches above (they caused the
+// $0.71 junk-price incident). Client-side row apply only (NO scraper→BC writeback); preserves priceSource:"manual".
+const API_PRICING_ENABLED=true;
 // G019 — Engineering Questions feature hidden until developed out; flip to true to restore intact.
 // DISPLAY-ONLY flag: extraction still populates panel.engineeringQuestions, saves still persist it,
 // mergeEngineeringQuestions is unchanged. This only gates the UI surfaces so the feature is fully reversible.
@@ -26680,6 +26686,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // DECISION(v1.19.376): Price confirmation popup — when user manually enters a price,
   // ask if it's confirmed (push to BC Purchase Price + Item Card) or budgetary (BOM only, no BC update, no priceDate).
   const [priceConfirmPending,setPriceConfirmPending]=useState(null); // {id, partNumber, price, row}
+  // F075 Phase 2: optional-price confirm modal. After Get-Prices applies on-row prices to Budgetary/
+  // empty/stale rows, any CONFIRMED row that got a DIFFERENT API price is offered here as an OPT-IN
+  // BC Purchase-Price record (never overwrites the row). Shape:
+  //   apiOptionalModal = { candidates:[{rowId,partNumber,bcNo,uom,currentPrice,currentVendor,apiVendor,apiPrice}], priced:Number }
+  const [apiOptionalModal,setApiOptionalModal]=useState(null);
+  const [apiOptionalChecked,setApiOptionalChecked]=useState({}); // {rowId:bool}
+  const [apiOptionalWriting,setApiOptionalWriting]=useState(false);
   // F065: cross-Line propagation prompt. {editedPartNumber,displayPart,patch,otherRows,kind,
   // sourceRowId,sourceQty,capturedProjectId,quoteSentAt}. otherRows are captured LIVE from the
   // project prop at prompt-open (F2) — the persisted crossLineDuplicates index is only the GATE.
@@ -30936,6 +30949,191 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(_isStandalonePricing){const _t=_bgTasks[_bgId];if(_t&&_t.status==="running")bgError(_bgId,"Pricing ended unexpectedly");}
     }
   }
+  // F075 (2026-07-29) — DEDICATED API-only pricing. Fetches Mouser + DigiKey ONLY (the two legitimate
+  // structured-price APIs), merges the best (lowest) price, and applies it to the row CLIENT-SIDE.
+  // Mirrors the RFQ-send apiGroups merge (searchVendorBatch @~:21548 + merge @~:21587) and the onApiPriced
+  // client-apply (@~:43109). HARD INVARIANTS (the $0.71 incident guard):
+  //   • Calls ONLY digikeySearch / mouserSearch — NEVER codaleTestScrape, customScraperBatch,
+  //     estimatePrices (AI), searchVendorPricing, or runPricingOnPanel.
+  // PHASE 2 (2026-07-29, F075-PHASE2-BUILD-PLAN.md) — reworked the apply gate + a NEW opt-in BC write:
+  //   • The blanket "never touch priceSource:'manual'" rule is RETIRED. Human intent is now gated by
+  //     the Confirmed-vs-Budgetary classification (DECISION v1.19.376, mirrors applyConfirmedPrice/
+  //     applyBudgetaryPrice), derived per-row from priceSource + priceDate + unitPrice:
+  //       - UPDATABLE (Budgetary manual+null-date, empty, $0, or stale-non-confirmed): apply the API
+  //         price ON-ROW. KEEP the row's existing bcVendorName/bcVendorNo — do NOT stamp match.source
+  //         (finding #1/#3: this was overwriting the Primary Supplier with "DigiKey"). Strip the
+  //         bcPoDate key so the Priced column shows the fresh date (mirrors the v1.24.52 onApiPriced hotfix).
+  //       - CONFIRMED (priceSource "bc" w/ date, or "manual" w/ date, unitPrice>0): NEVER overwritten.
+  //         A different API price is collected and offered as an OPT-IN BC Purchase-Price record via the
+  //         apiOptionalModal (finding #4: "add it as a Secondary supplier / let the user choose").
+  //   • Optional BC write is opt-in (confirm button), F071 bcCommitGate-HARD-BLOCKed (skip cleanly when
+  //     BC is down — never throw), >$0-guarded, vendor# resolved from config/vendorConfig
+  //     (digikeyVendorNo/mouserVendorNo) — NOT a displayName fuzzy match. Uses bcPushPurchasePrice (F072).
+  async function runApiPricingOnPanel(bomOverride,panelOverride,opts={}){
+    if(!API_PRICING_ENABLED)return;
+    const forceFresh=!!(opts&&opts.forceFresh);
+    const panelBase=panelOverride||panelRef.current||panel;
+    const bom=bomOverride||panelBase.bom||[];
+    if(!bom.length||!_apiKey)return;
+    // Eligible = priceable rows only: non-blank partNumber, not labor / _isExcludedFromPriceCheck.
+    // The old blanket priceSource==="manual" skip is REMOVED (Phase 2) — manual rows are now classified
+    // Confirmed vs Budgetary at apply-time, not skipped wholesale. Default mode → rows needing a price
+    // (Budgetary / empty / $0 / stale, incl. stale-Confirmed → offered as optional); forceFresh → every
+    // eligible row (so even a fresh-Confirmed row can surface an optional API price).
+    const staleMs=((_pricingConfig&&_pricingConfig.defaultStaleDays)||60)*24*60*60*1000;
+    // Confirmed = a firm human/BC decision (protect the price + vendor; API price → optional only).
+    // Uses _effectivePriceDate so a "bc" row keys off its bcPoDate exactly like the red-flag / date column.
+    const _rowDate=r=>(typeof _effectivePriceDate==="function"?_effectivePriceDate(r):r.priceDate);
+    const _rowStale=r=>{const d=_rowDate(r);return !d||(Date.now()-d)>=staleMs;};
+    const _rowConfirmed=r=>(+r.unitPrice>0)&&((r.priceSource==="bc"&&!!_rowDate(r))||(r.priceSource==="manual"&&r.priceDate!=null));
+    const eligible=bom.filter(r=>{
+      if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
+      if(!(r.partNumber||"").trim())return false;
+      if(forceFresh)return true;
+      // default → rows needing a price: not-Confirmed (Budgetary/empty/$0) OR Confirmed-but-stale.
+      return !_rowConfirmed(r)||_rowStale(r);
+    });
+    if(eligible.length===0){arcAlert("All priceable rows already have a current price. Use the ▾ to force-refresh every row from Mouser + DigiKey.");return;}
+    const _pp=(o)=>{setPricingProgress(o);};
+    if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
+    setAiPricing(true);
+    _pp({msg:`Getting prices for ${eligible.length} item${eligible.length!==1?"s":""} (Mouser + DigiKey)…`,pct:10});
+    // Snapshot before apply so the user can revert (mirrors runPricingOnPanel).
+    saveSnapshot(uid,projectId,panelBase,"Before Get Prices (Mouser+DigiKey)").catch(()=>{});
+    try{
+      // Batched callable — mirrors searchVendorBatch (@~:21548). digikeySearch / mouserSearch ONLY.
+      const _apiSearchBatch=async(fnName,items)=>{
+        const fn=firebase.functions().httpsCallable(fnName,{timeout:120000});
+        const BATCH=10;const results=[];
+        for(let i=0;i<items.length;i+=BATCH){
+          const batch=items.slice(i,i+BATCH);
+          try{const r=await fn({items:batch});results.push(...(r.data.results||r.data||[]));}
+          catch(e){batch.forEach(b=>results.push({partNumber:b.partNumber,found:false,error:e.message}));}
+        }
+        return results;
+      };
+      const items=eligible.map(i=>({partNumber:(i.partNumber||"").trim(),manufacturer:i.manufacturer||""}));
+      _pp({msg:"Searching DigiKey…",pct:30});
+      const dkResults=await _apiSearchBatch("digikeySearch",items);
+      _pp({msg:"Cross-checking Mouser…",pct:60});
+      const mResults=await _apiSearchBatch("mouserSearch",items);
+      // Merge: best (lowest) price wins; fill gaps from whichever source found it (mirrors :21587-21612).
+      const dkMap={},mMap={};
+      dkResults.forEach(r=>{dkMap[(r.partNumber||"").trim().toUpperCase()]={...r,source:"DigiKey"};});
+      mResults.forEach(r=>{mMap[(r.partNumber||"").trim().toUpperCase()]={...r,source:"Mouser"};});
+      const finalResults=[];
+      items.forEach(i=>{
+        const pn=i.partNumber.toUpperCase();
+        const dk=dkMap[pn],m=mMap[pn];
+        const dkOk=dk&&dk.found&&dk.price>0;
+        const mOk=m&&m.found&&m.price>0;
+        if(dkOk&&mOk){finalResults.push(m.price<dk.price?{...m,partNumber:i.partNumber,source:m.source}:{...dk,partNumber:i.partNumber,source:dk.source});}
+        else if(dkOk){finalResults.push({...dk,partNumber:i.partNumber,source:dk.source});}
+        else if(mOk){finalResults.push({...m,partNumber:i.partNumber,source:m.source});}
+        else finalResults.push({partNumber:i.partNumber,found:false,price:0,source:"none"});
+      });
+      const priced=finalResults.filter(r=>r.found&&r.price>0);
+      _pp({msg:`Applying ${priced.length} price${priced.length!==1?"s":""}…`,pct:85});
+      // Apply CLIENT-SIDE, mirroring onApiPriced (@~:43109). CLASSIFY each priced row at apply:
+      //   · UPDATABLE (Budgetary/empty/$0/stale-non-confirmed) → apply on-row. KEEP the existing
+      //     bcVendorName/bcVendorNo (do NOT stamp match.source — finding #1/#3). Strip bcPoDate via
+      //     delete so the Priced column shows the fresh priceDate (v1.24.52 onApiPriced hotfix).
+      //   · CONFIRMED → leave price/date/vendor UNTOUCHED; collect for the opt-in optional-record modal.
+      // priceSource:"bc" on the updatable stamp is retained per the plan (the "bc" mislabel is a deferred
+      // follow-up); the strip-bcPoDate hotfix keeps the date correct in the interim.
+      let applied=0;
+      const optionalCandidates=[];
+      const updatedBom=(panelBase.bom||[]).map(r=>{
+        if(r.isLaborRow)return r;
+        const pn=(r.partNumber||"").trim().toUpperCase();
+        const match=priced.find(res=>(res.partNumber||"").trim().toUpperCase()===pn);
+        if(!(match&&match.price>0))return r;
+        if(_rowConfirmed(r)){
+          // PROTECT — never overwrite a confirmed price/vendor. Offer the API price as an OPTIONAL BC record.
+          optionalCandidates.push({rowId:r.id,partNumber:(r.partNumber||"").trim(),bcNo:_bcNo(r),uom:(r.uom||"").trim(),currentPrice:+r.unitPrice||0,currentVendor:r.bcVendorName||"",apiVendor:match.source,apiPrice:+match.price});
+          return r;
+        }
+        // UPDATABLE — apply on-row; keep existing vendor; strip bcPoDate.
+        applied++;
+        const _apiRow={...r,unitPrice:match.price,priceDate:Date.now(),priceSource:"bc",..._priceStamp()};
+        delete _apiRow.bcPoDate;
+        return _apiRow;
+      });
+      const updated={...panelBase,bom:updatedBom,status:"costed"};
+      onUpdate(updated);
+      try{await onSaveImmediate(updated);}catch(e){console.warn("[F075] save failed:",e?.message);}
+      const notFound=eligible.length-applied-optionalCandidates.length;
+      setAiPricing(false);
+      if(optionalCandidates.length>0){
+        // Open the opt-in optional-price modal. On-row prices are already applied + saved regardless of
+        // what the user does here. The modal's confirm/cancel handlers set the final pill.
+        setApiOptionalChecked(Object.fromEntries(optionalCandidates.map(c=>[c.rowId,true])));
+        setApiOptionalModal({candidates:optionalCandidates,priced:applied});
+        _pp({msg:`✓ ${applied} priced · ${optionalCandidates.length} confirmed row${optionalCandidates.length!==1?"s":""} to review${notFound>0?` · ${notFound} not found`:""}`,pct:100});
+      }else{
+        _pp({msg:`✓ ${applied} of ${eligible.length} priced via Mouser + DigiKey${notFound>0?` (${notFound} not found)`:""}.`,pct:100});
+        pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
+      }
+    }catch(e){
+      console.error("[F075] API pricing failed:",e);
+      try{setAiPricing(false);}catch(_){}
+      _pp({msg:`Pricing error: ${((e&&e.message)||"failed").slice(0,60)}`,pct:0,isError:true});
+      pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},6000);
+    }
+  }
+  // F075 Phase 2 — confirm handler for the optional-price modal. Writes the checked candidates as BC
+  // Purchase-Price records (opt-in, finding #4). Guards (MANDATORY): F071 bcCommitGate HARD-BLOCK (skip
+  // cleanly, never throw), >$0 guard, and vendor# resolved from config/vendorConfig (digikeyVendorNo /
+  // mouserVendorNo) — NOT a displayName fuzzy match. A missing vendor# → skip + surface a setup notice.
+  // The on-row prices were already applied + saved by runApiPricingOnPanel; nothing here touches a row.
+  async function recordOptionalPricesToBc(){
+    if(!apiOptionalModal)return;
+    const pricedCount=apiOptionalModal.priced;
+    const _finalPill=msg=>{setPricingProgress({msg,pct:100});if(pricingClearTimer.current)clearTimeout(pricingClearTimer.current);pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},6000);};
+    // F071 HARD-BLOCK — BC down/unverified → skip the optional writes entirely (never throw).
+    if(bcCommitGate){
+      _fireBcCommitBlockedAlert(bcCommitGate.reason);
+      setApiOptionalModal(null);
+      _finalPill(`✓ ${pricedCount} priced · 0 optional recorded (BC offline)`);
+      return;
+    }
+    setApiOptionalWriting(true);
+    // Resolve the DigiKey/Mouser BC vendor numbers from the canonical config/vendorConfig doc.
+    let vc={};
+    try{const r=await _readSupplierConfig(uid,"vendorConfig");vc=(r&&r.data)||{};}catch(e){console.warn("[F075] vendorConfig read failed:",e&&e.message);}
+    const _vendorNoFor=src=>{
+      if(/digikey/i.test(src||""))return(vc.digikeyVendorNo||"").trim();
+      if(/mouser/i.test(src||""))return(vc.mouserVendorNo||"").trim();
+      return "";
+    };
+    let recorded=0;let skipped=0;const missingSetup=new Set();
+    for(const c of apiOptionalModal.candidates){
+      if(!apiOptionalChecked[c.rowId])continue; // unchecked → not a "skip", just excluded
+      if(!(+c.apiPrice>0)){skipped++;continue;} // $0 guard
+      const vNo=_vendorNoFor(c.apiVendor);
+      if(!vNo){missingSetup.add(/digikey/i.test(c.apiVendor||"")?"DigiKey":/mouser/i.test(c.apiVendor||"")?"Mouser":(c.apiVendor||"vendor"));skipped++;continue;}
+      try{
+        // UoM parity with applySecondary (:29935): resolve the item's BC base UoM when the row carries
+        // none, so the optional Purchase Price lands in the correct unit lane (wire/cable = FT/C/M, not EA).
+        let uom=(c.uom||"").trim(); if(!uom)uom=(await bcGetItemBaseUom(c.bcNo))||"EA";
+        const res=await bcPushPurchasePrice(c.bcNo,vNo,+c.apiPrice,Date.now(),uom);
+        if(res&&res.ok)recorded++;else{skipped++;console.warn("[F075] optional PP write failed:",c.partNumber,res&&res.reason);}
+      }catch(e){skipped++;console.warn("[F075] optional PP write error:",c.partNumber,e&&e.message);}
+    }
+    setApiOptionalWriting(false);
+    setApiOptionalModal(null);
+    if(missingSetup.size)arcAlert(`${[...missingSetup].join(" / ")}: BC vendor number not yet linked in Vendor Sync, so the optional price${missingSetup.size>1?"s were":" was"} not recorded to BC.\n\nThe vendor may already exist in BC — ARC still needs its vendor number mapped here to know where to write. Set it under Settings → Vendor Sync (auto-detect or enter the number), then re-run Get Prices.`);
+    _finalPill(`✓ ${pricedCount} priced · ${recorded} optional recorded to BC${skipped>0?` · ${skipped} skipped`:""}`);
+  }
+  // Cancel the optional-price modal — records nothing (on-row prices already applied).
+  function cancelOptionalPrices(){
+    if(!apiOptionalModal)return;
+    const pricedCount=apiOptionalModal.priced;
+    setApiOptionalModal(null);
+    setPricingProgress({msg:`✓ ${pricedCount} priced · optional prices not recorded`,pct:100});
+    if(pricingClearTimer.current)clearTimeout(pricingClearTimer.current);
+    pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
+  }
   async function validatePanel(){
     if(!_apiKey)return;
     setValidatingPanel(true);
@@ -31857,23 +32055,24 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </button>
               );
             })()}
-            {/* G020 (2026-07-24): "Get New Pricing" / "Refresh All" are no-ops while auto-pricing is
-               off (AUTO_PRICING_ENABLED=false) — they just alert "send an RFQ". Hide them behind the
-               same gate so they REAPPEAR automatically when auto-pricing is re-enabled (reversible;
-               display-only). Manual per-row entry, BC Item Browser, portal/RFQ, DigiKey/Mouser
-               paths are unaffected. */}
-            {AUTO_PRICING_ENABLED&&!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
+            {/* F075 (2026-07-29): Manual "Get Prices" button — RE-ENABLED for API sources ONLY.
+               Gated on API_PRICING_ENABLED (NOT AUTO_PRICING_ENABLED, which stays off). Fetches Mouser +
+               DigiKey ONLY via runApiPricingOnPanel — NOT the scrapers (Codale/Royal/custom), NOT AI-estimate,
+               NOT BC-reprice, NOT runPricingOnPanel (those caused the $0.71 junk-price incident and stay OFF).
+               Client-side row apply only (no BC write); preserves manually-entered prices. Manual per-row
+               entry, BC Item Browser, and portal/RFQ paths are unaffected. */}
+            {API_PRICING_ENABLED&&!readOnly&&_apiKey&&(panel.bom||[]).length>0&&(
               <div style={{position:"relative",display:"inline-flex"}}>
-                <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Refresh pricing — skips items priced within threshold"}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}runPricingOnPanel();}}
+                <button data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Get prices from Mouser + DigiKey (API only — no scrapers/AI/BC-reprice). Skips items already priced within the stale threshold. Applies to rows only; does not write to BC."}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>runApiPricingOnPanel(panel.bom,panel,{})}
                   disabled={aiPricing||ownerPriorityActive}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 12px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"6px 0 0 6px"})}>
-                  {aiPricing?"Refreshing…":"↻ Get New Pricing"}
+                  {aiPricing?"Getting prices…":"📥 Get Prices"}
                 </button>
                 <button disabled={aiPricing||ownerPriorityActive}
-                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(!AUTO_PRICING_ENABLED){arcAlert("Automated pricing is paused — send an RFQ to get pricing. RFQ replies fill both price and lead time.");return;}if(await arcConfirm("Force refresh ALL prices? This ignores stale thresholds and re-prices every item.",{kind:"warning",okLabel:"Refresh All"}))runPricingOnPanel(panel.bom,panel,null,{forceFresh:true});}}
+                  onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{if(await arcConfirm("Force refresh ALL prices from Mouser + DigiKey? This ignores stale thresholds and re-prices every item (manually-entered rows are preserved).",{kind:"warning",okLabel:"Refresh All"}))runApiPricingOnPanel(panel.bom,panel,{forceFresh:true});}}
                   style={btn(C.accentDim,C.accent,{fontSize:12,padding:"4px 6px",opacity:(aiPricing||ownerPriorityActive)?0.45:1,cursor:(aiPricing||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:"0 6px 6px 0",borderLeft:`1px solid ${C.accent}33`})}
-                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices — ignores stale thresholds"}>▾</button>
+                  title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices from Mouser + DigiKey — ignores stale thresholds"}>▾</button>
               </div>
             )}
             {/* DECISION(v1.19.694): Push Lead Times to BC — bulk writeback of every qualifying
@@ -33780,6 +33979,50 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               style={{padding:"7px 14px",background:"#2a0a0a",border:`1px solid ${C.red}66`,borderRadius:6,color:C.red,fontSize:12,cursor:"pointer",fontWeight:600}}>
               ✕ Discard Change
             </button>
+          </div>
+        </div>
+      ,document.body)}
+      {/* F075 Phase 2 — optional-price confirm modal. Lists CONFIRMED rows for which Get-Prices found a
+          DIFFERENT vendor's price. Records nothing on-row; the confirm button writes opt-in BC Purchase-
+          Price records (F071-gated, $0-guarded, vendor# from config/vendorConfig). Cancel = record nothing. */}
+      {apiOptionalModal&&ReactDOM.createPortal(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}}
+          onMouseDown={e=>{if(e.target===e.currentTarget&&!apiOptionalWriting)cancelOptionalPrices();}}>
+          <div style={{background:"#0d0d1a",border:`1px solid ${C.border}`,borderRadius:10,padding:"24px 28px",width:"92vw",maxWidth:660,maxHeight:"82vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:15,fontWeight:800,color:C.text,marginBottom:4}}>Record optional prices to Business Central?</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:14,lineHeight:1.5}}>
+              These rows already have a <b>confirmed</b> price, so their price and primary vendor were left unchanged. Mouser/DigiKey found a price from a different vendor — record it as an <b>optional</b> Purchase Price in BC so you can choose that vendor later. Nothing here overwrites the row.
+            </div>
+            <div style={{flex:1,overflowY:"auto",marginBottom:14,border:`1px solid ${C.border}`,borderRadius:8}}>
+              {apiOptionalModal.candidates.map(c=>(
+                <label key={c.rowId} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderBottom:`1px solid ${C.border}55`,cursor:apiOptionalWriting?"default":"pointer"}}>
+                  <input type="checkbox" checked={!!apiOptionalChecked[c.rowId]} disabled={apiOptionalWriting}
+                    onChange={e=>{const v=e.target.checked;setApiOptionalChecked(m=>({...m,[c.rowId]:v}));}}
+                    style={{width:16,height:16,flexShrink:0,cursor:apiOptionalWriting?"default":"pointer"}}/>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:700,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.partNumber||"—"}</div>
+                    <div style={{fontSize:11,color:C.muted,marginTop:2}}>Current: <b style={{color:C.text}}>${Number(c.currentPrice||0).toFixed(2)}</b>{c.currentVendor?` · ${c.currentVendor}`:""} <span style={{opacity:0.6}}>(kept)</span></div>
+                  </div>
+                  <div style={{fontSize:11,color:"#4ade80",textAlign:"right",whiteSpace:"nowrap",flexShrink:0}}>
+                    <div style={{fontWeight:700}}>{c.apiVendor}</div>
+                    <div>${Number(c.apiPrice||0).toFixed(2)} → BC optional</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            {bcCommitGate&&<div style={{fontSize:11,color:"#fca5a5",lineHeight:1.4,marginBottom:10}}>{_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
+            <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+              <button disabled={apiOptionalWriting} onClick={cancelOptionalPrices}
+                style={{padding:"8px 16px",background:"#2a0a0a",border:`1px solid ${C.red}66`,borderRadius:6,color:C.red,fontSize:12,cursor:apiOptionalWriting?"not-allowed":"pointer",fontWeight:600,opacity:apiOptionalWriting?0.5:1}}>Cancel</button>
+              {(()=>{const nChecked=apiOptionalModal.candidates.filter(c=>apiOptionalChecked[c.rowId]).length;return(
+                <button disabled={apiOptionalWriting||!!bcCommitGate||nChecked===0}
+                  onClick={bcCommitGate?()=>_fireBcCommitBlockedAlert(bcCommitGate.reason):recordOptionalPricesToBc}
+                  title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):""}
+                  style={{padding:"8px 18px",background:"#166534",border:"1px solid #4ade80",borderRadius:6,color:"#fff",fontWeight:700,fontSize:12,cursor:(apiOptionalWriting||bcCommitGate||nChecked===0)?"not-allowed":"pointer",opacity:(apiOptionalWriting||bcCommitGate||nChecked===0)?0.5:1}}>
+                  {apiOptionalWriting?"Writing to BC…":`Record ${nChecked} optional price${nChecked!==1?"s":""} to BC`}
+                </button>
+              );})()}
+            </div>
           </div>
         </div>
       ,document.body)}
