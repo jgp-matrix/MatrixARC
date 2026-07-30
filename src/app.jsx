@@ -14563,9 +14563,23 @@ Return ONLY a JSON array: [{"id":"...","status":"verified|plausible|suspect","no
   try{
     const raw=await apiCall({model:ANTHROPIC_MODELS.HAIKU_DATED,max_tokens:4000,messages:[{role:"user",content:prompt}]});
     const m=raw.replace(/```json|```/g,"").trim().match(/\[[\s\S]*\]/);
-    if(!m)return[];
+    if(!m){
+      // Non-empty model response but no parseable JSON array → ?PN badges will be absent.
+      // Surface to Debug Logs so the dark badge is diagnosable rather than silent.
+      if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+        try{window.logDebugEntry({severity:"warn",source:"verifyPartNumbers",message:"verifyPartNumbers: model response had no parseable JSON array — ?PN badges will be absent this run",extra:{rowsToCheck:toCheck.length}});}catch(_){}
+      }
+      return[];
+    }
     return JSON.parse(m[0]);
-  }catch(e){console.error("Part verification failed:",e);return[];}
+  }catch(e){
+    console.error("Part verification failed:",e);
+    // Surface the failure (e.g. Haiku 529 overload) to Debug Logs. Guarded so it can't throw.
+    if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function"){
+      try{window.logDebugEntry({severity:"warn",source:"verifyPartNumbers",message:`Part-# verification failed (${e?.message||e}) — ?PN badges will be absent this run`,extra:{rowsToCheck:toCheck.length,error:String(e?.message||e)}});}catch(_){}
+    }
+    return[];
+  }
 }
 
 // DECISION(v1.19.689): AI lead-time estimator — last-resort fallback when no BC/scraper/
@@ -26776,6 +26790,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // writeback of every BOM row's leadTimeDays → BC ItemVendorCatalog. Skips rows that
   // don't meet the safeguards (blank partNumber, no vendorNo, leadTimeDays<=0).
   const [pushingLeadTimes,setPushingLeadTimes]=useState(false);
+  // Visible "Verify Part #s" toolbar affordance. runVerify/verifying live in ConfidenceBar
+  // (buried in the extraction-report sub-section), so lift minimal state here to expose a
+  // discoverable re-run for when ?PN badges are dark (e.g. Haiku 529-overloaded at extract).
+  const [verifyingPn,setVerifyingPn]=useState(false);
+  async function runVerifyPn(){
+    if(verifyingPn||!(panel.bom||[]).length)return;
+    setVerifyingPn(true);
+    try{
+      const results=await verifyPartNumbers(panel.bom);
+      if(results.length>0){
+        const updated={...panel,bomVerification:results,updatedAt:Date.now()};
+        onUpdate(updated);
+        if(onSaveImmediate)try{await onSaveImmediate(updated);}catch(e){}
+      }
+    }catch(e){console.error("Verify part #s failed:",e);}
+    setVerifyingPn(false);
+  }
   const [pricingProgress,setPricingProgress]=useState(null);
   // DECISION(v1.19.766): unifiedProgress derivation — relocated here so it follows the
   // useState declarations for aiPricing and pricingProgress. Original location was ~80
@@ -32242,6 +32273,27 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                   title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Force refresh all prices from Mouser + DigiKey — ignores stale thresholds"}>▾</button>
               </div>
             )}
+            {/* Visible "Verify Part #s" affordance — re-runs the Haiku part-number check
+               that drives the ?PN badges. Surfaced here (not buried in the extraction-report
+               sub-section) so users can recover when badges are dark, e.g. after a Haiku 529
+               overload returned no verification at extract time. Shown only when there are
+               real part-numbered rows AND verification is missing or incomplete. */}
+            {(()=>{
+              if(readOnly||!_apiKey)return null;
+              const rows=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim().length>=3);
+              if(!rows.length)return null;
+              const bv=panel.bomVerification||[];
+              const verifiedIds=new Set(bv.map(v=>String(v.id)));
+              const incomplete=!bv.length||rows.some(r=>!verifiedIds.has(String(r.id)));
+              if(!incomplete)return null;
+              return(
+                <button onClick={runVerifyPn} disabled={verifyingPn}
+                  title="Re-run part-number verification (drives the ?PN validity badges). Use this if the ?PN indicators are dark — e.g. verification was skipped or the model was overloaded during extraction."
+                  style={btn("#1e1b4b","#a5b4fc",{fontSize:12,padding:"4px 12px",opacity:verifyingPn?0.5:1,cursor:verifyingPn?"not-allowed":"pointer",border:"1px solid #6366f188"})}>
+                  {verifyingPn?"Checking…":"🔎 Verify Part #s"}
+                </button>
+              );
+            })()}
             {/* DECISION(v1.19.694): Push Lead Times to BC — bulk writeback of every qualifying
                row's leadTimeDays to BC ItemVendorCatalog (Page 114). Same safeguards as the
                portal Apply Prices flow: non-blank partNumber, resolved bcVendorNo, leadTimeDays>0. */}
