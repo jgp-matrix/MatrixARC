@@ -793,6 +793,11 @@ function pendingPagesSet(projectId,panelId,data){const key=projectId+':'+panelId
 function pendingPagesClear(projectId,panelId){const key=projectId+':'+panelId;if(key in _pendingPagesCache){delete _pendingPagesCache[key];_pendingPagesNotify();}}
 function pendingPagesGet(projectId,panelId){return _pendingPagesCache[projectId+':'+panelId]||null;}
 function _bgKey(projectId,panelId){return projectId+':'+panelId;}
+// F077 Vendor Sync: module-level cache of the BC vendor list so every Settings-open
+// doesn't re-fetch the full list (several seconds). {vendors:[{No,Name}], at:<ms>}.
+// Fresh <10min → VendorNumberConfig hydrates its dropdowns instantly; the manual ↺
+// reload forces a re-fetch (bypasses/refreshes this cache). Do NOT init with Date.now().
+let _arcBcVendorListCache=null;
 // B012 hard one-editor lock (editing lease) — P1. See docs/B012-HARD-LOCK-COACH-PLAN.md.
 // LEASE_STALE_MS = crash/exit-detection window: the lease is VALID while editingExpiresAt
 // (heartbeat-renewed) is in the future. LEASE_HEARTBEAT_MS = renew cadence while the tab is
@@ -46925,6 +46930,19 @@ function VendorNumberConfig({uid,onDirtyChange}){
   const [touched,setTouched]=useState(false);   // user actively changed a selection (gates close-guard, not auto-detect)
   useEffect(()=>{
     if(!uid){setLoading(false);return;}
+    let cancelled=false;
+    let tokenTimer=null;
+    let tokenTries=0;
+    // Populate the dropdowns from BC when connected. Auto-detect only PRE-FILLS an empty
+    // selection (prev||detected) — never overrides a saved value, never auto-saves.
+    // If Settings opens BEFORE BC connects (token not yet set), poll for the token so the
+    // dropdowns still appear once it's ready — previously they never showed until a reopen.
+    const startVendorFetch=()=>{
+      if(cancelled)return;
+      if(_bcToken){fetchVendors();return;}          // token ready → fetch once, stop polling
+      if(tokenTries++>=15)return;                    // give up after ~15s; user can ↺ Retry / reconnect
+      tokenTimer=setTimeout(startVendorFetch,1000);
+    };
     // Read saved values on mount. Placeholders (V00196/V00304) are hints only — never pre-fill.
     _readSupplierConfig(uid,"vendorConfig").then(({data})=>{
       if(data){
@@ -46934,15 +46952,33 @@ function VendorNumberConfig({uid,onDirtyChange}){
         setSavedMouser(data.mouserVendorNo||'');
       }
     }).catch(e=>console.warn("VendorNumberConfig load:",e.message)).finally(()=>{
+      if(cancelled)return;
       setLoading(false);
-      // Populate the dropdowns from BC when connected. Auto-detect only PRE-FILLS an empty
-      // selection (prev||detected) — never overrides a saved value, never auto-saves.
-      if(_bcToken)fetchVendors();
+      startVendorFetch();
     });
+    return()=>{cancelled=true;if(tokenTimer)clearTimeout(tokenTimer);};
   },[uid]);
 
-  async function fetchVendors(){
+  // Apply a vendor list to state + run empty-only auto-detect. Shared by cache-hit and fresh-fetch.
+  function applyVendorList(list){
+    setVendors(list);
+    setVendorLoadErr(null);
+    // Auto-detect DigiKey and Mouser by name — pre-fill only when selection is empty.
+    const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
+    const dkV=list.find(v=>norm(v.Name).includes('digikey'));
+    const moV=list.find(v=>norm(v.Name).includes('mouser'));
+    if(dkV)setDk(prev=>prev||dkV.No);
+    if(moV)setMouser(prev=>prev||moV.No);
+  }
+
+  // force=true (manual ↺ reload) bypasses the module cache and re-fetches from BC.
+  async function fetchVendors(force){
     if(!_bcToken){setVendorLoadErr("Not connected to Business Central — connect first then retry.");return;}
+    // Cache hit: hydrate dropdowns + auto-detect instantly, no BC round-trip (unless forced/stale).
+    if(!force&&_arcBcVendorListCache&&(Date.now()-_arcBcVendorListCache.at<10*60*1000)&&(_arcBcVendorListCache.vendors||[]).length){
+      applyVendorList(_arcBcVendorListCache.vendors);
+      return;
+    }
     setLoadingVendors(true);
     setVendorLoadErr(null);
     try{
@@ -46957,14 +46993,9 @@ function VendorNumberConfig({uid,onDirtyChange}){
       let list=(await r.json()).value||[];
       // Sort by Name so users can find a vendor without knowing its number.
       list.sort((a,b)=>(a.Name||'').localeCompare(b.Name||''));
-      setVendors(list);
-      setVendorLoadErr(null);
-      // Auto-detect DigiKey and Mouser by name — pre-fill only when selection is empty.
-      const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
-      const dkV=list.find(v=>norm(v.Name).includes('digikey'));
-      const moV=list.find(v=>norm(v.Name).includes('mouser'));
-      if(dkV)setDk(prev=>prev||dkV.No);
-      if(moV)setMouser(prev=>prev||moV.No);
+      // Populate the shared module cache BEFORE state so a concurrent/next open hits it.
+      _arcBcVendorListCache={vendors:list,at:Date.now()};
+      applyVendorList(list);
     }catch(e){
       setVendorLoadErr(`Error loading vendors: ${e.message}`);
       console.warn("VendorNumberConfig fetchVendors error:",e);
@@ -47006,17 +47037,24 @@ function VendorNumberConfig({uid,onDirtyChange}){
           {/* Vendor load status */}
           {vendorLoadErr&&<div style={{marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
             <span style={{fontSize:12,color:"#f87171"}}>⚠ {vendorLoadErr}</span>
-            <button onClick={fetchVendors} disabled={loadingVendors}
+            <button onClick={()=>fetchVendors(true)} disabled={loadingVendors}
               style={{background:"#1e3a5f",color:"#93c5fd",border:"1px solid #3b6aad",borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>
               {loadingVendors?"Loading…":"↺ Retry"}
             </button>
           </div>}
-          {loadingVendors&&!vendorLoadErr&&<div style={{fontSize:12,color:C.muted,marginBottom:8}}>Loading BC vendors…</div>}
+          {/* Background-refresh note — first load shows a disabled placeholder in the dropdown slot instead. */}
+          {loadingVendors&&vendors.length>0&&!vendorLoadErr&&<div style={{fontSize:12,color:C.muted,marginBottom:8}}>Reloading BC vendors…</div>}
 
           <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:10}}>
             <div style={{flex:"1 1 200px"}}>
               <label style={{display:"block",fontSize:11,color:C.sub,marginBottom:4}}>DigiKey BC Vendor</label>
-              {vendors.length>0?(
+              {loadingVendors&&vendors.length===0?(
+                // First load (no cache yet): show a clear disabled placeholder in the dropdown's
+                // place so it reads as "loading", not "no dropdowns / broken".
+                <select disabled style={{...inp(),color:"#475569",fontFamily:"inherit",opacity:0.7,cursor:"wait"}}>
+                  <option>Loading BC vendors…</option>
+                </select>
+              ):vendors.length>0?(
                 <select value={dk} onChange={e=>{setDk(e.target.value);setTouched(true);}}
                   style={{...inp(),color:dk?C.text:"#475569",fontFamily:"inherit"}}>
                   <option value="">— select vendor —</option>
@@ -47030,7 +47068,11 @@ function VendorNumberConfig({uid,onDirtyChange}){
             </div>
             <div style={{flex:"1 1 200px"}}>
               <label style={{display:"block",fontSize:11,color:C.sub,marginBottom:4}}>Mouser BC Vendor</label>
-              {vendors.length>0?(
+              {loadingVendors&&vendors.length===0?(
+                <select disabled style={{...inp(),color:"#475569",fontFamily:"inherit",opacity:0.7,cursor:"wait"}}>
+                  <option>Loading BC vendors…</option>
+                </select>
+              ):vendors.length>0?(
                 <select value={mouser} onChange={e=>{setMouser(e.target.value);setTouched(true);}}
                   style={{...inp(),color:mouser?C.text:"#475569",fontFamily:"inherit"}}>
                   <option value="">— select vendor —</option>
@@ -47052,7 +47094,7 @@ function VendorNumberConfig({uid,onDirtyChange}){
             {!saving&&(dirty
               ? <span style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>● Not saved</span>
               : hasAny&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Saved</span>)}
-            {vendors.length>0&&!loadingVendors&&<button onClick={fetchVendors} title="Reload vendor list from BC"
+            {vendors.length>0&&!loadingVendors&&<button onClick={()=>fetchVendors(true)} title="Reload vendor list from BC"
               style={{background:"none",border:"1px solid #334155",borderRadius:4,padding:"5px 9px",fontSize:11,color:C.muted,cursor:"pointer"}}>↺</button>}
             {err&&<span style={{fontSize:12,color:C.red}}>⚠ {err}</span>}
           </div>
