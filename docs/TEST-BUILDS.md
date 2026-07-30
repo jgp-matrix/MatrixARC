@@ -75,3 +75,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.070 | v1.24.51-T070 | 6bd011ee | (no description) | 2026-07-29 |
 | V.070 | v1.24.52-T070 | 535a012d | F075 Phase 2 — Get-Prices Confirmed/Budgetary gate + opt-in record-as-optional to BC | 2026-07-29 |
 | V.075 | v1.24.52-T075 | 2f7cdfcc | F075 Phase 2 — unique label (V.075) to clear the V.070/V.071 cross-branch collision | 2026-07-29 |
+| V.076 | v1.24.52-T076 | d6be0665 | F075 Phase 2 — reworded missing-vendor notice | 2026-07-29 |
