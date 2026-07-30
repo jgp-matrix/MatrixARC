@@ -12892,6 +12892,10 @@ function _makeCompanionRow(parentRow,pn,relationship){
     priceDate:null,
     autoAddedCompanion:true,
     companionOfPartNumber:parentRow.partNumber||"",
+    // PRJ402501: companion parts are inferred from Description prose, not printed in the Part# column,
+    // so they must default to LOW confidence (circle shows) for user verification — never silent-high.
+    confidence:"low",
+    _confDowngradeReason:"Companion part inferred from description — verify against the drawing",
     // DECISION(v1.19.677): Companion rows inherit the parent's qty verbatim, which is
     // correct for the common case (1 base per relay) but wrong for edge cases like
     // "1 kit w/ 3 bases". Set suspectQty:true so the ⚠ qty badge shows on the row,
@@ -13235,7 +13239,12 @@ STEP 3 — MAP COLUMNS (CRITICAL — the column header dictates the field, not t
 The column HEADER tells you what each value means. A value that LOOKS like a catalog code
 in the TAGS column is NOT a catalog code — it's a tag. Trust the headers.
 
-• itemNo       ← columns headed: ITEM, Item #, Item No., LINE, Line #, No., or the leftmost sequential number column
+• itemNo       ← columns headed: ITEM, Item #, Item No., LINE, Line #, No., IDX, Idx, INDEX, Index, POS, Pos,
+                 or ANY leftmost column of running sequential integers — EVEN IF its header is abbreviated or
+                 unfamiliar (e.g. "Idx" means Index). If the leftmost column is a running sequence of integers,
+                 it IS the item-number column regardless of what it is labeled. Copy those numbers into itemNo.
+                 (Do NOT confuse this with the TAGS / Ref / Reference column of reference designators like CB103,
+                 M214 — those are device locations and belong in notes, not itemNo.)
 • qty          ← columns headed: QTY, Quantity, Qty., EA, Each, UNITS
 • partNumber   ← columns headed: PART NO., Part No., Part #, P/N, Cat. No., Catalog No.,
                  Model No., Order No., Product No., Stock No., Type No., MFG NO., MFG/PART NO.
@@ -13252,8 +13261,18 @@ in the TAGS column is NOT a catalog code — it's a tag. Trust the headers.
 
 STEP 4 — EXTRACT EVERY ROW (no skipping):
 • Multi-line cells: if text wraps to the next printed line, it is ONE row — keep it as one item
-• itemNo: copy exact value printed. Use "" if no item number column exists
+• itemNo: copy the EXACT value printed in the item/index column. NEVER renumber. If this page is a
+  CONTINUATION of a multi-page BOM, the printed numbers may start well above 1 (e.g. 41, 42, 43 …) — copy
+  them exactly; do NOT reset the sequence to 1. Use "" only if there is genuinely no item/index column.
 • NEVER invent or use sequential row counts (1,2,3…) as partNumber values
+• Dimensions, measurements, ratings, standards, or spec values embedded in a DESCRIPTION cell are
+  NOT part numbers — e.g. dimensions (1200, 24x36, 1200mm, 10 AWG) AND ratings/standards/specs
+  (IP66, IP54, NEMA 4X, Type 4X, UL508A, CSA, 24VDC, 480V, 60Hz). NEVER copy any of these into
+  partNumber and NEVER create a separate BOM row for them. The partNumber value MUST come from the
+  Part#/Catalog column ONLY — a value that appears only inside a Description is never a BOM line.
+• If a genuine companion/co-part appears ONLY in the Description prose (not printed in the Part#
+  column), emit it via additionalPartNumbers AND mark it confidence:"low" so it is flagged for
+  review — NEVER present a description-inferred part as high confidence.
 • Blank / "—" / "N/A" in part number column → partNumber: ""
 • Manufacturer prefix in part number cell: split it
   e.g. "SAGINAW SCE-24EL20X10SSLP" → manufacturer:"SAGINAW", partNumber:"SCE-24EL20X10SSLP"
@@ -13415,15 +13434,21 @@ headers. They are NOT separate tables — they are continuation of the same BOM,
 out across the page. Three-column BOMs follow the same pattern (left/middle/right).
 
 You MUST extract from ALL BOM boxes/columns/sections on the page. Specific rules:
-1. If you see a BOM table that doesn't start at item 1 (i.e., its smallest itemNo > 1),
-   STOP. There must be an earlier column/box/section containing items 1 through
-   (smallest − 1). Find it. It is almost always to the LEFT or ABOVE the column you're
-   looking at. Do not return any results until you've located all earlier items.
+1. If a BOM column/box on THIS PAGE doesn't start at item 1, first check whether an EARLIER
+   column/box ON THIS SAME PAGE (to the LEFT or ABOVE) holds the lower numbers — multi-column
+   D-size BOMs split one continuous list across columns on the same page. Scan the whole page.
+   HOWEVER — and this is CRITICAL for multi-page BOMs: if no lower numbers appear ANYWHERE on this
+   page, this page is a CONTINUATION of a multi-page BOM and it is CORRECT for it to start above 1
+   (e.g. 41). Do NOT renumber it to start at 1, and do NOT withhold results — copy the printed
+   item numbers EXACTLY as shown. Each page is extracted on its own; earlier items live on an
+   earlier page you cannot see here, which is expected and fine.
 2. If multiple BOM boxes share the same column headers (ITEM, QTY, CATALOG, MFG, DESCRIPTION),
    they are PARTS OF ONE BOM. Extract from all of them. detectedLineCount is the SUM
    across all boxes/columns/sections.
-3. The whole-page item-number sequence must be continuous: if extracted item numbers are
-   1..40 and 51..84, you're missing 41..50 — find them in another column or box.
+3. Within THIS PAGE, the item-number sequence across its columns/boxes should have no INTERNAL
+   gaps: if this page shows 41..60 and 71..84, items 61..70 are likely in another column/box on
+   this same page — find them. Do NOT expect the page to begin at 1; a continuation page
+   legitimately starts higher (e.g. 41). Judge gaps only within the numbers printed on THIS page.
 4. Reading order across columns: top-to-bottom in the LEFT column first, then top-to-bottom
    in the MIDDLE column (if any), then top-to-bottom in the RIGHT column. Mirror this for
    item-number sequence so consecutive numbers stay adjacent in your output.
@@ -13870,6 +13895,10 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
   //           high/medium/low UNTOUCHED, so the circle correctly appears on model-uncertain rows.
   //   Rule #1 (exact-BC → "high") is applied later in runPricingOnPanel, where the BC-match signal
   //           (priceSource/bcMatchType) first exists — still authoritative, overrides everything.
+  // NOTE (PRJ402501): this ladder still sets row.confidence (used by the vision-path circle + the
+  // extraction-report counts), but on PDF-NATIVE the review CIRCLE no longer reflects model low/medium —
+  // circle/pill/modal display is validity-driven via _bomReviewLevel() (suspect/placeholder/dimension),
+  // so a clean-read row here staying "high" is expected and correct.
   if(extractionPath==="pdf-native"){
     for(const it of items){
       const _c=String(it.confidence||"").toLowerCase();
@@ -13900,6 +13929,59 @@ function _parseAndVerifyBomRaw(raw,extractionPath){
     }
   }
   return{items,questions,noBomReason:items.length?null:noBomReason,extractionVerification:verification,extractionPath};
+}
+
+// PRJ402501: continuation BOM pages legitimately start above item 1 (page 2 = items 41-51).
+// The per-page verify above injects start-at-1 artifacts (missingFromStart + a fake 1..min-1
+// sequenceGap) whenever minItemNo>1 — correct for the FIRST BOM page (catches a missed left
+// column), WRONG for a continuation page (triggers a sabotaging "items 1..40 are missing" retry
+// that makes the model renumber, and a false completeness banner). Callers apply this ONLY to
+// continuation pages (pgIdx>0), where "starts above 1" is expected. Keeps internal-gap / count /
+// end / confidence checks intact.
+function _clearStartAtOneVerif(result){
+  const v=result&&result.extractionVerification; if(!v)return;
+  const nums=(result.items||[]).map(it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10)).filter(n=>!isNaN(n)&&n>0);
+  const minNo=nums.length?Math.min(...nums):1;
+  delete v.missingFromStart;
+  v.sequenceGaps=(v.sequenceGaps||[]).filter(g=>g>=minNo); // drop injected 1..min-1, keep interior gaps
+  v.status=(v.countMismatch||v.missingFromEnd||(v.sequenceGaps.length>0)
+            ||((v.lowConfidenceRows||[]).length>0)||((v.placeholderRows||[]).length>0))
+           ?(v.status==="ok"?"needs-review":v.status):"ok";
+}
+
+// PRJ402501 / #141 / #146 — SINGLE SOURCE OF TRUTH for the BOM "review" signal (the "C" circle, the
+// toolbar verification pill, and the Verify modal all call this). Jon's ruling: on a PDF-NATIVE
+// extraction the characters were read cleanly, so the signal reflects part-# VALIDITY (bomVerification
+// "suspect") + structurally-unread rows (placeholder / description-inferred companion / dimension echo)
+// — NOT the model's read-hedging. On VISION paths the model's own low/medium still surfaces, plus the
+// same validity force-flags. Returns "low" (red) | "medium" (amber) | null (no circle).
+function _bomReviewLevel(row,panel){
+  if(!row||row.isLaborRow||row.isContingency)return null;
+  if((row.priceSource==="bc"&&row.unitPrice>0)||row.isCrossed||row.isCorrection||row.correctedByLibrary)return null;
+  const verif=((panel&&panel.bomVerification)||[]).find(v=>String(v.id)===String(row.id));
+  const suspect=!!verif&&verif.status==="suspect";
+  const placeholder=row.partNumber==="?"||/EXTRACTION_FAILED/i.test(row.notes||"");
+  // Deterministic dimension/measurement backstop — independent of the Haiku verifier's PN>=3 / 60-row
+  // cap. A bare number that is a dimension, or merely echoes a value in its own description, is not a
+  // real Part# even when read cleanly. Mirrors the bomPrompt.js dimension/ratings rule.
+  const pn=String(row.partNumber||"").trim();
+  const dimLike=/^\d+(\.\d+)?\s*(mm|cm|in|"|')$/i.test(pn)||/^\d+\s*[xX]\s*\d+/.test(pn)
+    ||(/^\d{2,6}$/.test(pn)&&String(row.description||"").replace(/[^\dxX.]/g,"").includes(pn));
+  // Enclosure rows are stakes-elevated (v1.19.973) — most-expensive mis-reads → keep flagged on BOTH paths.
+  const encStakes=row._confDowngradeReason==="enclosure-row";
+  const forceFlag=suspect||placeholder||row.autoAddedCompanion||dimLike||encStakes;
+  // Per-row path: source page -> its extractionPath; fall back to panel path for legacy rows.
+  let rowPath=null;
+  const ppo=panel&&panel.extractionReport&&panel.extractionReport.perPageOutcomes;
+  if(Array.isArray(ppo)&&row.sourcePageId!=null){
+    const po=ppo.find(o=>String(o.pageId)===String(row.sourcePageId));
+    if(po)rowPath=po.extractionPath||null;
+  }
+  if(!rowPath)rowPath=(panel&&panel.extractionReport&&panel.extractionReport.extractionPath)||null;
+  const pdfNative=rowPath==="pdf-native";
+  if(pdfNative)return forceFlag?"low":null;                          // trust clean text; flag only real problems
+  const c=String(row.confidence||"").toLowerCase();
+  return (forceFlag||c==="low")?"low":(c==="medium"?"medium":null);  // vision: model hedge still counts
 }
 
 // DECISION(v1.19.981, server-side BOM extraction): Tries the server-side
@@ -16056,6 +16138,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           if(result?.pdfQuality)pagePdfQuality=result.pdfQuality;
           if(!pageRawModelOutput&&result?.rawModelOutput)pageRawModelOutput=result.rawModelOutput;
           // L3 Phase 1: broad retry + merge
+          // PRJ402501: continuation pages (pgIdx>0) legitimately start above item 1 — strip the
+          // start-at-1 verify artifacts so they don't trigger a "items 1..N missing" retry that
+          // makes the model renumber the page down to 1.
+          if(pgIdx>0)_clearStartAtOneVerif(result);
           const verif=result?.extractionVerification;
           const shouldRetry=verif&&verif.status==="needs-review"&&pageRetryAttempts<1;
           if(shouldRetry){
@@ -28472,6 +28558,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           }
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
+          if(pgIdx>0)_clearStartAtOneVerif(result); // PRJ402501: continuation pages start above 1 — no false 1..N-missing warning
           if(result?.extractionVerification)_reVerifications.push({page:pg.name||`Page ${pgIdx+1}`,...result.extractionVerification});
           _rePerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
@@ -28721,6 +28808,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         for(const unit of units){
           const notes=unit.regionNote?("Cropped BOM region: "+unit.regionNote+fbRgnCtx):fbRgnCtx;
           const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
+          if(pgIdx>0)_clearStartAtOneVerif(result); // PRJ402501: continuation pages start above 1 — no false 1..N-missing warning
           if(result?.extractionVerification)_fbVerifications.push({page:pg.name||`Page ${pgIdx+1}`,...result.extractionVerification});
           _fbPerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
@@ -32037,16 +32125,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 badge is invisible when extraction is healthy — no false alarms. */}
             {(()=>{
               const rows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency&&!r.autoLoaded);
-              const lowConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="low");
-              const medConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="medium");
-              const placeholders=rows.filter(r=>r.partNumber==="?"||/EXTRACTION_FAILED/i.test(r.notes||""));
-              // v1.19.973: enclosure-downgrade rows are stakes-elevated, treat as flagged.
-              const encDowngrade=medConf.filter(r=>r._confDowngradeReason==="enclosure-row");
-              const flagged=lowConf.length+placeholders.length+encDowngrade.length;
-              if(flagged===0&&medConf.length===0)return null;
+              // PRJ402501: route the pill through the same _bomReviewLevel predicate the "C" circle uses,
+              // so the count always matches what's circled (validity-driven on pdf-native, model-hedge on vision).
+              const flaggedRows=rows.filter(r=>_bomReviewLevel(r,panel)==="low");
+              const mediumRows=rows.filter(r=>_bomReviewLevel(r,panel)==="medium");
+              const flagged=flaggedRows.length;
+              if(flagged===0&&mediumRows.length===0)return null;
               const tone=flagged>0
                 ?{bg:"#3a1f00",border:"#f59e0baa",fg:"#fcd34d",label:`⚠ ${flagged} row${flagged===1?"":"s"} need${flagged===1?"s":""} review`}
-                :{bg:"#1a2a3a",border:"#3b82f688",fg:"#93c5fd",label:`${medConf.length} medium-confidence row${medConf.length===1?"":"s"}`};
+                :{bg:"#1a2a3a",border:"#3b82f688",fg:"#93c5fd",label:`${mediumRows.length} medium-confidence row${mediumRows.length===1?"":"s"}`};
               return(
                 <button onClick={()=>setShowVerifyModal(true)}
                   title="BOM extraction verification — some rows have low confidence, are placeholder/unreadable, or are enclosure rows (highest stakes) that need character-by-character verification. Click to review."
@@ -32573,11 +32660,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       ):f==="_status"?(
                         <td key="_status" data-tour="bom-status" style={{padding:"3px 2px",width:56,textAlign:"center"}}>
                           <div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",gap:4}}>  {/* right-anchor the circle pair — same wrapper the old _bc cell used (#141 C86) */}
-                          {/* #141 (C84): confidence "C" circle — reads row.confidence; amber=medium, red=low; informational (cursor:help). Renders LEFT of the BC circle. */}
-                          {!row.isLaborRow&&!row.isContingency&&(row.confidence==="low"||row.confidence==="medium")&&(
-                            <span title={`AI confidence: ${row.confidence} — verify this part number against the source drawing`}
-                              style={{background:row.confidence==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>C</span>
-                          )}
+                          {/* #141 (C84) / PRJ402501: confidence "C" circle — now routed through the SINGLE-SOURCE
+                             _bomReviewLevel(row,panel) predicate (validity-driven on pdf-native, model-hedge on vision;
+                             see its definition). red=low, amber=medium. Informational (cursor:help), LEFT of the BC circle. */}
+                          {(()=>{
+                            const _lvl=_bomReviewLevel(row,panel);
+                            if(!_lvl)return null;
+                            const _verif=(panel.bomVerification||[]).find(v=>String(v.id)===String(row.id));
+                            const _suspect=!!_verif&&_verif.status==="suspect";
+                            const _t=_suspect
+                              ?"Part number not recognized (see ? PN) — verify against the source drawing or delete the row"
+                              :`AI confidence: ${row.confidence||"low"} — verify this part number against the source drawing`;
+                            return(
+                            <span title={_t}
+                              style={{background:_lvl==="low"?"#ef4444":"#f59e0b",border:"none",color:"#000",cursor:"help",fontSize:9,fontWeight:800,borderRadius:"50%",width:24,height:24,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>C</span>
+                            );
+                          })()}
                           {/* F002 R1 — unified tri-state BC circle (replaces old blue circle 29071 + red "+ BC" 29214 + yellow "? BC" 29221).
                              Color = _bcCircle state (RED>YELLOW>BLUE>none). RED → open BC Browser directly (add & link);
                              YELLOW/BLUE → shared fuzzy-lookup (match & link) — identical to the old blue-circle handler. */}
@@ -33132,12 +33230,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {showVerifyModal&&ReactDOM.createPortal(
         (()=>{
           const rows=(panel.bom||[]).filter(r=>!r.isLaborRow&&!r.isContingency&&!r.autoLoaded);
-          const lowConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="low");
-          const medConf=rows.filter(r=>String(r.confidence||"").toLowerCase()==="medium");
+          // PRJ402501: route low/medium through the same _bomReviewLevel predicate as the circle + pill (SSOT).
           const placeholders=rows.filter(r=>r.partNumber==="?"||/EXTRACTION_FAILED/i.test(r.notes||""));
-          // Dedupe — placeholder rows are typically also low-confidence
-          const lowConfIds=new Set(lowConf.map(r=>r.id));
-          const placeholdersOnly=placeholders.filter(r=>!lowConfIds.has(r.id));
+          const placeholderIds=new Set(placeholders.map(r=>r.id));
+          // Placeholders get their own section below — exclude them from the low-confidence table to avoid double-listing.
+          const lowConf=rows.filter(r=>_bomReviewLevel(r,panel)==="low"&&!placeholderIds.has(r.id));
+          const medConf=rows.filter(r=>_bomReviewLevel(r,panel)==="medium");
+          const placeholdersOnly=placeholders;
           return(
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16}} onClick={()=>setShowVerifyModal(false)}>
               <div onClick={e=>e.stopPropagation()} style={{...card(),width:"95%",maxWidth:900,maxHeight:"85vh",display:"flex",flexDirection:"column"}}>

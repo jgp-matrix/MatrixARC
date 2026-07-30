@@ -64,7 +64,12 @@ STEP 3 — MAP COLUMNS (CRITICAL — the column header dictates the field, not t
 The column HEADER tells you what each value means. A value that LOOKS like a catalog code
 in the TAGS column is NOT a catalog code — it's a tag. Trust the headers.
 
-• itemNo       ← columns headed: ITEM, Item #, Item No., LINE, Line #, No., or the leftmost sequential number column
+• itemNo       ← columns headed: ITEM, Item #, Item No., LINE, Line #, No., IDX, Idx, INDEX, Index, POS, Pos,
+                 or ANY leftmost column of running sequential integers — EVEN IF its header is abbreviated or
+                 unfamiliar (e.g. "Idx" means Index). If the leftmost column is a running sequence of integers,
+                 it IS the item-number column regardless of what it is labeled. Copy those numbers into itemNo.
+                 (Do NOT confuse this with the TAGS / Ref / Reference column of reference designators like CB103,
+                 M214 — those are device locations and belong in notes, not itemNo.)
 • qty          ← columns headed: QTY, Quantity, Qty., EA, Each, UNITS
 • partNumber   ← columns headed: PART NO., Part No., Part #, P/N, Cat. No., Catalog No.,
                  Model No., Order No., Product No., Stock No., Type No., MFG NO., MFG/PART NO.
@@ -81,8 +86,18 @@ in the TAGS column is NOT a catalog code — it's a tag. Trust the headers.
 
 STEP 4 — EXTRACT EVERY ROW (no skipping):
 • Multi-line cells: if text wraps to the next printed line, it is ONE row — keep it as one item
-• itemNo: copy exact value printed. Use "" if no item number column exists
+• itemNo: copy the EXACT value printed in the item/index column. NEVER renumber. If this page is a
+  CONTINUATION of a multi-page BOM, the printed numbers may start well above 1 (e.g. 41, 42, 43 …) — copy
+  them exactly; do NOT reset the sequence to 1. Use "" only if there is genuinely no item/index column.
 • NEVER invent or use sequential row counts (1,2,3…) as partNumber values
+• Dimensions, measurements, ratings, standards, or spec values embedded in a DESCRIPTION cell are
+  NOT part numbers — e.g. dimensions (1200, 24x36, 1200mm, 10 AWG) AND ratings/standards/specs
+  (IP66, IP54, NEMA 4X, Type 4X, UL508A, CSA, 24VDC, 480V, 60Hz). NEVER copy any of these into
+  partNumber and NEVER create a separate BOM row for them. The partNumber value MUST come from the
+  Part#/Catalog column ONLY — a value that appears only inside a Description is never a BOM line.
+• If a genuine companion/co-part appears ONLY in the Description prose (not printed in the Part#
+  column), emit it via additionalPartNumbers AND mark it confidence:"low" so it is flagged for
+  review — NEVER present a description-inferred part as high confidence.
 • Blank / "—" / "N/A" in part number column → partNumber: ""
 • Manufacturer prefix in part number cell: split it
   e.g. "SAGINAW SCE-24EL20X10SSLP" → manufacturer:"SAGINAW", partNumber:"SCE-24EL20X10SSLP"
@@ -244,15 +259,21 @@ headers. They are NOT separate tables — they are continuation of the same BOM,
 out across the page. Three-column BOMs follow the same pattern (left/middle/right).
 
 You MUST extract from ALL BOM boxes/columns/sections on the page. Specific rules:
-1. If you see a BOM table that doesn't start at item 1 (i.e., its smallest itemNo > 1),
-   STOP. There must be an earlier column/box/section containing items 1 through
-   (smallest − 1). Find it. It is almost always to the LEFT or ABOVE the column you're
-   looking at. Do not return any results until you've located all earlier items.
+1. If a BOM column/box on THIS PAGE doesn't start at item 1, first check whether an EARLIER
+   column/box ON THIS SAME PAGE (to the LEFT or ABOVE) holds the lower numbers — multi-column
+   D-size BOMs split one continuous list across columns on the same page. Scan the whole page.
+   HOWEVER — and this is CRITICAL for multi-page BOMs: if no lower numbers appear ANYWHERE on this
+   page, this page is a CONTINUATION of a multi-page BOM and it is CORRECT for it to start above 1
+   (e.g. 41). Do NOT renumber it to start at 1, and do NOT withhold results — copy the printed
+   item numbers EXACTLY as shown. Each page is extracted on its own; earlier items live on an
+   earlier page you cannot see here, which is expected and fine.
 2. If multiple BOM boxes share the same column headers (ITEM, QTY, CATALOG, MFG, DESCRIPTION),
    they are PARTS OF ONE BOM. Extract from all of them. detectedLineCount is the SUM
    across all boxes/columns/sections.
-3. The whole-page item-number sequence must be continuous: if extracted item numbers are
-   1..40 and 51..84, you're missing 41..50 — find them in another column or box.
+3. Within THIS PAGE, the item-number sequence across its columns/boxes should have no INTERNAL
+   gaps: if this page shows 41..60 and 71..84, items 61..70 are likely in another column/box on
+   this same page — find them. Do NOT expect the page to begin at 1; a continuation page
+   legitimately starts higher (e.g. 41). Judge gaps only within the numbers printed on THIS page.
 4. Reading order across columns: top-to-bottom in the LEFT column first, then top-to-bottom
    in the MIDDLE column (if any), then top-to-bottom in the RIGHT column. Mirror this for
    item-number sequence so consecutive numbers stay adjacent in your output.
