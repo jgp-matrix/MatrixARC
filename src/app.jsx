@@ -13249,6 +13249,10 @@ in the TAGS column is NOT a catalog code — it's a tag. Trust the headers.
 • partNumber   ← columns headed: PART NO., Part No., Part #, P/N, Cat. No., Catalog No.,
                  Model No., Order No., Product No., Stock No., Type No., MFG NO., MFG/PART NO.
                  ★ THIS IS THE ONLY COLUMN where catalog/part numbers come from. ★
+                 ★ Use THIS row's Part#/Catalog column value even when the DESCRIPTION contains other
+                   codes/ratings that look more like a part number (e.g. IP66, UL, a model fragment). A
+                   long numeric catalog value in the Part# column (e.g. 640014405) IS the partNumber —
+                   NEVER replace it with a shorter, more recognizable token pulled from the description. ★
 • manufacturer ← columns headed: MANUFACTURER, MFG, MFR, Brand, Make, VENDOR, VEN, MAKER
 • description  ← columns headed: DESCRIPTION, Item Description, Function, Material Description, DESC
 • notes        ← columns headed: TAGS, TAG, Ref, Reference, Device ID, NOTES, REMARKS,
