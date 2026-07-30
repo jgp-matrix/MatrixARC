@@ -31122,7 +31122,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     setApiOptionalWriting(false);
     setApiOptionalModal(null);
-    if(missingSetup.size)arcAlert(`${[...missingSetup].join(" / ")} not set up in Vendor Sync settings — those optional prices were skipped. Add the vendor number under Settings → Vendor Sync, then run Get Prices again.`);
+    if(missingSetup.size)arcAlert(`${[...missingSetup].join(" / ")}: BC vendor number not yet linked in Vendor Sync, so the optional price${missingSetup.size>1?"s were":" was"} not recorded to BC.\n\nThe vendor may already exist in BC — ARC still needs its vendor number mapped here to know where to write. Set it under Settings → Vendor Sync (auto-detect or enter the number), then re-run Get Prices.`);
     _finalPill(`✓ ${pricedCount} priced · ${recorded} optional recorded to BC${skipped>0?` · ${skipped} skipped`:""}`);
   }
   // Cancel the optional-price modal — records nothing (on-row prices already applied).
