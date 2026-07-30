@@ -7,6 +7,18 @@
 
 ## Current — 🟢 2026-07-29 · prod v1.24.53 · RFQ-only pricing (auto-pricing OFF) + manual Get-Prices (Mouser/DigiKey) LIVE · Sales in UAT · Step-2 price reconcile CF in DRY-RUN (not live)
 
+> ## ▶ RESUME HERE (morning 2026-07-30) — Vendor Sync mapping is blocked; pick an unblock path.
+> **Goal Jon set:** "Set up DigiKey/Mouser in Vendor Sync and verify the BC write" (activate F075 Phase 2's opt-in optional-price BC write). **Jon deferred to the morning.**
+> **Already verified (live, prod controlled tab — no need to re-derive):**
+> - BC env = new UAT sandbox `MATR_SndBx_UAT_070926`, Connected.
+> - BC vendor numbers: **DigiKey = `V00196`** ("Digikey"), **Mouser = `V00304`** ("Mouser Electronics").
+> - Phase 2 reads `digikeyVendorNo`/`mouserVendorNo` from **`users/{uid}/config/vendorConfig`** (companyId is null → user-path doc; it currently holds only `vendorCodes`, both keys absent → that's why the optional write skipped).
+> **BLOCKER — no clean way to set those two keys:**
+> - App UI: the DigiKey "BC Vendor No" field (API Setup modal) does NOT persist on change (tested) — the keys are only written as a side-effect of the **"Update All DigiKey Prices" MASS sync** (prices every BC item via DigiKey — do NOT trigger casually). Mouser has NO vendor-number field at all.
+> - Direct Firestore write of the two keys = **blocked by the CCD safety classifier** (browser-injected mutations disallowed; app-mediated only).
+> **⇒ Phase 2's optional-BC-write is effectively STRANDED until a lightweight "map API vendor → BC vendor #" config UI exists — which is the queued "New-API-source BC-vendor check" item (now a PREREQUISITE, not a nicety).**
+> **OPTIONS for Jon (recommend #1):** (1) Build a small Vendor Sync config UI to set `digikeyVendorNo`/`mouserVendorNo` directly (no mass sync) — unblocks Phase 2 verify + IS the RS-Online item. (2) Run the full "Update All DigiKey Prices" mass sync (sets DigiKey config as a side-effect + bulk-prices all BC items; DigiKey only, not Mouser). (3) Jon sets the two numbers himself, then Freddy verifies the write end-to-end. Pushover P2 sent 2026-07-29 eve.
+
 > ## ✅ SHIPPED prod v1.24.52 (2026-07-29) — RFQ-send stale-Priced-Date hotfix (F075 finding #2).
 > Jon live-tested F075 (Test) and caught: RFQ-Send populated a fresh price but the Priced Date "stayed a May date." Root: the apiGroups apply (`onApiPriced` ~:43127) set a fresh `priceDate` but left a stale `bcPoDate`; `_effectivePriceDate` returns `bcPoDate` for `priceSource:"bc"` rows → column showed the old date. Surgical fix: strip the `bcPoDate` key on API apply so it falls through to the fresh `priceDate`. Coach **APPROVE-WITH-NITS** (mechanism + all readers + save-durability confirmed; NIT = edge case where a part with BOTH a stale BC purchase-price date AND a fresh scraper price can re-derive `bcPoDate` on a BC-connected reload — the durable fix is the `priceSource:"bc"` mislabeling, deferred to F075 Phase 2). Jon verified steps 1-3 on Test V.071 → cherry-picked `d6fdacb7`→master `bed91da7` → deploy.sh → **prod 46fd144d / v1.24.52**. Hotfix branch `claude/rfq-price-date-hotfix` (Test-build commits left off master).
 
