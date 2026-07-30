@@ -12707,6 +12707,45 @@ function fuzzyMergeBomItems(items){return fuzzyMergeBomItemsWithReport(items).it
 // read the description differently in each quadrant (e.g. truncated at a quadrant edge).
 // Y-coord match is a near-deterministic signal: rows in a BOM table are horizontal, and
 // our translateItemsToPageCoords(v1.19.603) normalizes Y to original-page fractions.
+// PRJ402501 — DETERMINISTIC continuation-page item-number fix (the reliable backstop; the prompt
+// only nudges). The drawing prints ONE continuous Idx column across pages (page 1 = 1-40, page 2 =
+// 41-51), but the model — extracting per-page — sometimes renumbers a continuation page back to 1
+// (page 2 returns 1-11), colliding with page 1. Walk pages in sourcePageIdx order tracking the
+// running max item number; if a later page's numbers OVERLAP an earlier page's, offset that whole
+// page to CONTINUE from the running max (1→41, 2→42, … preserving in-page gaps). If the model read
+// the continuation correctly (page min > running max, no overlap), leave it untouched. Model-
+// independent → stable run-to-run. Runs BEFORE dedup so the corrected itemNos feed the merge keys.
+function _resequenceContinuationPages(items){
+  if(!Array.isArray(items)||items.length<2)return items;
+  const byPage=new Map();
+  for(const it of items){
+    const pi=(typeof it.sourcePageIdx==="number")?it.sourcePageIdx:-1;
+    if(!byPage.has(pi))byPage.set(pi,[]);
+    byPage.get(pi).push(it);
+  }
+  const pages=[...byPage.keys()].filter(p=>p>=0).sort((a,b)=>a-b);
+  if(pages.length<2)return items; // single page → nothing to re-sequence
+  const _n=it=>parseInt(String(it.itemNo||"").replace(/\D/g,""),10);
+  let runningMax=0;
+  for(const pi of pages){
+    const pageItems=byPage.get(pi);
+    const nums=pageItems.map(_n).filter(n=>!isNaN(n)&&n>0);
+    if(!nums.length)continue; // no numeric item numbers on this page → skip
+    const pageMin=Math.min(...nums), pageMax=Math.max(...nums);
+    if(pageMin<=runningMax){
+      const offset=runningMax-pageMin+1;      // shift this page to continue from the prior page's max
+      for(const it of pageItems){
+        const n=_n(it);
+        if(!isNaN(n)&&n>0){it.itemNo=String(n+offset);it._itemNoResequenced=true;}
+      }
+      runningMax=pageMax+offset;
+      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"info",source:"resequenceContinuationPages",message:`Continuation page ${pi} overlapped prior page (min ${pageMin} ≤ ${runningMax-((pageMax+offset)-runningMax)}) — offset by ${offset} to continue from ${runningMax-(pageMax-pageMin)}`,extra:{sourcePageIdx:pi,pageMin,pageMax,offset,newMax:runningMax}});}catch(_){}
+    }else{
+      runningMax=Math.max(runningMax,pageMax);
+    }
+  }
+  return items;
+}
 function positionalMergeBomItems(items){
   // Items without y_top are passed through untouched (legacy rows, manual adds, labor rows, etc.).
   // DECISION(v1.19.645): CRITICAL fix — items without sourcePageIdx also bypass positional
@@ -16315,7 +16354,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       },3).then(results=>{
         const _extractionPath=_extractionPathsSeen.has("pdf-native")?"pdf-native":"unknown";
         console.log(`[BOM EXTRACT] panel extraction path: ${_extractionPath}`);
-        const all=results.flat();
+        const all=_resequenceContinuationPages(results.flat()); // PRJ402501: fix continuation-page item# collisions before dedup
         // v1.19.983: panel-level summary log — fires every time extraction
         // completes, with the full per-page outcome breakdown. This is the
         // signal an admin needs when a user reports "no BOM was found" — the
@@ -28584,7 +28623,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // index-vs-id distinction that was destroying rows via wrong-page snippet reads.
         return pageItems.map(item=>({...item,sourcePageIdx:pgIdx,sourcePageId:pg.id}));
       },3);
-      all=bomResults.flat();
+      all=_resequenceContinuationPages(bomResults.flat()); // PRJ402501: fix continuation-page item# collisions
       reQs=reQs.slice(0,10);
       console.log(`[RE-EXTRACT] Total: ${all.length} items, ${reQs.length} questions across all pages`);
     }catch(ex){console.error("[RE-EXTRACT] Failed:",ex);setErr(`Failed: ${ex.message}`);setExtracting(false);ep.stop();bgError(_bgKey(projectId,panel.id),"Re-extract failed: "+(ex.message||"").slice(0,60));_reBgFinished=true;return;}
@@ -28824,7 +28863,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // DECISION(v1.19.645/647): Attach sourcePageIdx + sourcePageId — see same fix above.
         return pageItems.map(item=>({...item,sourcePageIdx:pgIdx,sourcePageId:pg.id}));
       },3);
-      all=bomResults.flat();
+      all=_resequenceContinuationPages(bomResults.flat()); // PRJ402501: fix continuation-page item# collisions
       fbQs=fbQs.slice(0,10);
     }catch(ex){setErr(`Failed: ${ex.message}`);setReExtracting(false);return;}
     // DECISION(v1.19.620): Positional FIRST (max qty for cross-quadrant), then exact PN, then fuzzy.
