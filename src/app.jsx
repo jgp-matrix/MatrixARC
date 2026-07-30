@@ -46901,6 +46901,167 @@ function AdminBudgetSection({uid}){
   );
 }
 
+// ── F077 VENDOR SYNC CONFIG (Settings) — sets DigiKey/Mouser BC vendor numbers ──
+// Writes config/vendorConfig {digikeyVendorNo,mouserVendorNo} merge-safe (same doc
+// VendorPricingSyncPanel writes at 45305-45306; {merge:true} MANDATORY — the doc also
+// holds vendorCodes, a non-merge set would wipe it, Data Retention rule #1). F075 Phase 2
+// recordOptionalPricesToBc() reads these keys (via _readSupplierConfig "vendorConfig") to
+// record optional BC purchase prices. Config-write ONLY — deliberately NO mass-sync button
+// here (that scrapes+prices every BC item; it lives in Items → BC Item Browser → Sync Pricing).
+function VendorNumberConfig({uid,onDirtyChange}){
+  const [dk,setDk]=useState('');
+  const [mouser,setMouser]=useState('');
+  const [saving,setSaving]=useState(false);
+  // Last-persisted values (from Firestore load or a successful save) — drive the
+  // persistent Saved / Not-saved indicator so users get confirmation after reopening.
+  const [savedDk,setSavedDk]=useState('');
+  const [savedMouser,setSavedMouser]=useState('');
+  const [err,setErr]=useState(null);
+  const [loading,setLoading]=useState(true);
+  // BC vendor list (dropdown source) — replicates VendorPricingSyncPanel's fetch/auto-detect.
+  const [vendors,setVendors]=useState([]);          // [{No,Name}] from BC
+  const [loadingVendors,setLoadingVendors]=useState(false);
+  const [vendorLoadErr,setVendorLoadErr]=useState(null);
+  const [touched,setTouched]=useState(false);   // user actively changed a selection (gates close-guard, not auto-detect)
+  useEffect(()=>{
+    if(!uid){setLoading(false);return;}
+    // Read saved values on mount. Placeholders (V00196/V00304) are hints only — never pre-fill.
+    _readSupplierConfig(uid,"vendorConfig").then(({data})=>{
+      if(data){
+        setDk(data.digikeyVendorNo||'');
+        setMouser(data.mouserVendorNo||'');
+        setSavedDk(data.digikeyVendorNo||'');
+        setSavedMouser(data.mouserVendorNo||'');
+      }
+    }).catch(e=>console.warn("VendorNumberConfig load:",e.message)).finally(()=>{
+      setLoading(false);
+      // Populate the dropdowns from BC when connected. Auto-detect only PRE-FILLS an empty
+      // selection (prev||detected) — never overrides a saved value, never auto-saves.
+      if(_bcToken)fetchVendors();
+    });
+  },[uid]);
+
+  async function fetchVendors(){
+    if(!_bcToken){setVendorLoadErr("Not connected to Business Central — connect first then retry.");return;}
+    setLoadingVendors(true);
+    setVendorLoadErr(null);
+    try{
+      const allPages=await bcDiscoverODataPages();
+      const vPage=allPages.find(n=>/^vendor/i.test(n))||'Vendor';
+      // Load the FULL vendor list — NO PARTS posting-group filter. This picker must show
+      // EVERY vendor: e.g. Mouser (V00304) is not in the PARTS group, so a PARTS filter hid
+      // it while DigiKey (in PARTS) showed. $top high enough for the whole list.
+      const r=await bcGatedFetch(`${BC_ODATA_BASE}/${vPage}?$select=No,Name&$top=1000`,
+        {headers:{"Authorization":`Bearer ${_bcToken}`}});
+      if(!r.ok){const txt=await r.text();setVendorLoadErr(`BC ${r.status}: ${txt.slice(0,200)}`);setLoadingVendors(false);return;}
+      let list=(await r.json()).value||[];
+      // Sort by Name so users can find a vendor without knowing its number.
+      list.sort((a,b)=>(a.Name||'').localeCompare(b.Name||''));
+      setVendors(list);
+      setVendorLoadErr(null);
+      // Auto-detect DigiKey and Mouser by name — pre-fill only when selection is empty.
+      const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
+      const dkV=list.find(v=>norm(v.Name).includes('digikey'));
+      const moV=list.find(v=>norm(v.Name).includes('mouser'));
+      if(dkV)setDk(prev=>prev||dkV.No);
+      if(moV)setMouser(prev=>prev||moV.No);
+    }catch(e){
+      setVendorLoadErr(`Error loading vendors: ${e.message}`);
+      console.warn("VendorNumberConfig fetchVendors error:",e);
+    }
+    setLoadingVendors(false);
+  }
+
+  async function save(){
+    setErr(null);setSaving(true);
+    try{
+      const dkT=dk.trim(),mT=mouser.trim();
+      await fbDb.doc(_supplierDocPath(uid,"vendorConfig")).set(
+        {digikeyVendorNo:dkT,mouserVendorNo:mT},{merge:true});
+      setSavedDk(dkT);setSavedMouser(mT);
+    }catch(e){
+      const msg=e?.code==="permission-denied"?"You don't have permission to save vendor numbers. Contact your admin.":(e?.message||"Save failed");
+      setErr(msg);
+    }
+    setSaving(false);
+  }
+
+  // Name-detected matches (for the "✓ auto-detected" hint) — mirror 45319/45320.
+  const norm=s=>(s||'').toLowerCase().replace(/[\s\-\.]/g,'');
+  const dkMatch=vendors.find(v=>norm(v.Name).includes('digikey'));
+  const moMatch=vendors.find(v=>norm(v.Name).includes('mouser'));
+  // Persistent save-state: dirty when current selection differs from what's stored.
+  const dirty=(dk.trim()!==savedDk)||(mouser.trim()!==savedMouser);
+  const hasAny=!!(savedDk||savedMouser||dk.trim()||mouser.trim());
+  // Report dirty up ONLY when the user actually changed a selection — auto-detect pre-fill
+  // re-derives on next open, so it shouldn't trigger the close-guard nag.
+  useEffect(()=>{if(onDirtyChange)onDirtyChange(dirty&&touched);},[dirty,touched]);
+
+  return(
+    <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
+      <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Vendor Sync</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:10,lineHeight:1.6}}>Pick the Business Central vendors for <strong style={{color:C.text}}>DigiKey</strong> and <strong style={{color:C.text}}>Mouser</strong>. ARC uses these to record optional BC purchase prices when you apply pricing. Connect to Business Central to choose from your vendor list; otherwise enter the vendor numbers manually.</div>
+      {loading?<div style={{fontSize:12,color:C.muted}}>Loading…</div>:(
+        <>
+          {/* Vendor load status */}
+          {vendorLoadErr&&<div style={{marginBottom:8,display:"flex",alignItems:"center",gap:8}}>
+            <span style={{fontSize:12,color:"#f87171"}}>⚠ {vendorLoadErr}</span>
+            <button onClick={fetchVendors} disabled={loadingVendors}
+              style={{background:"#1e3a5f",color:"#93c5fd",border:"1px solid #3b6aad",borderRadius:4,padding:"3px 10px",fontSize:11,cursor:"pointer",fontWeight:600}}>
+              {loadingVendors?"Loading…":"↺ Retry"}
+            </button>
+          </div>}
+          {loadingVendors&&!vendorLoadErr&&<div style={{fontSize:12,color:C.muted,marginBottom:8}}>Loading BC vendors…</div>}
+
+          <div style={{display:"flex",gap:12,flexWrap:"wrap",marginBottom:10}}>
+            <div style={{flex:"1 1 200px"}}>
+              <label style={{display:"block",fontSize:11,color:C.sub,marginBottom:4}}>DigiKey BC Vendor</label>
+              {vendors.length>0?(
+                <select value={dk} onChange={e=>{setDk(e.target.value);setTouched(true);}}
+                  style={{...inp(),color:dk?C.text:"#475569",fontFamily:"inherit"}}>
+                  <option value="">— select vendor —</option>
+                  {vendors.map(v=><option key={v.No} value={v.No}>{v.No} — {v.Name}</option>)}
+                </select>
+              ):(
+                <input value={dk} onChange={e=>{setDk(e.target.value);setTouched(true);}} placeholder="V00196"
+                  onKeyDown={e=>{if(e.key==="Enter")save();}} style={inp()}/>
+              )}
+              {dkMatch&&dk===dkMatch.No&&<span style={{fontSize:11,color:"#22c55e",display:"inline-block",marginTop:4}}>✓ auto-detected</span>}
+            </div>
+            <div style={{flex:"1 1 200px"}}>
+              <label style={{display:"block",fontSize:11,color:C.sub,marginBottom:4}}>Mouser BC Vendor</label>
+              {vendors.length>0?(
+                <select value={mouser} onChange={e=>{setMouser(e.target.value);setTouched(true);}}
+                  style={{...inp(),color:mouser?C.text:"#475569",fontFamily:"inherit"}}>
+                  <option value="">— select vendor —</option>
+                  {vendors.map(v=><option key={v.No} value={v.No}>{v.No} — {v.Name}</option>)}
+                </select>
+              ):(
+                <input value={mouser} onChange={e=>{setMouser(e.target.value);setTouched(true);}} placeholder="V00304"
+                  onKeyDown={e=>{if(e.key==="Enter")save();}} style={inp()}/>
+              )}
+              {moMatch&&mouser===moMatch.No&&<span style={{fontSize:11,color:"#22c55e",display:"inline-block",marginTop:4}}>✓ auto-detected</span>}
+            </div>
+          </div>
+          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+            <button onClick={save} disabled={saving||!dirty}
+              style={btn(dirty?C.accent:"#334155","#fff",{fontSize:12,padding:"6px 18px",opacity:(saving||!dirty)?0.55:1,cursor:(saving||!dirty)?"default":"pointer"})}>
+              {saving?"Saving…":"Save"}
+            </button>
+            {/* Persistent save-state indicator (Jon: confirm Saved / Not Saved after reopen) */}
+            {!saving&&(dirty
+              ? <span style={{fontSize:12,color:"#f59e0b",fontWeight:600}}>● Not saved</span>
+              : hasAny&&<span style={{fontSize:12,color:C.green,fontWeight:600}}>✓ Saved</span>)}
+            {vendors.length>0&&!loadingVendors&&<button onClick={fetchVendors} title="Reload vendor list from BC"
+              style={{background:"none",border:"1px solid #334155",borderRadius:4,padding:"5px 9px",fontSize:11,color:C.muted,cursor:"pointer"}}>↺</button>}
+            {err&&<span style={{fontSize:12,color:C.red}}>⚠ {err}</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchive,onShowArchiveBrowser}){
   // v1.19.986 (audit Item E): saveErr surfaces API-key save failures inline.
   const [saveErr,setSaveErr]=useState(null);
@@ -46910,7 +47071,9 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
   const [apiTestMsg,setApiTestMsg]=useState(null); // {ok:bool, text:string}
   const [apiTesting,setApiTesting]=useState(false);
   const [firstName,setFirstName]=useState("");
+  const [savedFirstName,setSavedFirstName]=useState("");   // baseline for unsaved-edits guard
   const [nameSaved,setNameSaved]=useState(false);
+  const [vendorDirty,setVendorDirty]=useState(false);      // lifted from VendorNumberConfig
 
   const [curPass,setCurPass]=useState("");
   const [newPass,setNewPass]=useState("");
@@ -46922,6 +47085,7 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
   const [graphStatus,setGraphStatus]=useState("checking"); // checking|authorized|unauthorized|loading
   const [showPricingReports,setShowPricingReports]=useState(false);
   const [tcText,setTcText]=useState("");
+  const [savedTc,setSavedTc]=useState("");                 // baseline for unsaved-edits guard
   const [tcLoading,setTcLoading]=useState(true);
   const [tcSaved,setTcSaved]=useState(false);
   const settingsBackdropRef=useRef(null);
@@ -46957,14 +47121,14 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
       fbDb.doc(`users/${uid}/config/profile`).get(),
     ]).then(([apiDoc,profileDoc])=>{
       if(apiDoc.exists)setKey(apiDoc.data().key||"");
-      if(profileDoc.exists)setFirstName(profileDoc.data().firstName||"");
+      if(profileDoc.exists){const fn=profileDoc.data().firstName||"";setFirstName(fn);setSavedFirstName(fn);}
     }).finally(()=>setLoading(false));
     // Check if Mail.Send is already consented
     tryGraphTokenSilent().then(tok=>setGraphStatus(tok?"authorized":"unauthorized")).catch(()=>setGraphStatus("unauthorized"));
     // Load T&C from company config
     if(_appCtx.companyId){
       fbDb.doc(`companies/${_appCtx.companyId}`).get().then(d=>{
-        if(d.exists&&d.data().termsAndConditions)setTcText(d.data().termsAndConditions);
+        if(d.exists&&d.data().termsAndConditions){setTcText(d.data().termsAndConditions);setSavedTc(d.data().termsAndConditions);}
       }).finally(()=>setTcLoading(false));
     }else setTcLoading(false);
   },[uid]);
@@ -46979,6 +47143,7 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
     const name=firstName.trim();
     await fbDb.doc(`users/${uid}/config/profile`).set({firstName:name},{merge:true});
     if(onNameChange)onNameChange(name);
+    setSavedFirstName(name);
     setNameSaved(true);setTimeout(()=>setNameSaved(false),2000);
   }
 
@@ -47047,12 +47212,23 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
 
   const isEmailProvider=fbAuth.currentUser?.providerData?.some(p=>p.providerId==="password");
 
+  // Unsaved-edits guard (Jon): warn before closing if editable fields have unsaved changes.
+  const settingsDirty=vendorDirty||(firstName.trim()!==savedFirstName.trim())||(tcText!==savedTc);
+  async function requestClose(){
+    if(settingsDirty){
+      const ok=await arcConfirm("You have unsaved edits. Continue to close and lose the changes?",
+        {title:"Unsaved changes",okLabel:"Discard & Close",cancelLabel:"Keep Editing",destructive:true});
+      if(!ok)return;
+    }
+    onClose();
+  }
+
   return(
-    <div ref={settingsBackdropRef} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div ref={settingsBackdropRef} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"flex-start",justifyContent:"center",overflowY:"auto",padding:"16px"}} onMouseDown={e=>{if(e.target===e.currentTarget)requestClose();}}>
       <div style={{...card(),width:"100%",maxWidth:900,margin:"16px 0"}} onMouseDown={e=>e.stopPropagation()}>
         <div style={{display:"flex",alignItems:"center",marginBottom:4}}>
           <div style={{fontSize:36,fontWeight:900,flex:1}}>⚙ Settings</div>
-          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
+          <button onClick={requestClose} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px",borderRadius:4}} onMouseEnter={e=>e.currentTarget.style.color=C.text} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>✕</button>
         </div>
         <div style={{marginBottom:20}}/>
 
@@ -47092,6 +47268,9 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
 
         {/* BC Environment, Codale, Mouser, DigiKey, Pricing Reports — moved to API Setup modal (v1.19.379) */}
 
+        {/* F077 Vendor Sync — admin or solo-owner only (config write for F075 Phase 2 optional BC prices) */}
+        {(isAdmin()||!_appCtx.companyId)&&<VendorNumberConfig uid={uid} onDirtyChange={setVendorDirty}/>}
+
         {/* Terms & Conditions */}
         <div style={{marginBottom:20,background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:8,padding:"12px 14px"}}>
           <div style={{fontSize:12,color:C.sub,fontWeight:600,textTransform:"uppercase",letterSpacing:0.5,marginBottom:6}}>Quote Terms & Conditions</div>
@@ -47107,6 +47286,7 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
                   if(!_appCtx.companyId)return;
                   await fbDb.doc(`companies/${_appCtx.companyId}`).update({termsAndConditions:tcText});
                   _appCtx.termsAndConditions=tcText;
+                  setSavedTc(tcText);
                   setTcSaved(true);setTimeout(()=>setTcSaved(false),2000);
                 }} style={btn(C.accent,"#fff",{fontSize:12,padding:"6px 18px"})}>Save T&C</button>
                 {tcSaved&&<span style={{fontSize:12,color:C.green}}>✓ Saved</span>}
@@ -47168,7 +47348,7 @@ function SettingsModal({uid,onClose,onNameChange,onShowDebugLogs,onShowBulkArchi
 
         {/* Close button at bottom */}
         <div style={{marginTop:24,textAlign:"center"}}>
-          <button onClick={onClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
+          <button onClick={requestClose} style={{background:C.accent,color:"#fff",border:"none",borderRadius:8,padding:"10px 48px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Close</button>
         </div>
       </div>
     </div>
