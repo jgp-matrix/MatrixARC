@@ -6163,6 +6163,19 @@ const AUTO_PRICING_ENABLED=false;
 // BC-reprice, or runPricingOnPanel — those stay OFF under the three kill-switches above (they caused the
 // $0.71 junk-price incident). Client-side row apply only (NO scraper→BC writeback); preserves priceSource:"manual".
 const API_PRICING_ENABLED=true;
+// B053 re-scope (2026-07-30) — Jon's ruling: BC is the DEFAULT SOURCE OF TRUTH. The B053 master
+// kill-switch (AUTO_PRICING_ENABLED=false above) was over-broad — it disabled BC matching/pricing too,
+// so every extraction came up ALL RED with zero BC matches. BC is confirmed populated (Item Browser
+// finds parts), so extraction-time BC match + price + lead-time is RE-ENABLED. ONLY the Codale +
+// Royal/custom scrapers stay OFF (they wrote the $0.71 junk price). AI-estimate also stays OFF.
+// These three flags gate the phases INSIDE runPricingBackground + runPricingOnPanel independently.
+const BC_PRICING_ENABLED=true;        // BC match + price + lead-time — the default source of truth (RE-ENABLED)
+const SCRAPER_PRICING_ENABLED=false;  // Codale + Royal/custom ROW pricing — STAYS OFF (poisoned prices $0.71)
+const AI_ESTIMATE_PRICING_ENABLED=false; // estimatePrices + aiEstimateLeadTimes — STAYS OFF
+// B053 re-scope (2026-07-30) — plausibility ceiling for API (DigiKey/Mouser) prices. A conservative
+// sanity cap (NOT a narrow band) so a wildly-wrong value can't poison a row or BC. Reject anything above
+// this before it's applied on-row (runApiPricingOnPanel) or written to BC (recordOptionalPricesToBc).
+const _API_PRICE_MAX=100000;
 // G019 — Engineering Questions feature hidden until developed out; flip to true to restore intact.
 // DISPLAY-ONLY flag: extraction still populates panel.engineeringQuestions, saves still persist it,
 // mergeEngineeringQuestions is unchanged. This only gates the UI surfaces so the feature is fully reversible.
@@ -16798,7 +16811,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
 // ── BACKGROUND PRICING (runs when extraction completes after user navigated away) ──
 // Uses only module-scoped functions + captured projectId/panelId. No React state dependency.
 async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNumber,panelIndex,projectName){
-  if(!AUTO_PRICING_ENABLED)return; // B053: all automated pricing disabled — RFQ only
+  if(!BC_PRICING_ENABLED&&!AI_ESTIMATE_PRICING_ENABLED)return; // B053 re-scope: BC re-enabled (default source of truth); scrapers stay OFF (this fn has no scrapers)
   const bom=panelData.bom||[];
   if(!bom.length||!_apiKey)return;
   bgUpdate(_bgKey(projectId,panelId),"Background pricing…");
@@ -16806,8 +16819,8 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
   let bcCount=0;
   const bcFuzzySugg={};
   // Phase 1: BC lookup
-  if(!_bcToken){try{await Promise.race([acquireBcToken(false),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000))]);}catch(e){}}
-  if(_bcToken){
+  if(BC_PRICING_ENABLED&&!_bcToken){try{await Promise.race([acquireBcToken(false),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000))]);}catch(e){}}
+  if(BC_PRICING_ENABLED&&_bcToken){
     try{
       const compId=await bcGetCompanyId();
       if(compId){
@@ -16908,7 +16921,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
     }catch(ex){console.warn("[BG PRICING] BC phase failed:",ex);}
   }
   // Phase 2: Lead times from BC
-  if(_bcToken){
+  if(BC_PRICING_ENABLED&&_bcToken){
     const ltRows=updatedBom.filter(r=>{
       if(r.isLaborRow||_isExcludedFromPriceCheck(r)||!(r.partNumber||"").trim())return false;
       if(r.leadTimeSource==="supplier"||r.leadTimeSource==="manual")return false;
@@ -16933,7 +16946,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
   }
   // Phase 3: AI price fallback for unpriced non-labor rows
   const unpricedBom=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&!(r.unitPrice>0));
-  if(unpricedBom.length>0){
+  if(AI_ESTIMATE_PRICING_ENABLED&&unpricedBom.length>0){
     bgUpdate(_bgKey(projectId,panelId),`Background: AI pricing ${unpricedBom.length} items…`);
     try{
       const aiPrices=await estimatePrices(unpricedBom);
@@ -16947,7 +16960,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
   }
   // Phase 4: AI lead time fallback
   const rowsNeedingAiLead=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&r.leadTimeDays==null);
-  if(rowsNeedingAiLead.length>0){
+  if(AI_ESTIMATE_PRICING_ENABLED&&rowsNeedingAiLead.length>0){
     try{
       const estimates=await aiEstimateLeadTimes(rowsNeedingAiLead);
       const estMap={};
@@ -16956,7 +16969,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
     }catch(e){console.warn("[BG PRICING] AI lead time failed:",e);}
   }
   // Phase 5: Vendor backfill
-  if(_bcToken){
+  if(BC_PRICING_ENABLED&&_bcToken){
     const needVendor=updatedBom.filter(r=>r.priceSource==="bc"&&!r.bcVendorName&&!r.isLaborRow&&(r.partNumber||"").trim());
     if(needVendor.length>0){
       const vendorPatches={};
@@ -30439,7 +30452,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   }
 
   async function runPricingOnPanel(bomOverride,panelOverride,onEpProgress,opts={}){
-    if(!AUTO_PRICING_ENABLED)return; // B053: all automated pricing (BC/scraper/AI) disabled — RFQ only
+    if(!BC_PRICING_ENABLED&&!SCRAPER_PRICING_ENABLED&&!AI_ESTIMATE_PRICING_ENABLED)return; // B053 re-scope: BC re-enabled (default source of truth); scrapers/AI-estimate stay OFF
     const forceFresh=!!(opts&&opts.forceFresh);
     const bom=bomOverride||panel.bom||[];
     if(!bom.length||!_apiKey)return;
@@ -30483,12 +30496,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
     // Phase 1: Business Central lookup
     let _bcWasUnavailable=false;
-    if(!_bcToken){
+    if(BC_PRICING_ENABLED&&!_bcToken){
       _pp({msg:"Trying silent BC login…",pct:5});
       try{await Promise.race([acquireBcToken(false),new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),5000))]);}
       catch(e){_pp({msg:"BC silent login skipped — using AI…",pct:5});_bcWasUnavailable=true;}
     }
-    if(_bcToken){
+    if(BC_PRICING_ENABLED&&_bcToken){
       _pp({msg:"BC: Getting company ID…",pct:5});
       try{
         const compId=await bcGetCompanyId();
@@ -30646,7 +30659,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Manual source is preserved unless forceFresh. AI fallback (Task 6) runs at the very
     // end of this function. Scraper source (Task 7) applies later if Codale/custom scraper
     // returns a lead time.
-    if(_bcToken){
+    if(BC_PRICING_ENABLED&&_bcToken){
       const ltRows=updatedBom.filter(r=>{
         if(r.isLaborRow||_isExcludedFromPriceCheck(r))return false;
         if(!(r.partNumber||"").trim())return false;
@@ -30702,7 +30715,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(!forceFresh&&r.unitPrice>0&&r.priceDate&&(Date.now()-r.priceDate)<_codaleStaleDays&&r.priceSource==="bc")return false;
       return true;
     });
-    if(codaleItems.length>0){
+    // B053 re-scope (2026-07-30): Codale scraper STAYS OFF (poisoned prices). Gated on SCRAPER_PRICING_ENABLED
+    // so the codaleTestScrape fetch never runs. SCRAPER_BC_WRITEBACK_ENABLED remains the 2nd independent lock.
+    if(SCRAPER_PRICING_ENABLED&&codaleItems.length>0){
       const CODALE_BATCH=30;
       const codaleMap={};
       const fn=firebase.functions().httpsCallable("codaleTestScrape",{timeout:300000});
@@ -30797,7 +30812,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // Phase 1c: Custom scraper auto-pricing (Royal, etc.) — scrape portal for vendor-matched items
     // DECISION(v1.19.390): Loads custom scraper configs from Firestore, finds BOM items matching
     // each scraper's vendor name, and runs the scraper for each part number sequentially.
-    try{
+    // B053 re-scope (2026-07-30): custom/Royal scraper STAYS OFF (Royal's "first $ on the page" wrote
+    // the $0.71 junk). Entire block gated on SCRAPER_PRICING_ENABLED so customScraperBatch never runs.
+    if(SCRAPER_PRICING_ENABLED)try{
       const scraperPath=_appCtx.configPath||`users/${uid}/config`;
       const scraperDoc=await fbDb.doc(`${scraperPath}/customScrapers`).get();
       const customScrapers=(scraperDoc.exists?(scraperDoc.data().scrapers||[]):[]).filter(s=>s.category==="scraper"&&s.enabled&&(s.steps||[]).length>0);
@@ -30918,7 +30935,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.405): AI fallback only for truly unpriced items — skip anything with a price > 0.
     // Previously could overwrite extraction-time prices that had priceSource=null.
     const unpricedBom=updatedBom.filter(r=>r.priceSource!=="bc"&&r.priceSource!=="manual"&&!(r.unitPrice>0));
-    if(unpricedBom.length>0){
+    if(AI_ESTIMATE_PRICING_ENABLED&&unpricedBom.length>0){
       const BATCH=20;
       const total=Math.ceil(unpricedBom.length/BATCH);
       for(let i=0;i<unpricedBom.length;i+=BATCH){
@@ -30948,7 +30965,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // BC + scraper passes get estimated by Haiku. Flagged leadTimeEstimated:true so the
     // UI renders them italic + asterisk.
     const rowsNeedingAiLead=updatedBom.filter(r=>!r.isLaborRow&&!_isExcludedFromPriceCheck(r)&&(r.partNumber||"").trim()&&(r.leadTimeDays==null));
-    if(rowsNeedingAiLead.length>0){
+    if(AI_ESTIMATE_PRICING_ENABLED&&rowsNeedingAiLead.length>0){
       _pp({msg:`AI: estimating lead times for ${rowsNeedingAiLead.length} items…`,pct:96});
       try{
         const estimates=await aiEstimateLeadTimes(rowsNeedingAiLead);
@@ -31180,6 +31197,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         const pn=(r.partNumber||"").trim().toUpperCase();
         const match=priced.find(res=>(res.partNumber||"").trim().toUpperCase()===pn);
         if(!(match&&match.price>0))return r;
+        // B053 re-scope: plausibility ceiling — reject a wildly-wrong API price before it touches a
+        // row OR gets offered as an optional BC record. Skips + logs; leaves the row untouched.
+        if(!(match.price<=_API_PRICE_MAX)){try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"info",source:"apiPricing",message:`API price rejected (implausible): ${match.partNumber} $${match.price} > $${_API_PRICE_MAX} from ${match.source}`});}catch(_){}return r;}
         if(_rowConfirmed(r)){
           // PROTECT — never overwrite a confirmed price/vendor. Offer the API price as an OPTIONAL BC record.
           optionalCandidates.push({rowId:r.id,partNumber:(r.partNumber||"").trim(),bcNo:_bcNo(r),uom:(r.uom||"").trim(),currentPrice:+r.unitPrice||0,currentVendor:r.bcVendorName||"",apiVendor:match.source,apiPrice:+match.price});
@@ -31242,6 +31262,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     for(const c of apiOptionalModal.candidates){
       if(!apiOptionalChecked[c.rowId])continue; // unchecked → not a "skip", just excluded
       if(!(+c.apiPrice>0)){skipped++;continue;} // $0 guard
+      // B053 re-scope: plausibility ceiling on the BC-write path (defense-in-depth alongside the
+      // row-apply guard) — a wildly-wrong value must never poison BC's shared catalog.
+      if(!(+c.apiPrice<=_API_PRICE_MAX)){skipped++;try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"info",source:"apiPricing",message:`Optional BC price rejected (implausible): ${c.partNumber} $${c.apiPrice} > $${_API_PRICE_MAX} from ${c.apiVendor}`});}catch(_){}continue;}
       const vNo=_vendorNoFor(c.apiVendor);
       if(!vNo){missingSetup.add(/digikey/i.test(c.apiVendor||"")?"DigiKey":/mouser/i.test(c.apiVendor||"")?"Mouser":(c.apiVendor||"vendor"));skipped++;continue;}
       try{
