@@ -12733,13 +12733,14 @@ function _resequenceContinuationPages(items){
     if(!nums.length)continue; // no numeric item numbers on this page → skip
     const pageMin=Math.min(...nums), pageMax=Math.max(...nums);
     if(pageMin<=runningMax){
-      const offset=runningMax-pageMin+1;      // shift this page to continue from the prior page's max
+      const prevMax=runningMax;               // the value pageMin actually overlapped (capture before reassign)
+      const offset=prevMax-pageMin+1;          // shift this page to continue from the prior page's max
       for(const it of pageItems){
         const n=_n(it);
         if(!isNaN(n)&&n>0){it.itemNo=String(n+offset);it._itemNoResequenced=true;}
       }
       runningMax=pageMax+offset;
-      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"info",source:"resequenceContinuationPages",message:`Continuation page ${pi} overlapped prior page (min ${pageMin} ≤ ${runningMax-((pageMax+offset)-runningMax)}) — offset by ${offset} to continue from ${runningMax-(pageMax-pageMin)}`,extra:{sourcePageIdx:pi,pageMin,pageMax,offset,newMax:runningMax}});}catch(_){}
+      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"info",source:"resequenceContinuationPages",message:`Continuation page ${pi} overlapped prior page (min ${pageMin} ≤ ${prevMax}) — offset by ${offset} to continue from ${pageMin+offset}`,extra:{sourcePageIdx:pi,pageMin,pageMax,offset,newMax:runningMax}});}catch(_){}
     }else{
       runningMax=Math.max(runningMax,pageMax);
     }
