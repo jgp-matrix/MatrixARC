@@ -7793,20 +7793,18 @@ async function buildRfqSupplierGroups(bom){
   for(const {row:item,reason} of eligibleWithReasons){
     let vendorName=item.bcVendorName||"";
     let vendorNo=item.bcVendorNo||"";
-    // DECISION(v1.20.2): Crossed items carry stale bcVendorName/bcVendorNo from the
-    // original part (auto-cross spreads ...r without clearing vendor fields). Always
-    // re-resolve from BC using the current (crossed) partNumber so the RFQ routes to
-    // the correct supplier. Falls back to the stale vendor if BC lookup fails.
-    if(item.isCrossed&&_bcToken){
-      const pn=(item.partNumber||"").trim();
-      if(pn){
-        const freshNo=await bcGetItemVendorNo(_bcNo(item));
-        if(freshNo){const freshName=await bcGetVendorName(freshNo);if(freshName){vendorName=freshName;vendorNo=freshNo;}}
-      }
-    }
+    // WYSIWYG (2026-07-30, Jon): the RFQ ALWAYS routes to the vendor shown on the BOM row
+    // (item.bcVendorName). ARC won't let a user assign an item with an incorrect vendor, so the
+    // displayed value is authoritative — do NOT re-resolve from BC behind the scenes.
+    // (Removed the v1.20.2 crossed-item re-resolve: it re-queried using a stale bcNo — the ORIGINAL
+    // part's BC number — and mis-routed a correctly-displayed Intermountain item to Royal:
+    // PRJ402143 / SCE-60EL6018LPPL.) The blank-only fallback below still resolves a genuinely-empty
+    // vendor; it never overrides a vendor that's already shown on the row.
     if(!vendorName&&_bcToken){
       const pn=(item.partNumber||"").trim();
-      if(pn){vendorNo=vendorNo||await bcGetItemVendorNo(_bcNo(item));vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
+      // For a crossed row, resolve by the CURRENT part number (pn), not _bcNo(item) — _bcNo carries the
+      // ORIGINAL part's stale BC number and would re-introduce the same mis-route this fix removes.
+      if(pn){vendorNo=vendorNo||await bcGetItemVendorNo(item.isCrossed?pn:_bcNo(item));vendorName=vendorNo?await bcGetVendorName(vendorNo):"";}
     }
     if(!vendorName)vendorName="Unknown Supplier";
     if(!groupMap[vendorName]){
