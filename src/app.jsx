@@ -16935,9 +16935,12 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
         if(!pn)continue;
         const latestRow=updatedBom.find(r=>String(r.id)===String(row.id))||row;
         const vendorNo=latestRow.bcVendorNo||null;
+        // Use the RESOLVED BC item No. (bcNo, from the price-match phase) for the exact-match
+        // lead-time filter; fall back to the raw extracted PN only when the row never resolved.
+        const bcKey=(latestRow.bcNo||latestRow.bcNumber||pn).toString().trim();
         let ldDays=null,ldSource=null;
-        if(vendorNo){ldDays=await bcLookupItemVendorLeadTime(pn,vendorNo);if(ldDays!=null)ldSource="bc_vendor";}
-        if(ldDays==null){ldDays=await bcLookupLeadTime(pn);if(ldDays!=null)ldSource="bc_item";}
+        if(vendorNo){ldDays=await bcLookupItemVendorLeadTime(bcKey,vendorNo);if(ldDays!=null)ldSource="bc_vendor";}
+        if(ldDays==null){ldDays=await bcLookupLeadTime(bcKey);if(ldDays!=null)ldSource="bc_item";}
         if(ldDays!=null)ltUpdates[String(row.id)]={leadTimeDays:ldDays,leadTimeSource:ldSource,leadTimeUpdatedAt:Date.now(),leadTimeEstimated:false};
       }
       updatedBom=updatedBom.map(r=>{const k=String(r.id);return k in ltUpdates?{...r,...ltUpdates[k]}:r;});
@@ -30682,13 +30685,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // Find the latest version of this row from updatedBom in case BC phase changed vendor
           const latestRow=updatedBom.find(r=>String(r.id)===String(row.id))||row;
           const vendorNo=latestRow.bcVendorNo||null;
+          // Use the RESOLVED BC item No. (bcNo, stamped by the price-match phase from a fuzzy/exact
+          // BC match) for the exact-match lead-time filter — fall back to the raw extracted PN only
+          // when the row never resolved to a BC No. Prevents fuzzily-matched rows (extracted PN !=
+          // BC No.) from silently missing their lead time.
+          const bcKey=(latestRow.bcNo||latestRow.bcNumber||pn).toString().trim();
           let ldDays=null,ldSource=null;
           if(vendorNo){
-            ldDays=await bcLookupItemVendorLeadTime(pn,vendorNo);
+            ldDays=await bcLookupItemVendorLeadTime(bcKey,vendorNo);
             if(ldDays!=null)ldSource="bc_vendor";
           }
           if(ldDays==null){
-            ldDays=await bcLookupLeadTime(pn);
+            ldDays=await bcLookupLeadTime(bcKey);
             if(ldDays!=null)ldSource="bc_item";
           }
           if(ldDays!=null){
