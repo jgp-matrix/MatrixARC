@@ -12138,9 +12138,10 @@ async function executeRestore(archive,remaps,options,onProgress){
 // ── COPY PROJECT (Milestone E: "Copy to New Quote") ──
 // Firestore-local operation — no BC calls. Build-from-scratch pattern (include-list).
 // ECOs flattened into base BOMs via Phase 1 utilities.
-async function copyProject(uid,sourceProject,onProgress){
+async function copyProject(uid,sourceProject,onProgress,opts){
   const pp=onProgress||(()=>{});
   const src=sourceProject;
+  const copyOpts=opts||{};
   const srcPanels=src.panels||[];
   const ecoSummary=src.ecoSummary||[];
 
@@ -12186,21 +12187,52 @@ async function copyProject(uid,sourceProject,onProgress){
     };
   });
 
+  // Step 3b (#159): Give the copy its own customer + BC project so it isn't stranded
+  // customerless / PRJ#-less. When a BC customer was picked in the modal, create a REAL
+  // BC project (mirrors the New-Project path: bcCreateProject → bcCreatePanelTaskStructure),
+  // then merge ONLY the fresh BC-native fields into the doc below. This runs BEFORE the
+  // first saveProject, so a BC failure aborts cleanly with nothing stranded in Firestore.
+  // The source's own BC linkage is still excluded — bcFields is built purely from the NEW
+  // job + the picked customer, never from `src`. If no customer was picked (e.g. BC offline
+  // at copy time), bcFields stays empty and the copy proceeds as a plain draft (unchanged).
+  let bcFields={};
+  const bcCustomer=copyOpts.bcCustomer;
+  const copyName=src.name; // the modal's name input already carries the user's chosen name
+  if(bcCustomer&&bcCustomer.number){
+    pp({step:"bc",msg:"Creating BC project…",pct:26});
+    const bc=await bcCreateProject(copyName,bcCustomer.number,(copyOpts.custProjNum||"").trim());
+    // Best-effort BC task structure — non-fatal, mirrors New-Project (which keeps the
+    // project and only warns when the task-structure step fails).
+    try{
+      await bcCreatePanelTaskStructure(bc.number,copyName,newPanels.map(p=>({id:p.id,name:p.name})));
+    }catch(te){console.warn("copyProject: bcCreatePanelTaskStructure failed:",te.message);}
+    bcFields={
+      bcProjectId:bc.id,
+      bcProjectNumber:bc.number,
+      bcEnv:_bcConfig.env,
+      bcCustomerNumber:bc.customerNumber,
+      bcCustomerName:bc.customerName||bcCustomer.displayName,
+      customerProjectNumber:(copyOpts.custProjNum||"").trim() // F021
+    };
+  }
+
   // Step 4: Build project doc — include-list only (§5.2)
   pp({step:"build",msg:"Building project…",pct:30});
   const now=Date.now();
   const newProjectData={
-    name:src.name+" (Copy)",
+    name:copyName,
     status:"draft",
     panels:newPanels,
     quote:{number:quoteNumber},
+    ...bcFields, // #159: fresh BC linkage + picked customer (empty when no customer picked)
     ecoSummary:[],
     ecoCounter:0,
     createdAt:now,
     updatedAt:now
     // saveProject adds id, schemaVersion, createdBy automatically
-    // All BC linkage, customer, quote metadata, ECO state, review state,
-    // purchasing, admin/lock, archive refs excluded by omission
+    // Source's BC linkage, quote/sent metadata, ECO state, review state, purchasing,
+    // admin/lock, archive refs excluded by omission. #159 ADDS only bcFields above,
+    // which are derived from the freshly-created BC job — never from `src`.
   };
 
   // Step 5: Save to Firestore (without images yet)
@@ -50332,6 +50364,44 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
   const [result,setResult]=useState(null);
   const autoNavTimer=useRef(null);
 
+  // #159: BC customer picker — so a copy gets its own customer + BC PRJ#/Job (not stranded).
+  // Reuses the New-Project customer-pick pattern (bcLoadAllCustomers / bcFilterCustomers /
+  // acquireBcToken) and the Tier-A commit gate (useBcCommitGate). Customer is OPTIONAL here
+  // (unlike New Project, which requires it): a copy must still be creatable when BC is offline.
+  const bcCommitGate=useBcCommitGate();
+  const [bcConnected,setBcConnected]=useState(!!_bcToken);
+  const [customerQuery,setCustomerQuery]=useState("");
+  const [allCustomers,setAllCustomers]=useState([]);
+  const [customerResults,setCustomerResults]=useState([]);
+  const [customerSearching,setCustomerSearching]=useState(false);
+  const [selectedCustomer,setSelectedCustomer]=useState(null);
+  const [showDropdown,setShowDropdown]=useState(false);
+  const [custProjNum,setCustProjNum]=useState("");
+
+  useEffect(()=>{
+    if(_bcToken){setBcConnected(true);loadCopyCustomers();return;}
+    acquireBcToken(false).then(t=>{if(t){setBcConnected(true);loadCopyCustomers();}}).catch(()=>{});
+  },[]);
+  async function loadCopyCustomers(){
+    setCustomerSearching(true);
+    const all=await bcLoadAllCustomers();
+    setAllCustomers(all);setCustomerResults(all.slice(0,25));
+    setCustomerSearching(false);
+  }
+  async function connectBcForCopy(){
+    setCustomerSearching(true);
+    const t=await acquireBcToken(true);
+    if(t){setBcConnected(true);await loadCopyCustomers();}
+    setCustomerSearching(false);
+  }
+  function handleCopyCustomerInput(val){
+    setCustomerQuery(val);setSelectedCustomer(null);setShowDropdown(true);
+    setCustomerResults(bcFilterCustomers(allCustomers,val));
+  }
+  function selectCopyCustomer(c){
+    setSelectedCustomer(c);setCustomerQuery(c.displayName);setShowDropdown(false);
+  }
+
   // Compute preview stats
   const srcPanels=project.panels||[];
   const ecoSummary=project.ecoSummary||[];
@@ -50360,6 +50430,7 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
     {key:"quote",label:"Quote number assigned"},
     {key:"flatten",label:"ECOs flattened"},
     {key:"clone",label:"Panels cloned"},
+    ...(selectedCustomer?[{key:"bc",label:"BC project created"}]:[]), // #159
     {key:"save",label:"Saved to Firestore"},
     {key:"images",label:"Drawings copied"},
     {key:"done",label:"Complete"}
@@ -50376,9 +50447,16 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
   }
 
   async function startCopy(acknowledgment){
+    // #159: If a customer was picked, a real BC project will be created — block up-front when
+    // BC is unusable (mirrors New-Project Tier-A: never queue a create → no duplicate-job risk).
+    // No customer picked → plain draft copy, no BC call, gate not consulted.
+    if(selectedCustomer&&bcCommitGate){setError(_bcCommitBlockMsg(bcCommitGate.reason,'A'));setPhase("error");return;}
     setPhase("progress");setError("");
     try{
-      const newProj=await copyProject(uid,{...project,name:name.trim()},p=>setProgress(p));
+      const newProj=await copyProject(uid,{...project,name:name.trim()},p=>setProgress(p),{
+        bcCustomer:selectedCustomer?{number:selectedCustomer.number,displayName:selectedCustomer.displayName}:null,
+        custProjNum
+      });
       // If there was a BOM acknowledgment, store it on the new project
       if(acknowledgment){
         try{
@@ -50433,6 +50511,44 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
           <input value={name} onChange={e=>setName(e.target.value)}
             style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,marginBottom:12,outline:"none"}}
             onFocus={e=>e.target.style.borderColor=C.accent} onBlur={e=>e.target.style.borderColor=C.border}/>
+
+          {/* #159: Customer + BC project — pick a customer so the copy gets its own PRJ#/Job.
+              Optional: leave blank (or when BC is offline) to make a plain draft copy. */}
+          <label style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,display:"block"}}>Customer <span style={{textTransform:"none",letterSpacing:0,color:C.border}}>(Business Central — optional)</span></label>
+          {!bcConnected?(
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,background:C.card,borderRadius:6,padding:"8px 12px",border:"1px solid "+C.border}}>
+              <span style={{fontSize:12,color:C.muted,flex:1}}>Connect BC to give this copy a customer + PRJ#</span>
+              <button onClick={connectBcForCopy} disabled={customerSearching} style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"6px 12px",fontSize:12,fontWeight:700,cursor:customerSearching?"default":"pointer",opacity:customerSearching?0.5:1}}>{customerSearching?"Connecting…":"Connect BC"}</button>
+            </div>
+          ):(
+            <div style={{position:"relative",marginBottom:12}}>
+              <input value={customerQuery} onChange={e=>handleCopyCustomerInput(e.target.value)} onFocus={()=>setShowDropdown(true)} onBlur={()=>setTimeout(()=>setShowDropdown(false),150)}
+                placeholder={customerSearching?"Loading customers…":"Search by name or number…"}
+                style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+(selectedCustomer?C.green:C.border),borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,outline:"none"}}/>
+              {selectedCustomer&&<div style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",color:C.green,fontSize:14}}>✓</div>}
+              {showDropdown&&customerResults.length>0&&(
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,maxHeight:200,overflowY:"auto",marginTop:4,boxShadow:"0 8px 24px rgba(0,0,0,0.5)"}}>
+                  {customerResults.map(c=>(
+                    <div key={c.number} onMouseDown={()=>selectCopyCustomer(c)} style={{padding:"9px 12px",cursor:"pointer",display:"flex",gap:10,alignItems:"center",borderBottom:`1px solid ${C.border}33`}}
+                      onMouseEnter={e=>e.currentTarget.style.background="#345880"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      <span style={{fontSize:11,color:C.muted,minWidth:60,fontFamily:"monospace"}}>{c.number}</span>
+                      <span style={{fontSize:13,color:C.text}}>{c.displayName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {showDropdown&&!customerSearching&&customerResults.length===0&&customerQuery&&(
+                <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#2a4a6e",border:`1px solid ${C.accent}55`,borderRadius:8,zIndex:10,padding:"10px 12px",marginTop:4,fontSize:12,color:C.muted}}>No customers found</div>
+              )}
+            </div>
+          )}
+          {bcConnected&&<>
+            <label style={{fontSize:11,color:C.muted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,display:"block"}}>Customer Project # <span style={{textTransform:"none",letterSpacing:0,color:C.border}}>(optional)</span></label>
+            <input value={custProjNum} onChange={e=>setCustProjNum(e.target.value)} placeholder="e.g. 923455698"
+              style={{width:"100%",boxSizing:"border-box",background:C.card,border:"1px solid "+C.border,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:14,marginBottom:12,outline:"none"}}/>
+          </>}
+          {selectedCustomer&&bcCommitGate&&<div style={{fontSize:11,color:C.amber,marginBottom:10,lineHeight:1.4}}>⚠ {_bcCommitBlockMsg(bcCommitGate.reason,'A')}</div>}
+
           <div style={{fontSize:12,color:C.sub,lineHeight:1.8,marginBottom:12,background:C.card,borderRadius:6,padding:"10px 14px",border:"1px solid "+C.border}}>
             <div>Source: <strong style={{color:C.text}}>{project.bcProjectNumber||project.name}</strong></div>
             <div>Panels: <strong style={{color:C.text}}>{srcPanels.length}</strong></div>
@@ -50443,7 +50559,9 @@ function CopyProjectModal({project,uid,onCopied,onClose}){
             {ecoCount===0&&<div style={{color:C.muted}}>No ECOs to flatten</div>}
           </div>
           <div style={{fontSize:11,color:C.muted,marginBottom:12,lineHeight:1.5}}>
-            Creates a new draft project with a fresh quote number. No BC linkage, no customer data, no purchasing state. Source project is unchanged.
+            {selectedCustomer
+              ?<>Creates a new draft project with a fresh quote number and its own BC project for <strong style={{color:C.text}}>{selectedCustomer.displayName}</strong>. The source's quote/sent/purchasing state is NOT carried over. Source project is unchanged.</>
+              :<>Creates a new draft project with a fresh quote number. <strong style={{color:C.amber}}>No customer selected</strong> — the copy won't be linked to BC and the customer can't be set afterward, so pick one above to avoid a stranded copy. Source project is unchanged.</>}
           </div>
           <div style={{display:"flex",gap:8,justifyContent:"flex-end"}}>
             <button onClick={onClose} style={{background:"transparent",border:"1px solid "+C.border,borderRadius:6,padding:"8px 16px",color:C.muted,fontSize:13,cursor:"pointer"}}>Cancel</button>
