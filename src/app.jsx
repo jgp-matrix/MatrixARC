@@ -37469,10 +37469,16 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   // (the "🖨 Just Print" button bypasses this). Computed live so edits before clicking Send
   // are reflected.
   const incompleteItems=findIncompleteQuoteItems(project);
+  // F050: the magnitude (implausibly-low price) flag is NOT an unconditional hard block. It
+  // mirrors F044's red-row gate: non-managers are hard-blocked (must verify the price), a
+  // manager/admin gets a deliberate override confirm. So split it out of the hard sendBlocked
+  // set — _nonPlausItems drives the hard block; _plausIssues rides the manager-overridable path.
+  const _plausIssues=incompleteItems.filter(i=>i.isPlausibilityBlock);
+  const _nonPlausItems=incompleteItems.filter(i=>!i.isPlausibilityBlock);
   const _hasVerifyBlock=incompleteItems.some(i=>i.isVerificationBlock);
   const _hasTechReviewBlock=incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
   const _trLineCount=incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
-  const _pricingIssueCount=incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
+  const _pricingIssueCount=incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock&&!i.isPlausibilityBlock).length;
   // F044: Send is blocked when ANY BOM row is flagged red (qty=0 / $0 / no-priceDate /
   // stale / no-firm-LT / bcPollDivergence — the _isBomRowFlaggedRed SSOT via anyRedRow).
   // Non-managers → HARD block (disabled buttons + early return). Managers/admins → an
@@ -37488,7 +37494,10 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
   // F071 Tier-A HARD-BLOCK — Send Quote to customer is blocked when BC isn't usable (Jon-locked:
   // never send stale/unreconciled pricing to a customer while BC is down). Folds into sendBlocked so
   // the buttons disable; owner-priority alert still takes precedence in handleSend.
-  const sendBlocked=incompleteItems.length>0||!!ownerPriorityActive||!!bcCommitGate;
+  const sendBlocked=_nonPlausItems.length>0||!!ownerPriorityActive||!!bcCommitGate;
+  // F050: non-managers hard-blocked on a magnitude flag (parity with _redHardBlocks); managers
+  // keep enabled buttons + hit the override confirm in handleSend.
+  const _plausHardBlocks=_plausIssues.length>0&&!_isMgr;
   async function handleSend(withBom){
     // DECISION(v1.19.681): Owner Priority Mode gate. Blocks quote send.
     if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
@@ -37508,6 +37517,21 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       }
       const _ok=await arcConfirm(`⚠ ${_redCount} row${_redCount>1?"s are":" is"} flagged red (incomplete pricing / stale price / non-firm lead time). Send anyway? (manager override)`,{kind:"warning",destructive:true});
       if(!_ok)return;
+    }
+    // F050 magnitude gate — mirrors the F044 red-row override exactly. A HIGH plausibility flag
+    // (stored price far below the part's historical median → probable magnitude error) hard-blocks
+    // Sales/non-managers (they must verify the price), but a manager/admin gets a deliberate
+    // override confirm. Legit triggers exist (e.g. a real volume price break the median can't see),
+    // so a false positive must be recoverable — by a manager, never silently. Reached only after the
+    // sendBlocked + red gates above returned, so this is the last block before the send proceeds.
+    if(_plausIssues.length){
+      if(!_isMgr){
+        arcAlert(formatIncompleteQuoteAlert(_plausIssues));
+        return;
+      }
+      const _pn=_plausIssues.length;
+      const _ok2=await arcConfirm(`⚠ ${_pn} item${_pn>1?"s are":" is"} priced FAR below the usual price for that part — a probable magnitude error (e.g. a $12 price on a $6,000 item). Send anyway? (manager override — confirm you have verified the price${_pn>1?"s":""} ${_pn>1?"are":"is"} correct)`,{kind:"warning",destructive:true});
+      if(!_ok2)return;
     }
     if((sendMode==="new"||sendMode==="sales")&&!m.to.trim()){arcAlert("Enter a recipient email.");return;}
     if(sendMode==="reply"&&!selectedThread){arcAlert("Select an email thread to reply to.");return;}
@@ -37861,17 +37885,17 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,flexShrink:0}}>
           <button onClick={onClose} style={btn("#1a1a2a",C.muted,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
           <button onClick={()=>{onClose();setTimeout(()=>{const evt=new CustomEvent("arc-just-print");window.dispatchEvent(evt);},100);}} style={btn(C.greenDim,C.green,{fontSize:13,fontWeight:700,border:`1px solid ${C.green}44`})}>🖨 Just Print</button>
-          <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked||_redHardBlocks}
-            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF only"}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
-            {sending?"Sending…":(sendBlocked||_redHardBlocks)?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
+          <button onClick={()=>handleSend(false)} disabled={sending||sendBlocked||_redHardBlocks||_plausHardBlocks}
+            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(_nonPlausItems.length>0?`Send disabled — ${_nonPlausItems.length} incomplete item${_nonPlausItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:_plausHardBlocks?`Send disabled — ${_plausIssues.length} item${_plausIssues.length>1?"s":""} priced far below usual (verify price first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:(_plausIssues.length&&_isMgr)?`${_plausIssues.length} item${_plausIssues.length>1?"s":""} priced far below usual — Send will require a manager-override confirm`:"Send the Quote PDF only"}
+            style={btn(sendMode==="reply"?"#0d2a1a":"#0c2233",sendMode==="reply"?"#4ade80":"#38bdf8",{fontSize:13,fontWeight:700,border:`1px solid ${sendMode==="reply"?"#4ade80":"#38bdf8"}`,opacity:(sending||sendBlocked||_redHardBlocks||_plausHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks||_plausHardBlocks)?"not-allowed":undefined})}>
+            {sending?"Sending…":(sendBlocked||_redHardBlocks||_plausHardBlocks)?"✉ Send (blocked)":sendMode==="reply"?"↩ Reply All with Quote":"✉ Send"}
           </button>
           {/* DECISION(v1.19.931): Send w/BOM — same flow but also attaches the
               BOM Report PDF (spreadsheet-style listing of every panel's BOM
               with ARC Item # / Ref Dwg # / Qty / Description / MFR). */}
-          <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked||_redHardBlocks}
-            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(incompleteItems.length>0?`Send disabled — ${incompleteItems.length} incomplete item${incompleteItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
-            style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked||_redHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks)?"not-allowed":undefined})}>
+          <button onClick={()=>handleSend(true)} disabled={sending||sendBlocked||_redHardBlocks||_plausHardBlocks}
+            title={bcCommitGate?_bcCommitBlockMsg(bcCommitGate.reason,'A'):sendBlocked?(_nonPlausItems.length>0?`Send disabled — ${_nonPlausItems.length} incomplete item${_nonPlausItems.length>1?"s":""}`:"Send disabled"):_redHardBlocks?`Send disabled — ${_redCount} red row${_redCount>1?"s":""} (resolve or RFQ first)`:_plausHardBlocks?`Send disabled — ${_plausIssues.length} item${_plausIssues.length>1?"s":""} priced far below usual (verify price first)`:(_anyRed&&_isMgr)?`${_redCount} red row${_redCount>1?"s":""} — Send will require a manager-override confirm`:(_plausIssues.length&&_isMgr)?`${_plausIssues.length} item${_plausIssues.length>1?"s":""} priced far below usual — Send will require a manager-override confirm`:"Send the Quote PDF AND a BOM Report (separate PDF attachment)"}
+            style={btn(sendMode==="reply"?"#0d2a1a":"#0c1f33","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa",opacity:(sending||sendBlocked||_redHardBlocks||_plausHardBlocks)?0.4:1,cursor:(sendBlocked||_redHardBlocks||_plausHardBlocks)?"not-allowed":undefined})}>
             {sending?"Sending…":"✉ Send w/BOM"}
           </button>
         </div>
@@ -40589,6 +40613,12 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                    when send is blocked to reinforce that something needs fixing first. */}
                 {!readOnly&&(()=>{
                   const _incompleteItems=findIncompleteQuoteItems(project);
+                  // F050: the magnitude flag must NOT hard-block opening the Send modal (parity with
+                  // F044's red rows, which also don't block this outer button) — otherwise a manager
+                  // could never reach the override confirm inside the modal. So the outer gate keys off
+                  // the NON-plausibility items only; the plausibility items are handled (manager-override
+                  // or non-manager hard block) inside QuoteSendModal.handleSend.
+                  const _nonPlausIncomplete=_incompleteItems.filter(i=>!i.isPlausibilityBlock);
                   const _hasVerify=_incompleteItems.some(i=>i.isVerificationBlock);
                   const _hasTechReview=_incompleteItems.some(i=>i.isTechReviewBlock); // #199 P3
                   const _trCount=_incompleteItems.filter(i=>i.isTechReviewBlock).reduce((s,i)=>s+(i.count||1),0);
@@ -40600,10 +40630,10 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   // banner now just SPLITS the display so sales sees "N block Send (fix these)" vs
                   // "M flagged for lead time (will be RFQ'd, won't block)" instead of one lumped "fix
                   // all red rows" message. Presentational only.
-                  const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock).length;
+                  const _pricingCount=_incompleteItems.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock&&!i.isPlausibilityBlock).length;
                   const _mLtOnly=_ltOnlyRedCount(project); // B018: LT-only red count (RFQ'd, non-blocking)
                   // DECISION(v1.19.681): Owner Priority Mode extends the send-block reasons.
-                  const _sendBlocked=_incompleteItems.length>0||!!ownerPriorityActive;
+                  const _sendBlocked=_nonPlausIncomplete.length>0||!!ownerPriorityActive;
                   return(<>
                     {_sendBlocked&&(
                       <div style={{background:"#3a1f00",border:`1px solid ${C.yellow}`,borderRadius:8,padding:"8px 12px",fontSize:11,color:"#fde68a",lineHeight:1.5}}>
@@ -40625,7 +40655,10 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
 
                   onClick={async()=>{
                   if(ownerPriorityActive){_fireOwnerPriorityAlert();return;}
-                  if(_incompleteItems.length>0){arcAlert(formatIncompleteQuoteAlert(_incompleteItems));return;}
+                  // F050: only NON-plausibility incompletes hard-block opening the modal. A
+                  // plausibility-only flag opens the modal (full alert still lists it via the
+                  // formatIncompleteQuoteAlert branch) so a manager can hit the override there.
+                  if(_nonPlausIncomplete.length>0){arcAlert(formatIncompleteQuoteAlert(_incompleteItems));return;}
                   // Gate: require pre-review approval before sending quote
                   if(project.preReviewStatus&&project.preReviewStatus!=="approved"){
                     arcAlert("Engineering approval required before sending quote.\n\nCurrent status: "+(project.preReviewStatus==="pending"?"Awaiting Engineer/Designer review":"Returned for changes")+"\n\nClick 'Send for Technical Review' to submit for review, or wait for the Engineer/Designer to approve.");
@@ -40667,7 +40700,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     message:`${custFirst?custFirst+",\n\n":""}Please find the attached ${isBudg?"budgetary ":""}quote for ${project.bcProjectNumber||""} ${project.name||"your project"} for your review.\n\nIf you have any questions, please don't hesitate to reach out.`,
                     signature:`${spName}\n${spEmail}${spPhone?"\n"+spPhone:""}\n\nThis email was auto-generated. If there are any questions, you may reply to this email.`
                   });
-                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_incompleteItems.length>0?"✉ Send (blocked — "+_incompleteItems.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Qv."+String(project.quoteRev||0).padStart(2,"0"))}</button>
+                }} style={btn("#0c2233","#38bdf8",{fontSize:14,padding:"8px 18px",width:"100%",border:"1px solid #38bdf844",fontWeight:700,opacity:_sendBlocked?0.45:1,cursor:_sendBlocked?"not-allowed":"pointer"})}>{ownerPriorityActive?"✉ Send (blocked — owner working)":(_nonPlausIncomplete.length>0?"✉ Send (blocked — "+_nonPlausIncomplete.length+" incomplete)":"✉ "+(project.quoteSentAt?"Resend":"Send")+" / Print Quote — Qv."+String(project.quoteRev||0).padStart(2,"0"))}</button>
                 {/* #133 Change 2: standalone Send Quoted BOM (BOM-only, cross column)
                     for customer review/approval before PO. Disabled when a panel still
                     needs manual verification (D2) or owner-priority is active. */}
@@ -43936,7 +43969,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       let _proj=project; // #191: mutable so the assigned quote number flows to PDF/filename/stamps
                       // DECISION(v1.19.663): Guard on incomplete BOM rows.
                       const incomplete=findIncompleteQuoteItems(project);
-                      if(incomplete.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
+                      // F050: split the magnitude flag out of the hard block (parity with QuoteSendModal.handleSend).
+                      const _plausInline=incomplete.filter(i=>i.isPlausibilityBlock);
+                      const _nonPlausInline=incomplete.filter(i=>!i.isPlausibilityBlock);
+                      if(_nonPlausInline.length){arcAlert(formatIncompleteQuoteAlert(incomplete));return;}
                       // F044: red-row Send gate (parity with QuoteSendModal.handleSend). Non-managers
                       // → hard block; managers/admins → deliberate override confirm (Jon 2026-07-23).
                       if(anyRedRow(project)){
@@ -43944,6 +43980,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         if(!isManager()){arcAlert(`${_rc} row${_rc>1?"s are":" is"} flagged red (incomplete pricing, stale price, or non-firm lead time). Resolve or RFQ ${_rc>1?"them":"it"} before sending.\n\nUse 🖨 Just Print for a hard copy without sending.`);return;}
                         const _ok=await arcConfirm(`⚠ ${_rc} row${_rc>1?"s are":" is"} flagged red (incomplete pricing / stale price / non-firm lead time). Send anyway? (manager override)`,{kind:"warning",destructive:true});
                         if(!_ok)return;
+                      }
+                      // F050: magnitude gate (parity with QuoteSendModal.handleSend). Non-managers hard-blocked
+                      // (must verify the price); managers/admins get a deliberate override confirm. Never silent.
+                      if(_plausInline.length){
+                        if(!isManager()){arcAlert(formatIncompleteQuoteAlert(_plausInline));return;}
+                        const _pc=_plausInline.length;
+                        const _okp=await arcConfirm(`⚠ ${_pc} item${_pc>1?"s are":" is"} priced FAR below the usual price for that part — a probable magnitude error (e.g. a $12 price on a $6,000 item). Send anyway? (manager override — confirm you have verified the price${_pc>1?"s":""} ${_pc>1?"are":"is"} correct)`,{kind:"warning",destructive:true});
+                        if(!_okp)return;
                       }
                       if(!m.to.trim()){arcAlert("Enter a recipient email.");return;}
                       // DECISION(v1.19.667): Email regex validation — same as QuoteSendModal.
