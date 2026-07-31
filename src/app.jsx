@@ -21706,7 +21706,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   // vendor, API vendors excluded, comparison-only (never auto-applied). Secondary
   // tokens are tagged rfqPurpose:"secondary" and their fan-out items do NOT feed
   // sentItemIds (so a comparison RFQ can't trip the primary 30-day cooldown).
-  const [includeSecondary,setIncludeSecondary]=useState(false);
+  const [includeSecondary,setIncludeSecondary]=useState(true); // default-ON (Jon 2026-07-31): pre-check to auto-solicit secondary quotes → populate BC price/LT
   const [secondaryGroups,setSecondaryGroups]=useState([]); // pure-secondary vendor groups + merge deltas
   const [secondaryLoading,setSecondaryLoading]=useState(false);
   const secondaryLoadedRef=useRef(false);
@@ -21793,6 +21793,10 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     }catch(e){console.warn("[RFQ] secondary vendor load failed:",e);arcAlert("Failed to load secondary vendors from Business Central.");setIncludeSecondary(false);}
     setSecondaryLoading(false);
   }
+  // Default-ON: load secondaries when the modal opens (or when BC connects) with the box pre-checked.
+  // Guarded on _bcToken so it never fires the "BC not connected" alert on open; secondaryLoadedRef
+  // prevents re-fetch; on a load failure loadSecondaryVendors sets includeSecondary=false so this won't retry.
+  useEffect(()=>{ if(includeSecondary&&_bcToken&&!secondaryLoadedRef.current)loadSecondaryVendors(); },[_bcToken]);
   // Effective group list. OFF ⇒ identical reference to `groups` (OFF path sacred).
   // ON ⇒ primary groups, with each secondary item MERGED into an existing primary
   // vendor (one token/email/vendor) or appended as a new pure-secondary group.
