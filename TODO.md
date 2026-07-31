@@ -15,6 +15,26 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 > New items since the B/F/G cutover. Each category is its own ranked list (top = highest priority);
 > Freddy is sole allocator. Legacy `#1–#198` remain in the Round-N sections below (kept, not renumbered).
 
+> **🆕 NEW 2026-07-31 — Jon's working-list intake (Freddy-triaged: 10 new + 4 merges; #s stamped after B070/F077).**
+> _Bugs:_
+> - **B071 [BUG · Jon 2026-07-31]** — Auto-Assign supplier modal doesn't pick the **Primary Supplier** each time. Cross-ref **F041** (primary-vendor selection — core live; may be a dormant edge or a distinct auto-assign bug). Needs repro + trace.
+> - **B072 [BUG · Jon 2026-07-31]** — **Item Browser drawing preview accuracy** needs work (merges Jon's "drawing preview" + "make Item Browser preview more accurate" — same item). Renews TABLED **#128** (BC Item Browser BOM-region render preview — band mispositioned).
+> - **B073 [BUG · Jon 2026-07-31]** — Project-tile RFQ label wrong: shows **"1 SENT"**, should read **"1 RFQ SENT"** + per-status counts (e.g. "1 RFQ SENT, 2 RFQ …").
+> - **B074 [BUG · Jon 2026-07-31]** — **Digi-Key API not grabbing Stock Status** → should populate it as the item Lead Time (leadTimeSource).
+> - **B075 [BUG · Jon 2026-07-31]** — **Duplicate MFRs** in the manufacturer list (Phoenix, Vishay, Schneider) — dedup the MFR table.
+> - **B076 [BUG · Jon 2026-07-31]** — **DigiKey RFQs can't be emailed** — UI still shows "automatically obtained" for API-vendor items (should allow email OR correctly reflect the auto-priced state). Related: secondary-vendor RFQ "exclude API vendors" decision.
+> _Features:_
+> - **F078 [FEAT · Jon 2026-07-31]** — **API auto-pricing on extraction** ("should happen on extraction too — verify this"). Cross-ref **F075**. ⚠ VERIFY current behavior FIRST — API pricing is manual Get-Prices today by design (see pricing-model memory) — confirm before treating as a build.
+> - **F079 [FEAT · Jon 2026-07-31]** — **Consolidate Settings menus** — too many scattered across different modals; unify into one place.
+> - **F080 [FEAT · Jon 2026-07-31]** — **Add RS-Online API pricing** source. Cross-ref **F077** (RS-Online already named there as a vendor to map).
+> - **F081 [FEAT · Jon 2026-07-31]** — **Separate quote lines per Engineering discipline** (Eng *Design* is already one line item; extend to per-discipline lines).
+> - **F082 [FEAT · Jon 2026-07-31]** — **Dash-agnostic part# matching** — match Part#s with AND without dashes and with dashes in different positions; scan/compare both forms and score a possible match across all criteria. Extends the bcFuzzy normalization (`localNorm`); cross-ref the bcFuzzy cross-field fix (`claude/bcfuzzy-crossfield-fix`). (Promoted from INBOX.)
+> _Merged into existing (no new #):_
+> - "When a new API is added, verify + link to an existing Vendor" → **F077** (Vendor Sync mapping — exact scope).
+> - "Supplier portal manual entry of pricing & lead times" → **F076** (exact dup — parked, plan ready).
+> - "Track users: request/accept RFQs, enter pricing/LT manually" → **F046** (extend the per-row `priceSetBy`/`priceSetAt` audit to RFQ + manual-entry actions).
+> - "Cross Ref" → **F010** (Suggested alternates / ALT picker — alternate/equivalent parts; Jon confirmed 2026-07-31).
+
 > **🆕 NEW 2026-07-30 — PRJ402501 emergency-session follow-ups (Freddy to stamp B/F/G #s at triage):**
 > - **[BUG · LOW · Jon 2026-07-30] ⏳ BUILT — on branch `claude/mtx-vendor-display`, awaiting Test + Jon verify.** BC Fuzzy Matches box showed the internal **MTX# instead of the Vendor Part#**. Fix (Part A, display-only, commit `1075d007`): render `s._vendorItemNo||s.number` at app.jsx:33032 — shows vendor part# when present (ItemCard/step-5 path), falls back to MTX#; `s.number` still flows to `applyBcItem`. Part B (source steps 2–4 via `field:"both"` so the common path also carries `_vendorItemNo`) is a matcher-behavior change — DEFERRED for Jon's sign-off.
 > - **[BUG · MED] ⏳ PLAN READY — `docs/B-bcFuzzyLookup-misses-fix-plan.md`, awaiting Jon go (money-path).** `bcFuzzyLookup` misses in-BC parts the Item Browser finds (`800F-34RE100` → "scanned 0 prefix candidates"). ROOT: steps 1–4 query only `/items.number`; step 5's `startswith(field, stripped.slice(0,5))` can't match a raw BC value with a separator in the first 5 chars (`800F-` vs prefix `800F3`). FIX 1 (primary): add a post-step-4 `bcSearchItems(pn,{field:"both"})` step (Item Browser's own path), auto-accept ONLY on exact normalized-equality (else hold as suggestions — no new auto-apply risk). FIX 2: repair the prefix (leading alphanumeric run).

@@ -21,7 +21,7 @@
 
 ---
 
-- [2026-07-31] FEAT — "Dash-agnostic part# matching" — match Part#'s with AND without dashes, and with dashes in different positions. Suppliers vary: some strip dashes, some keep them, some place them differently. Best to scan/compare both dashed and un-dashed forms (and dash-position variants) and score a possible match across all criteria. Extends the bcFuzzy normalization (localNorm already strips punctuation for equality; this generalizes it to positional/variant matching + surfacing possible matches). — reported via Intake (source: Jon)
+_(No items awaiting triage — all promoted to TODO.md.)_
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
