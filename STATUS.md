@@ -5,7 +5,17 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-30 (eve) · prod v1.24.61 · BC = default source of truth (matching/pricing/lead-time ON; Royal/Codale scrapers OFF; API on) · F077 Vendor Sync UI LIVE · subagent-lane session (Freddy)
+## Current — 🟢 2026-07-31 · prod v1.24.62 · B070 catalog-PN corruption FIXED + shipped · subagent-lane session (Freddy)
+
+> ## ▶ RESUME HERE (2026-07-31) — B070 catalog-PN corruption FIXED + shipped to prod v1.24.62.
+> **This session flipped last night's IP66/1200 diagnosis.** The AI model extracted the parts CORRECTLY (pdf-native: `640014405`, `8660025`); ARC's `resolveInternalPartNumbers` was silently OVERWRITING correct all-digit Rittal catalog #s with description spec tokens (`640014405→IP66`, `8660025→1200`), moving the real value to `customerPartNumber`. Root cause: `_INTERNAL_PN_RE`'s `^\d{7,12}$` alternative collides with legit all-digit catalog numbers → on an all-digit BOM the >50% trigger fires BOM-wide. **Fix:** restrict `_INTERNAL_PN_RE` to dashed customer-codes only + reject IP-ratings in `_looksLikeMfrPn`. Coach APPROVE-WITH-NITS → Test V.071 → **Jon verified live** (Ref#7→`640014405`, Ref#44→`8660025`, zero corruptions, `internalPnResolutions` empty) → cherry-picked `fa1b2d53` (+ nit `8750c476`) → **prod v1.24.62 `b31ae57a`**. `recoverMisread` branch dropped (misaimed — model never misread). Doc: `docs/B070-internal-pn-catalog-corruption.md`.
+> **⏳ NEXT:**
+> - **B070 backfill (follow-up):** existing all-digit-catalog projects likely already corrupted; correct value survives in `customerPartNumber` → scan+restore feasible. Scope pending Jon go.
+> - **bcFuzzy Fix 1** (`claude/bcfuzzy-crossfield-fix` `f10dc67f`, Coach APPROVE-WITH-NITS; fold NIT-1 = raise 4b gate to `stripped.length>=5`) — cross-field `contains` step so Vendor_Item_No parts (`800F-34RE100`) match. Ready for its own Test pass.
+> - **Secondary-vendor RFQ** — scope SETTLED (`docs/F-secondary-vendor-rfq-scope.md`: Option A, comparison-only, price+LT, exclude API vendors). Build-ready.
+> - **Dash-agnostic part# matching** — new FEAT in INBOX (source Jon 2026-07-31): match Part#s with AND without dashes / varying dash positions; extends bcFuzzy normalization. Awaiting triage.
+
+> ## ▶ (PRIOR) RESUME (2026-07-30 eve) — superseded by B070 above; kept for history.
 
 > ## ▶ RESUME HERE (2026-07-30 eve → 2026-07-31) — IP66/1200 fix awaiting Jon's Test re-extract verify.
 > **Prod is FROZEN — nothing ships without Jon's go.** Today's shipped + staged work:
