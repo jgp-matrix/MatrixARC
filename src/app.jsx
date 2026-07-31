@@ -6865,6 +6865,88 @@ async function runPricingAudit(uid,onProgress){
 // totalProjects, msg}. Modeled verbatim on runPricingAudit's iteration + progress pattern.
 const PLAUSIBILITY_RATIO=0.5;   // flag when stored price < AI estimate × this
 const PLAUSIBILITY_HIGH_RATIO=0.2;   // HIGH severity when stored < AI estimate × this
+// ── F050 (C1) — historical-median magnitude send-block. $0, AI-free, synchronous. ──────────────
+// Catches the PRJ402119 class: a row priced 100–1000× too LOW slips the Send gate because it isn't
+// "red" (it has a price + a fresh date), just wildly wrong. This builds a partNumber → median
+// unitPrice index from the user's ALREADY-LOADED projects (the same loadProjects data the AI
+// plausibility sweep uses) and flags a row whose stored price is far below that historical median.
+// No AI, no network, no new persisted field — the index is computed live + memoized. Reuses the
+// existing PLAUSIBILITY_RATIO / PLAUSIBILITY_HIGH_RATIO thresholds. Decoupled from the frozen
+// AI_ESTIMATE_PRICING_ENABLED via its own flag. A row with NO history is NEVER flagged (safety net,
+// not a gate-for-all — the cold-start gap is accepted). See docs/F050-ACTIVATION-PLAN.md (Option C1).
+const F050_PLAUSIBILITY_ENABLED=true; // C1 historical-median send-block — $0, AI-free; flip to disable
+// Module snapshot of all loaded projects (refreshed by loadProjects) + its memoized median index.
+// The index is rebuilt lazily (only when the snapshot changes → cache nulled in loadProjects), so
+// findIncompleteQuoteItems — which runs on every render — pays only a Map.get per row after the
+// first build. Keeps the send-gate cheap + synchronous.
+let _plausibilityProjectsSnapshot=null;
+let _plausibilityMedianIndex=null; // Map<normPn, medianUnitPrice> | null (null ⇒ rebuild on next read)
+function _plausibilityMedian(nums){
+  if(!nums||!nums.length)return null;
+  const s=nums.slice().sort((a,b)=>a-b);
+  const m=Math.floor(s.length/2);
+  return s.length%2?s[m]:(s[m-1]+s[m])/2; // true median (robust to a single wildly-wrong outlier)
+}
+// Build the normalized-partNumber → median unitPrice index across all loaded projects. Only real
+// priced, priceable rows contribute (positive unitPrice, qty>0, not labor/excluded) — mirrors
+// collectPlausibilityCandidates' candidate filter so this baseline matches the AI sweep's. Part key
+// normalized via _bomNormPn (same normalization the rest of the BOM code uses). Pure/synchronous.
+function _buildPlausibilityMedianIndex(projects){
+  const byPart=new Map(); // normPn → number[]
+  for(const proj of (projects||[])){
+    for(const panel of (proj.panels||[])){
+      for(const row of (panel.bom||[])){
+        if(_isExcludedFromPriceCheck(row))continue; // labor / customer-supplied / contingency / Matrix Systems / buyoff-crate
+        if(+row.qty===0)continue;
+        const key=_bomNormPn(row.partNumber);
+        if(!key)continue;
+        const up=+row.unitPrice;
+        if(!(up>0))continue; // unpriced rows don't establish a baseline
+        if(!byPart.has(key))byPart.set(key,[]);
+        byPart.get(key).push(up);
+      }
+    }
+  }
+  const idx=new Map();
+  for(const[key,arr]of byPart){const med=_plausibilityMedian(arr);if(med!=null&&med>0)idx.set(key,med);}
+  return idx;
+}
+// Memoized accessor — the median index from the current module snapshot, or null when no projects
+// are loaded yet (or the feature is off). Rebuilt only when loadProjects refreshes the snapshot.
+function _plausibilityIndex(){
+  if(!F050_PLAUSIBILITY_ENABLED)return null;
+  if(_plausibilityMedianIndex)return _plausibilityMedianIndex;
+  if(!_plausibilityProjectsSnapshot)return null;
+  _plausibilityMedianIndex=_buildPlausibilityMedianIndex(_plausibilityProjectsSnapshot);
+  return _plausibilityMedianIndex;
+}
+// _plausibilityFloor(row,index) → the expected (median historical) unit price for this row's part,
+// or null when there's NO history / the row isn't priceable+priced / the feature is off. This is the
+// raw expected-price lookup; the ratio+severity RULE lives in _plausibilityVerdict below.
+function _plausibilityFloor(row,index){
+  if(!F050_PLAUSIBILITY_ENABLED||!index||!row)return null;
+  if(_isExcludedFromPriceCheck(row))return null;
+  if(+row.qty===0)return null;
+  const up=+row.unitPrice;
+  if(!(up>0))return null;                 // unpriced ⇒ handled by the existing price/qty block, not here
+  const key=_bomNormPn(row.partNumber);
+  if(!key)return null;
+  const floor=index.get(key);
+  return (floor!=null&&floor>0)?floor:null; // absent floor ⇒ NEVER flagged (cold-start gap, by design)
+}
+// _plausibilityVerdict(row,index) — the SINGLE-SOURCE predicate the send-gate AND any future BOM
+// row-indicator share (CLAUDE.md dual-consumer rule: factor the RULE, not the inputs). Returns
+// {floor, ratio, severity} when the row is priced implausibly LOW vs its historical median, else
+// null. severity: "high" (ratio < PLAUSIBILITY_HIGH_RATIO → HARD-block) or "med"
+// (PLAUSIBILITY_HIGH_RATIO ≤ ratio < PLAUSIBILITY_RATIO → warn-only, never blocks a legit-cheap part).
+// Pure/synchronous — no AI, no await, no network.
+function _plausibilityVerdict(row,index){
+  const floor=_plausibilityFloor(row,index);
+  if(floor==null)return null;
+  const ratio=(+row.unitPrice)/floor;
+  if(ratio>=PLAUSIBILITY_RATIO)return null; // plausible → no flag
+  return{floor,ratio,severity:ratio<PLAUSIBILITY_HIGH_RATIO?"high":"med"};
+}
 // Pass 1 only — load projects + collect priceable candidate rows. READ-ONLY, no AI.
 // Split out so the modal can show a row/cost estimate BEFORE firing any Sonnet calls.
 async function collectPlausibilityCandidates(uid,onProgress){
@@ -11056,7 +11138,13 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
-  return snap.docs.map(d=>migrateProjectShape(d.data()));
+  const projects=snap.docs.map(d=>migrateProjectShape(d.data()));
+  // F050 (C1): refresh the module snapshot the historical-median plausibility index is built from,
+  // and invalidate the memoized index so it rebuilds lazily on the next send-gate evaluation. Cheap
+  // ref copy — the index itself is built on-demand + memoized in _plausibilityIndex().
+  _plausibilityProjectsSnapshot=projects;
+  _plausibilityMedianIndex=null;
+  return projects;
 }
 
 // DECISION(v1.19.785): Lazy migration shim for projects loaded from Firestore. Anything
@@ -17939,6 +18027,9 @@ function findIncompleteQuoteItems(project){
   if(!project)return[];
   const issues=[];
   const panels=project.panels||[];
+  // F050 (C1): memoized historical-median index (built from all loaded projects). null when the
+  // feature is off or no history is loaded yet → the plausibility block below simply never fires.
+  const _plIndex=_plausibilityIndex();
   // DECISION(v1.19.677): Align with _isBomRowFlaggedRed — also flag stale priceDate rows.
   // Previously this function only flagged MISSING priceDate; stale-but-present dates were
   // red in the BOM table but didn't block Send. The banner told sales "fix the red rows"
@@ -18006,6 +18097,28 @@ function findIncompleteQuoteItems(project){
           missing:reasons,
         });
       }
+      // F050 (C1): historical-median MAGNITUDE block — a row priced implausibly LOW vs the median
+      // historical price for the SAME part (the PRJ402119 500×-off class: a $12 price on a $6,000
+      // item passes because it isn't red, just wrong). SSOT predicate _plausibilityVerdict — $0,
+      // AI-free, synchronous. HARD-block ONLY on HIGH severity (<0.2× the median). MED (0.2–0.5×) is
+      // warn-only and intentionally NOT pushed here (never lock out a legit-cheap part) — a future
+      // BOM row-indicator surfaces MED via the same shared predicate. A row with NO history is never
+      // flagged (absent floor ⇒ skip). Independent of the reasons[] block above: a row can carry a
+      // valid price + fresh date yet still be wildly-low. Placed in the per-row loop, well clear of
+      // the legacy 0-BOM guard above (B077 branch), so it can't collide with that broadening.
+      const _pv=_plausibilityVerdict(r,_plIndex);
+      if(_pv&&_pv.severity==="high"){
+        issues.push({
+          panelName:pan.name||`Panel ${pi+1}`,
+          partNumber:pn||"(no part #)",
+          description:desc.slice(0,60),
+          missing:["implausibly low price"],
+          isPlausibilityBlock:true,
+          storedPrice:+r.unitPrice,
+          expectedMedian:_pv.floor,
+          ratio:_pv.ratio,
+        });
+      }
     }
     // #199 P3 — hard gate: push ONE issue PER unresolved Tech-Review row (not one-per-panel),
     // so every count display that reads issues.length (Send-button label, modal titles) reflects
@@ -18051,7 +18164,8 @@ function formatIncompleteQuoteAlert(issues){
   const verifyIssues=issues.filter(i=>i.isVerificationBlock);
   const techReviewIssues=issues.filter(i=>i.isTechReviewBlock); // #199 P3
   const blankBomIssues=issues.filter(i=>i.isBlankBomBlock); // #119 legacy 0-BOM hard block
-  const pricingIssues=issues.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock&&!i.isBlankBomBlock);
+  const plausIssues=issues.filter(i=>i.isPlausibilityBlock); // F050 (C1) magnitude block — own message
+  const pricingIssues=issues.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock&&!i.isBlankBomBlock&&!i.isPlausibilityBlock);
   const parts=[];
   if(verifyIssues.length){
     const panelNames=verifyIssues.map(v=>v.panelName).join(", ");
@@ -18079,6 +18193,20 @@ function formatIncompleteQuoteAlert(issues){
     const lines=shown.map(i=>`  • ${i.panelName} — ${i.partNumber}${i.description?" · "+i.description:""}  [missing: ${i.missing.join(", ")}]`);
     const more=pricingIssues.length>maxShow?`\n  … and ${pricingIssues.length-maxShow} more`:"";
     parts.push(`${pricingIssues.length} item${pricingIssues.length>1?"s":""} still need${pricingIssues.length===1?"s":""} price, qty, or priced date (or have stale pricing):\n\n${lines.join("\n")}${more}\n\nFix those rows first (run Refresh Pricing for stale ones).`);
+  }
+  if(plausIssues.length){
+    // F050 (C1): magnitude block — stored price is far below the historical median for that part
+    // (likely a bad/wrong price, e.g. a $12 price on a $6,000 item). Distinct from stale-price so
+    // the fix is clear: verify the PRICE, not the date. Shows stored vs expected-median + percent.
+    const maxShow=12;
+    const shown=plausIssues.slice(0,maxShow);
+    const lines=shown.map(i=>{
+      const _p=+i.storedPrice,_m=+i.expectedMedian;
+      const pct=_m>0?Math.round((_p/_m)*100):0;
+      return `  • ${i.panelName} — ${i.partNumber}${i.description?" · "+i.description:""}  [$${_p.toFixed(2)} vs ~$${_m.toFixed(2)} usual · ${pct}%]`;
+    });
+    const more=plausIssues.length>maxShow?`\n  … and ${plausIssues.length-maxShow} more`:"";
+    parts.push(`${plausIssues.length} item${plausIssues.length>1?"s are":" is"} priced FAR below the usual price for that part — likely a wrong/bad price (magnitude error):\n\n${lines.join("\n")}${more}\n\nVerify these prices before sending. A stored price under ${Math.round(PLAUSIBILITY_HIGH_RATIO*100)}% of the part's usual price is blocked as probably wrong.`);
   }
   const suffix=`\n\nUse "🖨 Just Print" if you only want a hard copy for review.`;
   return `Quote cannot be SENT:\n\n${parts.join("\n\n")}${suffix}`;
