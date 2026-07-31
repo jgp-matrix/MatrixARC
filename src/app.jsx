@@ -17920,14 +17920,16 @@ function findIncompleteQuoteItems(project){
     // gate silently and a blank quote can be emailed. HARD-block Send on a genuinely-empty legacy
     // panel, mirroring the ZeroBomBanner precondition (drawings present + zero BOM rows). Non-empty
     // legacy BOMs have rows → `(pan.bom||[]).length===0` is false → skipped (no false-positive). Scoped
-    // to `!pan.extractionReport` (legacy) to stay within #119; the identical 0-BOM Send hole for
-    // NON-legacy panels (extractionReport present, 0 rows, manualVerifyRequired unset) is a related
-    // gap left out of scope here — flag for follow-up.
-    if(!pan.extractionReport&&_basePages(pan).length>0&&(pan.bom||[]).length===0){
+    // B077: broadened from `!pan.extractionReport` (legacy-only, #119) to ALSO cover NON-legacy
+    // panels (extractionReport present, 0 rows, manualVerifyRequired unset) — the identical 0-BOM
+    // Send hole. `!pan.extractionReport?.manualVerifyRequired` is true for legacy (no report →
+    // undefined) AND non-legacy-without-MVR; a panel WITH manualVerifyRequired is already caught by
+    // the verification block above, so no double-fire. Still gated on drawings-present + zero rows.
+    if(!pan.extractionReport?.manualVerifyRequired&&_basePages(pan).length>0&&(pan.bom||[]).length===0){
       issues.push({
         panelName:pan.name||`Panel ${pi+1}`,
         partNumber:"(entire BOM)",
-        description:"Legacy panel has drawings but zero BOM items",
+        description:"Panel has drawings but zero BOM items",
         missing:["BOM items"],
         isBlankBomBlock:true,
       });
