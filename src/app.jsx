@@ -33029,7 +33029,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                                   style={{display:"flex",alignItems:"center",gap:6,padding:"3px 4px",cursor:"pointer",borderRadius:4,fontSize:11}}
                                   onMouseEnter={e=>e.currentTarget.style.background=C.accentDim+"66"}
                                   onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                                  <span style={{color:C.text,fontWeight:600,whiteSpace:"nowrap"}}>{s.number}</span>
+                                  <span style={{color:C.text,fontWeight:600,whiteSpace:"nowrap"}}>{s._vendorItemNo||s.number}</span>{/* show recognizable vendor part# when present; fall back to internal MTX# (s.number). Display-only — s.number still flows to applyBcItem. */}
                                   <span style={{color:C.muted,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.displayName}</span>
                                   <span style={{color:C.green,fontWeight:600,whiteSpace:"nowrap"}}>{s.unitCost!=null?"$"+s.unitCost.toFixed(2):""}</span>
                                 </div>
