@@ -11141,6 +11141,39 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
   }finally{resolve();delete _panelSaveLocks[lockKey];}
 }
+// B078-1: retrying wrapper around saveProjectPanel — mirrors safeSave (2 retries × 2s backoff).
+// WRAPS saveProjectPanel, never bypasses it: the underlying call keeps its _panelSaveLocks
+// serialization and every merge guard (pages-wipe, storageUrl/reviewNotes/reviewShapes restore,
+// bomVersion bump, quote-rev high-water). saveProjectPanel resolves (undefined) on a persisted
+// write and THROWS on Firestore failure (e.g. resource-exhausted) — so no-throw == persisted.
+// Returns true when the write landed, false after all retries are exhausted; the caller must then
+// surface the failure LOUDLY (B078-1's whole point) instead of swallowing it to console.warn.
+let _lastPanelSaveError=null; // captured last error for the failure-surface debug entry
+async function saveProjectPanelWithRetry(uid,projectId,panelId,updatedPanel,skipNotify=false,retries=2){
+  for(let attempt=0;attempt<=retries;attempt++){
+    try{await saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify);return true;}
+    catch(e){
+      _lastPanelSaveError=e;
+      console.warn(`Panel save failed (attempt ${attempt+1}/${retries+1}):`,e&&e.message||e);
+      if(attempt<retries)await new Promise(r=>setTimeout(r,2000));
+    }
+  }
+  console.error("Panel save failed after all retries for project/panel:",projectId,panelId);
+  return false;
+}
+// B078-1: signal (keyed by _bgKey) set when an extraction's Firestore save did not persist after
+// retries. runExtractionTask's onDone caller reads+clears it to suppress the green "✓" and skip
+// pricing-on-unsaved-data. Kept off the panel object so it never pollutes React state / Firestore.
+const _extractionSaveFailed={};
+// B078-1: loud, logged, visible surface for an extraction save that never persisted. bgError is the
+// real user-visible surface (error task, no auto-dismiss); logDebugEntry gives admins a record;
+// _saveFailBanner mirrors safeSave's banner path (see note: currently an unwired stub app-wide).
+function _surfaceExtractionSaveFailure(projectId,panelId,latestPanel){
+  _extractionSaveFailed[_bgKey(projectId,panelId)]=true;
+  try{bgError(_bgKey(projectId,panelId),"Save failed — BOM not persisted");}catch(e){}
+  try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"runExtractionTask",message:"Extraction save failed after retries — extracted BOM may NOT be persisted to Firestore",extra:{projectId,panelId,itemCount:(latestPanel&&latestPanel.bom||[]).length,lastError:String(_lastPanelSaveError&&_lastPanelSaveError.message||_lastPanelSaveError||"unknown")}});}catch(e){}
+  try{if(_saveFailBanner)_saveFailBanner("Save failed — the extracted BOM may not have been saved. Check your connection and re-extract.");}catch(e){}
+}
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
@@ -16266,9 +16299,16 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
   // commits the reconciliation. Replace save() with an in-memory accumulator so
   // BOTH save() call sites (early-upload + final consolidated) become no-ops.
   // Storage page-image uploads still fire (harmless, cheap, never auto-deleted).
+  // B078-1: non-staging saves now route through saveProjectPanelWithRetry (retry + no swallow) and
+  // RETURN a boolean so the two critical call sites (early-upload + final consolidated) can detect
+  // a save that never persisted and surface it loudly instead of downgrading to console.warn. The
+  // staging no-op also returns true so callers can treat the result uniformly (staging never persists
+  // here — the reconciliation commit does the real write). latestPanel=p assignment unchanged.
   const save=cbs.stagingMode
-    ?(p=>{latestPanel=p;})
-    :(async p=>{latestPanel=p;await saveProjectPanel(uid,projectId,panel.id,p).catch(e=>console.warn("bg save:",e));});
+    ?(p=>{latestPanel=p;return true;})
+    :(async p=>{latestPanel=p;return await saveProjectPanelWithRetry(uid,projectId,panel.id,p);});
+  // B078-1: clear any stale save-failure signal from a prior run of this same panel before we start.
+  delete _extractionSaveFailed[_bgKey(projectId,panel.id)];
   const applyInMemory=p=>{latestPanel=p;};
   // Always update immediately so the bar never stays on "Starting extraction…"
   // Calculate phase weights for progress — each phase gets a proportional slice
@@ -17047,9 +17087,16 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // DECISION(v1.19.644): SINGLE CONSOLIDATED SAVE. All stages have accumulated into
     // `latestPanel` in-memory. One Firestore write captures BOM + validation + verification
     // + audit + compliance + stamp upload atomically. No more intra-extraction races.
-    await save(latestPanel);
+    const _finalSaveOk=await save(latestPanel);
+    // B078-1: the final consolidated save is where Ryan's silent loss happened — resource-exhausted
+    // was swallowed to console.warn while the bar still showed "✓ N items". Now: on terminal failure
+    // after retries, surface it (bgError + logDebugEntry + banner) and flag onDone so it does NOT show
+    // a green ✓ or run pricing against data that never persisted. Never silently succeed.
+    if(!_finalSaveOk)_surfaceExtractionSaveFailure(projectId,panel.id,latestPanel);
     const itemCount=(latestPanel.bom||[]).length;
-    bgUpdate(_bgKey(projectId,panel.id),itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(_bgKey(projectId,panel.id),95);
+    // B078-1: only advance the bar toward the success/pricing state when the save actually landed —
+    // otherwise the error msg/status set by _surfaceExtractionSaveFailure would be overwritten.
+    if(_finalSaveOk){bgUpdate(_bgKey(projectId,panel.id),itemCount>0?`${itemCount} items extracted — pricing…`:"Extracted");bgSetPct(_bgKey(projectId,panel.id),95);}
     // Save learning record to ARC Neural IQ
     saveExtractionLearning(uid,projectId,latestPanel,projectName||'',bcProjectNumber||'');
   }catch(ex){
@@ -17059,7 +17106,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
     // so the user doesn't lose intermediate progress. Otherwise in-memory state is gone.
     // #153 (C97): suppress the error-path save in stagingMode — a failed staged
     // extraction must leave zero Firestore writes on the panel doc.
-    if(!cbs.stagingMode){try{await saveProjectPanel(uid,projectId,panel.id,latestPanel).catch(()=>{});}catch(e){}}
+    // B078-1: error-path fallback save also retries + surfaces. bgError was already set above with the
+    // extraction error; if this recovery save ALSO fails to persist, escalate to the save-failure
+    // surface (flags onDone, logs, trips the banner) rather than swallowing it to nothing.
+    if(!cbs.stagingMode){const _epOk=await saveProjectPanelWithRetry(uid,projectId,panel.id,latestPanel);if(!_epOk)_surfaceExtractionSaveFailure(projectId,panel.id,latestPanel);}
   }finally{
     // #153 (C97): in stagingMode, hand the extracted BOM to the caller as a 2nd
     // arg so it routes to staging instead of being read off the (unsaved) panel.
@@ -28417,6 +28467,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     runExtractionTask(uid,projectId,updated,{
       projectName,bcProjectNumber,
       onDone:(finalPanel)=>{
+        // B078-1: if the extraction's Firestore save never persisted (after retries), the error was
+        // already surfaced inside runExtractionTask (bgError + logDebugEntry). Do NOT show a green "✓"
+        // and do NOT kick off pricing against unsaved data — raise a BLOCKING modal so the user can't
+        // mistake the on-screen BOM for saved (mirrors the API-key data-safety modal in addFiles),
+        // then clean up UI state, keep the in-memory BOM visible so the user can re-extract, and leave
+        // the error task standing.
+        if(_extractionSaveFailed[_bgKey(projectId,panel.id)]){
+          delete _extractionSaveFailed[_bgKey(projectId,panel.id)];
+          try{arcAlert(
+            "The extracted BOM for this panel could NOT be saved — a database write error blocked it, so the items shown here are NOT stored. Please re-extract this panel to try again.\n\nIf it keeps failing, trim the drawing to only the needed page(s) first and re-extract.",
+            {kind:"error",okLabel:"OK"}
+          ).catch(()=>{});}catch(_){}
+          try{if(_currentProjectId===_extractionProjectId)onUpdate(finalPanel);}catch(e){}
+          try{setExtracting(false);setValidatingPanel(false);}catch(e){}
+          return;
+        }
         if(_currentProjectId!==_extractionProjectId){
           console.warn(`[EXTRACTION GUARD] Background completion — extraction for ${_extractionProjectId}, active project is ${_currentProjectId}. Running pricing in background mode (no React state).`);
           try{setExtracting(false);setValidatingPanel(false);}catch(e){}
