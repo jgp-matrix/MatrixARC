@@ -158,32 +158,16 @@ const GLOBAL_ALLOWLIST = new Set([
 // Run with --strict to fail on baseline violations too (useful for a cleanup
 // sprint targeting these known issues).
 const KNOWN_VIOLATIONS = new Set([
-  // PanelListView ship-date popover calls `update(...)` but PanelListView has
-  // no `update` in scope — should be `persistProject(...)`.
-  'update:PanelListView',
-
-  // EcoEditor's handleEcoFiles references `projectId` (should be `project.id`)
-  // and `_logRemote` (defined in addFiles, not in EcoEditor scope).
-  'projectId:handleEcoFiles',
-  '_logRemote:handleEcoFiles',
-
-  // reExtractWithFeedback: `let fbQs` is declared inside a try{} block but
-  // referenced after the catch — block-scoped `let` is not accessible outside
-  // the try block. Works only because the catch returns early on error.
-  'fbQs:reExtractWithFeedback',
-
-  // ProjectView's applyPortalPrices references `selectedPanelId` which is
-  // defined in PanelListView, not ProjectView.
-  'selectedPanelId:applyPortalPrices',
-
-  // ProjectView references `onUpdate` (from _doInlineQuoteSend and the
-  // EcoEditor prop) but its props have `onChange`, not `onUpdate`.
-  'onUpdate:_doInlineQuoteSend',
-  'onUpdate:ProjectView',
-
-  // VendorsPanel's runMigration calls `setMigrateStatus` but no corresponding
-  // useState declaration exists. The migration tool would crash if invoked.
-  'setMigrateStatus:runMigration',
+  // (#60, 2026-07-31) All 7 previously-known identifier-scope bugs fixed:
+  //   update:PanelListView          → persistProject(...)  (3 ship-date popover call sites)
+  //   projectId:handleEcoFiles      → project.id
+  //   _logRemote:handleEcoFiles     → guarded window.logDebugEntry(...)
+  //   fbQs:reExtractWithFeedback    → declaration hoisted above the try block
+  //   selectedPanelId:applyPortalPrices → _currentPanelId (module-global mirror)
+  //   onUpdate:ProjectView          → update(...) (local persist fn)
+  //   setMigrateStatus:runMigration → added const[migrateStatus,setMigrateStatus]=useState(null)
+  // The stale 'onUpdate:_doInlineQuoteSend' entry was already resolved (body uses
+  // update()) and is removed here too.
 ]);
 
 // ─── Parse ───────────────────────────────────────────────────────────────────

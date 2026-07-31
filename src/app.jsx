@@ -19203,10 +19203,10 @@ function EcoEditor({project,eco,uid,onClose,onUpdateProject,onSaveImmediate}){
           }
           let originalPdfPath=null;
           try{
-            originalPdfPath=await uploadOriginalPdf(uid,projectId,f.name,uploadBuf);
+            originalPdfPath=await uploadOriginalPdf(uid,project.id,f.name,uploadBuf);
           }catch(retErr){
             console.error(`[ECO Drawings] PDF retention FAILED after retries: ${retErr.message}`);
-            _logRemote("error","ECO PDF retention failed — BOM extraction will be blocked",{file:f.name,error:retErr.message});
+            try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"handleEcoFiles",message:"ECO PDF retention failed — BOM extraction will be blocked",extra:{projectId:project.id,panelId:pickedPanel?.id,uid,file:f.name,error:retErr.message}});}catch(_){}
           }
           for(let pg=1;pg<=pdf.numPages;pg++){
             setEcoExtractMsg(`${f.name} p${pg}/${pdf.numPages}`);
@@ -28990,11 +28990,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     setReExtracting(true);setErr("");ep.start("Extracting BOM — applying feedback…",bomPages.length*12);
     bomPages=await Promise.all(bomPages.map(ensureDataUrl));
     const fbRgnCtx=buildRegionContext(pages);
-    let all=[];let bomDone=0;
+    let all=[];let bomDone=0;let fbQs=[];
     const _fbPerPageOutcomes=[];
     const _fbVerifications=[];
     try{
-      let fbQs=[];
       const bomResults=await parallelMap(bomPages,async(pg,pgIdx)=>{
         ep.update(`Extracting BOM — page ${++bomDone}/${bomPages.length}…`);
         const units=await getExtractionUnits(pg);
@@ -40036,7 +40035,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                                 const val=e.target.value;if(!val)return;
                                 const updatedPanel={...pp,controlPanelShipDate:val,controlPanelShipDateOverride:true};
                                 const updatedPanels=(project.panels||[]).map(x=>x.id===pp.id?updatedPanel:x);
-                                update({...project,panels:updatedPanels});
+                                persistProject({...project,panels:updatedPanels});
                                 saveProjectPanel(uid,project.id,pp.id,updatedPanel,true).catch(()=>{});
                                 setShipDatePopoverFor(null);
                               }}}
@@ -40048,7 +40047,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                               if(!val)return;
                               const updatedPanel={...pp,controlPanelShipDate:val,controlPanelShipDateOverride:true};
                               const updatedPanels=(project.panels||[]).map(x=>x.id===pp.id?updatedPanel:x);
-                              update({...project,panels:updatedPanels});
+                              persistProject({...project,panels:updatedPanels});
                               saveProjectPanel(uid,project.id,pp.id,updatedPanel,true).catch(()=>{});
                               setShipDatePopoverFor(null);
                             }}
@@ -40059,7 +40058,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                           {curOverride&&<button onClick={()=>{
                             const updatedPanel={...pp,controlPanelShipDate:null,controlPanelShipDateOverride:false};
                             const updatedPanels=(project.panels||[]).map(x=>x.id===pp.id?updatedPanel:x);
-                            update({...project,panels:updatedPanels});
+                            persistProject({...project,panels:updatedPanels});
                             saveProjectPanel(uid,project.id,pp.id,updatedPanel,true).catch(()=>{});
                             setShipDatePopoverFor(null);
                           }}
@@ -42789,7 +42788,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // If BOM is empty, create BOM rows from supplier quote items first, then proceed to review
     if(bomIsEmpty&&items.length>0){
       const now=Date.now();
-      const targetPanel=(projectRef.current.panels||[]).find(p=>p.id===selectedPanelId)||(projectRef.current.panels||[])[0];
+      const targetPanel=(projectRef.current.panels||[]).find(p=>p.id===_currentPanelId)||(projectRef.current.panels||[])[0];
       if(targetPanel){
         const newBomRows=items.filter(si=>!si.cannotSupply&&(si.partNumber||"").trim()).map((si,i)=>{
           const pn=stripMfrPrefix((si.partNumber||"").trim());
@@ -44320,7 +44319,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         eco={openEcoEditor}
         uid={uid}
         onClose={()=>setOpenEcoEditor(null)}
-        onUpdateProject={(updatedProject)=>onUpdate(updatedProject)}
+        onUpdateProject={(updatedProject)=>update(updatedProject)}
         onSaveImmediate={(updatedProject)=>{try{safeSave(uid,updatedProject);}catch(e){}}}
       />}
     </>
@@ -51045,6 +51044,7 @@ function VendorsPanel({uid,onVendorAdded}){
   const[dupRemoving,setDupRemoving]=useState(false);
   const[dupProgress,setDupProgress]=useState('');
   const[dupConfirmed,setDupConfirmed]=useState(false);
+  const[migrateStatus,setMigrateStatus]=useState(null); // Vendor posting-group migration tool progress: null | {running,total,patched,errors,needsSetup,log,done}
   const[showAll,setShowAll]=useState(false);
   const[vpgSaving,setVpgSaving]=useState({}); // {vendorNo: true} while PATCH in flight
   const[lastCreated,setLastCreated]=useState(null); // {no,name} — success banner
