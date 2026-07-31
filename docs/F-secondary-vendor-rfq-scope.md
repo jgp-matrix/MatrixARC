@@ -1,6 +1,6 @@
 # Scope — opt-in secondary-vendor RFQs
 
-**Status:** OPEN · feature · scope ready for Jon's decision (2026-07-30). No code written.
+**Status:** OPEN · feature · **scope SETTLED (Jon 2026-07-31)** — Option A approved; all sub-decisions locked (see "Decisions settled" at bottom). No code written yet; next in build queue behind IP66 + bcFuzzy Fix 1. (Draft 2026-07-30.)
 
 **Feature (Jon 2026-07-30):** at RFQ-send time, let the user confirm whether to ALSO solicit quotes from each item's SECONDARY suppliers. Ruling: *"the only time an item would be quoted by another supplier is if that supplier was listed as a secondary supplier."*
 
@@ -26,3 +26,11 @@ One checkbox in RfqEmailModal. When ON, each eligible item is also added to a gr
 
 ## Risks
 Mapping a secondary quote back to a single-vendor row (don't auto-overwrite primary); duplicate-vendor dedup; RFQ-history/`sentItemIds` double-count (tag secondary tokens e.g. `rfqPurpose:"secondary"`); BC lookup cost; BC-offline disables the toggle (no local fallback); API-vendor (DigiKey/Mouser) items already cross-check — decide if they participate.
+
+## Decisions settled (Jon 2026-07-31)
+1. **Option A approved** — single global "include secondary vendors" checkbox in `RfqEmailModal` (21608), fan-out at build time.
+2. **Comparison-only** — secondary quotes arrive as comparison data; user manually adopts via `applySecondary` (30181). Primary WYSIWYG routing/pricing (v1.24.61) is NEVER auto-overwritten. Toggle OFF = byte-identical to today.
+3. **Price + lead time** — secondary RFQs request BOTH. Requires per-(item,vendor) lead-time lookups → mind BC throttling (batch `bcFetchPurchasePricesMultiVendor`, 30/call; cap/limit LT calls).
+4. **Exclude API vendors** — DigiKey/Mouser items already cross-checked via Get-Prices; they do NOT participate in secondary-vendor RFQ fan-out. Secondary RFQs = BC-vendor secondaries only.
+
+**Build-ready** once IP66 + bcFuzzy Fix 1 clear the queue. Guardrails carried: tag secondary tokens `rfqPurpose:"secondary"` (double-count guard); dedup primary+secondary items for the same vendor into one email; BC-offline disables the toggle. Money-path → branch → Coach review → Test → Jon verify before prod.
