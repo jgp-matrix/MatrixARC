@@ -15,6 +15,22 @@ Each finding has a status: **OPEN** (still needs work), **RESOLVED** (committed,
 > New items since the B/F/G cutover. Each category is its own ranked list (top = highest priority);
 > Freddy is sole allocator. Legacy `#1–#198` remain in the Round-N sections below (kept, not renumbered).
 
+> **✅ CODE-VERIFIED CORRECTIONS 2026-07-31 (Freddy — grading/verification pass; tracker status was stale in BOTH directions):**
+> _Already SHIPPED but were marked open (RESOLVED — no work needed):_
+> - **B035** (send-block validates $0 service cards) — `1160f508`. Code-verified.
+> - **B036** (quoteSent* preserve-guards in saveProject) — `1160f508`. Code-verified.
+> - **B021** (single-point AbortController timeout on bcGatedFetch) — `b8610a1b`. Code-verified.
+> - **B041** (programmatic saves don't bump sent-quote rev) — `b1a92a79` / prod v1.23.19.
+> - **B013** (raw BC helpers routed through bcGatedFetch health gate) — `6958dc33`. Core shipped; residual = 4 background-cache read outliers (LOW cleanup).
+> - **F019** (background Get-New-Pricing survives nav-away) — shipped (Option A: runPricingOnPanel bg-task + lease keep-alive).
+> - **F014** (customer payment terms on every quote + BC field) — shipped (paymentTerms first-class, BC-synced, on PDF). Residual = optional free-text note verbiage (LOW).
+> - **#188** (validate-at-push: detect stale/dead BC vendor before ItemVendorCatalog write) — `68317abe`.
+> _Reclassified / downgraded:_
+> - **#192** — fix NOT firmed (`docs/192-...TRACE.md` offers 3 options, mechanism unreproduced) → Tier-B decision, needs Jon approach + likely instrument-to-repro. NOT ship-ready.
+> - **#198** — "permanently stuck" is FALSE (auto-clear on submit + manual Cancel/Retract both null the lock). Remaining = only the positive "Approved→advance" affordance (MED).
+> - **#81** — largely shipped as ScanResultsBanner/ZeroBomBanner; remaining = modal polish + #119 legacy gate (MED).
+> _Genuinely OPEN + CRITICAL (verified 2026-07-31):_ #80 · #119 · #60 (all BUILDING) · B065-Ph2 + F070 + F069 (SCOPING — shared `resolveBcBindings`) · F048/F049/F050 (quote-safety trio, unbuilt) · B016-core (deferred) · #99/#100/#83 (extraction completeness). Detail: `docs/CRITICAL-AUDIT-2026-07-31.md` + `docs/TRACKER-GRADED-2026-07-31.md`.
+
 > **🆕 NEW 2026-07-31 — Jon's working-list intake (Freddy-triaged: 10 new + 4 merges; #s stamped after B070/F077).**
 > _Bugs:_
 > - **B071 [BUG · Jon 2026-07-31]** — Auto-Assign supplier modal doesn't pick the **Primary Supplier** each time. Cross-ref **F041** (primary-vendor selection — core live; may be a dormant edge or a distinct auto-assign bug). Needs repro + trace.
