@@ -18061,7 +18061,7 @@ function formatIncompleteQuoteAlert(issues){
     // #119: distinct message — a legacy panel with drawings but ZERO BOM items would otherwise
     // send a blank quote silently (no Phase-1 net fired for legacy panels missing extractionReport).
     const panelNames=blankBomIssues.map(v=>v.panelName).join(", ");
-    parts.push(`⚠ ${panelNames}: this panel has drawings but NO BOM items (legacy project — no extraction diagnostics). Populate the BOM (verify the BOM-tagged page and run extraction, or add items manually) before sending.`);
+    parts.push(`⚠ ${panelNames}: this panel has drawings but NO BOM items. Populate the BOM (verify the BOM-tagged page and run extraction, or add items manually) before sending.`);
   }
   if(techReviewIssues.length){
     // #199 P3 — distinct Tech-Review message (Analyst Q2/R2 wording).
