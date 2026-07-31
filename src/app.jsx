@@ -13126,7 +13126,14 @@ function filterNonBomRows(bom){
 // part number. The actual MFR PN is embedded in the Description field. This filter
 // detects that pattern and extracts the MFR PN from the description, preserving the
 // original internal code in customerPartNumber.
-const _INTERNAL_PN_RE=/^\d{3,4}-\d{3,5}$|^\d{7,12}$/;
+// NOTE: bare all-digit codes (e.g. Rittal 8660025 / 640014405, Weidmüller, Phoenix)
+// are manufacturer catalog part numbers, NOT internal/customer codes. The old
+// `^\d{7,12}$` alternative collided with them: on an all-digit catalog BOM >50% of
+// rows tripped this filter, so it fired BOM-wide and overwrote correct catalog numbers
+// with description spec tokens (640014405→"IP66", 8660025→"1200"), moving the real value
+// to customerPartNumber. Only the dashed NNNN-NNNN(N) form is a reliable internal-code
+// signal, so restrict the pattern to that.
+const _INTERNAL_PN_RE=/^\d{3,4}-\d{3,5}$/;
 const _MEAS_RE=/^[\d.,]+\s*(mm2?|cm|m|kg|kw|kva|kvar|vdc|vac|v|a|hz|w|ohm|hp|mtr|k|kohm|ma|uf|nf|pf|awg|ga|sqmm)$/i;
 const _DIM_RE=/^\d+(\.\d+)?\s*x\s*\d/i;
 const _SPEC_WORDS=new Set(["AC","DC","LINEAR","NYLON","BRASS","STEEL","SS","BLACK","WHITE","RED","BLUE","GREEN","GREY","GRAY","ORANGE","YELLOW","CLEAR","DUAL","SINGLE","HEAVY","DUTY","APPROVED","RATED","FLAT","HEX","CORE","WIRE","CABLE","EARTH","NUMBERED","DWG"]);
@@ -13136,6 +13143,7 @@ function _looksLikeMfrPn(tok){
   if(_DIM_RE.test(tok))return false;
   if(/^\d+(\.\d+)?%$/.test(tok))return false;
   if(/^(1ph|3ph|1pole|2pole|3pole|4pole|n\/o|n\/c|no|nc)$/i.test(tok))return false;
+  if(/^IP\d{2}[A-Z]?$/i.test(tok))return false; // ingress rating (IP66, IP20K) is a spec, not a part number
   if(_SPEC_WORDS.has(tok.toUpperCase()))return false;
   const hasDigit=/\d/.test(tok),hasLetter=/[a-zA-Z]/.test(tok);
   if(hasLetter&&hasDigit)return true;
