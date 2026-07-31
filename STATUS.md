@@ -5,7 +5,15 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-31 · prod v1.24.62 · B070 catalog-PN corruption FIXED + shipped · subagent-lane session (Freddy)
+## Current — 🟢 2026-07-31 · prod v1.24.64 · 9 items shipped today · full tracker graded+verified · subagent-lane session (Freddy)
+
+> ## ▶ RESUME HERE (2026-07-31 EOD) — big production day, 9 shipped, zero regressions.
+> **SHIPPED TO PROD today:** v1.24.62 **B070** (resolveInternalPartNumbers catalog-PN corruption — the reframed IP66/1200 bug) · v1.24.63 **F039/B019/G007/G015** (cosmetics) · v1.24.64 **bcFuzzy** (Vendor_Item_No cross-field match — live-verified 32 matches) + **#80** (feedback re-extract dedup data-loss) + **#119** (legacy 0-BOM send-block) + **#60** (7 latent scope-crash fixes). All Coach-approved + Test-gated.
+> **MAJOR ANALYSIS today:** full tracker graded (3 lanes) + code-verified (`docs/CRITICAL-AUDIT-2026-07-31.md`, `docs/TRACKER-GRADED-2026-07-31.md`). Tracker was stale BOTH ways — 8 "criticals" were already shipped (B035/B036/B021/B041/B013/F019/F014/#188); #192/#198/#81 downgraded. Corrections block in TODO.md.
+> **VERIFIED REAL-OPEN CRITICALS (the actual remaining work):** F048/F049/F050 (PRJ402119 quote-safety trio, unbuilt) · B065-Ph2/F070/F069 (shared `resolveBcBindings` — plan ready: `docs/BC-BINDING-COORDINATED-BUILD-PLAN.md`, 4 phases + 8 Jon decisions) · B016-core · #99/#100/#83 (extraction completeness) · #159 (copy strands projects).
+> **⏳ AWAITING JON:** (1) B070 backfill (4 drafts/14 rows, recoverable) · (2) secondary-vendor RFQ build (scope settled) · (3) Tier-B build greenlight (F050/#159/#83) · (4) resolveBcBindings decisions (P4/F069 shippable first) · (5) #192 fix-approach pick. New intake: B077 (non-legacy 0-BOM send hole).
+
+
 
 > ## ▶ RESUME HERE (2026-07-31) — B070 catalog-PN corruption FIXED + shipped to prod v1.24.62.
 > **This session flipped last night's IP66/1200 diagnosis.** The AI model extracted the parts CORRECTLY (pdf-native: `640014405`, `8660025`); ARC's `resolveInternalPartNumbers` was silently OVERWRITING correct all-digit Rittal catalog #s with description spec tokens (`640014405→IP66`, `8660025→1200`), moving the real value to `customerPartNumber`. Root cause: `_INTERNAL_PN_RE`'s `^\d{7,12}$` alternative collides with legit all-digit catalog numbers → on an all-digit BOM the >50% trigger fires BOM-wide. **Fix:** restrict `_INTERNAL_PN_RE` to dashed customer-codes only + reject IP-ratings in `_looksLikeMfrPn`. Coach APPROVE-WITH-NITS → Test V.071 → **Jon verified live** (Ref#7→`640014405`, Ref#44→`8660025`, zero corruptions, `internalPnResolutions` empty) → cherry-picked `fa1b2d53` (+ nit `8750c476`) → **prod v1.24.62 `b31ae57a`**. `recoverMisread` branch dropped (misaimed — model never misread). Doc: `docs/B070-internal-pn-catalog-corruption.md`.
