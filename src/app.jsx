@@ -21718,7 +21718,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       const pnSet=new Set();
       const primaryVnoByPn=new Map(); // pnUpper → Set(primaryVendorNo) to exclude
       groups.forEach(g=>g.items.forEach(it=>{
-        const pn=(it.partNumber||"").trim();if(!pn)return;
+        const pn=(it.bcNo||"").trim();if(!pn)return; // BUGFIX: key on bcNo (BC Item_No), not display partNumber — BC PurchasePrices filter Item_No eq
         pnSet.add(pn);
         const key=pn.toUpperCase();
         const pv=(it.bcVendorNo||g.vendorNo||"").trim();
@@ -21741,7 +21741,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       // Fan out: for each item, add it to a group per secondary vendorNo (≠ its primary).
       const secByVno=new Map(); // vendorNo → {vendorNo,items:[]}
       groups.forEach(g=>g.items.forEach(it=>{
-        const pn=(it.partNumber||"").trim();if(!pn)return;
+        const pn=(it.bcNo||"").trim();if(!pn)return; // BUGFIX: key on bcNo (BC Item_No), not display partNumber — BC PurchasePrices filter Item_No eq
         const key=pn.toUpperCase();
         const primarySet=primaryVnoByPn.get(key)||new Set();
         const cand=vendorsByPn.get(key);if(!cand)return;
