@@ -21698,6 +21698,119 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   const [vendorContacts,setVendorContacts]=useState({}); // {vendorName: [{name,email,type}]}
   const [contactsLoading,setContactsLoading]=useState(true);
   const [remember,setRemember]=useState({});
+  // ── F: opt-in secondary-vendor RFQs (Option A) ──────────────────────────────
+  // One global toggle. OFF ⇒ this whole block is inert and `allGroups===groups`
+  // (byte-identical to the single-vendor WYSIWYG routing built by
+  // buildRfqSupplierGroups). ON ⇒ fan out each eligible item to its BC SECONDARY
+  // vendors (BC PurchasePrice vendors minus the item's primary), deduped per
+  // vendor, API vendors excluded, comparison-only (never auto-applied). Secondary
+  // tokens are tagged rfqPurpose:"secondary" and their fan-out items do NOT feed
+  // sentItemIds (so a comparison RFQ can't trip the primary 30-day cooldown).
+  const [includeSecondary,setIncludeSecondary]=useState(false);
+  const [secondaryGroups,setSecondaryGroups]=useState([]); // pure-secondary vendor groups + merge deltas
+  const [secondaryLoading,setSecondaryLoading]=useState(false);
+  const secondaryLoadedRef=useRef(false);
+  async function loadSecondaryVendors(){
+    if(!_bcToken){arcAlert("Business Central isn't connected — secondary vendors can't be looked up.");setIncludeSecondary(false);return;}
+    setSecondaryLoading(true);
+    try{
+      // Collect distinct part numbers across all primary groups + a pn→primaryVendorNo map.
+      const pnSet=new Set();
+      const primaryVnoByPn=new Map(); // pnUpper → Set(primaryVendorNo) to exclude
+      groups.forEach(g=>g.items.forEach(it=>{
+        const pn=(it.partNumber||"").trim();if(!pn)return;
+        pnSet.add(pn);
+        const key=pn.toUpperCase();
+        const pv=(it.bcVendorNo||g.vendorNo||"").trim();
+        if(!primaryVnoByPn.has(key))primaryVnoByPn.set(key,new Set());
+        if(pv)primaryVnoByPn.get(key).add(pv);
+      }));
+      const pns=Array.from(pnSet);
+      if(!pns.length){setSecondaryGroups([]);secondaryLoadedRef.current=true;setSecondaryLoading(false);return;}
+      // Batched BC PurchasePrice read (30/call) → Map `${Item_No}:${Vendor_No}` → {...}.
+      const ppMap=await bcFetchPurchasePricesMultiVendor(pns);
+      // Index by part number → Set(vendorNo).
+      const vendorsByPn=new Map(); // pnUpper → Set(vendorNo)
+      for(const rawKey of ppMap.keys()){
+        const idx=rawKey.lastIndexOf(":");if(idx<0)continue;
+        const pn=rawKey.slice(0,idx).trim().toUpperCase();const vno=rawKey.slice(idx+1).trim();
+        if(!vno)continue;
+        if(!vendorsByPn.has(pn))vendorsByPn.set(pn,new Set());
+        vendorsByPn.get(pn).add(vno);
+      }
+      // Fan out: for each item, add it to a group per secondary vendorNo (≠ its primary).
+      const secByVno=new Map(); // vendorNo → {vendorNo,items:[]}
+      groups.forEach(g=>g.items.forEach(it=>{
+        const pn=(it.partNumber||"").trim();if(!pn)return;
+        const key=pn.toUpperCase();
+        const primarySet=primaryVnoByPn.get(key)||new Set();
+        const cand=vendorsByPn.get(key);if(!cand)return;
+        cand.forEach(vno=>{
+          if(primarySet.has(vno))return; // skip the item's primary vendor
+          if(!secByVno.has(vno))secByVno.set(vno,{vendorNo:vno,items:[]});
+          const sg=secByVno.get(vno);
+          if(!sg.items.some(x=>x.id===it.id))sg.items.push({...it,_secondaryFanout:true}); // dedup within vendor
+        });
+      }));
+      // Resolve vendor names, drop API vendors (DigiKey/Mouser cross-checked via Get-Prices).
+      const built=[];
+      for(const[vno,sg]of secByVno){
+        const vName=await bcGetVendorName(vno);
+        if(!vName)continue;              // unresolvable vendor → skip (no local fallback)
+        if(isApiVendor(vName))continue;  // settled: API vendors don't participate
+        built.push({vendorName:vName,vendorNo:vno,items:sg.items,itemsMissingPrice:0,itemsMissingLeadTime:0,itemsStalePrice:0,itemsForced:0,defaultLeadTimeOnly:false,_rfqPurpose:"secondary"});
+      }
+      built.sort((a,b)=>a.vendorName.localeCompare(b.vendorName));
+      setSecondaryGroups(built);
+      secondaryLoadedRef.current=true;
+      // Initialize per-vendor UI state for NEW (pure-secondary) vendor names only —
+      // vendor names already present as a primary group keep their existing state.
+      const primaryNames=new Set(groups.map(g=>g.vendorName));
+      const newOnes=built.filter(g=>!primaryNames.has(g.vendorName));
+      if(newOnes.length){
+        setIncluded(prev=>{const m={...prev};newOnes.forEach(g=>{if(!(g.vendorName in m))m[g.vendorName]=true;});return m;});
+        setLeadTimeOnly(prev=>{const m={...prev};newOnes.forEach(g=>{if(!(g.vendorName in m))m[g.vendorName]=false;});return m;});
+        setEmails(prev=>{const m={...prev};newOnes.forEach(g=>{if(!(g.vendorName in m))m[g.vendorName]="";});return m;});
+        // Saved default emails for the new vendors.
+        const currentUid=uid||fbAuth.currentUser?.uid;
+        if(currentUid){
+          try{
+            const{data}=await _readSupplierConfig(currentUid,"vendorEmails");
+            const saved=data||{};const rem={};
+            newOnes.forEach(g=>{if(saved[g.vendorName]){setEmails(prev=>({...prev,[g.vendorName]:(saved[g.vendorName]||"").replace(/;\s*/g,"\n")}));rem[g.vendorName]=true;}});
+            if(Object.keys(rem).length)setRemember(prev=>({...prev,...rem}));
+          }catch(e){}
+        }
+        // BC contacts for the new vendors (auto-fill email only if still empty).
+        for(const g of newOnes){
+          const contacts=await bcFetchVendorContacts(g.vendorNo,g.vendorName);
+          if(contacts.length>0){
+            setVendorContacts(prev=>({...prev,[g.vendorName]:contacts}));
+            setEmails(prev=>{if(prev[g.vendorName])return prev;return{...prev,[g.vendorName]:contacts[0].email};});
+          }
+        }
+      }
+    }catch(e){console.warn("[RFQ] secondary vendor load failed:",e);arcAlert("Failed to load secondary vendors from Business Central.");setIncludeSecondary(false);}
+    setSecondaryLoading(false);
+  }
+  // Effective group list. OFF ⇒ identical reference to `groups` (OFF path sacred).
+  // ON ⇒ primary groups, with each secondary item MERGED into an existing primary
+  // vendor (one token/email/vendor) or appended as a new pure-secondary group.
+  const allGroups=useMemo(()=>{
+    if(!includeSecondary||!secondaryGroups.length)return groups;
+    const byName=new Map();
+    groups.forEach(g=>byName.set(g.vendorName,{...g,items:[...g.items]}));
+    secondaryGroups.forEach(sg=>{
+      const existing=byName.get(sg.vendorName);
+      if(existing){
+        const seen=new Set(existing.items.map(i=>i.id));
+        sg.items.forEach(it=>{if(!seen.has(it.id)){existing.items.push(it);seen.add(it.id);}});
+      }else{
+        byName.set(sg.vendorName,sg);
+      }
+    });
+    return Array.from(byName.values());
+  },[includeSecondary,groups,secondaryGroups]);
   // Load saved vendor emails + fetch BC contacts on mount
   useEffect(()=>{
     (async()=>{
@@ -21758,7 +21871,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
   async function sendAll(shouldPrint=false){
     setSending(true);
     // Check if we have any non-API vendors that need email
-    const hasEmailVendors=groups.some(g=>included[g.vendorName]&&!isApiVendor(g.vendorName)&&(emails[g.vendorName]||"").trim());
+    const hasEmailVendors=allGroups.some(g=>included[g.vendorName]&&!isApiVendor(g.vendorName)&&(emails[g.vendorName]||"").trim());
     let graphToken=null;
     if(hasEmailVendors){
       graphToken=await acquireGraphToken();
@@ -21773,7 +21886,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     const vendorTokens={};
     const uploadExpiry=Date.now()+30*24*60*60*1000;
     const currentUid=uid||fbAuth.currentUser?.uid||"";
-    for(const group of groups){
+    for(const group of allGroups){
       if(included[group.vendorName]&&(emails[group.vendorName]||"").trim()){
         const rfqNum=makeRfqNum(group.vendorName);
         const tok=Array.from(crypto.getRandomValues(new Uint8Array(16))).map(b=>b.toString(16).padStart(2,'0')).join('');
@@ -21784,10 +21897,18 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         const ltOnly=!!leadTimeOnly[group.vendorName];
         const lineItemsPayload=group.items.map(i=>{
           const base={partNumber:i.partNumber||"",description:i.description||"",qty:i.qty||1,manufacturer:i.manufacturer||""};
-          if(i.leadTimeDays!=null)base.referenceLeadTimeDays=+i.leadTimeDays;
-          if(i.leadTimeSource)base.referenceLeadTimeSource=i.leadTimeSource;
-          base.referencePrice=_hasPrice(i)?+i.unitPrice:null;
-          base.referencePriceSource=_hasPrice(i)?(i.priceSource||null):null;
+          // Secondary fan-out items: the price/LT on the row belong to the item's PRIMARY
+          // vendor. Never expose those as "reference" to a competing secondary vendor — a
+          // secondary RFQ is comparison-only and requests fresh price + LT (never LT-only).
+          if(!i._secondaryFanout){
+            if(i.leadTimeDays!=null)base.referenceLeadTimeDays=+i.leadTimeDays;
+            if(i.leadTimeSource)base.referenceLeadTimeSource=i.leadTimeSource;
+            base.referencePrice=_hasPrice(i)?+i.unitPrice:null;
+            base.referencePriceSource=_hasPrice(i)?(i.priceSource||null):null;
+          }else{
+            base.referencePrice=null;base.referencePriceSource=null;
+            base.secondaryFanout=true; // item-level tag (a merged primary token can carry both)
+          }
           return base;
         });
         // DECISION(v1.19.994, audit Item C): Stamp companyId on every new
@@ -21796,13 +21917,16 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         // OR-fallback (query both uid AND companyId, merge) so legacy docs
         // remain readable by the original sender forever, while new docs
         // are team-shared. Zero data migration; zero breaking change.
-        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:_normalizeEmails(emails[group.vendorName]),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||"",isTest:IS_TEST_ENV}).catch(e=>console.warn("rfqUpload save failed:",e));
+        fbDb.collection('rfqUploads').doc(tok).set({uid:currentUid,companyId:_appCtx.companyId||null,projectId:projectId||"",projectName:projectName||"",vendorName:group.vendorName,vendorNumber:group.vendorNo||"",vendorEmail:_normalizeEmails(emails[group.vendorName]),rfqNum,lineItems:lineItemsPayload,leadTimeOnly:ltOnly,...(group._rfqPurpose?{rfqPurpose:group._rfqPurpose}:{}),sentAt:Date.now(),expiresAt:uploadExpiry,status:"pending",companyName:_appCtx.company?.name||"",companyLogoUrl:_appCtx.company?.logoUrl||"",companyAddress:_appCtx.company?.address||"",companyPhone:_appCtx.company?.phone||"",isTest:IS_TEST_ENV}).catch(e=>console.warn("rfqUpload save failed:",e));
       }
     }
     const sentItemIds=[];
     const historyEntries=[];
     const apiGroups=[]; // collect API vendor groups for post-send processing
-    for(const group of groups){
+    // Comparison-only guard: a secondary fan-out item must NOT mark the row as RFQ-sent
+    // (that drives the primary 30-day cooldown). Only genuine primary items feed sentItemIds.
+    const _pushSent=grp=>grp.items.forEach(item=>{if(!item._secondaryFanout)sentItemIds.push(item.id);});
+    for(const group of allGroups){
       if(!included[group.vendorName]){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"skipped"}}));
         historyEntries.push({vendorName:group.vendorName,vendorEmail:_normalizeEmails(emails[group.vendorName]),items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id})),sent:false,skipped:true});
@@ -21841,7 +21965,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         const pdfName=`${rfqNum}-${(group.vendorName||"Supplier").replace(/[^a-z0-9]/gi,"_")}.pdf`;
         await sendGraphEmail(graphToken,to,subject,html,pdfBase64,pdfName);
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"sent"}}));
-        group.items.forEach(item=>sentItemIds.push(item.id));
+        _pushSent(group);
         historyEntries.push({rfqNum,vendorName:group.vendorName,vendorEmail:to,items:group.items.map(i=>({partNumber:i.partNumber,qty:i.qty,id:i.id,leadTimeDays:i.leadTimeDays!=null?+i.leadTimeDays:null})),sent:true,skipped:false,uploadToken:uploadToken||null});
       }catch(e){
         setStatuses(prev=>({...prev,[group.vendorName]:{state:"error",msg:String(e.message||e)}}));
@@ -21858,7 +21982,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       // Save supplier part cross-reference for crossed items
       const allCrossings=[];
       historyEntries.filter(e=>e.sent).forEach(entry=>{
-        const grp=groups.find(g=>g.vendorName===entry.vendorName);
+        const grp=allGroups.find(g=>g.vendorName===entry.vendorName);
         if(!grp)return;
         grp.items.filter(i=>i.crossedFrom).forEach(i=>{
           allCrossings.push({origPartNumber:i.crossedFrom,bcPartNumber:i.partNumber,description:i.description||"",manufacturer:i.manufacturer||"",vendorName:grp.vendorName,rfqNum:entry.rfqNum||"",rfqDate:Date.now()});
@@ -21876,7 +22000,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
       // checkbox was pre-loaded from a previous save), the updated email was
       // never written back. Now the final email value is always persisted.
       const emailsToSave={};
-      groups.forEach(g=>{
+      allGroups.forEach(g=>{
         if(remember[g.vendorName]){
           const emailVal=_normalizeEmails(emails[g.vendorName]);
           if(emailVal)emailsToSave[g.vendorName]=emailVal;
@@ -21962,7 +22086,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         if(altSources.length>0&&onApiAlternates){
           onApiAlternates(altSources);
         }
-        group.items.forEach(item=>sentItemIds.push(item.id));
+        _pushSent(group);
         const failCount=finalResults.filter(r=>!r.found).length;
         const altCount=altSources.filter(a=>a.chosenSource).length;
         const checkedNames=searchPlan.map(s=>s.name).join(" and ");
@@ -22002,12 +22126,12 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
     }
     setSending(false);setDone(true);
     if(sentItemIds.length>0&&onSent)onSent(sentItemIds);
-    if(shouldPrint&&onPrint)onPrint(groups);
+    if(shouldPrint&&onPrint)onPrint(allGroups);
   }
   const stColors={sent:"#4ade80",error:"#f87171",skipped:"#64748b",sending:"#818cf8"};
   const stLabel=st=>st?.state==="sending"?(st.msg?`⏳ ${st.msg}`:"⏳ Sending…"):st?.state==="sent"?(st.msg?`✓ ${st.msg}`:"✓ Sent"):st?.state==="error"?`✗ ${st.msg||"Failed"}`:st?.state==="skipped"?"— Skipped":null;
   // B043: warn-and-continue on blank-email vendors — surface them before + after send. Recomputes each render (live as the user types/toggles).
-  const _emailVendors=groups.filter(g=>included[g.vendorName]&&!isApiVendor(g.vendorName));
+  const _emailVendors=allGroups.filter(g=>included[g.vendorName]&&!isApiVendor(g.vendorName));
   const _emailVendorCount=_emailVendors.length;
   const _blankIncluded=_emailVendors.filter(g=>!_normalizeEmails(emails[g.vendorName])).map(g=>g.vendorName);
   return ReactDOM.createPortal(
@@ -22036,21 +22160,37 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10}}>
           <div style={{fontSize:12,color:"#94a3b8"}}>Uncheck any supplier to skip their email this send.</div>
           <div style={{display:"flex",gap:6}}>
-            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=true;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Check All</button>
-            <button onClick={()=>setIncluded(prev=>{const m={};groups.forEach(g=>{m[g.vendorName]=false;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Uncheck All</button>
+            <button onClick={()=>setIncluded(prev=>{const m={...prev};allGroups.forEach(g=>{m[g.vendorName]=true;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Check All</button>
+            <button onClick={()=>setIncluded(prev=>{const m={...prev};allGroups.forEach(g=>{m[g.vendorName]=false;});return m;})} disabled={sending||done} style={{background:"none",border:"1px solid #3d6090",color:"#94a3b8",borderRadius:4,padding:"2px 10px",fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>Uncheck All</button>
           </div>
         </div>
+        {/* F: opt-in secondary-vendor RFQs — global toggle. Default OFF ⇒ WYSIWYG single-vendor
+            routing unchanged. Disabled when BC is offline (secondaries need a BC PurchasePrice read). */}
+        <label style={{display:"flex",alignItems:"flex-start",gap:8,marginBottom:12,padding:"8px 10px",background:includeSecondary?"#0f1f16":"#0a0a18",border:`1px solid ${includeSecondary?"#2f6b46":"#3d6090"}`,borderRadius:6,cursor:_bcToken?"pointer":"not-allowed",opacity:_bcToken?1:0.55}}
+          title={_bcToken?"Also solicit quotes from each item's secondary BC vendors (comparison only — never overwrites the primary quote).":"Business Central must be connected to look up secondary vendors."}>
+          <input type="checkbox" checked={includeSecondary} disabled={!_bcToken||sending||done||secondaryLoading}
+            onChange={e=>{const on=e.target.checked;setIncludeSecondary(on);if(on&&!secondaryLoadedRef.current)loadSecondaryVendors();}}
+            style={{accentColor:"#34d399",width:14,height:14,marginTop:1,flexShrink:0,cursor:_bcToken?"pointer":"not-allowed"}}/>
+          <div style={{fontSize:12,lineHeight:1.5}}>
+            <span style={{fontWeight:700,color:includeSecondary?"#6ee7b7":"#cbd5e1"}}>Also request quotes from secondary vendors</span>
+            {secondaryLoading&&<span style={{color:"#fcd34d",marginLeft:6}}>⏳ loading…</span>}
+            {!_bcToken&&<span style={{color:"#f59e0b",marginLeft:6}}>— requires Business Central</span>}
+            <div style={{color:"#94a3b8",fontSize:11,marginTop:2}}>Comparison only — fans out each item to its BC secondary suppliers (price + lead time). Your primary quote is never overwritten.{includeSecondary&&secondaryLoadedRef.current&&!secondaryLoading&&secondaryGroups.length===0&&<span style={{color:"#f59e0b"}}> No secondary vendors found in BC for these items.</span>}</div>
+          </div>
+        </label>
         <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:18,maxHeight:360,overflowY:"auto"}}>
-          {groups.map(g=>{
+          {allGroups.map(g=>{
             const st=statuses[g.vendorName];
             const isOn=!!included[g.vendorName];
             const lbl=stLabel(st);
+            const isSecondary=g._rfqPurpose==="secondary";
             const lastSent=g.items.reduce((max,it)=>Math.max(max,it.rfqSentDate||0),0);
             return(
               <div key={g.vendorName} style={{background:isOn?"#111128":"#090910",border:`1px solid ${isOn?"#3d6090":"#151520"}`,borderRadius:6,padding:"10px 12px",opacity:isOn?1:0.55,transition:"opacity 0.15s"}}>
                 <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:isOn?6:0}}>
                   <input type="checkbox" checked={isOn} disabled={sending||done} onChange={e=>setIncluded(prev=>({...prev,[g.vendorName]:e.target.checked}))} style={{cursor:"pointer",accentColor:"#818cf8",width:14,height:14,flexShrink:0}}/>
                   <span style={{fontWeight:700,color:"#f1f5f9",fontSize:13,flex:1}}>{g.vendorName}</span>
+                  {isSecondary&&<span title="Secondary vendor — comparison quote only; never overwrites your primary." style={{fontSize:10,color:"#6ee7b7",fontWeight:700,background:"#0f2a1c",border:"1px solid #2f6b46",borderRadius:4,padding:"1px 6px"}}>Secondary</span>}
                   {lastSent>0&&<span style={{fontSize:10,color:"#f59e0b",fontWeight:600,background:"#3a1f00",borderRadius:4,padding:"1px 6px"}}>RFQ Sent {new Date(lastSent).toLocaleDateString("en-US",{month:"short",day:"numeric"})}</span>}
                   <button onClick={()=>setPreviewGroup(g)} title="Preview email" style={{background:"#0d1520",border:"1px solid #0284c7",borderRadius:4,color:"#38bdf8",cursor:"pointer",fontSize:11,padding:"1px 6px",fontFamily:"inherit"}}>👁 Preview</button>
                   <span style={{fontSize:11,color:lbl?stColors[st.state]:"#64748b"}}>{lbl||`${g.items.length} item${g.items.length!==1?"s":""}`}</span>
@@ -22122,7 +22262,7 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
           {done&&(()=>{
             // B043: always report an outcome in-app, even on a partial/zero run (independent of MS365 delivery).
             // NIT-1: split not-sent into blank-email vs other-failure so a transport error isn't mislabeled "no email address".
-            const inc=groups.filter(g=>included[g.vendorName]);
+            const inc=allGroups.filter(g=>included[g.vendorName]);
             if(inc.length===0)return <span style={{fontSize:12,color:"#64748b",marginRight:"auto"}}>— No suppliers selected</span>;
             const sentN=inc.filter(g=>statuses[g.vendorName]?.state==="sent").length;
             const notSent=inc.filter(g=>statuses[g.vendorName]?.state!=="sent");
@@ -22138,8 +22278,8 @@ function RfqEmailModal({groups,projectName,projectId,bcProjectNumber,uid,userEma
             return <span style={{fontSize:12,marginRight:"auto"}}><span style={{color:"#4ade80"}}>✓ {sentN} sent</span>{blankN>0&&<span style={{color:"#f59e0b"}}> · ⚠ {blankN} no email</span>}{otherN>0&&<span style={{color:"#f87171"}}> · ✗ {otherN} failed</span>}</span>;
           })()}
           <button onClick={onClose} style={{background:"#1a1a2a",border:"1px solid #3d6090",color:"#94a3b8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit"}}>{done?"Close":"Cancel"}</button>
-          {!sending&&!done&&<button onClick={()=>{if(onPrint)onPrint(groups);onClose();}} style={{background:"#1a1a2a",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📋 Print</button>}
-          {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={groups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
+          {!sending&&!done&&<button onClick={()=>{if(onPrint)onPrint(allGroups);onClose();}} style={{background:"#1a1a2a",border:"1px solid #4f46e5",color:"#a5b4fc",padding:"6px 14px",borderRadius:6,cursor:"pointer",fontSize:12,fontFamily:"inherit",fontWeight:600}}>📋 Print</button>}
+          {!sending&&!done&&<button onClick={()=>sendAll(false)} disabled={allGroups.length===0} style={{background:"#1e1b4b",border:"none",color:"#818cf8",padding:"6px 16px",borderRadius:6,cursor:"pointer",fontSize:13,fontFamily:"inherit",fontWeight:700}}>✉ Send</button>}
           {sending&&<span style={{fontSize:12,color:"#818cf8"}}>Sending…</span>}
         </div>
       </div>
