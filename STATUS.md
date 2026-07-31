@@ -5,7 +5,17 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-31 · prod v1.24.64 · 9 items shipped today · full tracker graded+verified · subagent-lane session (Freddy)
+## Current — 🟢 2026-07-31 (later) · prod v1.24.68 · PRJ402141 extraction-loss diagnosed → B078-1 fix on Test V.071 awaiting Jon · subagent-lane (Freddy)
+
+> ## ▶ RESUME HERE (2026-07-31 later) — Ryan's "extraction produces no drawing BOM" → root-caused to SILENT SAVE LOSS; B078-1 fix built + Coach-approved, on Test V.071, awaiting Jon.
+> **PRJ402141 (Plum Island, Ryan) — the drawing BOM "wouldn't extract" / "moved from line to line."** Live Firestore/debug-log diagnosis (no assumptions — Jon-gated):
+> - **NOT page-typing, NOT concurrency (open-lock prevents it).** ROOT CAUSE (Coach-verified): an 18-page add fires 1 PDF + 18 Storage uploads that saturate the uplink WHILE ~7 PanelCard background `_noBumpWrite` full-doc autosaves + the extraction saves pile up on the single client Firestore WriteStream → `resource-exhausted: Write stream exhausted` → the extraction save's error was **swallowed to `console.warn`** → UI showed "✓ N items" while Firestore got nothing → reload = 0 items/no report. Ryan's exact symptom.
+> - **Immediate fix for Ryan (workaround):** hard-refresh (fresh write queue) + trim the drawing to the 1 needed page (delete IGNORE pages) + re-extract → **DB-CONFIRMED persisted** (Line 4 now 5 drawing items + report). Line 3 already good.
+> - **Scoped (docs/B078-B079-B080-write-batching-scaling-scope.md, committed):** **B078** write-queue exhaustion · **B079** `addPanel` `Panel ${length+1}` duplicate-name bug (three "Panel 4"s) · **B080** the real 10-user ceiling = shared Anthropic key + ZERO 429/backoff (extract fns fail pages silently under org rate-limit).
+> - **✅ B078-1 BUILT (Marc) + Coach-APPROVED-with-fixes → live Test V.071, branch `marc/b078-1-save-retry` `ddc2cbdd`, prod UNTOUCHED:** `saveProjectPanelWithRetry` (mirrors safeSave 2×2s, all guards intact) + on terminal save-fail → bgError + logDebugEntry(error) + **blocking arcAlert modal** + onDone no longer shows ✓ or prices against unsaved data. Coach must-fix (the modal, since `_saveFailBanner` is a dead stub) APPLIED.
+> **⏳ AWAITING JON (pinged via Pushover):** (1) verify a normal extraction on Test V.071 (hard-refresh) → **prod deploy go** for B078-1; (2) **B080** priority (now vs after B078) + per-user API keys y/n. **Queued next:** B078-2 (coalesce the 7 autosaves), B079 (naming), B080 (Anthropic backoff/concurrency). Non-blocking follow-ups: gate `saveExtractionLearning` on save-ok; wire-or-remove dead `_saveFailBanner`.
+
+> ## ▶ RESUME HERE (2026-07-31 EOD) — big production day, 9 shipped, zero regressions.
 
 > ## ▶ RESUME HERE (2026-07-31 EOD) — big production day, 9 shipped, zero regressions.
 > **SHIPPED TO PROD today:** v1.24.62 **B070** (resolveInternalPartNumbers catalog-PN corruption — the reframed IP66/1200 bug) · v1.24.63 **F039/B019/G007/G015** (cosmetics) · v1.24.64 **bcFuzzy** (Vendor_Item_No cross-field match — live-verified 32 matches) + **#80** (feedback re-extract dedup data-loss) + **#119** (legacy 0-BOM send-block) + **#60** (7 latent scope-crash fixes). All Coach-approved + Test-gated.
