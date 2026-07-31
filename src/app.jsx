@@ -5799,7 +5799,10 @@ async function bcFuzzyLookup(partNumber){
   // Real case: 800F-34RE100 — the '-' at char 5 defeats step 5's slice(0,5) startswith prefix,
   // but contains(Vendor_Item_No,'800F-34RE100') matches the raw BC value directly.
   let _crossFieldSuggestions=[];
-  if(pn.length>=3){
+  // NIT-1 (Coach): gate on stripped.length>=5 — aligns with step 5's own threshold and prevents a
+  // short/common PN (e.g. "100","SW1") from fanning the field:"both" contains() over 7 ItemCard fields
+  // (7×1000 internal) on every step-1-4 fallthrough row. A 3-char cross-field exact is implausible.
+  if(stripped.length>=5){
     const rBoth=await bcSearchItems(pn,{field:"both",top:10});
     if(rBoth.items&&rBoth.items.length){
       const cfExact=rBoth.items.filter(it=>
