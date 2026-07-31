@@ -2738,6 +2738,12 @@ async function _readSupplierConfig(uid,docName){
 // The superseded ARC-side `config/itemAlternates` learning DB was DROPPED (SSOT — avoid two-source
 // drift); its loadItemAlternates/saveItemAlternates/_itemAltCache helpers were removed here.
 
+// F084 — per-item (bcNo) cache of the Price-Date hover's "alternate suppliers" list, so BC is hit
+// once per item per session (mind BC throttling). Value: {status:"done"|"error", vendors:[{vendorNo,
+// vendorName,price,uom,leadTimeDays,isPrimary}]}. Populated by _loadAltSuppliers (BomTable). Only
+// terminal states ("done") are cached; transient offline/loading are recomputed on the next hover.
+const _altSuppliersCache=new Map();
+
 // DECISION(v1.19.996, audit Item D follow-up): rfq_history collection
 // migration. Writes go to the company-shared collection; reads merge both
 // company-shared and legacy user-shared collections so existing per-user
@@ -27294,7 +27300,36 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [laborMoreInfo,setLaborMoreInfo]=useState(false);
   const [showUpdateBom,setShowUpdateBom]=useState(false);
   const [deleteConfirmId,setDeleteConfirmId]=useState(null);
-  const [priceTooltip,setPriceTooltip]=useState(null); // {x,y,vendor,date,price,source}
+  const [priceTooltip,setPriceTooltip]=useState(null); // {x,y,vendor,date,price,source,bcNo}
+  // F084 — Price-Date hover "alternate suppliers" list. Lazily fetched per row (bcNo) and cached
+  // in the module-scoped _altSuppliersCache. Mirrors the BC Item Browser source-selector path
+  // (useEffect ~25255): bcFetchPurchasePricesMultiVendor([bcNo]) → per-vendor bcGetVendorName +
+  // bcLookupItemVendorLeadTime, with the BC Item-Card primary (bcGetItemVendorNo) flagged.
+  const [altSuppliers,setAltSuppliers]=useState(null); // {bcNo,status:"loading"|"done"|"error"|"offline",vendors:[...]}
+  function _loadAltSuppliers(bcNo){
+    if(!bcNo)return; // unresolved row (no BC binding) — render shows "no BC alternates"
+    const cached=_altSuppliersCache.get(bcNo);
+    if(cached){setAltSuppliers({bcNo,...cached});return;} // instant on repeat hover
+    if(!_bcToken){setAltSuppliers({bcNo,status:"offline",vendors:[]});return;} // don't cache — token may arrive later
+    setAltSuppliers({bcNo,status:"loading",vendors:[]});
+    Promise.all([bcFetchPurchasePricesMultiVendor([bcNo]),bcGetItemVendorNo(bcNo).catch(()=>"")]).then(async([map,primaryNo])=>{
+      const out=[];
+      for(const [key,val] of map.entries()){
+        if(!key.startsWith(bcNo+":"))continue;
+        const vendorNo=key.slice(bcNo.length+1);
+        if(!vendorNo)continue;
+        const nm=await bcGetVendorName(vendorNo);
+        let ltDays=null;try{const lt=await bcLookupItemVendorLeadTime(bcNo,vendorNo);if(lt!=null)ltDays=lt;}catch(_){}
+        out.push({vendorNo,vendorName:nm||vendorNo,price:val.directUnitCost,uom:val.uom,leadTimeDays:ltDays,isPrimary:!!(primaryNo&&vendorNo===primaryNo)});
+      }
+      out.sort((a,b)=>(b.isPrimary?1:0)-(a.isPrimary?1:0)); // primary first
+      const rec={status:"done",vendors:out};
+      _altSuppliersCache.set(bcNo,rec); // cache only the terminal result
+      setAltSuppliers(prev=>(prev&&prev.bcNo===bcNo)?{bcNo,...rec}:prev); // ignore if user moved to another row
+    }).catch(()=>{
+      setAltSuppliers(prev=>(prev&&prev.bcNo===bcNo)?{bcNo,status:"error",vendors:[]}:prev);
+    });
+  }
   // DECISION(v1.19.725): Floating Lead Time tooltip — like priceTooltip but shows
   // supplier-stock snapshot when present (e.g. Codale "24 IN SLC" → 24 in SLC stock).
   const [leadTimeTooltip,setLeadTimeTooltip]=useState(null); // {x,y,row}
@@ -33660,7 +33695,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     onMouseEnter={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
                       const d=_effectivePriceDate(row); // B018: single source shared with the red-flag + send gate
                       const vendor=row.bcVendorName||(row.priceSource==="manual"?"Manual Entry":null);
-                      setPriceTooltip({x:e.clientX,y:e.clientY,vendor,date:d,price:row.unitPrice,source:row.priceSource,priceSetBy:row.priceSetBy,priceSetAt:row.priceSetAt});
+                      const _bn=(row.bcNo||"").toString().trim(); // F084: BC Item_No — keys the alternate-suppliers fetch
+                      setPriceTooltip({x:e.clientX,y:e.clientY,vendor,date:d,price:row.unitPrice,source:row.priceSource,priceSetBy:row.priceSetBy,priceSetAt:row.priceSetAt,bcNo:_bn});
+                      _loadAltSuppliers(_bn); // F084: lazy + per-row cached (no-op when bcNo empty)
                     }:undefined}
                     onMouseMove={(!row.isLaborRow&&row.unitPrice!=null)?e=>{
                       setPriceTooltip(prev=>prev?{...prev,x:e.clientX,y:e.clientY}:prev);
@@ -34502,7 +34539,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {priceTooltip&&ReactDOM.createPortal(
         <div style={{position:"fixed",left:priceTooltip.x+14,top:priceTooltip.y-8,zIndex:99999,pointerEvents:"none",
           background:"#0d0d1a",border:"1px solid #334155",borderRadius:10,boxShadow:"0 6px 28px rgba(0,0,0,0.7)",
-          padding:"10px 14px",minWidth:180,maxWidth:260,fontSize:12,lineHeight:1.6}}>
+          padding:"10px 14px",minWidth:200,maxWidth:300,fontSize:12,lineHeight:1.6}}>
+          {/* F084: TOP — currently-selected source (vendor · date · price · priced-by). */}
+          <div style={{fontSize:10,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5,marginBottom:3,fontWeight:700}}>Current source</div>
           <div style={{fontWeight:700,color:"#f1f5f9",marginBottom:4,fontSize:13}}>
             {priceTooltip.vendor||"Unknown Vendor"}
           </div>
@@ -34532,6 +34571,38 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               return <span><span style={{textTransform:"uppercase",letterSpacing:0.5,color:"#64748b"}}>Priced by </span><span style={{color:"#cbd5e1"}}>{whoLabel}</span>{whenStr?<span style={{color:"#94a3b8"}}>{" · "+whenStr}</span>:null}{srcStr?<span style={{color:"#94a3b8"}}>{" · "+srcStr}</span>:null}</span>;
             })()}
           </div>
+          {/* F084: BELOW — the item's OTHER BC vendors (name · price · lead-time). Lazily fetched +
+             per-bcNo cached (see _loadAltSuppliers). The currently-selected vendor (shown at top) is
+             filtered out; the BC Item-Card primary is flagged with ★. */}
+          {(()=>{
+            if(!priceTooltip.bcNo)return(
+              <div style={{marginTop:8,paddingTop:6,borderTop:"1px solid #1e293b",fontSize:10,color:"#64748b"}}>No BC alternates (item not linked to BC)</div>
+            );
+            const as=(altSuppliers&&altSuppliers.bcNo===priceTooltip.bcNo)?altSuppliers:null;
+            const status=as?as.status:"loading";
+            const curName=(priceTooltip.vendor||"").trim().toLowerCase();
+            const list=((as&&as.vendors)||[]).filter(v=>((v.vendorName||"").trim().toLowerCase())!==curName);
+            return(
+              <div style={{marginTop:8,paddingTop:6,borderTop:"1px solid #1e293b"}}>
+                <div style={{fontSize:10,color:"#64748b",textTransform:"uppercase",letterSpacing:0.5,marginBottom:4,fontWeight:700}}>Alternate suppliers</div>
+                {status==="loading"&&<div style={{color:"#64748b",fontSize:11,fontStyle:"italic"}}>Loading alternates…</div>}
+                {status==="offline"&&<div style={{color:"#64748b",fontSize:11}}>BC offline — no alternates</div>}
+                {status==="error"&&<div style={{color:"#64748b",fontSize:11}}>Could not load BC alternates</div>}
+                {status==="done"&&list.length===0&&<div style={{color:"#64748b",fontSize:11}}>No other BC vendors</div>}
+                {status==="done"&&list.map((v,i)=>(
+                  <div key={v.vendorNo||i} style={{display:"flex",justifyContent:"space-between",gap:10,alignItems:"baseline",marginBottom:i<list.length-1?3:0}}>
+                    <span style={{color:"#cbd5e1",fontSize:11,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:150}}>
+                      {v.isPrimary?<span title="BC primary vendor" style={{color:"#fbbf24",marginRight:3}}>★</span>:null}{v.vendorName}
+                    </span>
+                    <span style={{whiteSpace:"nowrap",flexShrink:0}}>
+                      <span style={{color:"#4ade80",fontWeight:600,fontSize:11}}>${(v.price||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                      <span style={{color:"#64748b",fontSize:10,marginLeft:6}}>{v.leadTimeDays!=null?v.leadTimeDays+"d LT":"— LT"}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
         </div>,document.body
       )}
       {aiSourceTooltip&&ReactDOM.createPortal(
