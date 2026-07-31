@@ -133,6 +133,7 @@ function useSmoothProgress(estSeconds=15){
   const est=useRef(estSeconds);
   const msgRef=useRef("");
   const baseRef=useRef(0); // base pct offset for phase transitions
+  const dispRef=useRef(0); // B019: last displayed pct — monotonic clamp so the bar never snaps backward mid-run
 
   const tick=useCallback(()=>{
     const elapsed=(Date.now()-startTime.current)/1000;
@@ -140,7 +141,9 @@ function useSmoothProgress(estSeconds=15){
     // Steady progression — nearly linear with gentle ease near end
     const curve=Math.pow(t,0.9);
     const pct=baseRef.current+(97-baseRef.current)*curve;
-    setState({msg:msgRef.current,pct:Math.min(97,Math.round(pct)),wentBack:wentBackRef.current});
+    const shown=Math.max(dispRef.current,Math.min(97,Math.round(pct))); // B019: never decrease
+    dispRef.current=shown;
+    setState({msg:msgRef.current,pct:shown,wentBack:wentBackRef.current});
     timer.current=requestAnimationFrame(tick);
   },[]);
 
@@ -148,6 +151,7 @@ function useSmoothProgress(estSeconds=15){
     if(seconds)est.current=seconds;
     msgRef.current=msg||"";
     baseRef.current=0;
+    dispRef.current=0; // B019: reset monotonic floor for a genuine new run
     prevPctRef.current=0;
     wentBackRef.current=false;
     startTime.current=Date.now();
@@ -186,7 +190,9 @@ function useSmoothProgress(estSeconds=15){
     baseRef.current=Math.min(97,pct);
     startTime.current=Date.now();
     if(msg)msgRef.current=msg;
-    setState({msg:msgRef.current,pct:rounded,wentBack:wentBackRef.current});
+    const shown=Math.max(dispRef.current,rounded); // B019: clamp so a low checkpoint can't snap the bar backward
+    dispRef.current=shown;
+    setState({msg:msgRef.current,pct:shown,wentBack:wentBackRef.current});
     if(!timer.current)timer.current=requestAnimationFrame(tick);
   },[tick]);
 
@@ -202,6 +208,7 @@ function useSmoothProgress(estSeconds=15){
   const stop=useCallback(()=>{
     if(timer.current){cancelAnimationFrame(timer.current);timer.current=null;}
     baseRef.current=0;
+    dispRef.current=0; // B019: reset monotonic floor
     setState(null);
   },[]);
 
@@ -33091,6 +33098,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                             }}
                             style={{...inp({padding:"5px 14px 5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:"100%",minWidth:0,boxSizing:"border-box"}}
                             onFocus={e=>{e.target.style.borderColor=C.accent;if(f==="qty")e.target.select();}}
+                            /* F039: Escape discards an in-progress edit — restore prior React value + blur (onBlur no-ops since val===row[f]); Enter commits via blur. Mirrors the price cell (never writes on Escape). */
+                            onKeyDown={e=>{if(e.key==="Enter")e.target.blur();if(e.key==="Escape"){e.target.value=String(row[f]||"");e.target.blur();}}}
                           />
                         )}
                       </td>
