@@ -28985,8 +28985,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const map={};const exactMerges=[];
     fbPositional.forEach(item=>{
       const pn=_bomNormPn(item.partNumber);
-      const key=pn||("desc:"+(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40));
       const itemNo=String(item.itemNo||item.item||"").replace(/\D/g,"");
+      const descNorm=(item.description||"").replace(/\s+/g," ").trim().toLowerCase().slice(0,40);
+      const key=(pn&&itemNo)?pn+":item:"+itemNo+":d:"+descNorm:pn?pn+":d:"+descNorm:"desc:"+descNorm;
       if(map[key]){map[key].qty=(+map[key].qty||1)+(+item.qty||1);exactMerges.push({keptItemNo:String(map[key].itemNo||map[key].item||"").replace(/\D/g,""),droppedItemNo:itemNo,keptPn:map[key].partNumber,droppedPn:item.partNumber});}
       else{map[key]={...item};}
     });
