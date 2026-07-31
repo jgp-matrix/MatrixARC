@@ -21,7 +21,8 @@
 
 ---
 
-- [2026-07-31] BUG — "Non-legacy 0-BOM panel passes send-gate" — a panel WITH an extractionReport that extracted 0 BOM rows and lacks `manualVerifyRequired` passes `findIncompleteQuoteItems` (the per-row loop finds nothing) → a blank quote can be SENT. ZeroBomBanner shows but the send-gate doesn't block. Parallel to #119 (which fixed the legacy `!extractionReport` case); this is the non-legacy sibling — a ~1-line broadening of the same guard (add `_basePages(pan)>0 && (pan.bom||[]).length===0 && !manualVerifyRequired`). Surfaced by the #119 build lane 2026-07-31. — reported via Intake (source: Marc→Freddy)
+- [2026-07-31] BUG — **B077** "Non-legacy 0-BOM panel passes send-gate" — [✅ BUILT 2026-07-31, commit `4d4c8e66`, awaiting Coach review + Test] non-legacy sibling of #119: a panel WITH an extractionReport but 0 BOM rows and no `manualVerifyRequired` passed the send-gate → blank quote sendable. Broadened the #119 guard. — reported via Intake (source: Marc→Freddy)
+- [2026-07-31] FEAT — **F083** "Item Browser: prompt to add extraction-identified MFR to BC" — On extraction ARC now populates the manufacturer on BOM rows for items NOT in BC (Jon: nice surprise; from Bug 1b `_withMeta`/`mfrCodes`). Feature: when the user opens the BC Item Browser for such an item to create/assign it in BC, PRE-FILL / PROMPT the extraction-identified MFR so it's added to the BC item card in one action (don't make them re-enter). Builds on the MFR-on-row data + the Item Browser create/MFR-assign flow (v1.24.49 mfr-guard, v1.24.50 Bug 1b). Money-path-adjacent (BC data quality). — reported via Intake (source: Jon 2026-07-31)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
