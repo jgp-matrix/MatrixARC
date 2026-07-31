@@ -5752,6 +5752,12 @@ async function bcFuzzyLookup(partNumber){
   if(exact&&exact.unitCost!=null)return{match:exact,type:"exact",suggestions:[]};
   // 2. Stripped search — remove dashes, spaces, special chars
   const stripped=pn.replace(/[-\s\/\\.#_]+/g,"");
+  // Shared normalized-equality gate (SINGLE SOURCE OF TRUTH — "factor the rule, not the
+  // inputs"). Used by BOTH the cross-field step below AND the normalized-startswith step 5.
+  // Strips the same punctuation set as `stripped` and upper-cases; equality against this is
+  // the ONLY auto-apply gate — do not relax it.
+  const localNorm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
+  const wantNorm=stripped.toUpperCase();
   if(stripped.length>=3){
     const r2=await bcSearchItems(stripped,{field:"number",top:10});
     if(r2.items.length===1)return{match:r2.items[0],type:"fuzzy",suggestions:[]};
@@ -5778,6 +5784,40 @@ async function bcFuzzyLookup(partNumber){
     if(r4.items.length===1)return{match:r4.items[0],type:"fuzzy",suggestions:[]};
     if(r4.items.length>1)return{match:null,type:"fuzzy",suggestions:r4.items.slice(0,8)};
   }
+  // 4b. Cross-field Item Browser path (B-bcFuzzyLookup Fix 1, 2026-07-31). Steps 1-4 above
+  // query ONLY the /items REST `number` field (BC `No`) — structurally blind to PNs stored in
+  // Vendor_Item_No / Common_Item_No (classic Allen-Bradley: `No` is an internal surrogate SKU).
+  // The manual BC Item Browser finds those because it uses bcSearchItems(query,{field:"both"})
+  // = contains() across the 7 ItemCard fields incl. Vendor_Item_No. Reuse that exact,
+  // production-proven path here for rows that fell through steps 1-4.
+  //   MONEY-PATH GUARDRAIL: AUTO-APPLY only when EXACTLY ONE returned result passes the shared
+  //   exact normalized-equality gate (localNorm(x)===wantNorm) against number/_vendorItemNo/
+  //   _commonItemNo. Multiple exact hits → held-for-review SUGGESTIONS. contains()-substring
+  //   hits with NO normalized-equal → held as fallback suggestions and we fall through to
+  //   step 5 (its normalized-startswith may still resolve a clean exact its own way);
+  //   those fallback suggestions surface only if step 5 also finds nothing. Never auto-applied.
+  // Real case: 800F-34RE100 — the '-' at char 5 defeats step 5's slice(0,5) startswith prefix,
+  // but contains(Vendor_Item_No,'800F-34RE100') matches the raw BC value directly.
+  let _crossFieldSuggestions=[];
+  if(pn.length>=3){
+    const rBoth=await bcSearchItems(pn,{field:"both",top:10});
+    if(rBoth.items&&rBoth.items.length){
+      const cfExact=rBoth.items.filter(it=>
+        localNorm(it.number)===wantNorm
+        ||localNorm(it._vendorItemNo||"")===wantNorm
+        ||localNorm(it._commonItemNo||"")===wantNorm);
+      if(cfExact.length===1){
+        console.log(`[bcFuzzyLookup] MATCH via Item Browser cross-field: "${pn}" → BC No "${cfExact[0].number}" (${rBoth.items.length} candidates scanned)`);
+        return{match:cfExact[0],type:"fuzzy-crossfield",suggestions:[]};
+      }
+      if(cfExact.length>1){
+        return{match:null,type:"fuzzy-crossfield",suggestions:cfExact.slice(0,8)};
+      }
+      // Items exist but none exact-normalized → substring-only. Hold as review-only fallback;
+      // let step 5 have its turn before we surface these.
+      _crossFieldSuggestions=rBoth.items.slice(0,8);
+    }
+  }
   // DECISION(v1.19.985): Steps 1-4 all use contains() — a literal substring
   // filter. They MISS items where BC stores the part with internal punctuation
   // (e.g. BC has "ABD-122-NUB" but extraction returned "ABD122NUB"). BC's
@@ -5796,7 +5836,7 @@ async function bcFuzzyLookup(partNumber){
   // returned empty because the stored value contained a separator.
   if(stripped.length>=5){
     const prefix=stripped.slice(0,5).replace(/'/g,"''");
-    const wantNorm=stripped.toUpperCase();
+    // wantNorm hoisted to function scope (shared with the 4b cross-field step above).
     try{
       const fields=["No","Vendor_Item_No","Common_Item_No"];
       const fetched=await Promise.all(
@@ -5807,7 +5847,7 @@ async function bcFuzzyLookup(partNumber){
         if(!items)continue;
         for(const it of items){if(it.number&&!candidates.has(it.number))candidates.set(it.number,it);}
       }
-      const localNorm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
+      // localNorm hoisted to function scope (shared with the 4b cross-field step above).
       const matches=[];
       for(const it of candidates.values()){
         if(localNorm(it.number)===wantNorm
@@ -5840,6 +5880,8 @@ async function bcFuzzyLookup(partNumber){
       }catch(_){}
     }catch(e){console.warn("bcFuzzyLookup normalized step failed:",e.message);}
   }
+  // Step 5 found nothing — surface any held-for-review cross-field substring suggestions (4b).
+  if(_crossFieldSuggestions.length)return{match:null,type:"fuzzy-crossfield",suggestions:_crossFieldSuggestions};
   return{match:null,type:null,suggestions:[]};
 }
 
