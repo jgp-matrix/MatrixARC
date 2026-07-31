@@ -21,7 +21,7 @@
 
 ---
 
-_(No items awaiting triage — all promoted to TODO.md.)_
+- [2026-07-31] BUG — "Non-legacy 0-BOM panel passes send-gate" — a panel WITH an extractionReport that extracted 0 BOM rows and lacks `manualVerifyRequired` passes `findIncompleteQuoteItems` (the per-row loop finds nothing) → a blank quote can be SENT. ZeroBomBanner shows but the send-gate doesn't block. Parallel to #119 (which fixed the legacy `!extractionReport` case); this is the non-legacy sibling — a ~1-line broadening of the same guard (add `_basePages(pan)>0 && (pan.bom||[]).length===0 && !manualVerifyRequired`). Surfaced by the #119 build lane 2026-07-31. — reported via Intake (source: Marc→Freddy)
 
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
