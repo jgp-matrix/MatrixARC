@@ -2,8 +2,10 @@
 
 **Purpose:** When a Claude.ai Freddy session ends and a new one starts, Jon pastes this document to bring the new Freddy up to speed immediately.
 
-**Last updated:** 2026-07-24
+**Last updated:** 2026-07-30 (EOD)
 **Also works for:** Mid-session reorientation after context compaction. Paste again if Freddy loses context.
+
+> **Current (2026-07-30 EOD):** prod **v1.24.61**, `master==origin` @ `1336f4fa`, **🧳 PROD FROZEN (Jon away)**. Shipped today v1.24.54–61 (multi-page Ref# fix, BC matching/pricing RE-ENABLED as default source of truth [only Royal/Codale scrapers stay off — see memory `project_rfq_only_pricing_mode`, CORRECTED], BC lead-times, F077 Vendor Sync UI, ?PN resilience, RFQ WYSIWYG vendor routing). **#1 open:** IP66/1200 deterministic Part#-recovery is built + on Test V.074 but not confirmed live — algorithm + plumbing both proven, yet Jon's re-extracts still showed IP66/1200 → recovery isn't executing → prime suspect a **stale service-worker bundle**; V.074 is instrumented with a `recoverMisread(trace)` log so ONE clean-cache re-extract pinpoints it. Full detail + ranked NEXT UP in SESSION-STATE.md.
 
 ---
 
