@@ -14283,7 +14283,9 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
       // If first call had NO bomRegion and we have one available, retry WITH CropBox.
       if(!bomRegion&&croppedBomDataUrl){
         console.warn("[BOM EXTRACT] server PDF-native (full page) returned 0 items, no bomRegion — JPEG crop fallback (lossy)");
-        try{return await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null,_regionParts);}
+        // #83: tag the result so the panel can warn the user to verify manually — this is the
+        // lossy JPEG-crop path (historically prone to OCR character-merging on dense BOMs).
+        try{const _jpegFb=await extractBomPageViaServer(dataUrl,feedback,userNotes,null,null,croppedBomDataUrl,null,_regionParts);if(_jpegFb&&(_jpegFb.items||[]).length>0)_jpegFb._fallbackExtraction="jpeg-crop";return _jpegFb;}
         catch(retryErr){console.warn("[BOM EXTRACT] JPEG crop fallback also failed:",retryErr?.message||retryErr);}
       }
       // bomRegion present + 0 items → falls through to degenerate-crop retry below (line 11776+)
@@ -14300,6 +14302,10 @@ async function extractBomPage(dataUrl,feedback="",userNotes="",originalPdfPath=n
           const uncropped=await extractBomPageViaServer(dataUrl,feedback,userNotes,originalPdfPath,pageNumber,croppedBomDataUrl,null,_regionParts);
           if((uncropped.items||[]).length>=items.length){
             uncropped._regionCropRetried=true;
+            // #83: the CropBox pass came back empty/all-placeholder and we recovered rows only via
+            // the uncropped full-page retry — a genuine fallback. Tag it so the panel warns the
+            // user to verify manually (only when the retry actually returned rows).
+            if((uncropped.items||[]).length>0)uncropped._fallbackExtraction="uncropped-retry";
             console.log(`[BOM EXTRACT] uncropped retry succeeded: ${uncropped.items.length} items (was ${items.length} ${allPlaceholder?"placeholder":"empty"})`);
             return uncropped;
           }
@@ -16273,6 +16279,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
         let pageItems=[],pageQs=[];
         let pageRejectReasons=[];
         let pageExtractionPath=null;
+        let pageFallback=null; // #83: records the fallback path (jpeg-crop / uncropped-retry) if the extractor had to fall back
         let pageRawModelOutput=null;
         // DECISION(v1.19.1057, L3 merge + gap-fill): Two-phase retry strategy.
         // Phase 1 (broad retry): If verification flags count mismatch or sequence
@@ -16301,6 +16308,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
             try{result=await extractBomPage(unit.dataUrl,"",notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);}finally{_pgHb.stop();}
           }
           if(result?.extractionPath){_extractionPathsSeen.add(result.extractionPath);pageExtractionPath=result.extractionPath;}
+          if(result?._fallbackExtraction&&!pageFallback)pageFallback=result._fallbackExtraction; // #83: sticky — once set, keep it (later retry passes don't clear a genuine fallback)
           if(result?.pdfQuality)pagePdfQuality=result.pdfQuality;
           if(!pageRawModelOutput&&result?.rawModelOutput)pageRawModelOutput=result.rawModelOutput;
           // L3 Phase 1: broad retry + merge
@@ -16434,6 +16442,7 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
           itemsFound:pageItems.length,
           unitsAttempted:units.length,
           extractionPath:pageExtractionPath,
+          fallbackReason:pageFallback, // #83: non-null when this page had to fall back to a lower-quality extraction path
           rejectReasons:pageRejectReasons,
           types:pg.types||[],
           pdfQuality:pagePdfQuality,
@@ -16716,6 +16725,10 @@ async function runExtractionTask(uid,projectId,panel,cbs={}){
       completenessWarning:(()=>{const ppo=mergeStats.perPageOutcomes||[];const flagged=ppo.filter(o=>o.extractionVerification?.status==="needs-review");if(!flagged.length&&!(mergeStats.finalSequenceGaps||[]).length)return null;const details=flagged.map(o=>{const v=o.extractionVerification;const parts=[];if(v.missingFromStart)parts.push(`items 1-${v.missingFromStart} missing from start`);if(v.missingFromEnd)parts.push(`items ${(v.expectedMaxItemNo||0)-v.missingFromEnd+1}-${v.expectedMaxItemNo} possibly missing from end`);if(v.sequenceGaps?.length)parts.push(`interior gaps: items ${v.sequenceGaps.slice(0,10).join(",")}`);if(v.countMismatch)parts.push(`count mismatch: extracted ${v.extractedCount} vs detected ${v.detectedLineCount}`);return(o.pageName||"?")+": "+parts.join("; ");});return{warning:true,details,finalSequenceGaps:mergeStats.finalSequenceGaps||[]};})(),
       timestamp:Date.now(),
       version:APP_VERSION,
+      // #83: fail-loud signal — extraction had to fall back to a lower-quality path (lossy JPEG
+      // crop or uncropped-region retry) but still returned rows. Surfaced in ScanResultsBanner so
+      // the user knows to verify the BOM manually. Additive only — does not alter extracted data.
+      ...((mergeStats.perPageOutcomes||[]).some(o=>o.fallbackReason)?{fallbackUsed:true,fallbackReasons:[...new Set((mergeStats.perPageOutcomes||[]).filter(o=>o.fallbackReason).map(o=>o.fallbackReason))]}:{}),
       ...(panel._manualVerifyRequired?{manualVerifyRequired:true}:{}),
     }:null;
     if(mergedBom.length>0||hazlocResult){
@@ -26189,6 +26202,11 @@ function ScanResultsBanner({panel,onDismiss}){
     const cwDetails=(cw.details||[]).join("; ")||"extraction may be incomplete";
     concerns.unshift(`⚠ Possible missing items: ${cwDetails}. Verify against the drawing.`);
   }
+  // #83: extraction fell back to a lower-quality path (lossy JPEG crop or uncropped-region retry)
+  // but still returned rows — the confident-looking-but-possibly-wrong case. Warn the user to verify
+  // manually. Derive from the explicit flag or, for older/other report shapes, from perPageOutcomes.
+  const fallbackUsed=!!r.fallbackUsed||(r.perPageOutcomes||[]).some(o=>o&&o.fallbackReason);
+  if(fallbackUsed)concerns.unshift(`⚠ Extraction fell back to a lower-quality path — part numbers may be misread. Verify the BOM against the drawing.`);
   if(concerns.length===0)return null;
   // B006 — dismiss-by-report: identify THIS scan (prefer the report timestamp; fall back to a
   // count/version key for legacy reports without one). Once the user dismisses this exact scan
@@ -26197,7 +26215,7 @@ function ScanResultsBanner({panel,onDismiss}){
   const _reportKey=String(r.timestamp||`${r.rawCount||0}-${r.finalCount||0}-${r.version||""}`);
   if(panel.scanBannerDismissedScan===_reportKey)return null;
   const fmtTs=()=>{try{return new Date(r.timestamp).toLocaleString("en-US",{month:"short",day:"numeric",hour:"numeric",minute:"2-digit",hour12:true});}catch(e){return "";}};
-  const isCritical=!!(cw&&cw.warning);
+  const isCritical=!!(cw&&cw.warning)||fallbackUsed; // #83: fallback extraction is a critical verify-manually warning
   return(
     <div style={{background:isCritical?"#4a1500":"#3a1f00",border:`1px solid ${isCritical?"#f97316":C.yellow}`,borderRadius:8,padding:expanded?"12px 14px":"8px 12px",marginBottom:12,fontSize:12}}>
       <div onClick={()=>setExpanded(!expanded)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer"}}>
@@ -28786,7 +28804,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(result?.extractionPath)_reExtractionPathsSeen.add(result.extractionPath);
           if(pgIdx>0)_clearStartAtOneVerif(result); // PRJ402501: continuation pages start above 1 — no false 1..N-missing warning
           if(result?.extractionVerification)_reVerifications.push({page:pg.name||`Page ${pgIdx+1}`,...result.extractionVerification});
-          _rePerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
+          _rePerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,fallbackReason:result?._fallbackExtraction||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           console.log(`[RE-EXTRACT] Page ${pgIdx+1} unit: ${items.length} items, ${(result.questions||[]).length} questions`);
           pageItems.push(...items);
@@ -29035,7 +29053,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           const result=await extractBomPage(unit.dataUrl,aiFeedback,notes,unit.originalPdfPath,unit.pageNumber,unit.croppedBomDataUrl,unit.bomRegion||null);
           if(pgIdx>0)_clearStartAtOneVerif(result); // PRJ402501: continuation pages start above 1 — no false 1..N-missing warning
           if(result?.extractionVerification)_fbVerifications.push({page:pg.name||`Page ${pgIdx+1}`,...result.extractionVerification});
-          _fbPerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
+          _fbPerPageOutcomes.push({pageId:pg.id,pageName:pg.name||`Page ${pgIdx+1}`,pageNumber:pg.pageNumber||null,itemsFound:(result.items||[]).length,extractionPath:result?.extractionPath||null,fallbackReason:result?._fallbackExtraction||null,rawModelOutput:(result?.rawModelOutput||"").slice(0,60000),extractionVerification:result?.extractionVerification||null});
           const items=translateItemsToPageCoords(result.items||result||[],unit.cropBounds);
           pageItems.push(...items);
           const qs=(result.questions||[]).map(q=>({...q,pageIdx:pgIdx,pageName:pg.name||`Page ${pgIdx+1}`}));
