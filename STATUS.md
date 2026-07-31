@@ -5,19 +5,16 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-29 · prod v1.24.53 · RFQ-only pricing (auto-pricing OFF) + manual Get-Prices (Mouser/DigiKey) LIVE · Sales in UAT · Step-2 price reconcile CF in DRY-RUN (not live)
+## Current — 🟢 2026-07-30 (eve) · prod v1.24.61 · BC = default source of truth (matching/pricing/lead-time ON; Royal/Codale scrapers OFF; API on) · F077 Vendor Sync UI LIVE · subagent-lane session (Freddy)
 
-> ## ▶ RESUME HERE (morning 2026-07-30) — Vendor Sync mapping is blocked; pick an unblock path.
-> **Goal Jon set:** "Set up DigiKey/Mouser in Vendor Sync and verify the BC write" (activate F075 Phase 2's opt-in optional-price BC write). **Jon deferred to the morning.**
-> **Already verified (live, prod controlled tab — no need to re-derive):**
-> - BC env = new UAT sandbox `MATR_SndBx_UAT_070926`, Connected.
-> - BC vendor numbers: **DigiKey = `V00196`** ("Digikey"), **Mouser = `V00304`** ("Mouser Electronics").
-> - Phase 2 reads `digikeyVendorNo`/`mouserVendorNo` from **`users/{uid}/config/vendorConfig`** (companyId is null → user-path doc; it currently holds only `vendorCodes`, both keys absent → that's why the optional write skipped).
-> **BLOCKER — no clean way to set those two keys:**
-> - App UI: the DigiKey "BC Vendor No" field (API Setup modal) does NOT persist on change (tested) — the keys are only written as a side-effect of the **"Update All DigiKey Prices" MASS sync** (prices every BC item via DigiKey — do NOT trigger casually). Mouser has NO vendor-number field at all.
-> - Direct Firestore write of the two keys = **blocked by the CCD safety classifier** (browser-injected mutations disallowed; app-mediated only).
-> **⇒ Phase 2's optional-BC-write is effectively STRANDED until a lightweight "map API vendor → BC vendor #" config UI exists — which is the queued "New-API-source BC-vendor check" item (now a PREREQUISITE, not a nicety).**
-> **OPTIONS for Jon (recommend #1):** (1) Build a small Vendor Sync config UI to set `digikeyVendorNo`/`mouserVendorNo` directly (no mass sync) — unblocks Phase 2 verify + IS the RS-Online item. (2) Run the full "Update All DigiKey Prices" mass sync (sets DigiKey config as a side-effect + bulk-prices all BC items; DigiKey only, not Mouser). (3) Jon sets the two numbers himself, then Freddy verifies the write end-to-end. Pushover P2 sent 2026-07-29 eve.
+> ## ▶ RESUME HERE (2026-07-30 eve → 2026-07-31) — IP66/1200 fix awaiting Jon's Test re-extract verify.
+> **Prod is FROZEN — nothing ships without Jon's go.** Today's shipped + staged work:
+> - **✅ SHIPPED prod v1.24.61:** RFQ WYSIWYG vendor routing (routes to BOM-displayed vendor; killed the stale-bcNo mis-route → Royal). Jon Test-verified.
+> - **⏳ ON TEST V.073 — awaiting Jon re-extract verify:** IP66/1200 deterministic Part#-recovery (`claude/ip66-partnum-recovery`). Headless regression recovers `640014405`/`8660025`; Coach-approved. **Live root-cause found this eve:** recovery read `window._pdfjs` without `await window.pdfjsReady()` → silent no-op on re-extract (why Jon's first two re-extracts still showed IP66/1200); fixed `177d037c` → Test V.073. **Jon: hard-refresh (unregister SW + Ctrl-Shift-R), confirm ribbon V.073, re-extract PRJ402501 Line 1 → Idx 7=640014405, Idx 44=8660025.** If still wrong on confirmed V.073 → instrument the bail point.
+> - **⏳ BUILT on branch `claude/mtx-vendor-display` (not on Test yet):** BC Fuzzy box shows vendor part# not MTX# (display-only, Part A). Deploy to Test after IP66 verify frees the Test channel (keep one thing under test at a time).
+> - **⏳ PLAN READY for Jon go (money-path):** bcFuzzyLookup misses in-BC parts — `docs/B-bcFuzzyLookup-misses-fix-plan.md` (Fix 1 = cross-field `contains` via the Item Browser path, exact-equality auto-apply gate).
+> - **⏳ SCOPE READY for Jon decision:** secondary-vendor RFQ opt-in — `docs/F-secondary-vendor-rfq-scope.md` (recommend Option A global toggle; 3 decisions needed).
+> - **Note:** F077 Vendor Sync UI is LIVE on prod. Remaining = Jon sets DigiKey `V00196` / Mouser `V00304` via Settings → Vendor Sync (data-config) to activate F075 optional API→BC writeback.
 
 > ## ✅ SHIPPED prod v1.24.52 (2026-07-29) — RFQ-send stale-Priced-Date hotfix (F075 finding #2).
 > Jon live-tested F075 (Test) and caught: RFQ-Send populated a fresh price but the Priced Date "stayed a May date." Root: the apiGroups apply (`onApiPriced` ~:43127) set a fresh `priceDate` but left a stale `bcPoDate`; `_effectivePriceDate` returns `bcPoDate` for `priceSource:"bc"` rows → column showed the old date. Surgical fix: strip the `bcPoDate` key on API apply so it falls through to the fresh `priceDate`. Coach **APPROVE-WITH-NITS** (mechanism + all readers + save-durability confirmed; NIT = edge case where a part with BOTH a stale BC purchase-price date AND a fresh scraper price can re-derive `bcPoDate` on a BC-connected reload — the durable fix is the `priceSource:"bc"` mislabeling, deferred to F075 Phase 2). Jon verified steps 1-3 on Test V.071 → cherry-picked `d6fdacb7`→master `bed91da7` → deploy.sh → **prod 46fd144d / v1.24.52**. Hotfix branch `claude/rfq-price-date-hotfix` (Test-build commits left off master).
