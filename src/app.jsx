@@ -17870,6 +17870,23 @@ function findIncompleteQuoteItems(project){
         isVerificationBlock:true,
       });
     }
+    // #119: LEGACY panels (no extractionReport) bypass the manualVerifyRequired net above, AND the
+    // per-row loop below never fires for a 0-row BOM — so a blank legacy BOM slips through the Send
+    // gate silently and a blank quote can be emailed. HARD-block Send on a genuinely-empty legacy
+    // panel, mirroring the ZeroBomBanner precondition (drawings present + zero BOM rows). Non-empty
+    // legacy BOMs have rows → `(pan.bom||[]).length===0` is false → skipped (no false-positive). Scoped
+    // to `!pan.extractionReport` (legacy) to stay within #119; the identical 0-BOM Send hole for
+    // NON-legacy panels (extractionReport present, 0 rows, manualVerifyRequired unset) is a related
+    // gap left out of scope here — flag for follow-up.
+    if(!pan.extractionReport&&_basePages(pan).length>0&&(pan.bom||[]).length===0){
+      issues.push({
+        panelName:pan.name||`Panel ${pi+1}`,
+        partNumber:"(entire BOM)",
+        description:"Legacy panel has drawings but zero BOM items",
+        missing:["BOM items"],
+        isBlankBomBlock:true,
+      });
+    }
     const bom=pan.bom||[];
     for(const r of bom){
       if(_isExcludedFromPriceCheck(r))continue;
@@ -17943,11 +17960,18 @@ function formatIncompleteQuoteAlert(issues){
   // DECISION(v1.20.108): Split verification blocks from pricing issues for distinct messaging.
   const verifyIssues=issues.filter(i=>i.isVerificationBlock);
   const techReviewIssues=issues.filter(i=>i.isTechReviewBlock); // #199 P3
-  const pricingIssues=issues.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock);
+  const blankBomIssues=issues.filter(i=>i.isBlankBomBlock); // #119 legacy 0-BOM hard block
+  const pricingIssues=issues.filter(i=>!i.isVerificationBlock&&!i.isTechReviewBlock&&!i.isBlankBomBlock);
   const parts=[];
   if(verifyIssues.length){
     const panelNames=verifyIssues.map(v=>v.panelName).join(", ");
     parts.push(`⚠ ${panelNames}: This BOM was extracted from a low-quality source and has not been manually verified. Review all part numbers before sending.`);
+  }
+  if(blankBomIssues.length){
+    // #119: distinct message — a legacy panel with drawings but ZERO BOM items would otherwise
+    // send a blank quote silently (no Phase-1 net fired for legacy panels missing extractionReport).
+    const panelNames=blankBomIssues.map(v=>v.panelName).join(", ");
+    parts.push(`⚠ ${panelNames}: this panel has drawings but NO BOM items (legacy project — no extraction diagnostics). Populate the BOM (verify the BOM-tagged page and run extraction, or add items manually) before sending.`);
   }
   if(techReviewIssues.length){
     // #199 P3 — distinct Tech-Review message (Analyst Q2/R2 wording).
@@ -25975,9 +25999,25 @@ function StampedDrawing({src,overlay,width,height,onClick}){
 // remediation hint based on the failure mode.
 function ZeroBomBanner({panel,onTriggerReextract}){
   const r=panel.extractionReport;
-  if(!r)return null;
   const hasBom=(panel.bom||[]).length>0;
-  if(hasBom)return null;
+  if(hasBom)return null; // real BOM present — never warn (covers legacy panels with a genuine, non-empty BOM)
+  if(!r){
+    // #119: LEGACY panels (pre-v1.19.598) carry NO extractionReport, so the rich diagnostic banner
+    // below can't render — every Phase-1 safety net early-returns on the missing report. Yet the
+    // render site only mounts this component when the panel has drawings (_basePages>0) AND zero BOM
+    // rows, so reaching here means a genuinely-empty legacy BOM. Show a minimal warning derived purely
+    // from the live BOM count (hasBom above) so a blank legacy quote isn't completely silent. This
+    // CANNOT false-positive on a real legacy BOM — those have rows, so hasBom short-circuits first.
+    return(
+      <div style={{background:"#3a0a0a",border:"2px solid #ef4444",borderRadius:10,padding:"14px 16px",marginBottom:12,animation:"fadeIn 0.3s ease-out"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:8}}>
+          <span style={{fontSize:20}}>🛑</span>
+          <span style={{fontSize:14,fontWeight:800,color:"#fca5a5",letterSpacing:0.3}}>NO BOM ITEMS</span>
+        </div>
+        <div style={{fontSize:13,color:"#fecaca",lineHeight:1.5}}>This panel has drawings but zero BOM items. It predates extraction diagnostics (legacy project), so no per-page detail is available. <strong>Do not send a quote from this panel</strong> until the BOM is populated — verify the BOM-tagged page and run extraction, or add items manually.</div>
+      </div>
+    );
+  }
   const bomPagesCount=r.bomPageCount||0;
   if(bomPagesCount===0)return null; // user hasn't tagged any pages BOM — this banner is for the "tagged but empty" case
   const perPage=r.perPageOutcomes||[];
