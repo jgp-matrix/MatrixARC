@@ -13121,8 +13121,8 @@ function filterNonBomRows(bom){
 }
 
 // ── INTERNAL PART NUMBER RESOLUTION ──
-// Some BOMs (e.g. FLS) use a "Part No" column that contains the customer's internal
-// catalog code (uniform NNNN-NNNN or 9-digit format) rather than the manufacturer's
+// Some BOMs use a "Part No" column that contains the customer's internal
+// catalog code (dashed NNNN-NNNN(N) form only) rather than the manufacturer's
 // part number. The actual MFR PN is embedded in the Description field. This filter
 // detects that pattern and extracts the MFR PN from the description, preserving the
 // original internal code in customerPartNumber.

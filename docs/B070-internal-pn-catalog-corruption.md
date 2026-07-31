@@ -1,6 +1,6 @@
 # B070 — resolveInternalPartNumbers corrupts all-digit manufacturer catalog part numbers
 
-**Status:** OPEN · HIGH (money-path, silent data corruption) · root cause VERIFIED live · fix Jon-approved + building (2026-07-31).
+**Status:** RESOLVED (merging to prod) · HIGH (money-path, silent data corruption) · root cause VERIFIED live · fix Coach-approved + **verified on Test V.071** (2026-07-31): re-extract of the same project → Ref#7 `partNumber`=`640014405`, Ref#44 `8660025`, zero `IP66`/`1200` rows, `internalPnResolutions` empty. Cherry-picked to master `fa1b2d53`.
 **Supersedes:** the "IP66/1200 misread recovery" theory (branch `claude/ip66-partnum-recovery`, dropped 2026-07-31, tip `0556aaa6`). The model never misread these — see below.
 
 ## Symptom
@@ -28,7 +28,7 @@ The raw model output (extractionPath `pdf-native`) shows the model emitted `6400
 Self-contained (`_INTERNAL_PN_RE` is used only inside `resolveInternalPartNumbers`). After this, an all-digit Rittal BOM no longer trips the >50% trigger → the function early-returns.
 **Change 2 (defense-in-depth, `_looksLikeMfrPn` ~13139):** `if(/^IP\d{2}[A-Z]?$/i.test(tok))return false;` — an ingress rating is a spec, never a PN (protects genuinely-internal dashed-code BOMs).
 
-**Risk:** loses auto-recovery for a hypothetical customer who prints bare 7–12-digit *internal* codes with the real PN in the description — no evidence such a customer exists; all-digit *manufacturer* BOMs are demonstrably common and actively corrupted today. Net-safer. Future-proof option if that case ever arises: gate recovery on a detected "Customer P/N" column header rather than a structural guess. The dashed `^\d{3,4}-\d{3,5}$` customer-code form is retained.
+**Risk:** loses auto-recovery for a customer who prints bare 7–12-digit *internal* codes with the real PN in the description. **FLS clarification (Jon, 2026-07-31):** FLS (named in the old code comment) is a **customer, not a supplier** — their numbers are dash-less project/PO numbers, and any parts they supply are customer-supplied anyway, so they do NOT rely on this recovery. No known customer depends on the dropped 9-digit path; all-digit *manufacturer* BOMs are demonstrably common and were actively corrupted. Net-safer. Broader matcher note from Jon (dash-agnostic matching, both dashed + un-dashed forms) captured as a separate FEAT in INBOX. Future-proof option if that case ever arises: gate recovery on a detected "Customer P/N" column header rather than a structural guess. The dashed `^\d{3,4}-\d{3,5}$` customer-code form is retained.
 
 ## Rollout
 Money-path → branch → Coach review → Test (`deploy-test.sh`) → **Jon re-extracts this same project and confirms `640014405`/`8660025` land in `partNumber`** → merge to master + prod (`deploy.sh`). Prod frozen until Jon's Test verify.
