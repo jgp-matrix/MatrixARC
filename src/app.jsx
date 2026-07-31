@@ -36605,38 +36605,6 @@ ${fullText.slice(0,8000)}`;
               </button>
               </>}
           </div>
-          {/* TEMP TEST BUTTON — remove when BC upload is verified */}
-          {bcProjectNumber&&quoteHeader?.pdfUrl&&(
-            <div style={{marginTop:8,padding:"8px 10px",background:"#1a0d00",border:"1px dashed #f97316",borderRadius:8,display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontSize:10,color:"#f97316",fontWeight:700,letterSpacing:0.5,textTransform:"uppercase"}}>Test</span>
-              <button onClick={async()=>{
-                setBcAttachMsg('Uploading test PDF to BC…');
-                try{
-                  const vendor=(quoteHeader.supplier||'Supplier').replace(/[^a-z0-9 &]/gi,' ').replace(/\s+/g,' ').trim();
-                  const rfqId=(quoteHeader.quoteId||'').replace(/[^a-z0-9-_]/gi,'').trim();
-                  const origName=(quoteHeader.fileName||`${vendor} Quote.pdf`).replace(/\.pdf$/i,'');
-                  const bcFileName=`QTE_S-[${vendor}][${rfqId||'RFQ'}] ${origName}.pdf`.replace(/\s+/g,' ');
-                  const resp=await fetch(quoteHeader.pdfUrl);
-                  if(!resp.ok)throw new Error(`Storage fetch ${resp.status}`);
-                  const ab=await resp.arrayBuffer();
-                  await bcAttachPdfQueued(bcProjectNumber,bcFileName,ab);
-                  setBcAttachMsg(`✓ Test upload OK: ${bcFileName}`);
-                  setTimeout(()=>setBcAttachMsg(''),8000);
-                }catch(e){setBcAttachMsg(`⚠ Test failed: ${e.message}`);}
-              }} style={btn('#1a0d00','#f97316',{fontSize:12,border:'1px solid #f9731644',padding:'4px 12px'})}>
-                📎 Test Upload to BC ({bcProjectNumber})
-              </button>
-              <span style={{fontSize:10,color:"#94a3b8"}}>→ {[quoteHeader.supplier,quoteHeader.quoteId,quoteHeader.fileName].filter(Boolean).join(' · ')}</span>
-            </div>
-          )}
-          {bcAttachMsg&&(
-            <div style={{fontSize:12,marginTop:6,padding:"5px 10px",borderRadius:6,
-              background:bcAttachMsg.startsWith('✓')?C.greenDim:bcAttachMsg.startsWith('⚠')?C.redDim:"#0a0a1a",
-              color:bcAttachMsg.startsWith('✓')?C.green:bcAttachMsg.startsWith('⚠')?C.red:C.muted,
-              border:`1px solid ${bcAttachMsg.startsWith('✓')?C.green+'44':bcAttachMsg.startsWith('⚠')?C.red+'44':C.border}`}}>
-              {bcAttachMsg}
-            </div>
-          )}
         </>)}
 
         {/* PUSHING PHASE */}
@@ -55768,6 +55736,11 @@ function TestEnvBanner(){
   // docs/TEST-BUILDS.md). TEST_BUILD is a global const from public/index.html (like APP_VERSION);
   // guard with a fallback in case an older cached index.html predates the constant.
   var tb=(typeof TEST_BUILD!=="undefined"?TEST_BUILD:"???");
-  return <div style={{position:"fixed",top:0,left:0,right:0,zIndex:2147483647,background:"#b45309",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",padding:"4px 12px",letterSpacing:0.3,fontFamily:"inherit",boxShadow:"0 2px 10px rgba(0,0,0,0.45)"}}>🧪 TEST ENVIRONMENT · <span style={{fontSize:15,letterSpacing:0.6}}>Test V.{tb}</span> (base {APP_VERSION}) — shared prod data · email/push suppressed · NOT production</div>;
+  // G015: z-index sits BELOW the full-screen modal band (Drawing Review = 9999, dialogs =
+  // 10000/10001) so those focus contexts render over the ribbon instead of the ribbon covering
+  // their top-edge chrome (the drawing-review markup toolbar was being hidden). 9000 is still far
+  // above normal page content, so the banner stays unmissable during ordinary app use. Ribbon-only
+  // change, IS_TEST_ENV-gated — zero prod impact (prod renders no ribbon).
+  return <div style={{position:"fixed",top:0,left:0,right:0,zIndex:9000,background:"#b45309",color:"#fff",fontWeight:800,fontSize:13,textAlign:"center",padding:"4px 12px",letterSpacing:0.3,fontFamily:"inherit",boxShadow:"0 2px 10px rgba(0,0,0,0.45)"}}>🧪 TEST ENVIRONMENT · <span style={{fontSize:15,letterSpacing:0.6}}>Test V.{tb}</span> (base {APP_VERSION}) — shared prod data · email/push suppressed · NOT production</div>;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<><TestEnvBanner/><Root/></>);
