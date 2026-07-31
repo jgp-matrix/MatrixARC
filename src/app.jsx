@@ -392,6 +392,49 @@ function _bcEnvMismatchInfo(project){
   };
 }
 
+// ── F069: HARD-BLOCK user-initiated BC writes when project env ≠ Settings env ──
+// `_bcEnvMismatched` above is a SILENT soft-skip used at background/auto-sync
+// sites (sell-price autosync, on-open sync, panel-add). But several USER-initiated
+// write gestures (manual ⇅ Sync, Quote Send BC sync, pre-print sync) had NO env
+// check at all — a user could push planning lines to the WRONG connected BC
+// environment and corrupt a same-numbered job there.
+//
+// Decision D2 (Jon, BC-BINDING plan): user gestures HARD-BLOCK; reads/background
+// stay soft-skip. `_assertBcProjectEnv` throws a tagged BcEnvMismatchError so a
+// single guard at the top of each user gesture aborts the write and surfaces ONE
+// toast per gesture. Uses the SAME rule as `_bcEnvMismatched`, so it does NOT
+// fire when project.bcEnv is unset (legacy/solo) — only a real mismatch blocks.
+class BcEnvMismatchError extends Error{
+  constructor(project){
+    const projEnv=(project&&project.bcEnv)||"(unknown)";
+    const curEnv=(_bcConfig&&_bcConfig.env)||"(none)";
+    super(`BC environment mismatch: project is linked to "${projEnv}" but the active BC connection is "${curEnv}".`);
+    this.name="BcEnvMismatchError";
+    this.projectBcEnv=projEnv;this.currentBcEnv=curEnv;
+  }
+}
+function _assertBcProjectEnv(projectNumber,project,opLabel){
+  if(_bcEnvMismatched(project)){
+    const err=new BcEnvMismatchError(project);
+    err.opLabel=opLabel||null;err.bcProjectNumber=projectNumber||null;
+    console.warn(`[F069] BC write BLOCKED (${opLabel||"BC op"}) — project bcEnv "${err.projectBcEnv}" ≠ current "${err.currentBcEnv}" (${projectNumber||"?"})`);
+    throw err;
+  }
+}
+// Once-per-gesture toast. A single Send/print fans out into many panel syncs, so
+// throttle identical env-mismatch alerts to surface the block ONCE per gesture
+// rather than per panel. Callers place the assert BEFORE the panel loop, so this
+// throttle is a belt-and-suspenders dedup for any burst.
+let _bcEnvToastAt=0;
+function _bcEnvMismatchToast(err){
+  const now=Date.now();
+  if(now-_bcEnvToastAt<4000)return; // collapse a burst within one gesture
+  _bcEnvToastAt=now;
+  if(typeof arcAlert==="function"){
+    arcAlert(`BC environment mismatch — this project is linked to «${err.projectBcEnv}», but you're connected to «${err.currentBcEnv}». Nothing was written to Business Central. Switch environments from the BC pill in the toolbar (BC Settings), then retry.`,{kind:"error",title:"BC write blocked — wrong environment"});
+  }
+}
+
 async function loadBcConfig(companyId){
   if(!companyId)return;
   try{
@@ -28487,6 +28530,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
 
   async function syncPlanningLinesToBC(){
     if(!bcProjectNumber||bcSyncing)return;
+    // F069: HARD-BLOCK a manual sync to the WRONG BC environment (D2). This
+    // gesture IS the BC write, so abort entirely and toast once on mismatch.
+    try{_assertBcProjectEnv(bcProjectNumber,project,"Manual ⇅ Sync to BC");}
+    catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);return;}throw e;}
     // DECISION(v1.19.487): Skip sync if BOM hasn't changed since last sync
     const curHash=computePanelBomHash(panel);
     if(curHash===(panel.bomSyncHash||"")&&!bcSyncErrors.length){
@@ -37334,7 +37381,13 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
         :m.to;
       // DECISION(v1.19.460): Full BC sync before locking — ensures planning lines match ARC
       if(project.bcProjectNumber&&_bcToken){
-        for(let i=0;i<(project.panels||[]).length;i++){
+        // F069: block the pre-lock sync if this project belongs to a different BC
+        // env (D2). The email is already sent above, so skip the sync + toast once
+        // rather than aborting the whole send.
+        let _bcEnvOk=true;
+        try{_assertBcProjectEnv(project.bcProjectNumber,project,"Quote Send BC sync");}
+        catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);_bcEnvOk=false;}else throw e;}
+        if(_bcEnvOk)for(let i=0;i<(project.panels||[]).length;i++){
           try{await bcSyncPanelPlanningLines(project.bcProjectNumber,i+1,project.panels[i],project.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",i+1,"failed:",e);}
         }
       }
@@ -42749,6 +42802,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     // Previously awaited full sync (30-45s for 50+ items) before showing any UI.
     if(!proj.quoteLocked&&(proj.panels||[]).some(p=>(p.bom||[]).some(r=>!r.isLaborRow))){
       (async()=>{
+        // F069: block a wrong-env pre-print sync (D2) — toast once, skip the loop.
+        try{_assertBcProjectEnv(bcNum,proj,"Pre-print BC sync");}
+        catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);return;}throw e;}
         for(let i=0;i<(proj.panels||[]).length;i++){
           try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print BC sync panel",i+1,"failed:",e);}
         }
@@ -43672,7 +43728,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         await sendGraphEmail(graphToken,m.to,_subject,html,pdfBase64,pdfName,_extraAtts);
                         // Full BC sync before locking
                         if(_proj.bcProjectNumber&&_bcToken){
-                          for(let pi=0;pi<(_proj.panels||[]).length;pi++){
+                          // F069: block a wrong-env pre-lock sync (D2). Email already sent — skip + toast once.
+                          let _bcEnvOk=true;
+                          try{_assertBcProjectEnv(_proj.bcProjectNumber,_proj,"Quote Send BC sync");}
+                          catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);_bcEnvOk=false;}else throw e;}
+                          if(_bcEnvOk)for(let pi=0;pi<(_proj.panels||[]).length;pi++){
                             try{await bcSyncPanelPlanningLines(_proj.bcProjectNumber,pi+1,_proj.panels[pi],_proj.name);}catch(e){console.warn("[QUOTE SEND] BC sync panel",pi+1,"failed:",e);}
                           }
                         }
@@ -43991,9 +44051,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                     const checked=prePrintChecklist.issues.filter(is=>is.checked);
                     const proj=projectRef.current;
                     const bcNum=proj.bcProjectNumber;
+                    // F069: gate the pre-print "sync" fixes on env match (D2) — evaluate once
+                    // per gesture; toast once and skip only the BC-sync fixes on mismatch.
+                    let _bcEnvOk=true;
+                    if(bcNum){try{_assertBcProjectEnv(bcNum,proj,"Pre-print checklist BC sync");}
+                    catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);_bcEnvOk=false;}else throw e;}}
                     // Process checked items
                     for(const issue of checked){
-                      if(issue.type==="sync"&&bcNum&&_bcToken){
+                      if(issue.type==="sync"&&bcNum&&_bcToken&&_bcEnvOk){
                         for(let i=0;i<(proj.panels||[]).length;i++){
                           const curHash=computePanelBomHash(proj.panels[i]);
                           if(curHash!==(proj.panels[i].bomSyncHash||"")){
@@ -44248,7 +44313,11 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                 const proj=projectRef.current;
                 const bcNum=proj.bcProjectNumber;
                 if(bcNum&&_bcToken){
-                  for(let i=0;i<(proj.panels||[]).length;i++){
+                  // F069: block a wrong-env sync (D2) — toast once, skip sync, still continue to upload prompt.
+                  let _bcEnvOk=true;
+                  try{_assertBcProjectEnv(bcNum,proj,"Pre-print Sync BC & Continue");}
+                  catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);_bcEnvOk=false;}else throw e;}
+                  if(_bcEnvOk)for(let i=0;i<(proj.panels||[]).length;i++){
                     try{await bcSyncPanelPlanningLines(bcNum,i+1,proj.panels[i],proj.name);}catch(e){console.warn("Pre-print sync panel",i+1,"failed:",e);}
                   }
                 }
