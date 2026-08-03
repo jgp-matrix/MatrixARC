@@ -2,10 +2,31 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // System version — all authenticated users can read, admins write on deploy
+    // System version — all authenticated users can read; any authenticated user can write
+    // (unchanged trust model for _system/version, written by the first admin who loads a new build).
+    // F086: `globalBroadcast` is deliberately EXCLUDED from this wildcard's write (docId guard) and
+    // locked to admins by the more-specific match below. This guard is REQUIRED: Firestore rules are
+    // additive (OR-combined), so without it this permissive wildcard would keep granting the very
+    // write the specific rule is meant to restrict.
     match /_system/{docId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null;
+      allow write: if request.auth != null && docId != 'globalBroadcast';
+    }
+    // F086: admin global broadcast. READ = any authed user (everyone must receive it). WRITE =
+    // admins only, resolved server-side. A top-level _system path carries no companyId, so the writer
+    // must STAMP the companyId they administer; the rule then verifies (a) sentBy == their own uid
+    // (anti-spoof, mirrors the notifications rule) and (b) they hold role 'admin' in that company's
+    // members subcollection. A non-admin cannot self-elevate — member docs are write-protected and
+    // role self-edit is blocked — so this is airtight against non-admins. NOTE for Coach: companyId is
+    // attacker-supplied, but the membership+role get() gates on it, so the worst a malicious
+    // admin-of-their-own-company can do is broadcast — which is exactly the capability being granted.
+    match /_system/globalBroadcast {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.data.sentBy == request.auth.uid
+        && request.resource.data.get('companyId', null) != null
+        && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid))
+        && get(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid)).data.role == 'admin';
     }
 
     // Users can read/write their own data

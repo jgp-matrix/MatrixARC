@@ -2499,6 +2499,14 @@ function ArcDialogHost(){
 let _appCtx={uid:null,companyId:null,role:null,permissions:{},projectsPath:null,configPath:null,company:{name:null,logoUrl:null,address:null,phone:null}};
 function isReadOnly(){return _appCtx.role==="view";}
 function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
+// ── F086 global-broadcast seen-dedup (localStorage) ──
+// Stops the top-right nag card from re-showing on every reconnect/remount. VERSION is
+// keyed by the served version string so "Later" suppresses that build until a NEWER one
+// ships; ADMIN messages are keyed by sentAt so only a strictly-newer message re-shows.
+function _bcVersionSeen(v){try{return localStorage.getItem('arc_broadcast_seen_version')===v;}catch(_){return false;}}
+function _bcMarkVersionSeen(v){try{localStorage.setItem('arc_broadcast_seen_version',v);}catch(_){}}
+function _bcAdminSeenAt(){try{return parseInt(localStorage.getItem('arc_broadcast_seen')||'0',10)||0;}catch(_){return 0;}}
+function _bcMarkAdminSeen(ts){try{localStorage.setItem('arc_broadcast_seen',String(ts));}catch(_){}}
 // DECISION(v1.19.758): Helper for granular permission checks. Returns true when the
 // current user has the named permission flag in companies/{cid}/members/{uid}.permissions
 // OR is an admin (admins implicitly have every permission). Add new flags by toggling
@@ -53271,7 +53279,10 @@ function App({user}){
   const [showReportIssue,setShowReportIssue]=useState(false);
   const [showDebugLogs,setShowDebugLogs]=useState(false);
   const [reportButtonDismissed,setReportButtonDismissed]=useState(false);
-  const [newVersionAvailable,setNewVersionAvailable]=useState(null); // null or "v1.19.XXX"
+  // F086: unified broadcast state drives the top-right nag card for BOTH triggers:
+  //   {type:'version', id:<served version string>}  — new deploy detected (version.json poll + _system/version snapshot)
+  //   {type:'admin',   message, id:<sentAt>}         — admin global message (_system/globalBroadcast)
+  const [broadcast,setBroadcast]=useState(null);
   const [companyId,setCompanyId]=useState(null);
   const [userRole,setUserRole]=useState(null);
   const [companyName,setCompanyName]=useState(null);
@@ -54186,17 +54197,59 @@ INSTRUCTIONS:
   },[user.uid]);
 
   // DECISION(v1.19.415): Version update push notification — listens to Firestore _system/version doc.
-  // When a new deploy changes the version, ALL logged-in users see a banner instantly.
-  // The deploy script writes the new version to Firestore after deploying.
+  // When a new deploy changes the version, ALL logged-in users see the nag card instantly.
+  // The deploy script writes the new version to Firestore after deploying. F086: this stays as
+  // the INSTANT version trigger; the version.json poll below is the credential-free backstop.
   useEffect(()=>{
     // Also write current version on load (in case _system/version doesn't exist yet)
     if(userRole==="admin")fbDb.doc("_system/version").set({version:APP_VERSION,updatedAt:Date.now()},{merge:true}).catch(()=>{});
     const unsub=fbDb.doc("_system/version").onSnapshot(snap=>{
       if(!snap.exists)return;
       const remote=snap.data().version;
-      if(remote&&remote!==APP_VERSION)setNewVersionAvailable(remote);
+      // Route into the unified broadcast state; skip if the user already clicked "Later" on this build.
+      if(remote&&remote!==APP_VERSION&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote});
     },()=>{});
     return()=>unsub();
+  },[]);
+
+  // F086: admin global-message listener — a separate top-level doc from _system/version so an
+  // admin broadcast never collides with the version write. onSnapshot → unified broadcast state
+  // (dismissible), seen-dedup'd by sentAt so a reconnect/remount doesn't re-pop an old message.
+  useEffect(()=>{
+    const unsub=fbDb.doc("_system/globalBroadcast").onSnapshot(snap=>{
+      if(!snap.exists)return;
+      const d=snap.data()||{};
+      const sentAt=Number(d.sentAt)||0;
+      if(d.type==='admin'&&d.message&&sentAt>_bcAdminSeenAt())setBroadcast({type:'admin',message:String(d.message),id:sentAt});
+    },()=>{});
+    return()=>unsub();
+  },[]);
+
+  // F086: version.json poll — credential-free auto-detect of a new deploy while the tab stays open.
+  // deploy.sh writes public/version.json every deploy. Fetch no-store every ~4 min + whenever the
+  // tab becomes visible; on mismatch raise a {type:'version'} broadcast (unless "Later"-suppressed).
+  // NEVER clobbers a pending admin message (admin takes precedence until dismissed).
+  useEffect(()=>{
+    let cancelled=false;
+    async function checkVersion(){
+      try{
+        const r=await window.fetch('/version.json?t='+Date.now(),{cache:'no-store'});
+        if(!r.ok)return;
+        const j=await r.json();
+        const remote=j&&j.version;
+        if(cancelled||!remote||remote===APP_VERSION||_bcVersionSeen(remote))return;
+        setBroadcast(b=>{
+          if(b&&b.type==='admin')return b;                       // don't wipe an unread admin message
+          if(b&&b.type==='version'&&b.id===remote)return b;       // already showing this build
+          return{type:'version',id:remote};
+        });
+      }catch(_){/* offline / transient — try again next tick */}
+    }
+    const iv=setInterval(checkVersion,4*60*1000);
+    function onVis(){if(document.visibilityState==='visible')checkVersion();}
+    document.addEventListener('visibilitychange',onVis);
+    checkVersion();
+    return()=>{cancelled=true;clearInterval(iv);document.removeEventListener('visibilitychange',onVis);};
   },[]);
 
   // Register handler so background extraction tasks can update App state after navigation
@@ -54458,13 +54511,17 @@ INSTRUCTIONS:
 
   return(
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
-      {/* DECISION(v1.19.415): New version banner — pushed to all users via Firestore onSnapshot */}
-      {/* DECISION(v1.19.610): If bg tasks are running, warn and clean up Firestore orphans before
-          reloading. Noah's re-extract died mid-flight on v1.19.608→609 deploy because this banner
-          let him hard-reload with an in-flight task, leaving a ghost activeExtractions doc that
-          flagged every project. Fix: confirm first, then bgError all running tasks (which triggers
-          rbgError → Firestore status="error" → 15s auto-delete) before the reload. */}
-      {newVersionAvailable&&(()=>{
+      {/* F086: unified top-right nag card — restyled from the old full-width version banner.
+          Drives BOTH triggers off the single `broadcast` state:
+            • type:'version' → PERSISTENT (no auto-dismiss); "Refresh & Update Now" (hard reload
+              via the UNCHANGED part-1 safeRefresh) + "Later" (seen-dedup suppresses this build).
+            • type:'admin'   → DISMISSIBLE admin message; "Dismiss" (seen-dedup by sentAt).
+          Fixed top-right, pulseYellow flash. Passive card — never autofocuses or navigates, so it
+          can't steal focus or yank the user off a project (Dashboard Command Center + Async rules).
+          DECISION(v1.19.610) preserved: safeRefresh still warns + cleans up Firestore orphans for
+          any running bg task before the (now hard) reload. */}
+      {broadcast&&(()=>{
+        const isVersion=broadcast.type==='version';
         const runningTasks=Object.values(_bgTasks||{}).filter(t=>t.status==='running');
         const hasRunning=runningTasks.length>0;
         async function safeRefresh(){
@@ -54486,14 +54543,36 @@ INSTRUCTIONS:
           }catch(e){/* best-effort — reload regardless */}
           window.location.reload();
         }
+        const cardStyle={position:"fixed",top:16,right:16,zIndex:10000,maxWidth:360,background:"#12122a",border:"1px solid #fde047",borderRadius:12,padding:"14px 16px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",gap:10,animation:"pulseYellow 1.6s ease-in-out infinite"};
+        if(isVersion){
+          return(
+            <div style={cardStyle} role="status" aria-live="polite">
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:18}}>🚀</span>
+                <span style={{fontSize:14,fontWeight:800,color:"#fff"}}>New version available</span>
+              </div>
+              <div style={{fontSize:12.5,color:"#e2e8f0",lineHeight:1.45}}>
+                {hasRunning
+                  ?`A new version of ARC (${broadcast.id}) is available. You have ${runningTasks.length} task${runningTasks.length>1?'s':''} running — finish your current work, then click to refresh (refreshing will cancel them).`
+                  :`A new version of ARC (${broadcast.id}) is available. Finish your current work, then click to refresh.`}
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
+                <button onClick={()=>{_bcMarkVersionSeen(broadcast.id);setBroadcast(null);}} style={{background:"none",border:"1px solid #ffffff33",borderRadius:6,padding:"5px 12px",color:"#cbd5e1",fontSize:12,cursor:"pointer"}}>Later</button>
+                <button onClick={safeRefresh} style={{background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"6px 14px",fontSize:13,fontWeight:800,cursor:"pointer"}}>{hasRunning?"Cancel & Update Now":"Refresh & Update Now"}</button>
+              </div>
+            </div>
+          );
+        }
         return(
-          <div style={{position:"fixed",top:0,left:0,right:0,zIndex:10000,background:hasRunning?"linear-gradient(90deg,#451a03,#b45309)":"linear-gradient(90deg,#1e3a5f,#2563eb)",padding:"10px 20px",display:"flex",alignItems:"center",justifyContent:"center",gap:16,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
-            <span style={{fontSize:14,fontWeight:700,color:"#fff"}}>🚀 New version {newVersionAvailable} is available!</span>
-            <span style={{fontSize:12,color:hasRunning?"#fde68a":"#93c5fd"}}>
-              {hasRunning?`⚠ ${runningTasks.length} task${runningTasks.length>1?'s':''} running — refresh will cancel them`:"Please refresh to get the latest features and fixes."}
-            </span>
-            <button onClick={safeRefresh} style={{background:"#fff",color:hasRunning?"#7c2d12":"#1e3a5f",border:"none",borderRadius:6,padding:"6px 16px",fontSize:13,fontWeight:700,cursor:"pointer"}}>{hasRunning?"Cancel & Refresh":"Refresh Now"}</button>
-            <button onClick={()=>setNewVersionAvailable(null)} style={{background:"none",border:"1px solid #ffffff44",borderRadius:6,padding:"4px 10px",color:"#fff",fontSize:12,cursor:"pointer"}}>Later</button>
+          <div style={cardStyle} role="status" aria-live="polite">
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:18}}>📢</span>
+              <span style={{fontSize:14,fontWeight:800,color:"#fff"}}>Message from Admin</span>
+            </div>
+            <div style={{fontSize:13,color:"#e2e8f0",lineHeight:1.45,whiteSpace:"pre-wrap"}}>{broadcast.message}</div>
+            <div style={{display:"flex",justifyContent:"flex-end"}}>
+              <button onClick={()=>{_bcMarkAdminSeen(broadcast.id);setBroadcast(null);}} style={{background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"6px 14px",fontSize:13,fontWeight:800,cursor:"pointer"}}>Dismiss</button>
+            </div>
           </div>
         );
       })()}
@@ -54659,6 +54738,21 @@ INSTRUCTIONS:
           <div style={{width:1,height:36,background:C.border,marginLeft:2,flexShrink:0}}/>
           {/* ✨ ARC AI Assistant */}
           <button title="ARC AI Assistant — Ask about projects, UL508A, C22, parts, pricing" onClick={()=>setShowSearch(v=>!v)} style={{background:showSearch?C.accentDim:"none",border:showSearch?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showSearch?C.accent:C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>✨</button>
+          {/* F086: 📢 Send Global Msg — visible admin-only. Broadcasts a dismissible message to the
+              top-right nag card of EVERY logged-in user via _system/globalBroadcast. */}
+          {userRole==="admin"&&<button title="Send a message to ALL logged-in ARC users" onClick={async()=>{
+            const msg=await arcPrompt("Message to broadcast to ALL logged-in users:",{multiline:true,okLabel:"Send to everyone"});
+            if(msg==null)return;
+            const text=String(msg).trim();
+            if(!text)return;
+            try{
+              // companyId is stamped so firestore.rules can resolve admin server-side (top-level _system path carries no companyId).
+              await fbDb.doc("_system/globalBroadcast").set({type:'admin',message:text,sentAt:Date.now(),sentBy:user.uid,sentByName:(user.displayName||user.email||"Admin"),companyId});
+              await arcAlert("Message sent to all logged-in users.",{kind:"success",title:"Broadcast sent"});
+            }catch(e){
+              await arcAlert("Could not send the broadcast: "+(e&&e.message?e.message:String(e)),{kind:"error",title:"Broadcast failed"});
+            }
+          }} style={{background:"none",border:"none",borderRadius:8,color:C.muted,cursor:"pointer",fontSize:20,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.color="#fde047"} onMouseLeave={e=>e.currentTarget.style.color=C.muted}>📢</button>}
           {/* 🔔 Bell icon */}
           <div style={{position:"relative",flexShrink:0}}>
             <button title="Notifications" onClick={()=>{setShowBellMenu(v=>!v);setShowGearMenu(false);setShowUserMenu(false);}} style={{background:showBellMenu?C.accentDim:"none",border:showBellMenu?`1px solid ${C.accent}44`:"none",borderRadius:8,color:showBellMenu?C.accent:notifications.length>0?"#fbbf24":C.muted,cursor:"pointer",fontSize:22,width:47,height:47,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>🔔</button>
