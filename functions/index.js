@@ -14,6 +14,135 @@ const { PDFDocument, PDFName, PDFRef } = require('pdf-lib');
 const { Agent: UndiciAgent } = require('undici');
 const _anthropicAgent = new UndiciAgent({ headersTimeout: 520000, bodyTimeout: 520000 });
 
+// ── B080 — anthropicFetchWithRetry — deadline-aware retry/backoff wrapper ──
+// Retries transient Anthropic failures (429 / 5xx / network throw) with
+// exponential backoff + FULL JITTER, honoring Retry-After. The CRITICAL guard:
+// never sleep into the 540s function hard-kill — `sleepBackoff` refuses to sleep
+// when the delay would land within DEADLINE_MARGIN_MS of `deadlineMs`. On
+// retries-exhausted or a non-retryable status it RETURNS the last response
+// unchanged, so every caller's existing `!response.ok` handler fires exactly as
+// before. Happy path (200) is a single fetch — behavior identical to the
+// pre-B080 direct call.
+const ANTHROPIC_RETRY = {
+  MAX_ATTEMPTS: 4,
+  BASE_MS: 1000,
+  CAP_MS: 20000,
+  DEADLINE_MARGIN_MS: 15000,     // refuse to retry if we'd land within 15s of the kill
+  ATTEMPT_ABORT_CAP_MS: 520000,  // never exceed undici's 520s header/body timeout
+  ATTEMPT_ABORT_MARGIN_MS: 5000, // leave 5s headroom under the remaining budget
+};
+const ANTHROPIC_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504, 529]);
+
+// Full-jitter backoff. `attempt` is 1-based (the attempt that just failed).
+// Honors a numeric Retry-After (seconds) when present, capped at CAP_MS.
+function anthropicBackoffDelay(attempt, retryAfterHeader) {
+  const ra = Number(retryAfterHeader);
+  if (Number.isFinite(ra) && ra >= 0) {
+    return Math.min(ra * 1000, ANTHROPIC_RETRY.CAP_MS);
+  }
+  const capped = Math.min(ANTHROPIC_RETRY.BASE_MS * Math.pow(2, attempt - 1), ANTHROPIC_RETRY.CAP_MS);
+  return Math.floor(Math.random() * capped); // full jitter: [0, capped)
+}
+
+// Sleeps `delayMs` and returns true — UNLESS doing so would land within
+// DEADLINE_MARGIN_MS of `deadlineMs`, in which case it sleeps nothing and
+// returns false (the guard against retrying into the 540s hard kill).
+async function sleepBackoff(delayMs, deadlineMs) {
+  if (Date.now() + delayMs + ANTHROPIC_RETRY.DEADLINE_MARGIN_MS > deadlineMs) return false;
+  await new Promise(r => setTimeout(r, delayMs));
+  return true;
+}
+
+// bodyObj: the JSON message body (model/max_tokens/system/messages/thinking…).
+// opts: { deadlineMs, extraHeaders, label }. `deadlineMs` is absolute wall-clock
+// (Date.now()+budget) computed by the caller at function entry.
+async function anthropicFetchWithRetry(bodyObj, apiKey, opts = {}) {
+  const {
+    deadlineMs = Date.now() + 510000,
+    extraHeaders = {},
+    label = 'anthropic',
+  } = opts;
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+    ...extraHeaders,
+  };
+  const body = JSON.stringify(bodyObj);
+  let lastResponse = null;
+
+  for (let attempt = 1; attempt <= ANTHROPIC_RETRY.MAX_ATTEMPTS; attempt++) {
+    const remaining = deadlineMs - Date.now();
+    // Per-attempt abort budget: leave 5s headroom, never exceed undici's 520s ceiling.
+    const attemptTimeout = Math.min(
+      remaining - ANTHROPIC_RETRY.ATTEMPT_ABORT_MARGIN_MS,
+      ANTHROPIC_RETRY.ATTEMPT_ABORT_CAP_MS
+    );
+    if (attemptTimeout <= 0) {
+      // No wall-clock budget left to even start an attempt.
+      if (lastResponse) return lastResponse;
+      const e = new Error(`${label}: deadline budget exhausted before attempt ${attempt}`);
+      e.name = 'AbortError';
+      throw e;
+    }
+
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), attemptTimeout);
+    let response;
+    try {
+      response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        signal: ac.signal,
+        dispatcher: _anthropicAgent,
+        headers,
+        body,
+      });
+    } catch (fetchErr) {
+      clearTimeout(timer);
+      // Our own per-attempt abort → deadline territory, non-retryable: surface.
+      if (fetchErr.name === 'AbortError') throw fetchErr;
+      // Genuine network throw → retryable if attempts + deadline budget remain.
+      if (attempt < ANTHROPIC_RETRY.MAX_ATTEMPTS) {
+        const delay = anthropicBackoffDelay(attempt, null);
+        if (await sleepBackoff(delay, deadlineMs)) {
+          functions.logger.warn(`${label}: network error, retried (attempt ${attempt}/${ANTHROPIC_RETRY.MAX_ATTEMPTS})`, { error: fetchErr.message });
+          continue;
+        }
+      }
+      throw fetchErr;
+    }
+    clearTimeout(timer);
+    lastResponse = response;
+
+    // Success OR a non-retryable status → hand back so the caller's !ok fires.
+    if (response.ok || !ANTHROPIC_RETRYABLE_STATUS.has(response.status)) {
+      return response;
+    }
+    // Retryable status, but out of attempts → return the last (failing) response.
+    if (attempt >= ANTHROPIC_RETRY.MAX_ATTEMPTS) {
+      functions.logger.warn(`${label}: status ${response.status} — attempts exhausted, surfacing to caller`);
+      return response;
+    }
+    const delay = anthropicBackoffDelay(attempt, response.headers.get('retry-after'));
+    // Drain the body to free the socket before sleeping/retrying.
+    try { await response.text(); } catch (_) {}
+    if (!(await sleepBackoff(delay, deadlineMs))) {
+      functions.logger.warn(`${label}: status ${response.status} but retry would cross deadline — surfacing`);
+      return response;
+    }
+    functions.logger.warn(`${label}: status ${response.status}, retrying (attempt ${attempt}/${ANTHROPIC_RETRY.MAX_ATTEMPTS})`);
+  }
+  return lastResponse;
+}
+
+// B080 unit-test hook — exported only when the test harness sets this env var,
+// so firebase's function discovery never sees these during `firebase deploy`.
+if (process.env.ARC_TEST_EXPORTS === '1') {
+  module.exports.anthropicFetchWithRetry = anthropicFetchWithRetry;
+  module.exports.sleepBackoff = sleepBackoff;
+  module.exports.anthropicBackoffDelay = anthropicBackoffDelay;
+}
+
 // Purchasing module functions
 const purchasing = require('./purchasing');
 exports.poCreateOrder = purchasing.createPurchaseOrder;
@@ -2179,6 +2308,8 @@ exports.extractSupplierQuotePricing = functions
   if (!token || !Array.isArray(pageImages) || !pageImages.length) {
     throw new functions.https.HttpsError('invalid-argument', 'Missing token or images');
   }
+  // B080: retry/backoff budget — 120s function timeout minus a 10s margin.
+  const deadlineMs = Date.now() + 110000;
 
   // DECISION(v1.19.955): Page-count cap. Legitimate quotes are 1-15 pages.
   if (pageImages.length > SUPPLIER_PORTAL_MAX_PAGES) {
@@ -2358,32 +2489,21 @@ You MUST return one entry per requested item. Also include extra supplier items 
   let modelUsed = SUPPLIER_PORTAL_FALLBACK_CHAIN[0];
   for (let fi = 0; fi < SUPPLIER_PORTAL_FALLBACK_CHAIN.length; fi++) {
     const tryModel = SUPPLIER_PORTAL_FALLBACK_CHAIN[fi];
-    // FIX(PRJ402119): 480s timeout — prevent undici headers timeout crash
-    const spAc = new AbortController();
-    const spTimer = setTimeout(() => spAc.abort(), 480000);
+    // B080: retry 429/5xx/network within this model attempt (deadline-aware).
+    // The 404 model-fallback loop below is preserved unchanged — 404 is
+    // non-retryable, so the wrapper returns it and the fallback still fires.
     try {
-      response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        signal: spAc.signal,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: tryModel,
-          max_tokens: 64000,
-          system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
-          messages: [{ role: 'user', content: messageContent }],
-        }),
-      });
+      response = await anthropicFetchWithRetry({
+        model: tryModel,
+        max_tokens: 64000,
+        system: [{ type: 'text', text: STATIC_PROMPT, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: messageContent }],
+      }, apiKey, { deadlineMs, label: `extractSupplierQuotePricing ${tryModel}` });
     } catch (fetchErr) {
-      clearTimeout(spTimer);
       const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
       functions.logger.error('extractSupplierQuotePricing API error', { model: tryModel, error: fetchErr.message, isTimeout });
-      throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out (480s)' : 'network error'}: ${fetchErr.message}`);
+      throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out' : 'network error'}: ${fetchErr.message}`);
     }
-    clearTimeout(spTimer);
     if (response.ok) {
       modelUsed = tryModel;
       if (fi > 0) {
@@ -3531,8 +3651,9 @@ exports.extractBomPage = functions
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
   const uid = context.auth.uid;
-  const ac = new AbortController();
-  const acTimer = setTimeout(() => ac.abort(), 520000);
+  // B080: retry/backoff budget — 540s function kill minus a 30s margin. The
+  // wrapper manages its own per-attempt AbortControllers off this deadline.
+  const deadlineMs = Date.now() + 510000;
   const { pdfPath, pageNumber, imageBase64, imageMediaType, feedback, userNotes, regionLearningParts, croppedBomImage, croppedBomMediaType, bomRegion, tiledBomImages, tiledBomMediaType } = data || {};
 
   const hasPdf = !!(pdfPath && pageNumber != null);
@@ -3718,32 +3839,26 @@ exports.extractBomPage = functions
   const t4 = Date.now();
   let response;
   try {
-    response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      signal: ac.signal,
-      dispatcher: _anthropicAgent,
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'interleaved-thinking-2025-05-14',
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODELS.OPUS,
-        max_tokens: 64000,
-        // H5/Opus 4.8: adaptive thinking only — {type:'enabled', budget_tokens} returns 400 on 4.7+.
-        thinking: { type: 'adaptive' },
-        system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
-        messages: [{ role: 'user', content: userContent }],
-      }),
+    // B080: route through the deadline-aware retry wrapper. Keep the
+    // interleaved-thinking beta header via extraHeaders. The wrapper owns the
+    // per-attempt AbortController + dispatcher.
+    response = await anthropicFetchWithRetry({
+      model: ANTHROPIC_MODELS.OPUS,
+      max_tokens: 64000,
+      // H5/Opus 4.8: adaptive thinking only — {type:'enabled', budget_tokens} returns 400 on 4.7+.
+      thinking: { type: 'adaptive' },
+      system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: userContent }],
+    }, apiKey, {
+      deadlineMs,
+      extraHeaders: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
+      label: 'extractBomPage',
     });
   } catch (fetchErr) {
-    clearTimeout(acTimer);
     const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
     functions.logger.error('extractBomPage API timeout/network error', { uid, extractionPath, pageNumber: pageNumber || null, error: fetchErr.message, isTimeout });
-    throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out (520s)' : 'network error'}: ${fetchErr.message}`);
+    throw new functions.https.HttpsError('deadline-exceeded', `Anthropic API ${isTimeout ? 'timed out' : 'network error'}: ${fetchErr.message}`);
   }
-  clearTimeout(acTimer);
 
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
@@ -3826,6 +3941,10 @@ exports.extractBomBatch = functions
     throw new functions.https.HttpsError('unauthenticated', 'Authentication required');
   }
   const uid = context.auth.uid;
+  // B080: single shared retry/backoff budget for the whole batch — 540s kill
+  // minus a 30s margin. All concurrent workers race the same wall-clock
+  // deadline, so a page that starts late naturally gets less retry room.
+  const deadlineMs = Date.now() + 510000;
   const { pdfPath, pages, feedback, userNotes } = data || {};
 
   if (!pdfPath || !pdfPath.startsWith('originalPdfs/')) {
@@ -3870,7 +3989,9 @@ exports.extractBomBatch = functions
   const noBomEscapeText = ` If this page does not contain a BOM table, return {"items":[],"questions":[],"noBomReason":"wrong-page-type"}.`;
 
   // Process pages with controlled concurrency
-  const CONCURRENCY = 4;
+  // B080: 4→3 — worst-case concurrent Opus calls drop from 5×4=20 to 5×3=15,
+  // easing the org rate-limit pool with negligible throughput loss.
+  const CONCURRENCY = 3;
   const results = new Array(pages.length);
   let idx = 0;
   let totalUsage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 };
@@ -3934,37 +4055,29 @@ exports.extractBomBatch = functions
           ];
         }
 
-        const batchAc = new AbortController();
-        const batchAcTimer = setTimeout(() => batchAc.abort(), 520000);
         let response;
         try {
-          response = await fetch('https://api.anthropic.com/v1/messages', {
-            method: 'POST',
-            signal: batchAc.signal,
-            dispatcher: _anthropicAgent,
-            headers: {
-              'Content-Type': 'application/json',
-              'x-api-key': apiKey,
-              'anthropic-version': '2023-06-01',
-              'anthropic-beta': 'interleaved-thinking-2025-05-14',
-            },
-            body: JSON.stringify({
-              model: ANTHROPIC_MODELS.OPUS,
-              max_tokens: 64000,
-              // H5/Opus 4.8: adaptive thinking only — {type:'enabled', budget_tokens} returns 400 on 4.7+.
-              thinking: { type: 'adaptive' },
-              system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
-              messages: [{ role: 'user', content: userContent }],
-            }),
+          // B080: deadline-aware retry wrapper, sharing the batch-wide deadline.
+          response = await anthropicFetchWithRetry({
+            model: ANTHROPIC_MODELS.OPUS,
+            max_tokens: 64000,
+            // H5/Opus 4.8: adaptive thinking only — {type:'enabled', budget_tokens} returns 400 on 4.7+.
+            thinking: { type: 'adaptive' },
+            system: [{ type: 'text', text: BOM_PROMPT, cache_control: { type: 'ephemeral' } }],
+            messages: [{ role: 'user', content: userContent }],
+          }, apiKey, {
+            deadlineMs,
+            extraHeaders: { 'anthropic-beta': 'interleaved-thinking-2025-05-14' },
+            label: `extractBomBatch p${pageNumber}`,
           });
         } catch (fetchErr) {
-          clearTimeout(batchAcTimer);
           const isTimeout = fetchErr.name === 'AbortError' || fetchErr.cause?.code === 'UND_ERR_HEADERS_TIMEOUT';
           functions.logger.error('extractBomBatch page API timeout', { uid, pageNumber: pg.pageNumber, error: fetchErr.message, isTimeout });
-          pageResults.push({ pageNumber: pg.pageNumber, success: false, error: `API ${isTimeout ? 'timeout (520s)' : 'network error'}` });
+          // B080 latent-bug fix: was `pageResults.push(...)` (undefined var →
+          // ReferenceError → dead branch). Correct sink is `results[i]`.
+          results[i] = { pageNumber, error: `API ${isTimeout ? 'timeout' : 'network error'}: ${fetchErr.message}`, extractionPath };
           continue;
         }
-        clearTimeout(batchAcTimer);
 
         if (!response.ok) {
           const errBody = await response.json().catch(() => ({}));
