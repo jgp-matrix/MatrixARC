@@ -5,7 +5,14 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-08-03 · prod v1.24.71 + functions · B078-1/F085/B078-2/B079/B080/B081 shipped · subagent-lane (Freddy)
+## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
+
+> ## ▶ RESUME HERE (2026-08-03 EOD) — full bug queue + F086 feature shipped, all Coach-reviewed.
+> **Bug queue → prod:** v1.24.69 B078-1 (loud save-fail) · v1.24.70 F085 (BC-sync-on-leave prompt) · v1.24.71 B078-2 (autosave coalescer — root fix) + B079 (unique panel names) + B081 (Auto-Add vendor part#) · functions B080 (Anthropic 429 retry-backoff) · v1.24.72 B082 (Margin-flush-on-leave). "3-user issues" = the B078 save-loss, RESOLVED.
+> **F086 (Admin Global Msg + version broadcast) — SHIPPED through v1.24.83 + firestore:rules:** admin top-bar 📢 button → `_system/globalBroadcast` (admin-locked rule, Coach fail-closed) · centered **TAKEOVER modal** (dimmed backdrop, must acknowledge) — version = "Refresh & Apply" (hard reload: unregister SW + clear caches, the stale-bundle fix) / "Return to what I was doing"; admin = "Acknowledge" · version detect = `_system/version` instant ping (fixed the userRole-null-at-mount skip → writes on `[userRole]`) + `version.json` 60s poll · **"Later" snoozes 4 min then re-nudges** until updated. Tested live w/ Noah (modal fires; 4-min nudge to be verified later).
+> **⏳ ROLLOUT:** the version-modal/hard-reload only fully work once a client is on ≥v1.24.83 — older cached tabs need ONE manual Ctrl+Shift+R to bootstrap onto it; after that it self-heals.
+> **⭐ S1 (SECURITY, non-blocking, PRE-EXISTING):** self-service bootstrap lets any authed user self-assign admin in a throwaway company → could broadcast to all. Fine internal/pre-launch; HARDEN before external/multi-tenant (allowlist company or CF-write).
+> **LOW backlog (no Jon input):** F085 F1/F2; B083; B080 F1/F2 (.gcloudignore + supplier-404 body-drain).
 
 > ## ▶ RESUME HERE (2026-08-03 PM) — big ship day, queue cleared to prod.
 > **Shipped today:** v1.24.69 B078-1 (loud save-fail) · v1.24.70 F085 (BC-sync-on-leave prompt) · v1.24.71 **B078-2** (autosave coalescer — root fix, invisible; watch large extractions), **B079** (unique panel names), **B081** (Auto-Add shows vendor part# — Jon re-adds his 2 rows) · **functions: B080** (Anthropic 429 retry-with-backoff, CONCURRENCY 4→3, +latent pageResults fix — deployed clean after a transient-lock retry). All Coach-reviewed.
