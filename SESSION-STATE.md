@@ -1,50 +1,36 @@
-# Session State — 2026-07-30 EOD MDT · prod v1.24.61 · 🧳 PROD FROZEN (Jon away) · IP66/1200 recovery on Test V.074 awaiting one trace re-extract
+# Session State — 2026-08-03 EOD MDT · prod v1.24.83 (+ functions + firestore:rules) · NOT frozen · big ship day (full bug queue + F086 feature)
 
-> ## ★★ CURRENT (2026-07-30 EOD) — read STATUS.md "▶ RESUME HERE" block first.
-> **prod v1.24.61**, `master == origin` @ `1336f4fa`, working tree clean. **🧳 PROD FROZEN — Jon away; nothing ships without a fresh "go".** Shipped to prod today: **v1.24.61 RFQ WYSIWYG vendor routing** (routes to the vendor shown on the BOM row — primary OR user-selected secondary; removed the crossed-item re-resolve that mis-routed via a stale `bcNo`, PRJ402143/SCE-60EL6018LPPL→Royal; Jon Test-verified, Coach-approved). Earlier today also shipped: v1.24.54–60 (multi-page Ref# resequence, BC matching/pricing re-enable, BC lead-times, F077 Vendor Sync UI, ?PN resilience).
->
-> **▶ #1 RESUME ITEM — IP66/1200 Part# recovery is BUILT + on Test V.074 but NOT confirmed live.** Deterministic recovery of Part#-column misreads (model writes a rating `IP66` / dimension `1200` from the description column into partNumber instead of the real catalog value `640014405`/`8660025`). Algorithm proven (headless regression) AND live plumbing proven (prod tab: pdf.js loads, PDF fetch OK, `640014405` at x=77 same-band as IP66). Fixed a real `window.pdfjsReady()` no-op. **But Jon's re-extracts on V.072 AND V.073 still showed IP66/1200 → the recovery code isn't EXECUTING on his re-extract.** Prime suspect: **stale service-worker bundle** (recurring all session). V.074 adds a per-page `recoverMisread(trace)` debug log. **ONE definitive-cache-clear re-extract tomorrow settles it** — see STATUS.md RESUME block for the exact steps + how Freddy reads the trace from `companies/XODxZ8xJc0dQXGZI7jbo/debugLogs`.
+> ## ★★ CURRENT (2026-08-03 EOD) — read STATUS.md "▶ RESUME HERE (2026-08-03 EOD)" block first.
+> **prod v1.24.83**, `master == origin` @ `6c290ad9`, working tree clean. **NOT frozen** — Jon actively shipped all day. This session: root-caused + fixed Ryan's extraction save-loss, shipped the entire staged bug queue, and built + shipped the **F086** Admin-Global-Broadcast / forced-refresh-on-new-version feature end-to-end (heavy live UX iteration with Jon).
 
 ## Operating model (READ FIRST)
-**Subagent-lane model is the default** (Jon's standing preference). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly. Money-path/data-safety = **Coach review before prod**; money-path features go **branch → Test (deploy-test.sh) → Jon verify → merge to master + prod (deploy.sh)** — keep master prod-clean until verified. Startup: `/ARC-team-Startup`; close-out: `/ARC-team-Closeout` (freeze-aware — skips deploy when prod frozen). Full spec: FREDDY.md + memory `feedback_subagent_lane_model_preferred`.
-
-## ★ CRITICAL — pricing model (CORRECTED 2026-07-30 — do NOT revert to "all auto-pricing OFF")
-**BC is the DEFAULT source of truth.** Every extraction pulls BC match + price + lead-time automatically. The post-PRJ402119 kill-switch was set TOO BROADLY (it disabled BC too → all-red BOMs) and was corrected this session:
-- `BC_PRICING_ENABLED=true` (BC matching/pricing/lead-time ON by default).
-- **Only the Royal/Codale SCRAPERS stay OFF** — double-locked: `SCRAPER_PRICING_ENABLED=false` + `SCRAPER_BC_WRITEBACK_ENABLED=false`. `AI_ESTIMATE_PRICING_ENABLED=false`.
-- **API (DigiKey/Mouser) is ON** (`API_PRICING_ENABLED=true`, F075 "Get Prices"), writes back to BC — optional-write inert until F077 vendor#s mapped.
-- Auto-reprice poll stays OFF (`AUTO_BC_REPRICE_ENABLED=false`). Manual/RFQ/supplier prices protected.
-See memory `project_rfq_only_pricing_mode` (rewritten 2026-07-30).
+**Subagent-lane model is the default** (Jon's standing preference). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly. Money-path/data-safety = **Coach review before prod**; money-path features go **branch → (Test if verifiable) → Jon verify → cherry-pick to master + prod (deploy.sh)** — keep master prod-clean until verified. Startup: `/ARC-team-Startup`; close-out: `/ARC-team-Closeout` (freeze-aware). Full spec: FREDDY.md + memory `feedback_subagent_lane_model_preferred`.
+> **Git discipline reminder (bit us once this session):** after a `git checkout master`, a subsequent commit lands on master, not a lane branch — checkout the branch BEFORE committing lane work. And browser-globals need `window.` prefix (`window.caches`/`window.fetch`) or `tools/check-scope.js` blocks the deploy.
 
 ## Version
-**v1.24.61** (PRODUCTION) — 2026-07-30 (release `39625cdd`). `master == origin/master` @ `1336f4fa`, working tree clean. **PROD FROZEN (Jon away).** Nothing pending deploy.
+**v1.24.83** (PRODUCTION) — 2026-08-03 (master `6c290ad9`). `master == origin/master`, tree clean. Functions redeployed (B080). firestore:rules redeployed (F086 admin-lock + S1 pin). Nothing pending deploy.
+
+## ✅ Shipped to prod this session (2026-08-03)
+- **v1.24.69 — B078-1:** extraction save-failure now retries + surfaces a blocking modal (no silent green ✓). Fixes the silent save-loss that lost Ryan's BOM.
+- **v1.24.70 — F085:** prompt-to-sync unsynced ARC→BC changes on project-leave (hash-based; "Sync now"/"Later"; unpriced→Later-only).
+- **v1.24.71 — B078-2** (autosave coalescer — the ROOT fix: an 18-page add no longer floods the Firestore write queue; airtight clobber-guard) **+ B079** (unique panel names via `panelSeq`) **+ B081** (Auto-Add config shows vendor part#).
+- **functions — B080:** Anthropic 429 retry-with-backoff (deadline-aware) on the 3 extraction calls + CONCURRENCY 4→3 + a latent `pageResults` bug fix. Ceiling = **tier bump** (Jon's Anthropic console, no code).
+- **v1.24.72 — B082:** Margin/sell-price PATCH no longer dropped on quick project-leave.
+- **v1.24.73–83 — F086** (Admin Global Msg + version broadcast; folds F008): hard-reload fix (unregister SW + clear caches) → admin-locked `_system/globalBroadcast` doc + top-bar 📢 button + **centered TAKEOVER modal** (must acknowledge) → version detect via `_system/version` instant ping (fixed userRole-null-at-mount) + `version.json` 60s poll → **"Later" snoozes 4 min then re-nudges** until updated. **S1 hardened:** broadcast write pinned to Matrix PCI company `XODxZ8xJc0dQXGZI7jbo` (Jon test-verified).
+- **"3-user issues" = the B078 save-loss** (Jon confirmed) — fully resolved by B078-1/2.
 
 ## ⭐ NEXT UP (ranked)
-1. **IP66/1200 recovery — confirm live (Test V.074).** One definitive-cache-clear re-extract of PRJ402501 Line 1 → Freddy reads `recoverMisread(trace)` in debugLogs. **NO trace entry = stale bundle** (then fix SW cache-busting + re-verify); **a trace entry** → read its `stage`/`outcomes` for the exact runtime cause. Done = Idx 7→`640014405`, Idx 44→`8660025`, both low-confidence flagged. Branch `claude/ip66-partnum-recovery` (has temp trace instrumentation to remove before prod merge).
-2. **MTX#→vendor part# display fix — stage on Test + verify.** Built on `claude/mtx-vendor-display` (Part A: render `s._vendorItemNo||s.number`, display-only). Deploy to Test after #1 frees the channel; then merge to prod. Part B (source the common fuzzy path via `field:"both"`) deferred — matcher-behavior change, needs Jon sign-off.
-3. **bcFuzzyLookup misses in-BC parts — Jon go on the fix (money-path).** Plan: `docs/B-bcFuzzyLookup-misses-fix-plan.md`. Fix 1 = add a cross-field `contains` step (Item Browser's path) with exact-equality auto-apply gate. `800F-34RE100` etc.
-4. **Secondary-vendor RFQ opt-in — Jon decision on 3 questions.** Scope: `docs/F-secondary-vendor-rfq-scope.md`. Recommend Option A global toggle. Needs: approve A? comparison-only vs auto-applicable? lead-time or price-only?
-5. **F077 activation (data-config, not a build).** Jon sets DigiKey `V00196` / Mouser `V00304` via Settings → Vendor Sync to turn on F075 optional API→BC writeback (then verify the write end-to-end live).
-6. **B024** — reviewer-assignment notification writes to the ASSIGNED uid (not the brittle BC-email chain). [OPEN·MED]
-7. **B069** — Sign-Out doesn't release project presence immediately (90s lingering). Small/isolated fix. [TABLED pending BC-sandbox migration]
-8. **F076** — supplier portal manual entry. [parked]
-9. **`1002` non-MTX item in PRJ402119** — Step-2 reconcile leftover, needs Jon's BC-item pick.
-10. **Test-env data isolation** — matrix-arc-test shares PROD Firestore; needs a separate test user/project before real customers (memory `test_env_blocked_one_company_per_user`).
+1. **F086 — verify the 4-min nudge live.** Not yet exercised end-to-end (Noah saw the modal + hard-reload work; the snooze→re-nudge timing is untested). Get a client on ≥v1.24.83, push a bump, click "Later", confirm it re-pops in ~4 min. Done = re-nudge fires.
+2. **F086 rollout bootstrap.** The modal/hard-reload/nudge only fully work once a client is on **≥v1.24.83** — older cached tabs still have the old plain-reload; the team needs **ONE manual Ctrl+Shift+R** to bootstrap. After that it self-heals. (Tell Ryan/Noah.)
+3. **B078-2 monitor (no code).** Coalescer is deployed but Jon has no large project to force-test — WATCH future large-drawing extractions for any recurrence of `resource-exhausted` / silent BOM loss; re-surface B078 if it recurs.
+4. **B080 tier bump** — Jon action on the company Anthropic account console (raises the rate-limit ceiling; the backoff makes it graceful meanwhile).
+5. **LOW backlog (no Jon input needed):** F085 F1 (bgDone green-pill on partial sync-fail) / F2 (lead-time flush failures not reported in Sync-now); **B080 F1** (add `functions/test-retry.js` to `.gcloudignore`) / **F2** (drain body on supplier-404 fallback `continue`); **B083** (lead-time BC writeback dropped on hard tab-close <30s, recoverable).
+6. **S1 multi-tenant hardening (future).** The broadcast write is pinned to one company ID — before any external/multi-tenant rollout, update the ID or move the write to a Cloud Function (Admin SDK). Note in firestore.rules.
+7. **TODO.md over budget (3,642 lines).** Flag for an archive-review pass (criteria in TODO header; archive to TODO-ARCHIVE.md) — do NOT blind-trim. Also triage: promote/close this session's INBOX items (all stamped B078–B083/F085/F086, statuses in INBOX.md) into TODO.md.
+8. **Older open TODO.md items** — next session should read TODO.md top block for the fuller backlog (B024 reviewer-assignment notification, F076 supplier-portal manual entry, test-env data isolation, etc.).
 
-## Shipped to prod this session (2026-07-30)
-- **v1.24.54** — multi-page BOM continuation-page Ref# fix + validity-driven confidence (PRJ402501).
-- **v1.24.55** — prompt reinforce: partNumber from Part# column even when description has recognizable codes (IP66 nudge; non-deterministic — superseded by the deterministic recovery now on Test).
-- **v1.24.56** — deterministic `_resequenceContinuationPages` (Ref# 41=41; Jon-verified).
-- **v1.24.57** — re-scope kill-switch: **re-enable BC + API pricing, keep scrubbers off** (all-red-BOM fix).
-- **v1.24.58** — BC lead-time lookup uses resolved `bcNo` (fuzzy-matched parts resolve lead time).
-- **v1.24.59** — F077 Settings → Vendor Sync UI + BC-vendor-list cache (instant dropdowns).
-- **v1.24.60** — ?PN/~PN resilience: Debug-Logs surfacing on verify failures + visible "🔎 Verify Part #s" button (transient Haiku 529 was the cause; Jon confirmed badges show).
-- **v1.24.61** — RFQ WYSIWYG vendor routing (Jon Test-verified).
-
-## Branches (retained — intentionally NOT on master)
-- `claude/ip66-partnum-recovery` — IP66/1200 recovery + trace instrumentation (Test V.074; awaiting live confirm).
-- `claude/mtx-vendor-display` — MTX#→vendor part# display fix (built; awaiting Test/verify).
-- (Many older lane branches remain; prune during a non-frozen session.)
+## Branches (retained — work already cherry-picked to master, safe to prune next session)
+13 `marc/*` lane branches on origin (b078-1/f085/b078-2/b079/b081/b080/b082/f086-part2, etc.). Each was cherry-picked to master + shipped. `git branch -d` may fail (cherry-picked, not merged) — prune with care next session.
 
 ## How to resume (next session)
-Boot `/ARC-team-Startup`. Read this file + STATUS.md "▶ RESUME HERE" + TODO.md top block. The #1 action is the IP66 trace re-extract (needs Jon live). Prod is frozen until Jon lifts it.
+Boot `/ARC-team-Startup`. Read this file + STATUS.md "▶ RESUME HERE (2026-08-03 EOD)" + TODO.md top. Nothing is frozen; nothing is mid-deploy. The only live-verify owed is the F086 4-min nudge (#1). Everything else this session is shipped + stable.
