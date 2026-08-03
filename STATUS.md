@@ -9,7 +9,8 @@
 
 > ## ▶ RESUME HERE (2026-08-03 PM) — big ship day, queue cleared to prod.
 > **Shipped today:** v1.24.69 B078-1 (loud save-fail) · v1.24.70 F085 (BC-sync-on-leave prompt) · v1.24.71 **B078-2** (autosave coalescer — root fix, invisible; watch large extractions), **B079** (unique panel names), **B081** (Auto-Add shows vendor part# — Jon re-adds his 2 rows) · **functions: B080** (Anthropic 429 retry-with-backoff, CONCURRENCY 4→3, +latent pageResults fix — deployed clean after a transient-lock retry). All Coach-reviewed.
-> **⏳ IN FLIGHT:** B082 (Margin-flush-on-leave) — Marc building → Coach → deploy.
+> **✅ v1.24.72 — B082** (Margin-flush-on-leave: sale-price PATCH no longer dropped on quick-leave) — Coach APPROVE (exactly-once PATCH verified). Queue Jon asked to stage this morning is now fully shipped.
+> **⏳ NEW / SCOPING:** F086 (Admin Global Msg + forced-refresh-on-new-version broadcast; folds in F008) — Jon 2026-08-03; likely addresses the stale-cached-bundle root of Ryan's problems.
 > **👉 JON ACTION:** B080 ceiling = **tier bump** (his Anthropic account console — no code). Post-deploy smoke for B080 = watch functions:log on the next real extraction (happy-path unchanged, unit-tested 13/13).
 > **STILL OPEN (non-blocking):** the "3-user issues" — confirm they were the B078 save-loss (fixed) vs. something else. F085 follow-ups F1/F2 (LOW); B083 (LOW); B080 follow-ups F1/F2 (LOW, .gcloudignore + supplier-404 body-drain).
 
