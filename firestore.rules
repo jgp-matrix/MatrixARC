@@ -25,6 +25,7 @@ service cloud.firestore {
       allow write: if request.auth != null
         && request.resource.data.sentBy == request.auth.uid
         && request.resource.data.get('companyId', null) != null
+        && request.resource.data.companyId == 'XODxZ8xJc0dQXGZI7jbo' // S1 hardening (2026-08-03): allowlist the REAL Matrix PCI company. Without this, any authed user could create a throwaway company, self-assign 'admin' in it, and satisfy the member/role check below to broadcast to everyone. Pinning the companyId means a throwaway company can't match. UPDATE THIS ID (or switch to a CF-write) before any external/multi-tenant rollout.
         && exists(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid))
         && get(/databases/$(database)/documents/companies/$(request.resource.data.companyId)/members/$(request.auth.uid)).data.role == 'admin';
     }
