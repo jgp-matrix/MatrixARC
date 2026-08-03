@@ -11212,6 +11212,76 @@ function _surfaceExtractionSaveFailure(projectId,panelId,latestPanel){
   try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"runExtractionTask",message:"Extraction save failed after retries — extracted BOM may NOT be persisted to Firestore",extra:{projectId,panelId,itemCount:(latestPanel&&latestPanel.bom||[]).length,lastError:String(_lastPanelSaveError&&_lastPanelSaveError.message||_lastPanelSaveError||"unknown")}});}catch(e){}
   try{if(_saveFailBanner)_saveFailBanner("Save failed — the extracted BOM may not have been saved. Check your connection and re-extract.");}catch(e){}
 }
+// ── BACKGROUND AUTOSAVE COALESCER (B078-2 — the burst amplifier) ──
+// An 18-page add/extract fires a BURST of PanelCard background _noBumpWrite autosaves
+// (priceDate/vendor-name/BC-PO-date backfills, BC price poll, BC item-pulse, labor-row
+// sync, mount alternates/corrections, stale-title cleanup, BC re-verify) as panel+bom
+// props churn. Each of those is a fire-and-forget FULL read-modify-write of the whole
+// multi-panel project doc via saveProjectPanel (serialized per-project by _panelSaveLocks).
+// That burst, riding the same single client Firestore WriteStream the 1-PDF+18-image
+// Storage uploads are already saturating, is what tips the stream into RESOURCE_EXHAUSTED —
+// and the exhausted stream is what silently drops the extraction commit (B078).
+//
+// This coalescer collapses rapid duplicate BACKGROUND saves for the same panel into ONE
+// trailing write and caps concurrent in-flight background writes — so the cosmetic/backfill
+// autosaves can never themselves saturate the stream. It mirrors the proven debug-write
+// rate limiter shape (public/index.html ~321-357): periodic flush tick + latest-wins
+// dedup + in-flight cap.
+//
+// LATEST-WINS IS SAFE HERE: saveProjectPanel REPLACES the whole target panel (line ~11102,
+// `panels.map(p=>p.id===panelId?safeUpdated:p)`), so two un-coalesced background saves for
+// the same panel already end in last-writer-wins. Collapsing a burst to its latest payload
+// therefore yields the SAME final Firestore state with fewer writes. It NEVER touches the
+// merge guards — the actual write still goes through saveProjectPanel (pages-wipe guard,
+// storageUrl/reviewNotes/reviewShapes restore, bomVersion bump, quote-rev high-water all
+// intact) via the site's own onSaveImmediate fn.
+//
+// USER-INITIATED / CONTENT saves DO NOT pass through here — they call onSaveImmediate /
+// saveProject directly and write immediately (rev-bump correctness). Only the fire-and-forget
+// _noBumpWrite background PanelCard effects are routed through _scheduleBgSave.
+const _bgSaveMap=new Map();          // key `${projectId}:${panelId}` → {fn,payload}
+const _BG_SAVE_FLUSH_MS=1000;        // trailing flush cadence — collapses a churn burst
+const _BG_SAVE_MAX_INFLIGHT=2;       // cap concurrent outstanding background writes
+let _bgSaveInflight=0;
+let _bgSaveTimer=null;
+function _bgSaveFlushTick(){
+  // Stop the timer once fully drained (nothing queued + none in flight).
+  if(!_bgSaveMap.size&&_bgSaveInflight===0){clearInterval(_bgSaveTimer);_bgSaveTimer=null;return;}
+  for(const key of [..._bgSaveMap.keys()]){
+    if(_bgSaveInflight>=_BG_SAVE_MAX_INFLIGHT)break;
+    const item=_bgSaveMap.get(key);
+    _bgSaveMap.delete(key);
+    _bgSaveInflight++;
+    // The site's fn (onSaveImmediate) may be sync or async — Promise.resolve normalizes both.
+    Promise.resolve().then(()=>item.fn(item.payload)).then(()=>{_bgSaveInflight--;}).catch((e)=>{
+      _bgSaveInflight--;
+      try{console.warn("[BG-SAVE] coalesced background autosave failed:",e&&e.message||e);}catch(_){}
+    });
+  }
+}
+// Route a background _noBumpWrite panel autosave through the coalescer. key=projectId:panelId
+// → latest payload wins (collapses a burst for one panel into a single trailing write).
+function _scheduleBgSave(fn,projectId,panelId,payload){
+  if(typeof fn!=="function")return;
+  const key=(projectId||"?")+":"+(panelId||"?");
+  _bgSaveMap.set(key,{fn,payload});
+  if(!_bgSaveTimer)_bgSaveTimer=setInterval(_bgSaveFlushTick,_BG_SAVE_FLUSH_MS);
+}
+// Flush every pending trailing write NOW, bypassing the in-flight cap — so a tab hide/close
+// can never drop a pending background write. Mirrors the BC lead-time queue's
+// visibilitychange/beforeunload best-effort flush.
+function _flushBgSaveNow(){
+  if(!_bgSaveMap.size)return;
+  const items=[..._bgSaveMap.values()];
+  _bgSaveMap.clear();
+  for(const item of items){try{Promise.resolve().then(()=>item.fn(item.payload)).catch(()=>{});}catch(_){}}
+}
+if(typeof document!=="undefined"){
+  document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")_flushBgSaveNow();});
+}
+if(typeof window!=="undefined"){
+  window.addEventListener("beforeunload",_flushBgSaveNow);
+}
 async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
@@ -27177,7 +27247,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const cleaned={...panel,drawingNo:"",drawingDesc:"",drawingRev:""};
     console.log('[TITLE BLOCK] Cleared stale drawingNo/Desc/Rev on panel with no drawings:',panel.name||panel.id);
     onUpdate(cleaned);
-    try{onSaveImmediate&&onSaveImmediate({...cleaned,_noBumpWrite:true});}catch(e){} // B041: background stale-title cleanup — don't bump/unlock a sent quote
+    _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...cleaned,_noBumpWrite:true}); // B041/B078-2: background stale-title cleanup — coalesced, no bump/unlock
   },[panel.pages?.length,panel.drawingNo,panel.drawingDesc,panel.drawingRev]);
   // DECISION(v1.19.589): Restore pendingPages + awaitingConfirm from the module-scope cache.
   // If the user dropped drawings, navigated away (unmounting PanelCard), and came back,
@@ -27203,7 +27273,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const newLabor=(synced.bom||[]).filter(r=>r.isLaborRow);
     // Only update if labor rows actually changed (avoid infinite loop)
     const changed=oldLabor.length!==newLabor.length||oldLabor.some((r,i)=>r.qty!==newLabor[i]?.qty||r.unitPrice!==newLabor[i]?.unitPrice);
-    if(changed){onUpdate(synced);try{onSaveImmediate({...synced,_noBumpWrite:true});}catch(e){}} // B041: background labor auto-sync — no bump/unlock
+    if(changed){onUpdate(synced);_scheduleBgSave(onSaveImmediate,projectId,panel.id,{...synced,_noBumpWrite:true});} // B041/B078-2: background labor auto-sync — coalesced, no bump/unlock
   },[panel.id]);
   const _bcReVerifyRan=useRef(null);
   const REVERIFY_COOLDOWN_MS=5*60*1000; // 5-minute cooldown per panel (#65c)
@@ -27225,7 +27295,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const updated={...latestPanelRef.current,bom:updatedBom,_lastReVerifyAt:Date.now()};
       latestPanelRef.current=updated;
       onUpdate(updated);
-      try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC re-verify — no bump/unlock
+      _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: background BC re-verify — coalesced, no bump/unlock
     })();
     return()=>{cancelled=true;};
   },[panel.id]);
@@ -27561,7 +27631,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       });
       if(changed){
         console.log(`[PanelView mount] auto-applied ${appliedAlt} alternates and ${appliedCorr} corrections to existing BOM${heldAlt>0?` (${heldAlt} alternates held back — manualVerifyRequired)`:""}`);
-        const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: mount auto-apply alternates/corrections — no bump/unlock
+        const updated={...panel,bom:newBom};onUpdate(updated);_scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: mount auto-apply alternates/corrections — coalesced, no bump/unlock
       }
       if(heldAlt>0)console.log(`[PanelView mount] ${heldAlt} auto-cross alternate(s) held back — BOM needs manual verification`);
 
@@ -27602,7 +27672,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if(changed){
             const updated={...panel,bom:newBom};
             onUpdate(updated);
-            try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background vendor-name backfill — no bump/unlock
+            _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: background vendor-name backfill — coalesced, no bump/unlock
             _dbg("VENDOR BACKFILL: updated",newBom.filter(r=>r.bcVendorName&&!bom.find(o=>o.id===r.id&&o.bcVendorName)).length,"rows for panel",panel.name);
           }
         }catch(e){console.warn("Vendor backfill error:",e);}
@@ -27628,7 +27698,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     });
     const updated={...panel,bom:newBom};
     onUpdate(updated);
-    try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background priceDate backfill — no bump/unlock
+    _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: background priceDate backfill — coalesced, no bump/unlock
     console.log("PRICEDATE BACKFILL:",needDate.length,"rows for panel",panel.name);
   },[]);
 
@@ -27651,7 +27721,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         });
         const updated={...panel,bom:newBom};
         onUpdate(updated);
-        try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC PO-date backfill — no bump/unlock
+        _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: background BC PO-date backfill — coalesced, no bump/unlock
       })().catch(()=>{});
     }
     tryBackfill();
@@ -27735,7 +27805,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(changed||divergedRows.length){
           const updated={...fresh,bom:newBom};
           onUpdate(updated);
-          try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC price poll — no bump/unlock
+          _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: background BC price poll — coalesced, no bump/unlock
           setBcUpdatedRows(new Set([...changedIds,...divergedRows.map(d=>d.id)]));
           setBcUpdateNotif(true);
           setTimeout(()=>setBcUpdatedRows(new Set()),4000);
@@ -27797,7 +27867,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(!item){
           const updated={...panel,bcItemNumber:null,status:panel.status==="pushed_to_bc"?"costed":panel.status,updatedAt:Date.now()};
           onUpdate(updated);
-          try{await onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: background BC item-pulse check — no bump/unlock
+          _scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}); // B041/B078-2: background BC item-pulse check — coalesced, no bump/unlock
         }
       }catch(e){console.warn("BC item pulse check failed:",e);}
     })();
@@ -27814,7 +27884,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const nonLabor=(panel.bom||[]).filter(r=>!r.isLaborRow);
     const updated={...panel,bom:[...laborRows,...nonLabor]};
     onUpdate(updated);
-    const t=setTimeout(()=>onSaveImmediate({...updated,_noBumpWrite:true}).catch(()=>{}),800); // B041: background labor-row sync — no bump/unlock
+    const t=setTimeout(()=>_scheduleBgSave(onSaveImmediate,projectId,panel.id,{...updated,_noBumpWrite:true}),800); // B041/B078-2: background labor-row sync — coalesced, no bump/unlock
     return()=>clearTimeout(t);
   },[_laborSyncKey]);
 
