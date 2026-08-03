@@ -10420,6 +10420,37 @@ function computePanelBomHash(panel){
   for(let i=0;i<str.length;i++){h=((h<<5)+h)+str.charCodeAt(i);h=h&h;}
   return String(h);
 }
+// F085: single source of truth for the drift-prone "priced BOM changed since last BC sync" comparison.
+// The raw hash-vs-syncHash test is factored here so the pre-print checklist (~43160), on-open auto-sync
+// (~42558) and the App-level leave-gate predicate all share ONE definition and can't drift (dual-consumer rule).
+function _panelBomHashMismatch(panel){
+  return computePanelBomHash(panel)!==((panel&&panel.bomSyncHash)||"");
+}
+// A panel "needs BC sync" when its priced-BOM hash drifted AND it has ≥1 non-labor row (labor-only panels
+// never sync to BC planning lines). Matches the pre-print rule exactly (formerly inlined at ~43160-43162).
+function _panelBomUnsynced(panel){
+  return _panelBomHashMismatch(panel)&&(((panel&&panel.bom)||[]).some(r=>!r.isLaborRow));
+}
+// F085 leave-gate predicate: a BC-linked project has unsynced ARC→BC changes when any panel needs sync.
+// App reads this off `openProject`, which ProjectView keeps fresh via onChange on every edit.
+function _hasUnsyncedBcChanges(project){
+  return !!(project&&project.bcProjectNumber&&(project.panels||[]).some(_panelBomUnsynced));
+}
+// F085 cross-component bridge: each mounted PanelCard registers its own BC-sync capability here, keyed by
+// _bgKey(projectId,panelId), so the App-level leave gate can trigger the panel's own syncPlanningLinesToBC /
+// lead-time flush (which own the B078 loud-failure surfacing). Mirrors the _bcQueueCountSetter injection
+// idiom; entries are removed on unmount.
+const _bcLeaveSyncRegistry={};
+function _bcLeaveSyncTargets(project){
+  if(!project)return[];
+  const out=[];
+  for(const p of (project.panels||[])){
+    if(!p||!p.id)continue;
+    const e=_bcLeaveSyncRegistry[_bgKey(project.id,p.id)];
+    if(e&&e.hasUnsynced())out.push(e);
+  }
+  return out;
+}
 function _computeDvBomHash(panel){
   const data=(panel.bom||[]).filter(r=>!r.isLaborRow).map(r=>({pn:(r.partNumber||'').trim(),q:r.qty||0}));
   const str=JSON.stringify(data);
@@ -28902,17 +28933,19 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   },[_sellPrice,bcProjectNumber]);
 
   async function syncPlanningLinesToBC(){
-    if(!bcProjectNumber||bcSyncing)return;
+    // F085: return an outcome ({ok, synced, reason|failed|error}) so the App leave gate can tell
+    // success from failure and honor B078 (never proceed-as-synced on failure). Existing callers ignore it.
+    if(!bcProjectNumber||bcSyncing)return{ok:true,synced:false,reason:"noop"};
     // F069: HARD-BLOCK a manual sync to the WRONG BC environment (D2). This
     // gesture IS the BC write, so abort entirely and toast once on mismatch.
     try{_assertBcProjectEnv(bcProjectNumber,project,"Manual ⇅ Sync to BC");}
-    catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);return;}throw e;}
+    catch(e){if(e instanceof BcEnvMismatchError){_bcEnvMismatchToast(e);return{ok:false,reason:"env-mismatch"};}throw e;}
     // DECISION(v1.19.487): Skip sync if BOM hasn't changed since last sync
     const curHash=computePanelBomHash(panel);
     if(curHash===(panel.bomSyncHash||"")&&!bcSyncErrors.length){
       setBcSyncStatus("ok");setTimeout(()=>setBcSyncStatus(null),2000);
       console.log("syncPlanningLinesToBC: hash unchanged, skipping sync");
-      return;
+      return{ok:true,synced:false,reason:"unchanged"};
     }
     // LOAD-BEARING GUARD (#168): All non-labor BOM rows must be BC/manual-priced.
     // This is the sole gate preventing AI-estimated items from syncing to BC.
@@ -28923,7 +28956,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // shouldn't block the auto-sync. The user fills the partNumber via BC
     // Browser → commitBcItem stamps priceSource → sync proceeds.
     const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual");
-    if(unpriced.length){setUnpricedAlert(unpriced);return;}
+    if(unpriced.length){setUnpricedAlert(unpriced);return{ok:false,reason:"unpriced"};}
+    let _leaveOutcome={ok:true,synced:true}; // F085: flipped to {ok:false} in the failed branch below
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
     // F-2d.3: Write pending marker before BC sync starts
     try{onSaveImmediate({...panel,bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true});}catch(e){} // B041: BC-sync marker (non-content) — no bump/unlock
@@ -28973,6 +29007,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       if(result.failed&&result.failed.length>0){
         setBcSyncStatus("error");
         setSyncFailedAlert(result.failed);
+        _leaveOutcome={ok:false,failed:result.failed}; // F085/B078: a failed sync must NOT read as synced
         // persist errors on rows so pill shows after modal is dismissed
         const errs={};result.failed.forEach(f=>{if(f.rowId)errs[f.rowId]=f;});
         setBcSyncErrors(prev=>({...prev,...errs}));
@@ -28997,11 +29032,28 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       try{onSaveImmediate({...panel,bomSyncPending:false,bomSyncStartedAt:null,_noBumpWrite:true});}catch(e2){} // B041: BC-sync marker (non-content) — no bump/unlock
       setTimeout(()=>setBcSyncStatus(null),6000);
       bgError(syncTaskId,"BC sync failed: "+(e.message||"").slice(0,60));
-      setBcSyncing(false);return;
+      setBcSyncing(false);return{ok:false,error:e&&e.message?e.message:String(e)};
     }
     setBcSyncing(false);
     bgDone(syncTaskId,"✓ Synced to BC");
+    return _leaveOutcome; // F085
   }
+  // F085: register this panel's BC-sync capability so the App-level leave gate can flush ARC→BC changes
+  // on "Sync now". Latest state is read through a ref (avoids stale closures); entry removed on unmount.
+  const _leaveSyncStateRef=useRef(null);
+  _leaveSyncStateRef.current={bcProjectNumber,readOnly,ownerPriorityActive,project,panel,syncPlanningLinesToBC,flushLeadTimes:_flushLeadTimeBcQueue,leadQ:_leadTimeBcQueue};
+  useEffect(()=>{
+    const key=_bgKey(projectId,panel.id);
+    _bcLeaveSyncRegistry[key]={
+      hasUnsynced:()=>_panelBomUnsynced(_leaveSyncStateRef.current.panel),
+      // Can't-sync cases (owner-priority soft-lock / readOnly / BC disconnected / env mismatch) → the gate
+      // offers "Later" only, never a Sync-now that would silently fail.
+      canSync:()=>{const s=_leaveSyncStateRef.current;return !!s.bcProjectNumber&&!!_bcToken&&!s.readOnly&&!s.ownerPriorityActive&&!_bcEnvMismatched(s.project);},
+      sync:()=>_leaveSyncStateRef.current.syncPlanningLinesToBC(),
+      flushLeadTimes:async()=>{const s=_leaveSyncStateRef.current;if(s.leadQ.current.pending.size>0)await s.flushLeadTimes();}
+    };
+    return()=>{delete _bcLeaveSyncRegistry[key];};
+  },[projectId,panel.id]);
   function saveLineQty(){
     const q=Math.max(1,Math.min(1000,parseInt(draftLineQty)||1));
     setDraftLineQty(q);
@@ -42555,8 +42607,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         for(let i=0;i<livePanels.length;i++){
           const p=livePanels[i];
           if(!p||!p.id)continue;
-          const curHash=computePanelBomHash(p);
-          const hashMatch=curHash===(p.bomSyncHash||"");
+          const hashMatch=!_panelBomHashMismatch(p); // F085: shared drift primitive (behavior unchanged — labor-row clause intentionally not applied on this path)
           const pending=p.bomSyncPending&&p.bomSyncStartedAt;
           const stale=pending&&(Date.now()-p.bomSyncStartedAt>SYNC_PENDING_STALE_MS);
           // F-2d.3: Skip if fully synced with no pending marker
@@ -43156,10 +43207,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
 
     // Check 1: BC Sync needed?
     const bcNum=projectRef.current.bcProjectNumber;
-    const panelsNeedSync=(projectRef.current.panels||[]).filter(p=>{
-      const curHash=computePanelBomHash(p);
-      return curHash!==(p.bomSyncHash||"")&&(p.bom||[]).some(r=>!r.isLaborRow);
-    });
+    const panelsNeedSync=(projectRef.current.panels||[]).filter(_panelBomUnsynced); // F085: shared predicate (behavior unchanged)
     if(bcNum&&_bcToken&&panelsNeedSync.length>0){
       issues.push({type:"sync",label:"Sync BOM to BC",detail:`${panelsNeedSync.length} panel${panelsNeedSync.length>1?"s":""} changed since last sync`,checked:true});
     }
@@ -53032,6 +53080,8 @@ function App({user}){
   const [navPinned,setNavPinned]=useState(true);
   const [openProject,setOpenProject]=useState(null);
   const [revWarnModal,setRevWarnModal]=useState(null); // {project, pendingAction}
+  const [bcSyncLeaveModal,setBcSyncLeaveModal]=useState(null); // F085: {project, pendingAction}
+  const [bcSyncLeaveBusy,setBcSyncLeaveBusy]=useState(false); // F085: "Sync now" in flight
   const [revSnoozed,setRevSnoozed]=useState({}); // {[projectId]: true} per session
   const [myProjectsOnly,setMyProjectsOnly]=useState(false);
   // B048 (Fix A): bumped by _landSalespersonCache() when the BC /Salesperson roster lands → forces the
@@ -54131,14 +54181,24 @@ INSTRUCTIONS:
   },[user?.uid,loading]);
 
   function checkQuoteRevWarn(action){
-    if(!openProject){action();return;}
+    // F085: compose the unsynced-BC leave prompt INTO the existing leave gate. Every leave path already
+    // funnels through here (logo, BACK, open-another), so wrapping the action means the BC prompt reuses
+    // the same gate and the two prompts chain (quote-rev first, then BC) — never a stacked double-modal.
+    const proceed=()=>_maybePromptUnsyncedBc(action);
+    if(!openProject){proceed();return;}
     const p=openProject;
     if(p.lastPrintedBomHash&&(p.quoteRev||0)>(p.quoteRevAtPrint||0)){
-      if(revSnoozed[p.id]){action();return;}
-      if(p.quoteRevAcknowledgedAt&&p.quoteRevAcknowledgedAt>=(p.lastQuotePrintedAt||0)){action();return;}
-      setRevWarnModal({project:p,pendingAction:action});return;
+      if(revSnoozed[p.id]){proceed();return;}
+      if(p.quoteRevAcknowledgedAt&&p.quoteRevAcknowledgedAt>=(p.lastQuotePrintedAt||0)){proceed();return;}
+      setRevWarnModal({project:p,pendingAction:proceed});return;
     }
-    action();
+    proceed();
+  }
+  // F085: if the leaving project has ARC→BC changes not yet pushed, prompt to sync. "Later" is always
+  // safe — the durable bomSyncHash re-surfaces the diff on next open (on-open auto-sync + pre-print catch it).
+  function _maybePromptUnsyncedBc(action){
+    if(!openProject||!_hasUnsyncedBcChanges(openProject)){action();return;}
+    setBcSyncLeaveModal({project:openProject,pendingAction:action});
   }
   // F019: a HARD browser reload/close DOES kill the tab (module-scoped _bgTasks state is lost), so warn
   // on beforeunload while a pricing bg task runs for the open project. Native prompt text is browser-set.
@@ -54689,6 +54749,21 @@ INSTRUCTIONS:
       {showAbout&&<AboutModal onClose={()=>setShowAbout(false)}/>}
       {showSupplierPricing&&<SupplierPricingUploadModal uid={user.uid} onClose={()=>setShowSupplierPricing(false)}/>}
       {showSetup&&<CompanySetupModal uid={user.uid} email={user.email} onDone={(cid,role,name)=>{setCompanyId(cid);setUserRole(role);setCompanyName(name||null);setShowSetup(false);}} onClose={()=>setShowSetup(false)}/>}
+      </>}{/* end projects tab */}
+      {/* DECISION(v1.19.787): Top-level ProjectView render — fires whenever a project is
+          open AND the current tab matches the origin tab (where the project was opened
+          from). Lives outside any navTab block so it covers all four origin tabs:
+          projects, engineering, purchasing, production. */}
+      {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
+        <ErrorBoundary onBack={()=>setView("dashboard")}>
+          <ProjectView key={openProject.id} project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} portalFocusId={pendingPortalOpen===openProject.id?pendingPortalFocusId:null} onPortalOpened={()=>{setPendingPortalOpen(null);setPendingPortalFocusId(null);}} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
+        </ErrorBoundary>
+      )}
+      {/* M1 (Coach F085 review): these two leave-gate modals MUST render outside the navTab==="projects"
+          fragment — ProjectView opens under ANY origin tab (engineering/purchasing/production too), and if
+          the modal can't render there the leave gate stalls with no UI (user trapped). Kept as a pair so the
+          F085 chain (quote-rev modal → then BC prompt) works from every origin tab. Neither depends on
+          projects-tab scope. */}
       {revWarnModal&&(()=>{const rm=revWarnModal;const rev=rm.project.quoteRev||0;return React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onClick:e=>{if(e.target===e.currentTarget){rm.pendingAction();setRevWarnModal(null);}}},
         React.createElement("div",{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"32px 36px",maxWidth:440,width:"90%",textAlign:"center"}},
           React.createElement("div",{style:{fontSize:28,marginBottom:12}},"⚠️"),
@@ -54701,16 +54776,44 @@ INSTRUCTIONS:
           )
         )
       );})()}
-      </>}{/* end projects tab */}
-      {/* DECISION(v1.19.787): Top-level ProjectView render — fires whenever a project is
-          open AND the current tab matches the origin tab (where the project was opened
-          from). Lives outside any navTab block so it covers all four origin tabs:
-          projects, engineering, purchasing, production. */}
-      {view==="project"&&openProject&&navTab===(projectOriginTab||"projects")&&(
-        <ErrorBoundary onBack={()=>setView("dashboard")}>
-          <ProjectView key={openProject.id} project={openProject} uid={user.uid} onBack={()=>checkQuoteRevWarn(()=>{setRevSnoozed(s=>{const n={...s};delete n[openProject?.id];return n;});setView("dashboard");setOpenProject(null);setProjectOriginTab(null);})} onChange={handleChange} onDelete={()=>handleDelete(openProject.id,openProject.name,openProject.bcProjectId,openProject.bcProjectNumber,openProject)} onTransfer={companyId?()=>setTransferProject(openProject):undefined} onCopy={()=>setCopyProject(openProject)} onArchive={companyId?async()=>{const _archLabel=openProject.name||openProject.bcProjectNumber;const issues=scanBomForArchiveIssues(openProject);const hasIssues=issues.bcNotInBcCount>0||issues.mfrMissingCount>0||issues.vendorMissingCount>0;let acknowledgment=null;if(hasIssues){const bullets=[];if(issues.bcNotInBcCount>0)bullets.push(`${issues.bcNotInBcCount} item(s) not found in BC`);if(issues.mfrMissingCount>0)bullets.push(`${issues.mfrMissingCount} item(s) missing manufacturer`);if(issues.vendorMissingCount>0)bullets.push(`${issues.vendorMissingCount} item(s) missing vendor`);const proceed=await arcConfirm(`This project's BOM has issues that will affect restoration:\n\n${bullets.map(b=>"  • "+b).join("\n")}\n\nIf you archive now, restoring later may produce a BOM with missing items in BC requiring manual remediation.\n\nRecommended: resolve these issues before archiving (add missing items to BC, assign manufacturers/vendors).`,{kind:"warning",title:"⚠ Archive Warning — Incomplete BOM Sync",okLabel:"Archive Anyway — I Acknowledge",cancelLabel:"Cancel — Fix BOM First"});if(!proceed)return;const cu=firebase.auth().currentUser;acknowledgment={bcNotInBcCount:issues.bcNotInBcCount,mfrMissingCount:issues.mfrMissingCount,vendorMissingCount:issues.vendorMissingCount,acknowledgedBy:user.uid,acknowledgedByName:cu?.displayName||cu?.email||user.uid,acknowledgedAt:Date.now()};}else{if(!await arcConfirm(`Archive "${_archLabel}"? This creates a read-only snapshot. The original project is not affected.`,{okLabel:"Archive"}))return;}setArchivingProject(openProject.id);try{await archiveProject(user.uid,openProject,"user-initiated",acknowledgment);await arcAlert(`✓ Archived "${_archLabel}" successfully.`);}catch(e){await arcAlert("Archive failed: "+e.message,{kind:"error"});}finally{setArchivingProject(null);}}:undefined} autoOpenPortal={pendingPortalOpen===openProject.id} portalFocusId={pendingPortalOpen===openProject.id?pendingPortalFocusId:null} onPortalOpened={()=>{setPendingPortalOpen(null);setPendingPortalFocusId(null);}} autoOpenCustomerReview={pendingCustomerReviewOpen===openProject.id} onCustomerReviewOpened={()=>setPendingCustomerReviewOpen(null)}/>
-        </ErrorBoundary>
-      )}
+      {/* F085: unsynced-ARC→BC-changes leave prompt. "Sync now" flushes each mismatched panel's planning
+          lines + lead-time queue via the panel's own sync (which surfaces failures loudly per B078); it only
+          proceeds with the leave on a clean sync. "Later" is safe — the diff recovers on next open. If the
+          leaver can't push (owner-lock / readOnly / BC disconnected / env mismatch, or panels unmounted),
+          only "Later" is offered so we never present a Sync-now that would silently fail. */}
+      {bcSyncLeaveModal&&(()=>{
+        const lm=bcSyncLeaveModal;
+        const targets=_bcLeaveSyncTargets(lm.project);
+        const canSyncNow=targets.length>0&&targets.every(e=>e.canSync());
+        const later=()=>{const a=lm.pendingAction;setBcSyncLeaveModal(null);a();};
+        const syncNow=async()=>{
+          setBcSyncLeaveBusy(true);
+          let anyFail=false;
+          for(const e of targets){
+            try{const res=await e.sync();if(res&&res.ok===false)anyFail=true;}catch(err){anyFail=true;}
+            try{await e.flushLeadTimes();}catch(_){}
+          }
+          setBcSyncLeaveBusy(false);
+          setBcSyncLeaveModal(null);
+          // B078: on any failure the panel's syncFailedAlert modal is now showing — do NOT proceed as if
+          // synced. Stay on the project so the user can act. Only leave on a fully clean sync.
+          if(anyFail)return;
+          lm.pendingAction();
+        };
+        return React.createElement("div",{style:{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"},onClick:e=>{if(e.target===e.currentTarget&&!bcSyncLeaveBusy){later();}}},
+          React.createElement("div",{style:{background:C.card,border:`1px solid ${C.border}`,borderRadius:16,padding:"32px 36px",maxWidth:460,width:"90%",textAlign:"center"}},
+            React.createElement("div",{style:{fontSize:28,marginBottom:12}},"⇅"),
+            React.createElement("div",{style:{fontSize:16,fontWeight:700,color:C.text,marginBottom:8}},"Unsynced changes to Business Central"),
+            React.createElement("div",{style:{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:24}},
+              canSyncNow
+                ? "This project has BOM changes that haven't been pushed to Business Central. Sync now, or leave — your changes are saved and will re-sync automatically the next time you open this project."
+                : "This project has BOM changes that haven't been pushed to Business Central. They can't be pushed right now, but your changes are saved and will re-sync automatically the next time you open this project."),
+            React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:10}},
+              canSyncNow?React.createElement("button",{disabled:bcSyncLeaveBusy,onClick:syncNow,style:{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}55`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:bcSyncLeaveBusy?"default":"pointer",opacity:bcSyncLeaveBusy?0.6:1}},bcSyncLeaveBusy?"Syncing…":"Sync now"):null,
+              React.createElement("button",{disabled:bcSyncLeaveBusy,onClick:later,style:{background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:600,cursor:bcSyncLeaveBusy?"default":"pointer"}},"Later")
+            )
+          )
+        );})()}
       </div>{/* end main content column */}
       {/* F033: app-level To-Do rail — persistent right column across every top-level nav tab.
           SUPPRESSED when: (a) an open project's ProjectView is on-screen (it has its own right pane),
