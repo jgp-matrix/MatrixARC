@@ -10998,6 +10998,11 @@ async function loadDvHistory(uid,projectId){
   return snap.docs.map(d=>({id:d.id,...d.data()}));
 }
 async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=false){
+  // B078-2 stale-clobber guard: capture SYNCHRONOUSLY (before any await) whether this write is a
+  // coalesced background save. Every NON-coalesced (immediate) caller — user-edit/content saves,
+  // the extraction final save, and the BC-sync markers — stamps _bgLastContentSave on success so a
+  // later stale background payload for this panel is dropped at flush. See the coalescer block.
+  const _bgStampImmediate=!_coalescedBgActive;
   // Skip if panel was deleted
   if(window._deletedPanelIds&&window._deletedPanelIds.has(panelId)){console.log("saveProjectPanel: skipped — panel",panelId,"was deleted");return;}
   // Serialize saves per project to prevent race conditions
@@ -11174,6 +11179,9 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     liveProject.crossLineDuplicates=buildCrossLineDuplicates(liveProject.panels);
     const stripped=JSON.parse(JSON.stringify({...liveProject,panels:liveProject.panels.map(p=>({...p,pages:(p.pages||[]).map(pg=>{const{dataUrl,...r}=pg;return r;})}))}));
     await ref.set(stripped);
+    // B078-2: stamp the last IMMEDIATE (non-coalesced) write time for this panel so the coalescer
+    // drops any background payload captured before it (superseded → whole-panel-replace clobber).
+    if(_bgStampImmediate)_bgLastContentSave[projectId+":"+panelId]=Date.now();
     _flushQvHistory(projectId);
     if(_prOvr)delete _pendingPreReviewOverrides[projectId];
     if(!skipNotify)notifyProjectListeners(projectId,liveProject);
@@ -11239,11 +11247,35 @@ function _surfaceExtractionSaveFailure(projectId,panelId,latestPanel){
 // USER-INITIATED / CONTENT saves DO NOT pass through here — they call onSaveImmediate /
 // saveProject directly and write immediately (rev-bump correctness). Only the fire-and-forget
 // _noBumpWrite background PanelCard effects are routed through _scheduleBgSave.
-const _bgSaveMap=new Map();          // key `${projectId}:${panelId}` → {fn,payload}
+const _bgSaveMap=new Map();          // key `${projectId}:${panelId}` → {fn,payload,capturedAt,key}
 const _BG_SAVE_FLUSH_MS=1000;        // trailing flush cadence — collapses a churn burst
 const _BG_SAVE_MAX_INFLIGHT=2;       // cap concurrent outstanding background writes
 let _bgSaveInflight=0;
 let _bgSaveTimer=null;
+// STALE-CLOBBER GUARD (Coach must-fix). saveProjectPanel is whole-panel-replace, so a background
+// payload captured just BEFORE an immediate write, then flushed ~≤1s later, would overwrite that
+// newer write. `_bgLastContentSave[key]` records the wall-clock of the most recent NON-coalesced
+// (immediate) write per panel — stamped inside saveProjectPanel for every non-coalesced caller,
+// which covers ALL THREE immediate classes automatically because they all funnel through it:
+//   (a) user-edit / content saves        → saveImmediatePanel → saveProjectPanel
+//   (b) extraction final save (B078-1)    → saveProjectPanelWithRetry → saveProjectPanel
+//   (c) BC-sync markers (~29040/29102/29109) → onSaveImmediate → saveProjectPanel
+// The coalescer sets `_coalescedBgActive` around its own dispatch so those (and only those) writes
+// are excluded from stamping. At flush, any queued item whose capturedAt predates the last immediate
+// write for its panel is DROPPED (superseded) — safe: the backfill effect re-fires if still stale.
+const _bgLastContentSave=Object.create(null); // key `${projectId}:${panelId}` → Date.now() of last immediate write
+let _coalescedBgActive=false;                 // true only while the coalescer is synchronously invoking a bg save
+// Dispatch one queued bg item, wrapping fn() so saveProjectPanel's synchronous prologue reads
+// _coalescedBgActive=true (and therefore does NOT stamp _bgLastContentSave for this write). fn
+// (onSaveImmediate) runs synchronously into saveProjectPanel up to its first await before returning
+// its promise, so the flag is captured there before the finally resets it. Returns a promise.
+function _dispatchBgSave(item){
+  let r;
+  _coalescedBgActive=true;
+  try{r=item.fn(item.payload);}
+  finally{_coalescedBgActive=false;}
+  return Promise.resolve(r);
+}
 function _bgSaveFlushTick(){
   // Stop the timer once fully drained (nothing queued + none in flight).
   if(!_bgSaveMap.size&&_bgSaveInflight===0){clearInterval(_bgSaveTimer);_bgSaveTimer=null;return;}
@@ -11251,9 +11283,13 @@ function _bgSaveFlushTick(){
     if(_bgSaveInflight>=_BG_SAVE_MAX_INFLIGHT)break;
     const item=_bgSaveMap.get(key);
     _bgSaveMap.delete(key);
+    // Drop a stale payload superseded by a newer immediate/content write for this panel.
+    if(item.capturedAt<(_bgLastContentSave[key]||0)){
+      try{console.log("[BG-SAVE] dropped stale background autosave (superseded by newer immediate write):",key);}catch(_){}
+      continue;
+    }
     _bgSaveInflight++;
-    // The site's fn (onSaveImmediate) may be sync or async — Promise.resolve normalizes both.
-    Promise.resolve().then(()=>item.fn(item.payload)).then(()=>{_bgSaveInflight--;}).catch((e)=>{
+    _dispatchBgSave(item).then(()=>{_bgSaveInflight--;}).catch((e)=>{
       _bgSaveInflight--;
       try{console.warn("[BG-SAVE] coalesced background autosave failed:",e&&e.message||e);}catch(_){}
     });
@@ -11264,17 +11300,20 @@ function _bgSaveFlushTick(){
 function _scheduleBgSave(fn,projectId,panelId,payload){
   if(typeof fn!=="function")return;
   const key=(projectId||"?")+":"+(panelId||"?");
-  _bgSaveMap.set(key,{fn,payload});
+  _bgSaveMap.set(key,{fn,payload,capturedAt:Date.now(),key});
   if(!_bgSaveTimer)_bgSaveTimer=setInterval(_bgSaveFlushTick,_BG_SAVE_FLUSH_MS);
 }
 // Flush every pending trailing write NOW, bypassing the in-flight cap — so a tab hide/close
 // can never drop a pending background write. Mirrors the BC lead-time queue's
-// visibilitychange/beforeunload best-effort flush.
+// visibilitychange/beforeunload best-effort flush. Still honors the stale-clobber guard.
 function _flushBgSaveNow(){
   if(!_bgSaveMap.size)return;
   const items=[..._bgSaveMap.values()];
   _bgSaveMap.clear();
-  for(const item of items){try{Promise.resolve().then(()=>item.fn(item.payload)).catch(()=>{});}catch(_){}}
+  for(const item of items){
+    if(item.capturedAt<(_bgLastContentSave[item.key]||0))continue; // superseded → drop
+    try{_dispatchBgSave(item).catch(()=>{});}catch(_){}
+  }
 }
 if(typeof document!=="undefined"){
   document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")_flushBgSaveNow();});
