@@ -54207,7 +54207,7 @@ INSTRUCTIONS:
       if(!snap.exists)return;
       const remote=snap.data().version;
       // Route into the unified broadcast state; skip if the user already clicked "Later" on this build.
-      if(remote&&remote!==APP_VERSION&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote});
+      if(remote&&remote!==APP_VERSION&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='admin')?b:(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote}); // N1: don't wipe an unread admin message (matches the poll guard)
     },()=>{});
     return()=>unsub();
   },[]);
