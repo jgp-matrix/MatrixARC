@@ -38822,9 +38822,14 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
   },[project.id]);
 
   function addPanel(){
-    const n=(project.panels||[]).length+1;
-    const newPanel={id:'panel-'+Date.now(),name:`Panel ${n}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'};
-    const updated={...project,panels:[...(project.panels||[]),newPanel]};
+    const n=(project.panels||[]).length+1; // positional index — still drives BC task-block numbering (unchanged)
+    // B079: derive the display name from a persisted monotonic counter so an add-after-delete can't reuse a
+    // number (the "three Panel 4s" bug). Seed from the max existing "Panel N" + current count + any stored
+    // panelSeq, so existing projects don't restart at 1 and a renamed/deleted panel can't lower the high-water.
+    const _existingMax=(project.panels||[]).reduce((m,p)=>{const mt=/^Panel\s+(\d+)$/.exec((p&&p.name)||"");return mt?Math.max(m,+mt[1]):m;},0);
+    const _seq=Math.max(project.panelSeq||0,_existingMax,(project.panels||[]).length)+1;
+    const newPanel={id:'panel-'+Date.now(),name:`Panel ${_seq}`,pages:[],bom:[],validation:null,pricing:null,budgetaryQuote:null,status:'draft'};
+    const updated={...project,panelSeq:_seq,panels:[...(project.panels||[]),newPanel]};
     persistProject(updated);
     // DECISION(v1.19.1005, TODO #22): Mirror the BC task-block scaffolding that
     // New Project creates via bcCreatePanelTaskStructure. Without this, the
