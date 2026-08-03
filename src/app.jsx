@@ -10890,6 +10890,11 @@ async function saveProject(uid,project){
   const stripped={...data,updatedBy:uid,updatedAt:Date.now(),panels:(data.panels||[]).map(panel=>({...panel,pages:(panel.pages||[]).map(p=>{const {dataUrl,...rest}=p;return rest;})}))};
   const toSave=JSON.parse(JSON.stringify(stripped));
   await ref.set(toSave);
+  // B078-2 clobber-guard (Coach re-review gap): saveProject is an immediate whole-project write (never
+  // coalesced) that persists panel content — EngineeringQuestions-modal save, BC re-link, quote/PO saves.
+  // Stamp each panel so a stale coalesced backfill captured BEFORE this write is dropped on flush instead of
+  // whole-panel-replacing it. saveProject is never called from the coalescer, so this is unconditionally safe.
+  try{for(const _p of (data.panels||[]))if(_p&&_p.id)_bgLastContentSave[project.id+":"+_p.id]=Date.now();}catch(_){}
   _flushQvHistory(project.id);
   if(_pendingPreReviewOverrides[project.id]&&data.preReviewStatus!==undefined)delete _pendingPreReviewOverrides[project.id];
   return data; // return with dataUrls intact for in-memory use
@@ -11284,7 +11289,7 @@ function _bgSaveFlushTick(){
     const item=_bgSaveMap.get(key);
     _bgSaveMap.delete(key);
     // Drop a stale payload superseded by a newer immediate/content write for this panel.
-    if(item.capturedAt<(_bgLastContentSave[key]||0)){
+    if(item.capturedAt<=(_bgLastContentSave[key]||0)){ // <= : same-ms tie fails safe (drop bg, it self-heals)
       try{console.log("[BG-SAVE] dropped stale background autosave (superseded by newer immediate write):",key);}catch(_){}
       continue;
     }
@@ -11311,7 +11316,7 @@ function _flushBgSaveNow(){
   const items=[..._bgSaveMap.values()];
   _bgSaveMap.clear();
   for(const item of items){
-    if(item.capturedAt<(_bgLastContentSave[item.key]||0))continue; // superseded → drop
+    if(item.capturedAt<=(_bgLastContentSave[item.key]||0))continue; // superseded (<= : same-ms fails safe) → drop
     try{_dispatchBgSave(item).catch(()=>{});}catch(_){}
   }
 }
