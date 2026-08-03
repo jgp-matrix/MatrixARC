@@ -5,7 +5,13 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-08-03 · prod v1.24.70 · B078-1 + F085 shipped · subagent-lane (Freddy)
+## Current — 🟢 2026-08-03 · prod v1.24.71 + functions · B078-1/F085/B078-2/B079/B080/B081 shipped · subagent-lane (Freddy)
+
+> ## ▶ RESUME HERE (2026-08-03 PM) — big ship day, queue cleared to prod.
+> **Shipped today:** v1.24.69 B078-1 (loud save-fail) · v1.24.70 F085 (BC-sync-on-leave prompt) · v1.24.71 **B078-2** (autosave coalescer — root fix, invisible; watch large extractions), **B079** (unique panel names), **B081** (Auto-Add shows vendor part# — Jon re-adds his 2 rows) · **functions: B080** (Anthropic 429 retry-with-backoff, CONCURRENCY 4→3, +latent pageResults fix — deployed clean after a transient-lock retry). All Coach-reviewed.
+> **⏳ IN FLIGHT:** B082 (Margin-flush-on-leave) — Marc building → Coach → deploy.
+> **👉 JON ACTION:** B080 ceiling = **tier bump** (his Anthropic account console — no code). Post-deploy smoke for B080 = watch functions:log on the next real extraction (happy-path unchanged, unit-tested 13/13).
+> **STILL OPEN (non-blocking):** the "3-user issues" — confirm they were the B078 save-loss (fixed) vs. something else. F085 follow-ups F1/F2 (LOW); B083 (LOW); B080 follow-ups F1/F2 (LOW, .gcloudignore + supplier-404 body-drain).
 
 > ## ▶ RESUME HERE (2026-08-03) — two ships today: B078-1 (silent-save-loss fix) v1.24.69, F085 (BC-sync-on-leave prompt) v1.24.70.
 > - **✅ v1.24.69 — B078-1:** extraction save now retries + surfaces a blocking modal on failure instead of a silent green ✓ (the PRJ402141/Ryan silent-save-loss). Coach-reviewed, Jon Test-verified.
