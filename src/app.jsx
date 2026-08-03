@@ -20577,7 +20577,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
     if(bcDebounce.current){clearTimeout(bcDebounce.current);bcDebounce.current=null;}
     const exists=defaultItems.some(d=>(d.description||"").toLowerCase()===((item.displayName||"").toLowerCase()));
     if(!exists){
-      setDefaultItems(prev=>[...prev,{partNumber:item.number||"",description:item.displayName||"",manufacturer:"",qty:1,unitPrice:item.unitCost??item.unitPrice??0,priceSource:"bc",priceDate:Date.now()}]);
+      setDefaultItems(prev=>[...prev,{partNumber:item.number||"",vendorPartNumber:item._vendorItemNo||"",description:item.displayName||"",manufacturer:"",qty:1,unitPrice:item.unitCost??item.unitPrice??0,priceSource:"bc",priceDate:Date.now()}]); // B081: store the BC Vendor_Item_No so the list can show the vendor part# instead of the MTX Item No
     }
     setBcQuery("");setBcResults([]);setBcSearching(false);
   }
@@ -20786,7 +20786,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
                 {bcResults.map((item,i)=>(
                   <div key={i} onClick={()=>addBcItem(item)} style={{display:"grid",gridTemplateColumns:"110px 1fr 80px 90px",gap:0,padding:"7px 10px",cursor:"pointer",borderBottom:`1px solid ${C.border}33`,fontSize:12,transition:"background 0.1s"}}
                     onMouseEnter={e=>e.currentTarget.style.background="#345880"} onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.number}</div>
+                    <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item._vendorItemNo||item.number}</div>
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",paddingRight:8}}>{item.displayName}</div>
                     <div style={{textAlign:"right",color:C.green}}>{item.unitCost!=null?"$"+item.unitCost.toFixed(2):"—"}</div>
                     <div style={{textAlign:"right",color:C.muted}}>{fmtDate(item.lastModifiedDateTime)}</div>
@@ -20820,7 +20820,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
                 return(
                   <div key={i} style={{display:"grid",gridTemplateColumns:"50px 100px 1fr 80px 32px",gap:0,padding:"4px 10px",fontSize:12,borderBottom:i<defaultItems.length-1?`1px solid ${C.border}22`:"none",background:zeroPrice?"#ff000011":"transparent",alignItems:"center"}}>
                     <input type="number" min="1" step="1" value={item.qty||1} onChange={e=>{const q=Math.max(1,+e.target.value||1);setDefaultItems(prev=>prev.map((it,j)=>j===i?{...it,qty:q}:it));}} onFocus={e=>e.target.select()} style={{...inp(),width:40,fontSize:12,textAlign:"center",padding:"3px 4px"}}/>
-                    <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.partNumber||"—"}</div>
+                    <div style={{color:C.accent,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.vendorPartNumber||item.partNumber||"—"}</div>
                     <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.description}</div>
                     <div style={{textAlign:"right",color:zeroPrice?C.red:C.green}}>{item.unitPrice?"$"+Number(item.unitPrice).toFixed(2):"$0.00"}</div>
                     <button onClick={()=>removeItem(i)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:14,padding:0,lineHeight:1}} title="Remove">✕</button>
