@@ -10431,6 +10431,13 @@ function _panelBomHashMismatch(panel){
 function _panelBomUnsynced(panel){
   return _panelBomHashMismatch(panel)&&(((panel&&panel.bom)||[]).some(r=>!r.isLaborRow));
 }
+// F085: the exact set of non-labor rows that AREN'T BC/manual-priced — i.e. the rows the #168 load-bearing
+// guard inside syncPlanningLinesToBC will block on ("BC Sync Blocked"). Factored so the guard AND the leave
+// gate share ONE definition (dual-consumer rule): when this is non-empty a "Sync now" can only hit the block,
+// so the leave gate hides "Sync now" and offers Later-only with pricing guidance instead of a dead-end button.
+function _panelUnpricedForBc(panel){
+  return (((panel&&panel.bom)||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual"));
+}
 // F085 leave-gate predicate: a BC-linked project has unsynced ARC→BC changes when any panel needs sync.
 // App reads this off `openProject`, which ProjectView keeps fresh via onChange on every edit.
 function _hasUnsyncedBcChanges(project){
@@ -28955,7 +28962,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // partNumber rows, so a freshly-added blank "+ Add Row" placeholder
     // shouldn't block the auto-sync. The user fills the partNumber via BC
     // Browser → commitBcItem stamps priceSource → sync proceeds.
-    const unpriced=(panel.bom||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual");
+    const unpriced=_panelUnpricedForBc(panel);
     if(unpriced.length){setUnpricedAlert(unpriced);return{ok:false,reason:"unpriced"};}
     let _leaveOutcome={ok:true,synced:true}; // F085: flipped to {ok:false} in the failed branch below
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
@@ -29046,9 +29053,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const key=_bgKey(projectId,panel.id);
     _bcLeaveSyncRegistry[key]={
       hasUnsynced:()=>_panelBomUnsynced(_leaveSyncStateRef.current.panel),
-      // Can't-sync cases (owner-priority soft-lock / readOnly / BC disconnected / env mismatch) → the gate
-      // offers "Later" only, never a Sync-now that would silently fail.
-      canSync:()=>{const s=_leaveSyncStateRef.current;return !!s.bcProjectNumber&&!!_bcToken&&!s.readOnly&&!s.ownerPriorityActive&&!_bcEnvMismatched(s.project);},
+      // Can't-sync cases → the gate offers "Later" only, never a Sync-now that would silently fail or dead-end:
+      //  - owner-priority soft-lock / readOnly / BC disconnected / env mismatch (would fail), AND
+      //  - unpriced non-labor rows (would hit the #168 "BC Sync Blocked" guard → the loop Jon reported).
+      canSync:()=>{const s=_leaveSyncStateRef.current;return !!s.bcProjectNumber&&!!_bcToken&&!s.readOnly&&!s.ownerPriorityActive&&!_bcEnvMismatched(s.project)&&_panelUnpricedForBc(s.panel).length===0;},
+      unpricedCount:()=>_panelUnpricedForBc(_leaveSyncStateRef.current.panel).length,
       sync:()=>_leaveSyncStateRef.current.syncPlanningLinesToBC(),
       flushLeadTimes:async()=>{const s=_leaveSyncStateRef.current;if(s.leadQ.current.pending.size>0)await s.flushLeadTimes();}
     };
@@ -32184,7 +32193,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     </div>
                   ))}
                 </div>
-                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Use "Get BC Prices" to price these items, or mark them manually before syncing.</div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Use "Get Prices" or "BC Item Browser" to add all items to BC before running a sync.</div>
                 <button onClick={()=>setUnpricedAlert(null)}
                   style={{background:C.accent,color:"#fff",border:"none",borderRadius:6,padding:"8px 24px",fontSize:13,fontWeight:700,cursor:"pointer",width:"100%"}}>
                   OK
@@ -54785,6 +54794,7 @@ INSTRUCTIONS:
         const lm=bcSyncLeaveModal;
         const targets=_bcLeaveSyncTargets(lm.project);
         const canSyncNow=targets.length>0&&targets.every(e=>e.canSync());
+        const unpricedTotal=targets.reduce((n,e)=>n+((e.unpricedCount&&e.unpricedCount())||0),0);
         const later=()=>{const a=lm.pendingAction;setBcSyncLeaveModal(null);a();};
         const syncNow=async()=>{
           setBcSyncLeaveBusy(true);
@@ -54807,7 +54817,9 @@ INSTRUCTIONS:
             React.createElement("div",{style:{fontSize:13,color:C.sub,lineHeight:1.6,marginBottom:24}},
               canSyncNow
                 ? "This project has BOM changes that haven't been pushed to Business Central. Sync now, or leave — your changes are saved and will re-sync automatically the next time you open this project."
-                : "This project has BOM changes that haven't been pushed to Business Central. They can't be pushed right now, but your changes are saved and will re-sync automatically the next time you open this project."),
+                : unpricedTotal>0
+                  ? `This project has BOM changes that haven't been pushed to Business Central. ${unpricedTotal} item${unpricedTotal>1?"s":""} must be priced in BC first — use "Get Prices" or the BC Item Browser — before it can sync. Your changes are saved; nothing is lost.`
+                  : "This project has BOM changes that haven't been pushed to Business Central. They can't be pushed right now, but your changes are saved and will re-sync automatically the next time you open this project."),
             React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:10}},
               canSyncNow?React.createElement("button",{disabled:bcSyncLeaveBusy,onClick:syncNow,style:{background:C.accentDim,color:C.accent,border:`1px solid ${C.accent}55`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:700,cursor:bcSyncLeaveBusy?"default":"pointer",opacity:bcSyncLeaveBusy?0.6:1}},bcSyncLeaveBusy?"Syncing…":"Sync now"):null,
               React.createElement("button",{disabled:bcSyncLeaveBusy,onClick:later,style:{background:C.surface,color:C.muted,border:`1px solid ${C.border}`,borderRadius:20,padding:"8px 20px",fontSize:13,fontWeight:600,cursor:bcSyncLeaveBusy?"default":"pointer"}},"Later")
