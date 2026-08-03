@@ -54543,36 +54543,34 @@ INSTRUCTIONS:
           }catch(e){/* best-effort — reload regardless */}
           window.location.reload();
         }
-        const cardStyle={position:"fixed",top:16,right:16,zIndex:10000,maxWidth:360,background:"#12122a",border:"1px solid #fde047",borderRadius:12,padding:"14px 16px",boxShadow:"0 8px 30px rgba(0,0,0,0.6)",display:"flex",flexDirection:"column",gap:10,animation:"pulseYellow 1.6s ease-in-out infinite"};
+        // F086 (Jon 2026-08-03): full-width bar overlaying the entire top-bar strip (not a corner card),
+        // horizontal layout, flashing. Covers only the top bar (top:0), never the nav tabs below.
+        const barStyle={position:"fixed",top:0,left:0,right:0,zIndex:10000,boxSizing:"border-box",background:"#12122a",borderBottom:"2px solid #fde047",padding:"10px 20px",boxShadow:"0 4px 20px rgba(0,0,0,0.55)",display:"flex",flexDirection:"row",alignItems:"center",gap:14,animation:"pulseYellow 1.6s ease-in-out infinite"};
         if(isVersion){
           return(
-            <div style={cardStyle} role="status" aria-live="polite">
-              <div style={{display:"flex",alignItems:"center",gap:8}}>
-                <span style={{fontSize:18}}>🚀</span>
-                <span style={{fontSize:14,fontWeight:800,color:"#fff"}}>New version available</span>
+            <div style={barStyle} role="status" aria-live="polite">
+              <span style={{fontSize:20,flexShrink:0}}>🚀</span>
+              <div style={{flex:1,minWidth:0}}>
+                <span style={{fontSize:14,fontWeight:800,color:"#fff",marginRight:8}}>New version available</span>
+                <span style={{fontSize:12.5,color:"#e2e8f0"}}>
+                  {hasRunning
+                    ?`ARC ${broadcast.id} is ready. You have ${runningTasks.length} task${runningTasks.length>1?'s':''} running — finish your current work, then click to refresh (refreshing cancels them).`
+                    :`ARC ${broadcast.id} is ready. Finish your current work, then click to refresh and load the new version.`}
+                </span>
               </div>
-              <div style={{fontSize:12.5,color:"#e2e8f0",lineHeight:1.45}}>
-                {hasRunning
-                  ?`A new version of ARC (${broadcast.id}) is available. You have ${runningTasks.length} task${runningTasks.length>1?'s':''} running — finish your current work, then click to refresh (refreshing will cancel them).`
-                  :`A new version of ARC (${broadcast.id}) is available. Finish your current work, then click to refresh.`}
-              </div>
-              <div style={{display:"flex",gap:8,alignItems:"center",justifyContent:"flex-end"}}>
-                <button onClick={()=>{_bcMarkVersionSeen(broadcast.id);setBroadcast(null);}} style={{background:"none",border:"1px solid #ffffff33",borderRadius:6,padding:"5px 12px",color:"#cbd5e1",fontSize:12,cursor:"pointer"}}>Later</button>
-                <button onClick={safeRefresh} style={{background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"6px 14px",fontSize:13,fontWeight:800,cursor:"pointer"}}>{hasRunning?"Cancel & Update Now":"Refresh & Update Now"}</button>
-              </div>
+              <button onClick={()=>{_bcMarkVersionSeen(broadcast.id);setBroadcast(null);}} style={{flexShrink:0,background:"none",border:"1px solid #ffffff33",borderRadius:6,padding:"5px 12px",color:"#cbd5e1",fontSize:12,cursor:"pointer"}}>Later</button>
+              <button onClick={safeRefresh} style={{flexShrink:0,background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"6px 16px",fontSize:13,fontWeight:800,cursor:"pointer"}}>{hasRunning?"Cancel & Update Now":"Refresh & Update Now"}</button>
             </div>
           );
         }
         return(
-          <div style={cardStyle} role="status" aria-live="polite">
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:18}}>📢</span>
-              <span style={{fontSize:14,fontWeight:800,color:"#fff"}}>Message from Admin</span>
+          <div style={barStyle} role="status" aria-live="polite">
+            <span style={{fontSize:20,flexShrink:0}}>📢</span>
+            <div style={{flex:1,minWidth:0,display:"flex",alignItems:"baseline",gap:8}}>
+              <span style={{fontSize:14,fontWeight:800,color:"#fff",flexShrink:0}}>Message from Admin:</span>
+              <span style={{fontSize:13,color:"#e2e8f0",whiteSpace:"pre-wrap",overflow:"hidden",textOverflow:"ellipsis"}}>{broadcast.message}</span>
             </div>
-            <div style={{fontSize:13,color:"#e2e8f0",lineHeight:1.45,whiteSpace:"pre-wrap"}}>{broadcast.message}</div>
-            <div style={{display:"flex",justifyContent:"flex-end"}}>
-              <button onClick={()=>{_bcMarkAdminSeen(broadcast.id);setBroadcast(null);}} style={{background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"6px 14px",fontSize:13,fontWeight:800,cursor:"pointer"}}>Dismiss</button>
-            </div>
+            <button onClick={()=>{_bcMarkAdminSeen(broadcast.id);setBroadcast(null);}} style={{flexShrink:0,background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"6px 16px",fontSize:13,fontWeight:800,cursor:"pointer"}}>Dismiss</button>
           </div>
         );
       })()}
