@@ -5,7 +5,15 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
-## Current — 🟢 2026-07-31 (later) · prod v1.24.68 · PRJ402141 extraction-loss diagnosed → B078-1 fix on Test V.071 awaiting Jon · subagent-lane (Freddy)
+## Current — 🟢 2026-08-03 · prod v1.24.70 · B078-1 + F085 shipped · subagent-lane (Freddy)
+
+> ## ▶ RESUME HERE (2026-08-03) — two ships today: B078-1 (silent-save-loss fix) v1.24.69, F085 (BC-sync-on-leave prompt) v1.24.70.
+> - **✅ v1.24.69 — B078-1:** extraction save now retries + surfaces a blocking modal on failure instead of a silent green ✓ (the PRJ402141/Ryan silent-save-loss). Coach-reviewed, Jon Test-verified.
+> - **✅ v1.24.70 — F085:** prompt on project-leave when a BC-linked project has unsynced ARC→BC BOM changes ("Sync now" / "Later"). Durable `bomSyncHash` → core sync isn't lost (recovers on next open); F085 adds the leave-time reminder. Coach APPROVE-WITH-FIXES (M1 = modals moved out of the navTab gate so they render from any origin tab). Jon-caught loop fixed: unpriced items → "Later"-only (no dead-end Sync-now) + BC-block popup reworded. One shared `_panelUnpricedForBc` predicate drives both the sync guard and the leave gate.
+> - **Answered for Jon:** the "Push Update to BC" 3s auto-timer IS real (28875) but conditional (count-increase/ECO + all-priced) and cancelled if you leave <3s; the core BOM→BC sync still recovers on next open via `bomSyncHash`.
+> **⏳ QUEUED (Jon to prioritize):** B078-2 (coalesce the autosave flood — the deeper root fix), B079 (panel `Panel ${length+1}` dup-name), B080 (Anthropic shared-key/429 ceiling — the real 10-user wall; Jon slotted it after these), B081 (Auto-Add config shows MTX# not vendor part# — needs Jon input on Matrix-internal items), B082 (sell-price/markup quick-leave drop, MED), B083 (lead-time hard-close drop, LOW). F085 follow-ups F1/F2 (LOW).
+
+> ## ▶ RESUME HERE (2026-07-31 later) — Ryan's "extraction produces no drawing BOM" → root-caused to SILENT SAVE LOSS; B078-1 fix built + Coach-approved, on Test V.071, awaiting Jon.
 
 > ## ▶ RESUME HERE (2026-07-31 later) — Ryan's "extraction produces no drawing BOM" → root-caused to SILENT SAVE LOSS; B078-1 fix built + Coach-approved, on Test V.071, awaiting Jon.
 > **PRJ402141 (Plum Island, Ryan) — the drawing BOM "wouldn't extract" / "moved from line to line."** Live Firestore/debug-log diagnosis (no assumptions — Jon-gated):
