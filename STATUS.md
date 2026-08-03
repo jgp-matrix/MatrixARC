@@ -12,7 +12,8 @@
 > **✅ v1.24.72 — B082** (Margin-flush-on-leave: sale-price PATCH no longer dropped on quick-leave) — Coach APPROVE (exactly-once PATCH verified). Queue Jon asked to stage this morning is now fully shipped.
 > **⏳ NEW / SCOPING:** F086 (Admin Global Msg + forced-refresh-on-new-version broadcast; folds in F008) — Jon 2026-08-03; likely addresses the stale-cached-bundle root of Ryan's problems.
 > **👉 JON ACTION:** B080 ceiling = **tier bump** (his Anthropic account console — no code). Post-deploy smoke for B080 = watch functions:log on the next real extraction (happy-path unchanged, unit-tested 13/13).
-> **STILL OPEN (non-blocking):** the "3-user issues" — confirm they were the B078 save-loss (fixed) vs. something else. F085 follow-ups F1/F2 (LOW); B083 (LOW); B080 follow-ups F1/F2 (LOW, .gcloudignore + supplier-404 body-drain).
+> **✅ RESOLVED:** the "3-user issues" were **only** the B078 save-loss (Jon confirmed 2026-08-03) — fully fixed by B078-1/B078-2. No other multi-user symptom.
+> **LOW backlog (no Jon input needed):** F085 F1/F2; B083; B080 F1/F2 (.gcloudignore + supplier-404 body-drain). **In flight:** F086 scope.
 
 > ## ▶ RESUME HERE (2026-08-03) — two ships today: B078-1 (silent-save-loss fix) v1.24.69, F085 (BC-sync-on-leave prompt) v1.24.70.
 > - **✅ v1.24.69 — B078-1:** extraction save now retries + surfaces a blocking modal on failure instead of a silent green ✓ (the PRJ402141/Ryan silent-save-loss). Coach-reviewed, Jon Test-verified.
