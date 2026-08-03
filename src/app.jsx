@@ -29033,6 +29033,29 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // supplier quote application, and AI pricing.
   const _sellPrice=computePanelSellPrice(panel);
   const prevSellPrice=useRef(_sellPrice);
+  // B082: hold the pending sell-price PATCH in a ref so a leave (in-app unmount / tab-hide / tab-close)
+  // can FLUSH it instead of silently dropping it. computePanelBomHash (10417) excludes sell price/markup,
+  // so a margin-only edit whose 2s timer is cancelled on unmount has NO on-open recovery path — the only
+  // fix is to fire the pending PATCH on leave rather than clearTimeout it away.
+  const _sellPriceBcRef=useRef({timer:null,pending:null});
+  // ONE flush fn every consumer calls — the 2s debounce, the unmount cleanup, and the visibilitychange /
+  // beforeunload handlers (dual-consumer rule: "when do we push the sell price + how" lives in one place).
+  // Clears the pending timer first so the debounce can NEVER also fire → no duplicate PATCH.
+  const _flushSellPriceBc=()=>{
+    const s=_sellPriceBcRef.current;
+    if(s.timer){clearTimeout(s.timer);s.timer=null;}
+    const p=s.pending;s.pending=null;
+    if(!p)return;
+    // B016-1(c) coalesce — if the planning-line auto-sync is armed it already writes the fresh sell price
+    // to BC line 10000 (via bcSyncPanelPlanningLines) AND recovers on next open via bomSyncHash, so skip
+    // this redundant standalone patch. (This is why B082 is only the margin-ONLY case: no planning-line change.)
+    if(bcAutoSyncTimer.current){console.log("SELL PRICE FLUSH: skipped (planning-line sync armed, will carry sell price)");return;}
+    // env/connection guards were checked when the PATCH was queued below; re-assert connection cheaply.
+    if(!_bcToken)return;
+    bcPatchProgressBillingLine(p.bcProjectNumber,p.taskNo,p.sellPrice)
+      .then(()=>console.log("SELL PRICE AUTO-SYNC: line 10000 →",p.sellPrice))
+      .catch(e=>console.warn("SELL PRICE AUTO-SYNC failed:",e.message));
+  };
   useEffect(()=>{
     if(prevSellPrice.current===_sellPrice){return;}
     prevSellPrice.current=_sellPrice;
@@ -29040,18 +29063,33 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // v1.19.991 (audit Item G): skip if project bound to different BC env
     if(_bcEnvMismatched(project))return;
     const taskNo=String(20000+(idx+1)*100+10);
+    // Stash the freshest pending PATCH so a leave can flush the latest value (not a stale closure).
+    _sellPriceBcRef.current.pending={bcProjectNumber,taskNo,sellPrice:_sellPrice};
     // Debounce 2s to avoid rapid-fire patches during bulk price updates
-    const t=setTimeout(()=>{
-      // B016-1(c): coalesce — if the planning-line auto-sync is armed it already writes
-      // the fresh sell price to BC line 10000 (via bcSyncPanelPlanningLines), so skip
-      // this redundant standalone patch to reduce on-open BC churn.
-      if(bcAutoSyncTimer.current){console.log("SELL PRICE AUTO-SYNC: skipped (planning-line sync armed, will carry sell price)");return;}
-      bcPatchProgressBillingLine(bcProjectNumber,taskNo,_sellPrice)
-        .then(()=>console.log("SELL PRICE AUTO-SYNC: line 10000 →",_sellPrice))
-        .catch(e=>console.warn("SELL PRICE AUTO-SYNC failed:",e.message));
-    },2000);
-    return()=>clearTimeout(t);
+    if(_sellPriceBcRef.current.timer)clearTimeout(_sellPriceBcRef.current.timer);
+    _sellPriceBcRef.current.timer=setTimeout(()=>{_sellPriceBcRef.current.timer=null;_flushSellPriceBc();},2000);
+    // On dependency change (still in-project) just clear the old timer — the new effect run re-arms with the
+    // latest pending, preserving the debounce. TRUE unmount is flushed by the mount-once effect below (a
+    // flush here would fire on every margin keystroke and defeat the debounce).
+    return()=>{if(_sellPriceBcRef.current.timer){clearTimeout(_sellPriceBcRef.current.timer);_sellPriceBcRef.current.timer=null;}};
   },[_sellPrice,bcProjectNumber]);
+  // B082: flush a pending sell-price PATCH on LEAVE — in-app unmount (project close/switch), tab-hide, and
+  // tab-close — instead of dropping it. Mirrors the _leadTimeBcQueue visibilitychange/beforeunload best-effort
+  // flush (line ~27626). Mount-once ([] deps) so the cleanup is a genuine unmount, not a per-edit re-run.
+  // Best-effort async on teardown: the PATCH may not resolve before the component is gone (fire-and-forget,
+  // same posture as the lead-time queue). _flushSellPriceBc reads only refs, so this first-render closure is
+  // never stale.
+  useEffect(()=>{
+    const onVis=()=>{if(document.visibilityState==="hidden")_flushSellPriceBc();};
+    const onBeforeUnload=()=>{_flushSellPriceBc();};
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("beforeunload",onBeforeUnload);
+    return()=>{
+      document.removeEventListener("visibilitychange",onVis);
+      window.removeEventListener("beforeunload",onBeforeUnload);
+      _flushSellPriceBc();
+    };
+  },[]);
 
   async function syncPlanningLinesToBC(){
     // F085: return an outcome ({ok, synced, reason|failed|error}) so the App leave gate can tell
