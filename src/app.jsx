@@ -54200,14 +54200,19 @@ INSTRUCTIONS:
   // When a new deploy changes the version, ALL logged-in users see the nag card instantly.
   // The deploy script writes the new version to Firestore after deploying. F086: this stays as
   // the INSTANT version trigger; the version.json poll below is the credential-free backstop.
+  // F086 FIX: write the version marker when userRole RESOLVES to admin. userRole is null at first mount, so
+  // the old mount-only ([]) write was silently skipped → the instant cross-client "new version" ping never
+  // fired (users only got it via the slow poll). The [userRole] dep runs it the moment an admin's client
+  // loads a new build, so every other open tab's onSnapshot fires instantly.
   useEffect(()=>{
-    // Also write current version on load (in case _system/version doesn't exist yet)
     if(userRole==="admin")fbDb.doc("_system/version").set({version:APP_VERSION,updatedAt:Date.now()},{merge:true}).catch(()=>{});
+  },[userRole]);
+  useEffect(()=>{
     const unsub=fbDb.doc("_system/version").onSnapshot(snap=>{
       if(!snap.exists)return;
       const remote=snap.data().version;
       // Route into the unified broadcast state; skip if the user already clicked "Later" on this build.
-      if(remote&&remote!==APP_VERSION&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='admin')?b:(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote}); // N1: don't wipe an unread admin message (matches the poll guard)
+      if(remote&&remote!==APP_VERSION&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='admin')?b:(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote}); // N1: don't wipe an unread admin message
     },()=>{});
     return()=>unsub();
   },[]);
@@ -54245,7 +54250,7 @@ INSTRUCTIONS:
         });
       }catch(_){/* offline / transient — try again next tick */}
     }
-    const iv=setInterval(checkVersion,4*60*1000);
+    const iv=setInterval(checkVersion,60*1000); // F086: 60s (was 4min) so a focused open tab detects a new deploy within ~1 min even without the admin-load instant ping
     function onVis(){if(document.visibilityState==='visible')checkVersion();}
     document.addEventListener('visibilitychange',onVis);
     checkVersion();
