@@ -2503,8 +2503,11 @@ function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
 // Stops the top-right nag card from re-showing on every reconnect/remount. VERSION is
 // keyed by the served version string so "Later" suppresses that build until a NEWER one
 // ships; ADMIN messages are keyed by sentAt so only a strictly-newer message re-shows.
-function _bcVersionSeen(v){try{return localStorage.getItem('arc_broadcast_seen_version')===v;}catch(_){return false;}}
-function _bcMarkVersionSeen(v){try{localStorage.setItem('arc_broadcast_seen_version',v);}catch(_){}}
+// F086: "Later" on the version modal now SNOOZES for 4 min (a nudge), not forever — so the 60s poll
+// re-surfaces the update prompt every ~4 min until the user actually refreshes (avoids stale-bundle problems).
+const _BC_VERSION_SNOOZE_MS=4*60*1000;
+function _bcVersionSeen(v){try{const s=JSON.parse(localStorage.getItem('arc_broadcast_seen_version')||'null');return !!(s&&s.v===v&&(s.until||0)>Date.now());}catch(_){return false;}}
+function _bcMarkVersionSeen(v){try{localStorage.setItem('arc_broadcast_seen_version',JSON.stringify({v:v,until:Date.now()+_BC_VERSION_SNOOZE_MS}));}catch(_){}}
 function _bcAdminSeenAt(){try{return parseInt(localStorage.getItem('arc_broadcast_seen')||'0',10)||0;}catch(_){return 0;}}
 function _bcMarkAdminSeen(ts){try{localStorage.setItem('arc_broadcast_seen',String(ts));}catch(_){}}
 // DECISION(v1.19.758): Helper for granular permission checks. Returns true when the
