@@ -54513,11 +54513,12 @@ INSTRUCTIONS:
     <div style={{minHeight:"100vh",background:C.bg,display:"flex",flexDirection:"column"}}>
       {/* F086: unified top-right nag card — restyled from the old full-width version banner.
           Drives BOTH triggers off the single `broadcast` state:
-            • type:'version' → PERSISTENT (no auto-dismiss); "Refresh & Update Now" (hard reload
-              via the UNCHANGED part-1 safeRefresh) + "Later" (seen-dedup suppresses this build).
-            • type:'admin'   → DISMISSIBLE admin message; "Dismiss" (seen-dedup by sentAt).
-          Fixed top-right, pulseYellow flash. Passive card — never autofocuses or navigates, so it
-          can't steal focus or yank the user off a project (Dashboard Command Center + Async rules).
+            • type:'version' → "Refresh & Apply" (hard reload via the UNCHANGED part-1 safeRefresh)
+              + "Return to what I was doing" (seen-dedup suppresses this build).
+            • type:'admin'   → "Acknowledge" (seen-dedup by sentAt).
+          Centered TAKEOVER modal with a dimmed backdrop — the user MUST click a button to proceed
+          (no click-outside dismiss). Blocking is deliberate per Jon; the "Return to what I was doing"
+          / "Acknowledge" button is the one-click escape, so no in-progress work is ever trapped.
           DECISION(v1.19.610) preserved: safeRefresh still warns + cleans up Firestore orphans for
           any running bg task before the (now hard) reload. */}
       {broadcast&&(()=>{
@@ -54545,31 +54546,35 @@ INSTRUCTIONS:
         }
         // F086 (Jon 2026-08-03): full-width bar overlaying the entire top-bar strip (not a corner card),
         // horizontal layout, flashing. Covers only the top bar (top:0), never the nav tabs below.
-        // Opaque solid bar + pulseYellowBar (flashes the border/glow only, NOT the background — so the top
-        // bar can't bleed through). Message centered + large; buttons right-aligned in an equal-flex gutter.
-        const barStyle={position:"fixed",top:0,left:0,right:0,zIndex:10000,boxSizing:"border-box",background:"#12122a",borderBottom:"3px solid #fde047",padding:"12px 20px",boxShadow:"0 4px 20px rgba(0,0,0,0.55)",display:"flex",flexDirection:"row",alignItems:"center",gap:16,minHeight:58,animation:"pulseYellowBar 1.6s ease-in-out infinite"};
+        // F086 (Jon 2026-08-03): centered TAKEOVER modal — dimmed backdrop greys out the page and the user
+        // MUST click a button to proceed (no click-outside-to-dismiss). Version → "Refresh & Apply" or
+        // "Return to what I was doing"; admin → "Acknowledge". pulseYellowBar glows the border only (bg stays solid).
+        const backdrop={position:"fixed",inset:0,zIndex:10000,background:"rgba(5,5,12,0.74)",display:"flex",alignItems:"center",justifyContent:"center",padding:20};
+        const modalCard={maxWidth:540,width:"100%",boxSizing:"border-box",background:"#12122a",border:"2px solid #fde047",borderRadius:16,padding:"30px 34px",boxShadow:"0 0 60px 8px rgba(250,204,21,0.22),0 14px 44px rgba(0,0,0,0.7)",textAlign:"center",animation:"pulseYellowBar 1.8s ease-in-out infinite"};
         if(isVersion){
           return(
-            <div style={barStyle} role="status" aria-live="polite">
-              <div style={{flex:1,minWidth:16}}/>
-              <div style={{flex:"0 1 auto",fontSize:17,fontWeight:800,color:"#fff",textAlign:"center",lineHeight:1.3}}>
-                🚀 New version of ARC ({broadcast.id}) is ready — {hasRunning?`finish your work, then Refresh (cancels ${runningTasks.length} running task${runningTasks.length>1?'s':''}).`:`finish your current work, then click Refresh to load it.`}
-              </div>
-              <div style={{flex:1,minWidth:16,display:"flex",justifyContent:"flex-end",gap:10}}>
-                <button onClick={()=>{_bcMarkVersionSeen(broadcast.id);setBroadcast(null);}} style={{whiteSpace:"nowrap",background:"none",border:"1px solid #ffffff44",borderRadius:6,padding:"6px 12px",color:"#cbd5e1",fontSize:12,cursor:"pointer"}}>Later</button>
-                <button onClick={safeRefresh} style={{whiteSpace:"nowrap",background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"7px 16px",fontSize:13,fontWeight:800,cursor:"pointer"}}>{hasRunning?"Cancel & Update Now":"Refresh & Update Now"}</button>
+            <div style={backdrop} role="dialog" aria-modal="true">
+              <div style={modalCard}>
+                <div style={{fontSize:42,marginBottom:6}}>🚀</div>
+                <div style={{fontSize:22,fontWeight:800,color:"#fff",marginBottom:12}}>A new version of ARC is available</div>
+                <div style={{fontSize:15,color:"#e2e8f0",lineHeight:1.6,marginBottom:26}}>
+                  Version <b style={{color:"#fde047"}}>{broadcast.id}</b> has been deployed — there may be important updates that need to be applied.{hasRunning?` You have ${runningTasks.length} task${runningTasks.length>1?'s':''} running; refreshing will cancel them.`:""}
+                </div>
+                <div style={{display:"flex",gap:12,justifyContent:"center",flexWrap:"wrap"}}>
+                  <button onClick={safeRefresh} style={{background:"#fde047",color:"#12122a",border:"none",borderRadius:8,padding:"12px 22px",fontSize:15,fontWeight:800,cursor:"pointer"}}>{hasRunning?"Cancel Tasks & Refresh":"Refresh & Apply"}</button>
+                  <button onClick={()=>{_bcMarkVersionSeen(broadcast.id);setBroadcast(null);}} style={{background:"#1e1e34",color:"#cbd5e1",border:"1px solid #ffffff33",borderRadius:8,padding:"12px 22px",fontSize:15,fontWeight:700,cursor:"pointer"}}>Return to what I was doing — I'll refresh after</button>
+                </div>
               </div>
             </div>
           );
         }
         return(
-          <div style={barStyle} role="status" aria-live="polite">
-            <div style={{flex:1,minWidth:16}}/>
-            <div style={{flex:"0 1 auto",fontSize:20,fontWeight:800,color:"#fff",textAlign:"center",whiteSpace:"pre-wrap",lineHeight:1.25}}>
-              📢 {broadcast.message}
-            </div>
-            <div style={{flex:1,minWidth:16,display:"flex",justifyContent:"flex-end"}}>
-              <button onClick={()=>{_bcMarkAdminSeen(broadcast.id);setBroadcast(null);}} style={{whiteSpace:"nowrap",background:"#fde047",color:"#12122a",border:"none",borderRadius:6,padding:"7px 16px",fontSize:13,fontWeight:800,cursor:"pointer"}}>Dismiss</button>
+          <div style={backdrop} role="dialog" aria-modal="true">
+            <div style={modalCard}>
+              <div style={{fontSize:42,marginBottom:6}}>📢</div>
+              <div style={{fontSize:18,fontWeight:800,color:"#fde047",letterSpacing:0.5,textTransform:"uppercase",marginBottom:16}}>Message from Admin</div>
+              <div style={{fontSize:19,color:"#fff",lineHeight:1.5,marginBottom:28,whiteSpace:"pre-wrap"}}>{broadcast.message}</div>
+              <button onClick={()=>{_bcMarkAdminSeen(broadcast.id);setBroadcast(null);}} style={{background:"#fde047",color:"#12122a",border:"none",borderRadius:8,padding:"12px 34px",fontSize:15,fontWeight:800,cursor:"pointer"}}>Acknowledge</button>
             </div>
           </div>
         );
