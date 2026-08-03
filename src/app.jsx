@@ -54476,6 +54476,14 @@ INSTRUCTIONS:
             // Give rbgError a moment to write to Firestore, then reload
             await new Promise(r=>setTimeout(r,500));
           }
+          // F086: HARD reload. The old plain reload could re-serve a stale service-worker-cached bundle —
+          // the root cause of users running an old ARC version (e.g. Ryan last week). Unregister the SW +
+          // clear all caches FIRST so we always load the freshly-deployed build. Best-effort: reload
+          // regardless of teardown errors so the button never dead-ends.
+          try{
+            if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}
+            if(window.caches){const ks=await window.caches.keys();await Promise.all(ks.map(k=>window.caches.delete(k)));}
+          }catch(e){/* best-effort — reload regardless */}
           window.location.reload();
         }
         return(
