@@ -7,7 +7,10 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
-> ## ▶ TODAY (2026-08-04) — B084 pin fix SHIPPED prod v1.24.85. Freddy.
+> ## ▶ TODAY (2026-08-04) — B085+B086 relink rebuild in build; B084 shipped v1.24.85. Freddy.
+> **PRJ402135 — REMEDIATED** (Jon ran per-panel ⇅ Sync BC; all Project Planning Lines populated, idempotent, confirmed). Root of the failure = B085.
+> **B085 (relink leave-persistence, silent-fail) + B086 (BC card Salesperson/PM/Designer not populated) — Marc lane BUILDING (Jon go 2026-08-04), bundled (same `relinkToBC` fn).** B085: convert relinkToBC → bg-task keyed by projectId (survives leave via beforeunload/lease) + identity-guard writes + loud-fail/Debug-Logs (mirror B078-1) + move stale-clear before the loop. B086: PATCH salesperson (Person_Responsible/CCS_Salesperson_Code) + PM/Designer onto the BC card (⚠ don't guess PM/Designer BC field names — may need live-BC confirm). → Coach review (money-path, #66/B065 ordering risk) → Jon deploy go. Design: docs/B085-relink-persistence-scope.md.
+> **NEXT:** G023 (audit ALL project fns for leave-persistence/no-silent-fail — Jon step 3). PARKED: F088 (per-user pin store) + G022 (per-user settings consolidation) awaiting Jon decisions.
 > **✅ B084 "Pin to Top" — SHIPPED prod v1.24.85** (`fc0c18eb`, master==origin, Coach APPROVE all 3 parts, Jon deploy go). (1) pinned projects now sort to the top of their group on the main board (applied once after groupProjects, all 6 groupBy modes; stable sort keeps unpinned order — reverses the F027 "not on main board" note per Jon); (2) 📌 amber indicator on pinned tiles; (3) uncheck clobber-race fixed — pin write serialized under `_panelSaveLocks[projectId]` (same key saveProjectPanel uses) + pin fields made single-writer in both save guards. Coach data-safety PASS (only pin-field authorship changed; no retention regression). ⏳ Jon live-verify owed: pin → floats to top + 📌 shows; uncheck → sticks/drops back. LOW follow-up logged (pre-existing saveProject lock-free TOCTOU — not introduced by this change).
 > **F087 "Email Customer Confirmation on project create"** — SCOPED (docs/F087-email-customer-confirmation-scope.md); reuses Send-Quote Outlook chain-picker; 6 Jon decisions pending; PARKED (Jon focused on B084).
 
