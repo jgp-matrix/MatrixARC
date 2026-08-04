@@ -43100,7 +43100,12 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           bom:((pan&&pan.bom)||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;})};
       });
       projectRef.current=_relinkBound;
-      if(_alive()){setProject(_relinkBound);onChange(_relinkBound);}
+      // B087: onChange (parent projects-list update — handleChange merges by id, focus-safe) fires
+      // REGARDLESS of _alive so the main board reflects the relink even when the user has navigated
+      // away before it completed (the stale-until-refresh symptom). Only setProject — THIS unmounting
+      // component's own state — stays gated by _alive.
+      if(_alive())setProject(_relinkBound);
+      onChange(_relinkBound);
       try{await saveProject(uid,_relinkBound);}catch(e){console.warn("Relink: pre-loop cleared-binding persist failed:",e&&e.message);}
 
       if(_alive())setRelinkMsg("Creating task structure…");
@@ -54607,7 +54612,10 @@ INSTRUCTIONS:
       if(proj)handleOpen(proj);
     }catch(e){console.warn("[RESTORE] post-restore project load failed:",e.message);}
   }
-  function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(p);}
+  // B087: always update the projects list (merge by id), but only reassign openProject when the changed
+  // project IS the one currently open — never hijack the user's view/nav (Dashboard focus rule + Async
+  // Ownership Rule). This lets a relink-after-leave update the board list without stealing the current view.
+  function handleChange(p){setProjects(ps=>ps.map(x=>x.id===p.id?p:x));setOpenProject(op=>op&&op.id===p.id?p:op);}
   function handleDelete(id,name,bcProjectId,bcProjectNumber,project){setDeleteConfirm({id,name,bcProjectId,bcProjectNumber,project});}
   async function confirmDelete(deleteFromBC){
     if(!deleteConfirm)return;
