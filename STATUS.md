@@ -7,6 +7,20 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
+> ## ▶ TOMORROW AM (2026-08-04) — priority queue teed up EOD 2026-08-03 (Freddy). Prod stable v1.24.83, nothing frozen/mid-deploy.
+> **🔴 NEEDS JON (do first — gate the team):**
+> 1. **F086 — verify the 4-min re-nudge live** (only live-verify still owed): client on ≥v1.24.83 → push a bump → click "Later" → confirm re-pop in ~4 min. Needs a live browser (Jon), not a lane. Done = re-nudge fires.
+> 2. **B080 — Anthropic tier bump** (console action, no code): raises the rate-limit ceiling; backoff makes it graceful meanwhile. Decision: tier bump (central billing — REC) vs per-user keys. Flagged HIGH.
+> 3. **F086 rollout bootstrap** (comms, not code): tell Ryan/Noah to do ONE manual Ctrl+Shift+R to bootstrap onto ≥v1.24.83; self-heals after.
+> **🟢 TEAM AUTONOMOUS (no Jon input — Freddy spawns Marc lane on go):**
+> 4. **LOW backlog batch:** B080-F1 (test-retry.js → .gcloudignore) · B080-F2 (drain body on supplier-404 continue) · F085-F1 (gate green "✓ Synced to BC" pill on outcome) · F085-F2 (report lead-time flush failures in Sync-now) · B083 (lead-time writeback dropped on hard tab-close <30s, recoverable).
+> 5. **TODO.md archive-review pass** — 3,642 lines (budget 1,500); REVIEW-not-blind-trim against header criteria + triage this session's INBOX items (B078–B083/F085/F086) into the tracker.
+> **🟡 WATCH / BACKLOG (awareness only):**
+> 6. **B078-2 coalescer monitor** — root save-loss fix deployed but never force-tested large; watch next big-drawing extraction for resource-exhausted / silent BOM loss, re-surface B078 if it recurs.
+> 7. **S1 multi-tenant hardening (future)** — broadcast write pinned to Matrix PCI company ID; update ID or move to a Cloud Function before any multi-tenant rollout.
+> 8. **Older TODO backlog** — B024 (reviewer-assignment notif), F076 (portal manual entry), test-env data isolation, etc. — pull from TODO.md top when ready.
+> **Freddy's rec:** knock out #1 + #2 (need Jon, unblock rollout), then run the #4 LOW batch as a Marc lane in parallel.
+
 > ## ▶ RESUME HERE (2026-08-03 EOD) — full bug queue + F086 feature shipped, all Coach-reviewed.
 > **Bug queue → prod:** v1.24.69 B078-1 (loud save-fail) · v1.24.70 F085 (BC-sync-on-leave prompt) · v1.24.71 B078-2 (autosave coalescer — root fix) + B079 (unique panel names) + B081 (Auto-Add vendor part#) · functions B080 (Anthropic 429 retry-backoff) · v1.24.72 B082 (Margin-flush-on-leave). "3-user issues" = the B078 save-loss, RESOLVED.
 > **F086 (Admin Global Msg + version broadcast) — SHIPPED through v1.24.83 + firestore:rules:** admin top-bar 📢 button → `_system/globalBroadcast` (admin-locked rule, Coach fail-closed) · centered **TAKEOVER modal** (dimmed backdrop, must acknowledge) — version = "Refresh & Apply" (hard reload: unregister SW + clear caches, the stale-bundle fix) / "Return to what I was doing"; admin = "Acknowledge" · version detect = `_system/version` instant ping (fixed the userRole-null-at-mount skip → writes on `[userRole]`) + `version.json` 60s poll · **"Later" snoozes 4 min then re-nudges** until updated. Tested live w/ Noah (modal fires; 4-min nudge to be verified later).
