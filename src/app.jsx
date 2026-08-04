@@ -10785,13 +10785,20 @@ async function saveProject(uid,project){
         // reads data.quoteSentRev so the preserved value feeds the bump cap.
         {
           const _srvSent=_curDoc.data();
-          // F027: priorityPinnedAt/By ride the SAME preserve-guard so a manager's pin
-          // survives a concurrent owner full-doc save that omits them (undefined = field
-          // absent → preserve; explicit null = intentional unpin → passes through).
-          for(const _qf of ['quoteSentRev','quoteSentAt','quoteSentTo','priorityPinnedAt','priorityPinnedBy']){
+          for(const _qf of ['quoteSentRev','quoteSentAt','quoteSentTo']){
             if(_srvSent[_qf]!==undefined&&data[_qf]===undefined){
               data[_qf]=_srvSent[_qf];
             }
+          }
+          // B084 (3b): pin SSOT — priorityPinnedAt/By have ONE authoritative writer (the checkbox
+          // _pinRef.update). Make the preserve UNCONDITIONAL for these two: a whole-doc save must
+          // NEVER author them, so ALWAYS defer to the current server value regardless of what the
+          // incoming write carries (the data[_qf]===undefined condition is DROPPED here — it is
+          // retained as-is for the quoteSent* fields above). Server absent → mirror the absence
+          // (delete) so a stale incoming pin can't be written back.
+          for(const _qf of ['priorityPinnedAt','priorityPinnedBy']){
+            if(_srvSent[_qf]!==undefined)data[_qf]=_srvSent[_qf];
+            else delete data[_qf];
           }
         }
         // (3) quoteRev bump — compute hash AFTER bomVersion has been applied so
@@ -11137,6 +11144,13 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // save never clobbers their own lease. Do NOT replace the spread with a field-by-field rebuild
     // without re-adding an explicit lease-preserve (cf. the saveProject guard above).
     let liveProject={...proj,panels,updatedBy:uid,updatedAt:Date.now(),schemaVersion:APP_SCHEMA_VERSION};
+    // B084 (3b): pin SSOT — priorityPinnedAt/By have ONE authoritative writer (the checkbox
+    // _pinRef.update). Re-assert them from `proj` (the in-lock server read at ref.get above) so this
+    // whole-doc panel save can never author/clobber them. The {...proj,...} spread already carries
+    // these, but assert explicitly so a future spread refactor can't silently drop the guarantee.
+    // Server absent → undefined → JSON.stringify drops the key on the set() below (stays unpinned).
+    liveProject.priorityPinnedAt=proj.priorityPinnedAt;
+    liveProject.priorityPinnedBy=proj.priorityPinnedBy;
     // DECISION(v1.19.744): Quote Rev bump on per-panel save. Same logic as in saveProject —
     // hash the quote-relevant content; if it differs from the persisted hash, bump.
     // saveProjectPanel is the more common save path (every BOM-row edit hits it), so this
@@ -39867,12 +39881,29 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       style:{display:"flex",alignItems:"center",gap:6,fontSize:11,color:C.muted,cursor:"pointer",marginTop:4},
                       title:"Pin this project to the top of every board column. Any manager or admin can pin or unpin."
                     },
-                      React.createElement("input",{type:"checkbox",checked:!!project.priorityPinnedAt,onChange:function(e){
+                      React.createElement("input",{type:"checkbox",checked:!!project.priorityPinnedAt,onChange:async function(e){
                         var _pinRef=fbDb.doc(`${_appCtx.projectsPath}/${project.id}`);
                         var patch=e.target.checked
                           ?{priorityPinnedAt:Date.now(),priorityPinnedBy:_appCtx.uid,updatedAt:Date.now()}
                           :{priorityPinnedAt:null,priorityPinnedBy:null,updatedAt:Date.now()};
-                        _pinRef.update(patch).then(function(){onUpdate(Object.assign({},project,patch));}).catch(function(err){console.warn("[F027] pin update failed:",err);});
+                        // B084 (3a): SERIALIZE the pin write under the SAME _panelSaveLocks[project.id]
+                        // guard saveProjectPanel uses, so a pin/unpin can't land BETWEEN a concurrent
+                        // panel save's server-read (ref.get) and its whole-doc set() — which was reading
+                        // the stale pinned timestamp and writing it back (clobbering the unpin). The pin
+                        // fields have ONE authoritative writer (this _pinRef.update); the lock keeps it
+                        // from interleaving. Release in finally (never deadlocks — no nested acquire).
+                        var _lockKey=project.id;
+                        while(_panelSaveLocks[_lockKey])await _panelSaveLocks[_lockKey];
+                        var _release;
+                        _panelSaveLocks[_lockKey]=new Promise(function(r){_release=r;});
+                        try{
+                          await _pinRef.update(patch);
+                          onUpdate(Object.assign({},project,patch));
+                        }catch(err){
+                          console.warn("[F027] pin update failed:",err);
+                        }finally{
+                          _release();delete _panelSaveLocks[_lockKey];
+                        }
                       },style:{cursor:"pointer"}}),
                       React.createElement("span",null,"📌 Pin to top"),
                       project.priorityPinnedAt&&React.createElement("span",{style:{fontSize:10,color:"#fcd34d",fontWeight:700,background:"#3a2800",borderRadius:4,padding:"1px 6px",marginLeft:4}},"ACTIVE")
@@ -50243,7 +50274,14 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
           myProjects=myProjects.filter(p=>deepSearch(p,q,0));
         }
         const transferred=projects.filter(p=>p.transferred&&p.transferredTo===uid);
-        const groups=groupProjects(myProjects);   // F027: priority-pin ordering is NOT applied to the main board (Jon) — it lives in the F025 To-Do list. _priorityPinCompare retained for that pane.
+        // B084 (2026-08-04, Jon REVERSED the F027 decision): priority-pin ordering IS now applied to
+        // the MAIN board. Applied ONCE here, AFTER groupProjects, so EVERY groupBy mode (status/customer/
+        // production/purchasing/engineering/purchasing_kanban/…) inherits it from a single source of truth
+        // rather than each branch sorting independently. _priorityPinCompare is the PRIMARY key and returns
+        // 0 for unpinned; Array.sort is stable, so unpinned projects keep their existing relative order
+        // (incl. the status board's active-ECO-first ordering already baked into each group's items).
+        // .slice() before .sort() so we never mutate the internal arrays groupProjects returns (map[k], etc.).
+        const groups=groupProjects(myProjects).map(g=>({...g,items:(g.items||[]).slice().sort(_priorityPinCompare)}));
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
         // kanban and the focused single-column view share one definition (previously
         // computed per-column inside the map). View-only styling data — no behavior change.
@@ -51639,7 +51677,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     {/* Row 1: 📌 pin badge + PRJ# + inline ECO label + BC-disconnected ⚠ (left) · owner / EDITING (right) */}
     {/* B047: overflow:hidden is the safety net — the right-side name/EDITING must NEVER bleed past the tile edge. */}
     <div style={{display:"flex",alignItems:"center",gap:6,minWidth:0,overflow:"hidden"}}>
-      {/* F027: pin badge intentionally NOT shown on the main board (Jon) — the priority pin belongs to the F025 To-Do list, not the main screen. */}
+      {/* B084 (2026-08-04): pin badge IS now shown on the main board (Jon reversed the F027 decision).
+          Cosmetic/display-only 📌 — flexShrink:0 so it never squeezes the PRJ#; amber to match the
+          "ACTIVE" pill on the Pin-to-top checkbox. Only rendered when the project is pinned. */}
+      {p.priorityPinnedAt&&<span title="Pinned to top" aria-label="Pinned to top" style={{fontSize:12,lineHeight:1,color:"#fcd34d",flexShrink:0}}>📌</span>}
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
