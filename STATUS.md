@@ -7,19 +7,17 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
-> ## ▶ TOMORROW AM (2026-08-04) — priority queue teed up EOD 2026-08-03 (Freddy). Prod stable v1.24.83, nothing frozen/mid-deploy.
-> **🔴 NEEDS JON (do first — gate the team):**
-> 1. **F086 — verify the 4-min re-nudge live** (only live-verify still owed): client on ≥v1.24.83 → push a bump → click "Later" → confirm re-pop in ~4 min. Needs a live browser (Jon), not a lane. Done = re-nudge fires.
-> 2. **B080 — Anthropic tier bump** (console action, no code): raises the rate-limit ceiling; backoff makes it graceful meanwhile. Decision: tier bump (central billing — REC) vs per-user keys. Flagged HIGH.
-> 3. **F086 rollout bootstrap** (comms, not code): tell Ryan/Noah to do ONE manual Ctrl+Shift+R to bootstrap onto ≥v1.24.83; self-heals after.
-> **🟢 TEAM AUTONOMOUS (no Jon input — Freddy spawns Marc lane on go):**
-> 4. **LOW backlog batch:** B080-F1 (test-retry.js → .gcloudignore) · B080-F2 (drain body on supplier-404 continue) · F085-F1 (gate green "✓ Synced to BC" pill on outcome) · F085-F2 (report lead-time flush failures in Sync-now) · B083 (lead-time writeback dropped on hard tab-close <30s, recoverable).
-> 5. **TODO.md archive-review pass** — 3,642 lines (budget 1,500); REVIEW-not-blind-trim against header criteria + triage this session's INBOX items (B078–B083/F085/F086) into the tracker.
-> **🟡 WATCH / BACKLOG (awareness only):**
-> 6. **B078-2 coalescer monitor** — root save-loss fix deployed but never force-tested large; watch next big-drawing extraction for resource-exhausted / silent BOM loss, re-surface B078 if it recurs.
-> 7. **S1 multi-tenant hardening (future)** — broadcast write pinned to Matrix PCI company ID; update ID or move to a Cloud Function before any multi-tenant rollout.
-> 8. **Older TODO backlog** — B024 (reviewer-assignment notif), F076 (portal manual entry), test-env data isolation, etc. — pull from TODO.md top when ready.
-> **Freddy's rec:** knock out #1 + #2 (need Jon, unblock rollout), then run the #4 LOW batch as a Marc lane in parallel.
+> ## ▶ TODAY (2026-08-04) — Jon reviewed the AM queue; dispositions below (Freddy). Prod stable v1.24.83.
+> **✅ CLOSED THIS AM (Jon 2026-08-04):**
+> 1. **F086 4-min re-nudge — VERIFIED (Jon: "works").** Live re-nudge confirmed; F086 fully closed.
+> 2. **B080 Anthropic ceiling — DECIDED: central/tier bump** (not per-user keys). Jon actioning the company Anthropic console; backoff is graceful meanwhile.
+> 3. **F086 rollout bootstrap — DONE** (Ryan/Noah told to Ctrl+Shift+R onto ≥v1.24.83).
+> **🟢 IN FLIGHT:**
+> 4. **LOW backlog batch — BUILDING (Marc lane, Jon go 2026-08-04):** B080-F1 (.gcloudignore) · B080-F2 (drain supplier-404 body) · F085-F1 (gate green "✓ Synced" pill on outcome) · F085-F2 (report lead-time flush failures in Sync-now) · B083 (assess). Freddy commits + holds Coach-review/deploy for Jon (F085/B083 = money-path-adjacent).
+> 5+8. **Full open-backlog inventory — Coach lane running** → Freddy exporting to a Word doc for Jon to review/prioritize (covers #5 archive-review triage + #8 older-backlog decisions).
+> **🟡 WATCH / BACKLOG:**
+> 6. **B078-2 coalescer monitor** — Jon: "will do." Watch next big-drawing extraction for recurrence.
+> 7. **S1 multi-tenant hardening (future)** — context given to Jon; broadcast write pinned to Matrix PCI ID, no action needed until multi-tenant rollout.
 
 > ## ▶ RESUME HERE (2026-08-03 EOD) — full bug queue + F086 feature shipped, all Coach-reviewed.
 > **Bug queue → prod:** v1.24.69 B078-1 (loud save-fail) · v1.24.70 F085 (BC-sync-on-leave prompt) · v1.24.71 B078-2 (autosave coalescer — root fix) + B079 (unique panel names) + B081 (Auto-Add vendor part#) · functions B080 (Anthropic 429 retry-backoff) · v1.24.72 B082 (Margin-flush-on-leave). "3-user issues" = the B078 save-loss, RESOLVED.
