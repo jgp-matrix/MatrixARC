@@ -12,9 +12,9 @@
 > 1. **F086 4-min re-nudge — VERIFIED (Jon: "works").** Live re-nudge confirmed; F086 fully closed.
 > 2. **B080 Anthropic ceiling — DECIDED: central/tier bump** (not per-user keys). Jon actioning the company Anthropic console; backoff is graceful meanwhile.
 > 3. **F086 rollout bootstrap — DONE** (Ryan/Noah told to Ctrl+Shift+R onto ≥v1.24.83).
-> **🟢 IN FLIGHT:**
-> 4. **LOW backlog batch — BUILDING (Marc lane, Jon go 2026-08-04):** B080-F1 (.gcloudignore) · B080-F2 (drain supplier-404 body) · F085-F1 (gate green "✓ Synced" pill on outcome) · F085-F2 (report lead-time flush failures in Sync-now) · B083 (assess). Freddy commits + holds Coach-review/deploy for Jon (F085/B083 = money-path-adjacent).
-> 5+8. **Full open-backlog inventory — Coach lane running** → Freddy exporting to a Word doc for Jon to review/prioritize (covers #5 archive-review triage + #8 older-backlog decisions).
+> **🟢 IN FLIGHT / DONE:**
+> 4. **LOW backlog batch — BUILT + Coach APPROVED (safe to deploy), awaiting Jon deploy go.** On branch `marc/low-batch-2026-08-04` (`1a420d56`); master stays prod-clean. B080-F1 (.gcloudignore) · B080-F2 (drain supplier-404 body) · F085-F1 (gate green "✓ Synced" pill on outcome — APPROVE, non-auto-dismiss error pill verified) · F085-F2 (report lead-time flush failures in Sync-now — APPROVE, best-effort/non-blocking verified) · B083 (assessed → accept-as-is: sendBeacon/keepalive can't do the auth'd fresh-etag PATCH safely; already recoverable). Deploy = hosting (`deploy.sh`) + `firebase deploy --only functions` (run preflight first). **Jon deploy go pending.**
+> 5+8. **Full open-backlog inventory — DONE.** Coach inventoried ~193 open items; Freddy exported to Word doc `ARC-Open-Backlog-2026-08-04.docx` (6 sections, decision-pending first, money-path flagged) and sent to Jon for review/prioritize (covers #5 archive-review + #8 older-backlog). NOTE: TODO.md status brackets are stale in many places — inventory graded off each item's latest inline note.
 > **🟡 WATCH / BACKLOG:**
 > 6. **B078-2 coalescer monitor** — Jon: "will do." Watch next big-drawing extraction for recurrence.
 > 7. **S1 multi-tenant hardening (future)** — context given to Jon; broadcast write pinned to Matrix PCI ID, no action needed until multi-tenant rollout.
