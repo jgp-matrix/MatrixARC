@@ -43012,7 +43012,24 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!_bcToken){arcAlert("Connect to Business Central first.");return;}
     if(bcCommitGate){_fireBcCommitBlockedAlert(bcCommitGate.reason);return;} // F071 Tier-A — relink creates a new BC project
     if(!(await arcConfirm("This will create a NEW BC project in the current environment ("+_bcConfig.env+") and re-link this project. Continue?",{kind:"warning",okLabel:"Re-link"})))return;
-    setRelinking(true);setRelinkMsg("Creating BC project…");
+    // B085 — make re-link a bg-task so it SURVIVES the user leaving mid-op (arms the beforeunload
+    // guard :54488 + editing-lease keep-alive :42448 via _hasRunningBgTaskForProject :872), and
+    // identity-guard every React-state write so a stale-project write is dropped after navigation
+    // (Async Project Ownership Rule). Implemented IN-PLACE (bg-task + identity guard + loud-fail)
+    // rather than as a fully module-scoped runRelinkTask() peer of runExtractionTask: this closure
+    // captures ~12 component bindings (arcAlert/arcConfirm/_bcToken/bcCommitGate/_fireBcCommitBlocked
+    // Alert/_bcConfig/setProject/onChange/setRelinkMsg/projectRef/project/uid), so an in-place
+    // conversion is the safe one-pass change. The BC writes are already projectId/bc.number-scoped
+    // by argument, so they correctly run to completion after navigation; only the React-state writes
+    // (setProject/onChange/setRelinkMsg) are gated, and saveProject targets capturedProjectId via the
+    // passed object's id (:10596), never a "current project" global.
+    const capturedProjectId=(projectRef.current&&projectRef.current.id)||(project&&project.id)||null;
+    const taskId=_bgKey(capturedProjectId,"relink");        // project-scoped (relink is NOT panel-scoped)
+    const _alive=()=>_currentProjectId===capturedProjectId; // false once the user navigates away (unmount clears _currentProjectId :41820)
+    let _bindNumberForLog=(project.bcProjectNumber!=null&&String(project.bcProjectNumber).trim())?String(project.bcProjectNumber).trim():null;
+    setRelinking(true);
+    bgStart(taskId,(projectRef.current&&projectRef.current.name)||project.name||"Project",capturedProjectId,"Re-linking to BC…");
+    if(_alive())setRelinkMsg("Creating BC project…");
     _relinkInFlight=true; // WS4(b) — pause the background import-sync's stub-creation while we relink
     try{
       // WS1 (KEYSTONE) — push ARC's number so BC carries it. bcCreateProject hard-verifies the
@@ -43036,10 +43053,62 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       try{
         await saveProject(uid,{...projectRef.current,bcProjectNumber:_bindNumber,bcProjectId:bc.id,bcEnv:_bcConfig.env,_noBumpWrite:true});
       }catch(e){console.warn("Relink: early BC-binding persist failed (import-sync guard degraded):",e&&e.message);}
+      _bindNumberForLog=_bindNumber;
+      bgSetPct(taskId,10,"Pushing project card…");
 
-      setRelinkMsg("Creating task structure…");
-      const panels=project.panels||[];
-      await bcCreatePanelTaskStructure(bc.number,project.name,panels).catch(e=>console.warn("Relink task structure error:",e));
+      // B086 — populate Salesperson / PM / Designer on the NEW BC project card. The New-Project create
+      // flow already PATCHes these (:48631-48633); the re-link path never did. Field names are CONFIRMED
+      // against that flow AND the PanelListView dropdown key-map (:39854):
+      //   ARC bcSalespersonCode    → BC CCS_Salesperson_Code
+      //   ARC bcProjectManagerCode → BC Project_Manager
+      //   ARC bcDesignerCode       → BC CCS_Designer
+      // RESILIENT: try all three at once, fall back per-field so one bad field can't block the others,
+      // and NEVER fail the re-link — a people-field PATCH error is logged (Debug Logs) but does not abort
+      // the binding (Data Retention: no existing behavior removed; codes read from the project, not cleared).
+      try{
+        const _pp=projectRef.current||project;
+        const _peoplePairs=[];
+        if(_pp.bcSalespersonCode)_peoplePairs.push({CCS_Salesperson_Code:_pp.bcSalespersonCode});
+        if(_pp.bcProjectManagerCode)_peoplePairs.push({Project_Manager:_pp.bcProjectManagerCode});
+        if(_pp.bcDesignerCode)_peoplePairs.push({CCS_Designer:_pp.bcDesignerCode});
+        if(_peoplePairs.length){
+          try{await bcPatchJobOData(_bindNumber,Object.assign({},..._peoplePairs));}
+          catch(e){
+            console.warn("Relink: BC people-field PATCH (all) failed — trying individually:",e&&e.message);
+            const _peopleFailed=[];
+            for(const f of _peoplePairs){
+              try{await bcPatchJobOData(_bindNumber,f);}
+              catch(e2){console.warn("Relink: BC people field",Object.keys(f)[0],"failed:",e2&&e2.message);_peopleFailed.push({field:Object.keys(f)[0],error:((e2&&e2.message)||String(e2)).slice(0,300)});}
+            }
+            if(_peopleFailed.length){try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"warn",source:"relinkToBC",message:"BC people-field PATCH partially failed (non-fatal — re-link binding preserved)",extra:{projectId:capturedProjectId,bcProjectNumber:_bindNumber,failedFields:_peopleFailed}});}catch(_){}}
+          }
+        }
+      }catch(e){console.warn("Relink: people-field PATCH block errored (non-fatal):",e&&e.message);}
+
+      // B085 item 4 — clear stale OLD-project BC bindings (panel.bcTaskNo / row.bcLineNo) + set the NEW
+      // binding on the in-memory project AND PERSIST *before* the planning-line loop. Two reasons:
+      // (1) a mid-loop interrupt (now survivable via the bg-task) can no longer strand OLD-project line
+      // numbers on rows — idempotent resume; (2) the loop syncs the CLEANED panels, so the B065
+      // delete-guard (:4677 reads panel.bom[].bcLineNo) is never fed a stale OLD line number. Supersedes
+      // the old post-loop clear/save (removed below). Binding was primed with _noBumpWrite above; this is
+      // the version-bumping final-state save — same object/semantics as the old post-loop saveProject,
+      // just reordered earlier so the clean state is durable before the long loop.
+      const _relinkBound={...projectRef.current,bcProjectNumber:_bindNumber,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
+      if(_relinkBound.panels)_relinkBound.panels=_relinkBound.panels.map(pan=>{
+        const {bcTaskNo,...panRest}=pan||{};
+        return {...panRest,bcPdfAttached:false,bcPdfFileName:null,
+          bom:((pan&&pan.bom)||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;})};
+      });
+      projectRef.current=_relinkBound;
+      if(_alive()){setProject(_relinkBound);onChange(_relinkBound);}
+      try{await saveProject(uid,_relinkBound);}catch(e){console.warn("Relink: pre-loop cleared-binding persist failed:",e&&e.message);}
+
+      if(_alive())setRelinkMsg("Creating task structure…");
+      bgSetPct(taskId,15,"Creating task structure…");
+      const panels=_relinkBound.panels||[];
+      let _taskStructureError=null;
+      try{await bcCreatePanelTaskStructure(bc.number,project.name,panels);}
+      catch(e){_taskStructureError=(e&&e.message)||String(e);console.warn("Relink task structure error:",e);try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"warn",source:"relinkToBC",message:"Task-structure create failed (per-panel sync will backfill the task block :4367)",extra:{projectId:capturedProjectId,bcProjectNumber:_bindNumber,error:_taskStructureError}});}catch(_){}}
 
       // WS3 — itemized planning-line outcome + FAIL-FAST. A shared failFast object counts
       // CONSECUTIVE non-2xx/non-429 line errors across the project's panels; at N=5 we abort the
@@ -43050,7 +43119,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       let _relinkAborted=false;
       for(let i=0;i<panels.length;i++){
         if(_relinkAborted)break;
-        setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
+        if(_alive())setRelinkMsg(`Syncing planning lines (panel ${i+1}/${panels.length})…`);
+        bgSetPct(taskId,15+Math.round((i/(panels.length||1))*80),`Syncing planning lines (panel ${i+1}/${panels.length})…`);
         // B065 C1 FIX: pass the 1-based panel number (i+1). This call previously
         // passed the 0-based `i` while task structure was built 1-based (:3253)
         // and every other caller uses i+1 → relinked projects wrote planning
@@ -43078,19 +43148,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const _skippedRows=_panelOutcomes.flatMap(o=>o.skippedNotInBc||[]);
       const _skipLine=_skippedRows.length?`\n\n${_skippedRows.length} row(s) not in BC were skipped (not yet committed — they show a red BC circle and will sync once added to BC): ${_skippedRows.slice(0,6).map(r=>r.partNumber).join(", ")}${_skippedRows.length>6?` +${_skippedRows.length-6} more`:""}`:"";
 
-      // WS2 — keep ARC's number (do NOT set bcProjectNumber=bc.number).
-      const updated={...projectRef.current,bcProjectNumber:_bindNumber,bcProjectId:bc.id,bcEnv:_bcConfig.env,bcPdfAttached:false,bcPdfFileName:null};
-      // Reset per-panel bc attachment flags + CLEAR durable BC bindings (B065):
-      // relink creates a NEW BC project, so any stored panel.bcTaskNo / row.bcLineNo
-      // point at the OLD project and MUST be dropped so they re-bind against the
-      // new one.
-      if(updated.panels)updated.panels=updated.panels.map(pan=>{
-        const {bcTaskNo,...panRest}=pan||{};
-        return {...panRest,bcPdfAttached:false,bcPdfFileName:null,
-          bom:((pan&&pan.bom)||[]).map(r=>{const {bcLineNo,...rr}=r||{};return rr;})};
-      });
-      setProject(updated);projectRef.current=updated;onChange(updated);
-      await saveProject(uid,updated);
+      // WS2 / B085 item 4 — the cleaned + newly-bound state was already persisted BEFORE the loop, so
+      // there is NO post-loop binding-clear/save here anymore. Removing it is precisely what makes a
+      // mid-loop interrupt idempotent-resumable: the durable ARC state no longer depends on the loop
+      // finishing (ARC keeps its number — bcProjectNumber was set to _bindNumber, never bc.number).
 
       // WS3 — surface the itemized outcome INCLUDING the real BC error text; NEVER a bare "✓ Re-linked"
       // when anything failed. (Prior copy guessed "#163 not run" — misleading when the reconciliation
@@ -43100,21 +43161,36 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
       const _errLine=_firstErr?`\n\nFirst BC error (line ${_firstErr.lineNo}${_firstErr.partNumber?", "+_firstErr.partNumber:""}, HTTP ${_firstErr.status}):\n${_firstErr.error}`:"";
       if(_relinkAborted){
         console.error("Relink ABORTED (fail-fast) — panel outcomes:",_panelOutcomes);
-        setRelinkMsg(`⚠ Re-link ABORTED after ${_failFast.consecutive} consecutive BC errors — BOM NOT fully synced`);
+        if(_alive())setRelinkMsg(`⚠ Re-link ABORTED after ${_failFast.consecutive} consecutive BC errors — BOM NOT fully synced`);
+        // B085 — loud + Debug-Logs (bgError has NO auto-dismiss :935 → survives unmount; the arcAlert is unmount-safe too).
+        try{bgError(taskId,"Re-link ABORTED — BOM not fully synced to BC");}catch(_){}
+        try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"relinkToBC",message:"Re-link ABORTED (fail-fast) — BOM not fully synced to BC",extra:{projectId:capturedProjectId,bcProjectNumber:_bindNumber,consecutiveErrors:_failFast.consecutive,firstError:_firstErr,taskStructureError:_taskStructureError,panelOutcomes:_panelOutcomes}});}catch(_){}
         arcAlert(`Re-link to ${_bindNumber} was ABORTED after ${_failFast.consecutive} consecutive Business Central line errors — the BOM did NOT fully transfer. No renumber occurred (ARC stays ${_bindNumber}).${_errLine}${_skipLine}`,{kind:"error"});
       }else if(_failedPanels.length){
         console.error("Relink completed WITH FAILURES — panel outcomes:",_panelOutcomes);
         const _detail=_failedPanels.slice(0,4).map(o=>o.failed?`panel ${o.panel}: ${o.failed.slice(0,3).map(f=>`${f.partNumber||"?"} (line ${f.lineNo}, ${f.status})`).join(", ")}${o.failed.length>3?` +${o.failed.length-3} more`:""}`:`panel ${o.panel}: ${o.error}`).join("\n");
-        setRelinkMsg(`⚠ Re-linked to ${_bindNumber} — ${_failedPanels.length} panel(s) had line failures`);
+        if(_alive())setRelinkMsg(`⚠ Re-linked to ${_bindNumber} — ${_failedPanels.length} panel(s) had line failures`);
+        try{bgError(taskId,`Re-linked to ${_bindNumber} — ${_failedPanels.length} panel(s) had line failures`);}catch(_){}
+        try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"relinkToBC",message:"Re-link completed WITH line failures — BOM not fully synced to BC",extra:{projectId:capturedProjectId,bcProjectNumber:_bindNumber,failedPanelCount:_failedPanels.length,firstError:_firstErr,taskStructureError:_taskStructureError,panelOutcomes:_panelOutcomes}});}catch(_){}
         arcAlert(`Re-linked to ${_bindNumber}, but some planning lines failed to sync:\n\n${_detail}${_errLine}${_skipLine}\n\nARC's number was preserved (no renumber). Review before relying on the BC BOM.`,{kind:"warning"});
       }else{
-        setRelinkMsg("✓ Re-linked to "+_bindNumber);
+        if(_alive())setRelinkMsg("✓ Re-linked to "+_bindNumber);
+        try{bgDone(taskId,"✓ Re-linked to "+_bindNumber);}catch(_){}
         if(_skipLine)arcAlert(`✓ Re-linked to ${_bindNumber} — all in-BC items synced.${_skipLine}`,{kind:"success"});
       }
-      setTimeout(()=>setRelinkMsg(null),(_relinkAborted||_failedPanels.length)?15000:3000);
+      // Only the failure branches leave a persistent bgError; success auto-dismisses via bgDone (:928).
+      if(_alive())setTimeout(()=>{if(_alive())setRelinkMsg(null);},(_relinkAborted||_failedPanels.length)?15000:3000);
     }catch(e){
+      // B085 — FAIL LOUDLY. Previously this was a bare console.error + setRelinkMsg: no Debug-Logs
+      // record and no persistent surface, so a mid-op failure vanished the instant ProjectView unmounted
+      // (the whole B085 silent-failure mechanism). Now: a non-auto-dismiss bg-task error + a durable
+      // Debug-Logs entry + an unmount-safe arcAlert. _bindNumberForLog is null if bcCreateProject threw
+      // before a number was bound.
       console.error("Relink error:",e);
-      setRelinkMsg("Failed: "+(e.message||e));
+      if(_alive())setRelinkMsg("Failed: "+((e&&e.message)||e));
+      try{bgError(taskId,"Re-link failed — BOM not fully synced to BC");}catch(_){}
+      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"relinkToBC",message:"Re-link failed — BOM not fully synced to BC",extra:{projectId:capturedProjectId,bcProjectNumber:_bindNumberForLog,lastError:(e&&e.message)||String(e)}});}catch(_){}
+      try{arcAlert("Re-link failed — the BOM was NOT fully synced to Business Central: "+((e&&e.message)||e),{kind:"error"});}catch(_){}
     }finally{
       _relinkInFlight=false; // WS4(b) — always release the import-sync guard
     }
