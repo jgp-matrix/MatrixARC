@@ -68,6 +68,9 @@
 - [2026-08-04] FOLLOW-UP (G023) — RFQ send / `rfq_history` WRITE path not traced this session (read helpers swallow to console.warn :2781/2788). Queue a focused trace pass. — (source: Coach G023)
 - [2026-08-04] ✅ **B087 — BUILT (branch `marc/b087-board-stale` `8ee6cfce`), awaiting Jon deploy go.** onChange fires unconditionally (board list updates after leave) + handleChange focus-safe (setOpenProject only if it's the open project). Display-only, validators clean.
 
+- [2026-08-04] ✅ **B088 + B089 — SHIPPED prod v1.24.88, Coach APPROVE** (F075 Get-Prices + BC drawing-attach survive leave + fail loudly). ⏳ Jon live-verify owed. Ready to promote to TODO.md RESOLVED.
+- [2026-08-04] FOLLOW-UP (B088) — [LOW · Coach nit, non-blocking] `runApiPricingOnPanel` has no A2-style re-entrancy guard like `runPricingOnPanel` (:31360); a 2nd concurrent invocation would share `_apBgId` and interleave terminals. Real risk low (button disabled via `aiPricing` while running; not a new hazard — no task existed pre-B088). Consider adding the A2 guard. Also cosmetic: catch calls `_pp(...)`→bgSetPct after bgError (overwrites msg, status stays "error"); + comment line-ref drift. — reported via Intake (source: Coach B088 review → Freddy)
+
 <!-- Triage log:
      2026-07-02 — G001 (Allow-Once → Verified/not-fixable), B001 (trailing-dot redirect URI, LOW), B002 (approved-state TR block message, LOW) promoted by Freddy.
      2026-07-03 — G005 (matrix-arc-test shares PROD Firestore), B003 (Review-Supplier-Quote modal lists unquoted parts), B004 (portal-Apply unawaited-save reload-race → RESOLVED 41824f6c / shipped v1.21.25), B005 (resolved-TR-row can't re-arm, LOW/tuning) promoted by Freddy at #199 close-out.
