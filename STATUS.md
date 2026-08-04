@@ -7,6 +7,10 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
+> ## ▶ TODAY (2026-08-04) — pin fix (B084) in build; prod v1.24.84 (LOW batch shipped). Freddy.
+> **B084 "Pin to Top"** — root-caused (2 facets): (1) `_priorityPinCompare` sort DEFINED but never called → pin reorders nothing; main board deliberately skipped it (50246, now reversed per Jon); (2) uncheck fails to stick — a whole-doc `saveProjectPanel` re-hydrate clobbers the null pin back (pin write not under `_panelSaveLocks`; preserve-guard missing from saveProjectPanel). Jon spec (2026-08-04): pinned floats to top of its board grouping + small 📌 on the tile. **Marc lane BUILDING** 3 parts (sort + tile icon + serialize-write/guard-parity). → Coach review (touches saveProjectPanel/hot save path) → Jon deploy go.
+> **F087 "Email Customer Confirmation on project create"** — SCOPED (docs/F087-email-customer-confirmation-scope.md); reuses Send-Quote Outlook chain-picker; 6 Jon decisions pending; PARKED (Jon focused on B084).
+
 > ## ▶ TODAY (2026-08-04) — Jon reviewed the AM queue; dispositions below (Freddy). Prod stable v1.24.83.
 > **✅ CLOSED THIS AM (Jon 2026-08-04):**
 > 1. **F086 4-min re-nudge — VERIFIED (Jon: "works").** Live re-nudge confirmed; F086 fully closed.
