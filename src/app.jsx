@@ -28807,8 +28807,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   useEffect(()=>{if(bcUploadRefsMap)bcUploadRefsMap.current[panel.id]=buildAndAttachPdf;return()=>{if(bcUploadRefsMap)delete bcUploadRefsMap.current[panel.id];};},[panel.id]);
   async function buildAndAttachPdf(uploadOpts={}){
     if(!pages.length||!bcProjectNumber)return;
+    // B089 (G023) — register the BC drawing attach as a bg-task so the panel-flag write + failure surface
+    // SURVIVE the user leaving mid-op (arms the beforeunload guard :54564 + editing-lease keep-alive via
+    // _hasRunningBgTaskForProject :872) and identity-guard the completion React-state writes (Async Project
+    // Ownership Rule / #86). Mirrors relinkToBC's bg-task lifecycle (:43031) + addFiles logDebugEntry shape
+    // (:28025). DISTINCT "_pdfattach" suffix so it can't collide with API pricing (_apipricing), standard
+    // pricing/extraction/addFiles (plain _bgKey) or bcsync (_bcsync) tasks for the SAME panel. The attach
+    // itself still rides the bcAttachPdfQueued offline queue UNCHANGED — this only wraps the flag write +
+    // failure surface with survives-leave + loud-fail.
+    const capturedPanelId=panel.id;
+    const _paBgId=_bgKey(projectId,capturedPanelId)+"_pdfattach";
+    const _paAlive=()=>_currentProjectId===projectId; // false once the user navigates away (:41820 clears it)
+    let _paTerminated=false;
     setAttachingPdf(true);
     setAttachPdfMsg("Building PDF…");
+    bgStart(_paBgId,panel.name||("Panel "+(idx+1)),projectId,"Building BC drawing PDF…");
     try{
       const JsPDF=await ensureJsPDF();
       // Ensure all page dataUrls are loaded
@@ -28938,7 +28951,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       const dwgVTag=panel?.bomVersion!=null?` DWG-v${panel.bomVersion}`:"";
       const qRevTag=revTag?revTag.replace(/^ REV /,' Q-REV '):"";
       const fileName=`DWG-[${fileLabel}${qRevTag}${dwgVTag}] ${dwg} - ${bcProjectNumber||"NoProject"} - ${lineSuffix}.pdf`;
-      setAttachPdfMsg("Uploading to BC…");
+      setAttachPdfMsg("Uploading to BC…");bgUpdate(_paBgId,"Uploading drawing to BC…");
       const pdfBytes=doc.output("arraybuffer");
       // Clean up old bad-formatted files from previous code bugs
       // Old patterns: "500 - PRJ402065", "[AS-QUOTED] NoDWG - PRJ402065", "[AS-QUOTED REV 01] NoDWG - PRJ402065"
@@ -28983,11 +28996,18 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       try{await bcDeleteAttachmentByName(bcProjectNumber,oldNoSuffix);}catch(e){}
       await bcAttachPdfQueued(bcProjectNumber,fileName,pdfBytes,previousFile);
       const updated={...panel,bcPdfAttached:true,bcPdfFileName:fileName,bcUploadCount:(panel.bcUploadCount||0)+1,bcUploadQuoteRev:quoteRev||0};
-      onUpdate(updated);
-      try{onSaveImmediate(updated);}catch(e){}
-      setBcPdfMissing(false);
-      setAttachPdfMsg("✓ Uploaded — cleaning duplicates…");
-      // Run bulk duplicate cleanup in background (non-blocking)
+      if(_paAlive())onUpdate(updated);
+      // Persist the panel-flag write even if the user left (survives-leave). onSaveImmediate targets the
+      // CAPTURED panel (bound to panel.id at render → saveProjectPanel(uid,project.id,panelId,…)); the lease
+      // keep-alive armed by bgStart holds the editing lease so it lands. Now AWAITED (was fire-and-forget) so
+      // the flag persists BEFORE bgDone stops the keep-alive; a save failure is now loud (durable debug-log).
+      try{await onSaveImmediate(updated);}
+      catch(e){try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"buildAndAttachPdf",message:"BC attach panel-flag save failed (attach may show as un-uploaded after reload): "+((e&&e.message)||"unknown"),extra:{projectId,panelId:capturedPanelId,bcProjectNumber,fileName}});}catch(_){}}
+      // B089 — success terminal (attach enqueued/sent + flag persisted). Lights the tile ✓ + stops keep-alive.
+      bgDone(_paBgId,"✓ Drawing uploaded to BC");_paTerminated=true;
+      if(_paAlive())setBcPdfMissing(false);
+      if(_paAlive())setAttachPdfMsg("✓ Uploaded — cleaning duplicates…");
+      // Run bulk duplicate cleanup in background (non-blocking) — a BC-side write; UI msg updates no-op if unmounted.
       bcCleanupDuplicateAttachments(bcProjectNumber,[fileName.replace(/\.pdf$/i,"")]).then(r=>{
         if(r.deleted>0)setAttachPdfMsg(`✓ Uploaded + cleaned ${r.deleted} old file${r.deleted>1?"s":""}`);
         else setAttachPdfMsg("✓ Uploaded: "+fileName);
@@ -28995,10 +29015,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       }).catch(()=>{setAttachPdfMsg("✓ Uploaded: "+fileName);setTimeout(()=>setAttachPdfMsg(""),5000);});
     }catch(e){
       console.error("Attach PDF failed:",e);
-      setAttachPdfMsg("✗ "+e.message);
-      setTimeout(()=>setAttachPdfMsg(""),6000);
+      // B089 — fail LOUDLY: bgError (no auto-dismiss) + durable debug-log, alongside the existing toast.
+      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"buildAndAttachPdf",message:"BC drawing attach failed: "+((e&&e.message)||"unknown"),extra:{projectId,panelId:capturedPanelId,bcProjectNumber,uploadMode:(uploadOpts&&uploadOpts.mode)||null,stampMode:(uploadOpts&&uploadOpts.stampMode)||null}});}catch(_){}
+      if(!_paTerminated){bgError(_paBgId,("Attach failed: "+((e&&e.message)||"")).slice(0,60));_paTerminated=true;}
+      if(_paAlive()){setAttachPdfMsg("✗ "+e.message);setTimeout(()=>{if(_paAlive())setAttachPdfMsg("");},6000);}
+    }finally{
+      if(_paAlive())setAttachingPdf(false);
+      // B089 — exhaustive safety net: never leave a leaked "running" task (it would pin the editing lease
+      // via _startLeaseKeepAlive and lock out teammates). If any path exited without a terminal, force one.
+      const _t=_bgTasks[_paBgId];if(_t&&_t.status==="running")bgError(_paBgId,"Attach ended unexpectedly");
     }
-    setAttachingPdf(false);
   }
 
   // DECISION(v1.19.879, ECO Stage D): Compute an ECO-row fingerprint that changes
@@ -32009,9 +32035,21 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return !_rowConfirmed(r)||_rowStale(r);
     });
     if(eligible.length===0){arcAlert("All priceable rows already have a current price. Use the ▾ to force-refresh every row from Mouser + DigiKey.");return;}
-    const _pp=(o)=>{setPricingProgress(o);};
+    // B088 (G023) — register API pricing as a bg-task so it SURVIVES the user leaving mid-op (arms the
+    // beforeunload guard :54564 + editing-lease keep-alive via _hasRunningBgTaskForProject :872) and
+    // identity-guards the completion React-state writes (Async Project Ownership Rule / #86). Mirrors
+    // runPricingOnPanel's A1/A5 lifecycle (bgStart :31336, bgError :31826/31916, finally net :31961).
+    // DISTINCT "_apipricing" suffix so it can't collide with runPricingOnPanel's plain _bgKey task nor the
+    // extraction/bcsync/addFiles tasks for the SAME panel (API + standard pricing may run concurrently).
+    // The Mouser/DigiKey remote calls + onSaveImmediate are argument-scoped and run to completion on leave.
+    const _apPanelId=(panelBase&&panelBase.id)||(panel&&panel.id);
+    const _apBgId=_bgKey(projectId,_apPanelId)+"_apipricing";
+    const _apAlive=()=>_currentProjectId===projectId; // false once the user navigates away (:41820 clears it)
+    let _apTerminated=false;
+    const _pp=(o)=>{if(_apAlive())setPricingProgress(o);bgSetPct(_apBgId,o.pct,o.msg);}; // tile always updates; local bar only while mounted
     if(pricingClearTimer.current){clearTimeout(pricingClearTimer.current);pricingClearTimer.current=null;}
     setAiPricing(true);
+    bgStart(_apBgId,(panelBase&&panelBase.name)||panel.name||("Panel "+(idx+1)),projectId,"Getting prices (Mouser + DigiKey)…");
     _pp({msg:`Getting prices for ${eligible.length} item${eligible.length!==1?"s":""} (Mouser + DigiKey)…`,pct:10});
     // Snapshot before apply so the user can revert (mirrors runPricingOnPanel).
     saveSnapshot(uid,projectId,panelBase,"Before Get Prices (Mouser+DigiKey)").catch(()=>{});
@@ -32078,25 +32116,41 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         return _apiRow;
       });
       const updated={...panelBase,bom:updatedBom,status:"costed"};
-      onUpdate(updated);
-      try{await onSaveImmediate(updated);}catch(e){console.warn("[F075] save failed:",e?.message);}
+      if(_apAlive())onUpdate(updated);
+      // Persistence MUST run even if the user left (survives-leave). onSaveImmediate targets the CAPTURED
+      // panel (bound to panel.id at render → saveProjectPanel(uid,project.id,panelId,…)); the lease keep-alive
+      // armed by bgStart holds the editing lease so this write lands. A save failure is now loud (durable log).
+      try{await onSaveImmediate(updated);}
+      catch(e){console.warn("[F075] save failed:",e?.message);try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"apiPricing",message:"API pricing result save failed (prices may not have persisted): "+((e&&e.message)||"unknown"),extra:{projectId,panelId:_apPanelId,applied}});}catch(_){}}
       const notFound=eligible.length-applied-optionalCandidates.length;
-      setAiPricing(false);
+      if(_apAlive())setAiPricing(false);
       if(optionalCandidates.length>0){
-        // Open the opt-in optional-price modal. On-row prices are already applied + saved regardless of
-        // what the user does here. The modal's confirm/cancel handlers set the final pill.
-        setApiOptionalChecked(Object.fromEntries(optionalCandidates.map(c=>[c.rowId,true])));
-        setApiOptionalModal({candidates:optionalCandidates,priced:applied});
+        // Open the opt-in optional-price modal. On-row prices are already applied + saved regardless of what
+        // the user does here. The modal's confirm/cancel handlers set the final pill. Guarded by _apAlive so
+        // a nav-away doesn't pop a modal into a different project's view (on-row prices already persisted).
+        if(_apAlive()){
+          setApiOptionalChecked(Object.fromEntries(optionalCandidates.map(c=>[c.rowId,true])));
+          setApiOptionalModal({candidates:optionalCandidates,priced:applied});
+        }
         _pp({msg:`✓ ${applied} priced · ${optionalCandidates.length} confirmed row${optionalCandidates.length!==1?"s":""} to review${notFound>0?` · ${notFound} not found`:""}`,pct:100});
       }else{
         _pp({msg:`✓ ${applied} of ${eligible.length} priced via Mouser + DigiKey${notFound>0?` (${notFound} not found)`:""}.`,pct:100});
-        pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
+        if(_apAlive())pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},4000);
       }
+      // B088 — success terminal (lights the dashboard tile ✓ + stops the lease keep-alive).
+      if(!_apTerminated){bgDone(_apBgId,`✓ ${applied} priced${optionalCandidates.length>0?` · ${optionalCandidates.length} to review`:""}`);_apTerminated=true;}
     }catch(e){
       console.error("[F075] API pricing failed:",e);
-      try{setAiPricing(false);}catch(_){}
+      // B088 — fail LOUDLY: durable debug-log + bgError (no auto-dismiss), alongside the existing toast.
+      try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"apiPricing",message:"API pricing (Mouser + DigiKey) failed: "+((e&&e.message)||"unknown"),extra:{projectId,panelId:_apPanelId,eligible:eligible.length,forceFresh}});}catch(_){}
+      if(!_apTerminated){bgError(_apBgId,("Pricing failed: "+((e&&e.message)||"")).slice(0,60));_apTerminated=true;}
+      try{if(_apAlive())setAiPricing(false);}catch(_){}
       _pp({msg:`Pricing error: ${((e&&e.message)||"failed").slice(0,60)}`,pct:0,isError:true});
-      pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},6000);
+      if(_apAlive())pricingClearTimer.current=setTimeout(()=>{setPricingProgress(null);pricingClearTimer.current=null;},6000);
+    }finally{
+      // B088 — exhaustive safety net: never leave a leaked "running" task (it would pin the editing lease
+      // via _startLeaseKeepAlive and lock out teammates). If any path exited without a terminal, force one.
+      const _t=_bgTasks[_apBgId];if(_t&&_t.status==="running")bgError(_apBgId,"Pricing ended unexpectedly");
     }
   }
   // F075 Phase 2 — confirm handler for the optional-price modal. Writes the checked candidates as BC
