@@ -7,8 +7,8 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
-> ## ▶ TODAY (2026-08-04) — pin fix (B084) in build; prod v1.24.84 (LOW batch shipped). Freddy.
-> **B084 "Pin to Top"** — root-caused (2 facets): (1) `_priorityPinCompare` sort DEFINED but never called → pin reorders nothing; main board deliberately skipped it (50246, now reversed per Jon); (2) uncheck fails to stick — a whole-doc `saveProjectPanel` re-hydrate clobbers the null pin back (pin write not under `_panelSaveLocks`; preserve-guard missing from saveProjectPanel). Jon spec (2026-08-04): pinned floats to top of its board grouping + small 📌 on the tile. **Marc lane BUILDING** 3 parts (sort + tile icon + serialize-write/guard-parity). → Coach review (touches saveProjectPanel/hot save path) → Jon deploy go.
+> ## ▶ TODAY (2026-08-04) — B084 pin fix SHIPPED prod v1.24.85. Freddy.
+> **✅ B084 "Pin to Top" — SHIPPED prod v1.24.85** (`fc0c18eb`, master==origin, Coach APPROVE all 3 parts, Jon deploy go). (1) pinned projects now sort to the top of their group on the main board (applied once after groupProjects, all 6 groupBy modes; stable sort keeps unpinned order — reverses the F027 "not on main board" note per Jon); (2) 📌 amber indicator on pinned tiles; (3) uncheck clobber-race fixed — pin write serialized under `_panelSaveLocks[projectId]` (same key saveProjectPanel uses) + pin fields made single-writer in both save guards. Coach data-safety PASS (only pin-field authorship changed; no retention regression). ⏳ Jon live-verify owed: pin → floats to top + 📌 shows; uncheck → sticks/drops back. LOW follow-up logged (pre-existing saveProject lock-free TOCTOU — not introduced by this change).
 > **F087 "Email Customer Confirmation on project create"** — SCOPED (docs/F087-email-customer-confirmation-scope.md); reuses Send-Quote Outlook chain-picker; 6 Jon decisions pending; PARKED (Jon focused on B084).
 
 > ## ▶ TODAY (2026-08-04) — Jon reviewed the AM queue; dispositions below (Freddy). Prod stable v1.24.83.
