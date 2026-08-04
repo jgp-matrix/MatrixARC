@@ -29205,7 +29205,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       setBcSyncing(false);return{ok:false,error:e&&e.message?e.message:String(e)};
     }
     setBcSyncing(false);
-    bgDone(syncTaskId,"✓ Synced to BC");
+    // F085-F1: gate the green "✓ Synced to BC" pill on the ACTUAL sync outcome. A PARTIAL
+    // failure (result.failed rows → syncFailedAlert modal showing) previously still flashed
+    // the success pill; surface it as a non-auto-dismissing error pill instead so the
+    // background indicator can't contradict the failure alert.
+    if(_leaveOutcome.ok===false){
+      const _nFail=(_leaveOutcome.failed&&_leaveOutcome.failed.length)||0;
+      bgError(syncTaskId,`⚠ ${_nFail} item${_nFail===1?"":"s"} failed to sync to BC — see alert`);
+    }else{
+      bgDone(syncTaskId,"✓ Synced to BC");
+    }
     return _leaveOutcome; // F085
   }
   // F085: register this panel's BC-sync capability so the App-level leave gate can flush ARC→BC changes
@@ -29222,7 +29231,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       canSync:()=>{const s=_leaveSyncStateRef.current;return !!s.bcProjectNumber&&!!_bcToken&&!s.readOnly&&!s.ownerPriorityActive&&!_bcEnvMismatched(s.project)&&_panelUnpricedForBc(s.panel).length===0;},
       unpricedCount:()=>_panelUnpricedForBc(_leaveSyncStateRef.current.panel).length,
       sync:()=>_leaveSyncStateRef.current.syncPlanningLinesToBC(),
-      flushLeadTimes:async()=>{const s=_leaveSyncStateRef.current;if(s.leadQ.current.pending.size>0)await s.flushLeadTimes();}
+      // F085-F2: return the flush outcome so "Sync now" can REPORT lead-time writeback failures (best-effort, B083).
+      flushLeadTimes:async()=>{const s=_leaveSyncStateRef.current;if(s.leadQ.current.pending.size>0)return await s.flushLeadTimes();return{ok:true,synced:0,failed:0,failures:[]};}
     };
     return()=>{delete _bcLeaveSyncRegistry[key];};
   },[projectId,panel.id]);
@@ -30402,7 +30412,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   // 30s debounce timer, from the "Sync now" pill button, and from visibilitychange.
   async function _flushLeadTimeBcQueue(){
     const q=_leadTimeBcQueue.current;
-    if(q.flushing||q.pending.size===0)return;
+    if(q.flushing||q.pending.size===0)return{ok:true,synced:0,failed:0,failures:[]}; // F085-F2: consistent outcome shape for callers
     q.flushing=true;
     const batch=[...q.pending.values()];
     q.pending.clear();
@@ -30451,6 +30461,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     console.log(`[LEAD TIME BATCH] ${ok} synced to BC${failed>0?`, ${failed} failed`:""}`);
     if(failures.length>0)console.warn("[LEAD TIME BATCH] failures:",failures);
+    // F085-F2: return an outcome so callers (the "Sync now" leave gate) can REPORT lead-time
+    // writeback failures instead of only console.warn'ing them. Writeback stays best-effort
+    // (B083) — this does not throw and does not block the leave — but the user is now told.
+    return{ok:failed===0,synced:ok,failed,failures};
   }
   function saveBomRow(updated){
     try{onSaveImmediate(updated);}catch(e){}
@@ -55069,14 +55083,22 @@ INSTRUCTIONS:
         const syncNow=async()=>{
           setBcSyncLeaveBusy(true);
           let anyFail=false;
+          // F085-F2: lead-time BC writeback is best-effort (B083) — it must NOT block the leave, but its
+          // failures were previously swallowed here so "Sync now" implied a complete push. Tally them and
+          // report once after the loop so the user knows lead-time writeback didn't fully land.
+          let ltFailed=0;
           for(const e of targets){
             try{const res=await e.sync();if(res&&res.ok===false)anyFail=true;}catch(err){anyFail=true;}
-            try{await e.flushLeadTimes();}catch(_){}
+            try{const ltRes=await e.flushLeadTimes();if(ltRes&&typeof ltRes.failed==="number")ltFailed+=ltRes.failed;}catch(_){ltFailed++;}
           }
           setBcSyncLeaveBusy(false);
           setBcSyncLeaveModal(null);
-          // B078: on any failure the panel's syncFailedAlert modal is now showing — do NOT proceed as if
-          // synced. Stay on the project so the user can act. Only leave on a fully clean sync.
+          if(ltFailed>0){
+            // Best-effort report — does not block the leave. Recoverable via "📤 Push Lead Times to BC".
+            arcAlert(`${ltFailed} lead-time writeback${ltFailed>1?"s":""} to Business Central didn't go through. Your BOM sync is unaffected — recover the lead times anytime with "📤 Push Lead Times to BC" in the BOM toolbar.`,{kind:"warning",title:"Lead-time sync incomplete"});
+          }
+          // B078: on any planning-line failure the panel's syncFailedAlert modal is now showing — do NOT
+          // proceed as if synced. Stay on the project so the user can act. Only leave on a fully clean sync.
           if(anyFail)return;
           lm.pendingAction();
         };

@@ -2515,6 +2515,9 @@ You MUST return one entry per requested item. Also include extra supplier items 
     }
     if (response.status === 404 && fi < SUPPLIER_PORTAL_FALLBACK_CHAIN.length - 1) {
       functions.logger.warn(`extractSupplierQuotePricing: model ${tryModel} returned 404, trying next fallback…`);
+      // B080-F2: drain the unconsumed 404 body to free the socket before the next attempt
+      // (mirrors the retry-path drain in anthropicFetchWithRetry).
+      try { await response.text(); } catch (_) {}
       continue;
     }
     // Non-404 error or last fallback exhausted — throw

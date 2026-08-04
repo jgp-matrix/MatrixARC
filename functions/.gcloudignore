@@ -1,0 +1,12 @@
+# Files that are *not* uploaded to Google Cloud when deploying functions.
+# Same syntax as .gitignore. See: gcloud topic gcloudignore
+#
+# NOTE: Firebase excludes node_modules and .git by default only when NO
+# .gcloudignore is present. Once this file exists it fully governs the upload,
+# so those defaults must be listed here explicitly or they'd be uploaded.
+.gcloudignore
+.git
+node_modules
+
+# B080: local unit test harness — never deployed with the functions.
+test-retry.js
