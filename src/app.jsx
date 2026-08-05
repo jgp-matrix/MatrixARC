@@ -6020,7 +6020,7 @@ async function _bcResolveSurrogateExact(pn,rowMfr){
     const nm=s=>(s||"").toString().replace(/[^A-Za-z0-9]/g,"").toUpperCase();
     const wantMfr=nm(rowMfr);
     if(wantMfr){
-      const byMfr=exacts.filter(it=>{const c=nm(it._mfrCode);return !!c&&(c===wantMfr||wantMfr.startsWith(c)||c.startsWith(wantMfr));});
+      const byMfr=exacts.filter(it=>{const c=nm(it._mfrCode);if(!c)return false;if(c===wantMfr)return true;/* B098 (Jon: FIRM MFR verification): accept a prefix match only when the shorter side is >=3 chars — blocks a thin 1-2 char code from thinly "uniquely surviving" a collision (Coach nit N1). */const sh=c.length<=wantMfr.length?c:wantMfr,lo=c.length<=wantMfr.length?wantMfr:c;return sh.length>=3&&lo.startsWith(sh);});
       if(byMfr.length===1)return byMfr[0];
     }
     return null;
