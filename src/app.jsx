@@ -54876,15 +54876,34 @@ INSTRUCTIONS:
             // Give rbgError a moment to write to Firestore, then reload
             await new Promise(r=>setTimeout(r,500));
           }
-          // F086: HARD reload. The old plain reload could re-serve a stale service-worker-cached bundle —
-          // the root cause of users running an old ARC version (e.g. Ryan last week). Unregister the SW +
-          // clear all caches FIRST so we always load the freshly-deployed build. Best-effort: reload
-          // regardless of teardown errors so the button never dead-ends.
+          // B099/B091 (2026-08-05): SW/caches teardown is best-effort ONLY and must NEVER gate the reload —
+          // race it against a short timeout so a hung serviceWorker op can't dead-end the button (the reported
+          // symptom: modal stays, page never reloads). Confirmed harmless: neither sw.js nor
+          // firebase-messaging-sw.js has a fetch handler and caches are empty + deleted on activate, so this
+          // teardown is largely a no-op — retained for the documented F086 stale-version (Ryan) intent.
           try{
-            if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}
-            if(window.caches){const ks=await window.caches.keys();await Promise.all(ks.map(k=>window.caches.delete(k)));}
-          }catch(e){/* best-effort — reload regardless */}
-          window.location.reload();
+            await Promise.race([
+              (async()=>{
+                if(navigator.serviceWorker){const rs=await navigator.serviceWorker.getRegistrations();await Promise.all(rs.map(r=>r.unregister()));}
+                if(window.caches){const ks=await window.caches.keys();await Promise.all(ks.map(k=>window.caches.delete(k)));}
+              })(),
+              new Promise(r=>setTimeout(r,1500))
+            ]);
+          }catch(e){/* best-effort — navigate regardless */}
+          // B091 insurance: snooze the acted-on build id so a stale version poll can't re-pop the modal after nav.
+          try{_bcMarkVersionSeen(broadcast.id);}catch(_){}
+          // B099/B091 FIX: cache-BUSTING navigation. A plain reload() re-issues the SAME url and can be answered
+          // by a stale/intermediate index.html (HTTP/bfcache/Fastly edge) — the true root cause (Ctrl+Shift+R
+          // works only because it bypasses every cache layer). A never-seen url can't be a cache HIT at ANY
+          // layer, so we always land on the freshest index.html → freshest bundle in ONE hop, and skip the
+          // intermediate build that produced the B091 double-modal. URL API preserves any ?rfqUpload=/?join=
+          // token; location.replace (not href) avoids a Back-into-?_cb history entry. Fallback to reload() if
+          // the URL API ever throws so the button can never dead-end.
+          try{
+            const u=new URL(window.location.href);
+            u.searchParams.set('_cb',Date.now().toString());
+            window.location.replace(u.toString());
+          }catch(e){window.location.reload();}
         }
         // F086 (Jon 2026-08-03): full-width bar overlaying the entire top-bar strip (not a corner card),
         // horizontal layout, flashing. Covers only the top bar (top:0), never the nav tabs below.
