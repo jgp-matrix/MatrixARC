@@ -11250,6 +11250,18 @@ function _surfaceExtractionSaveFailure(projectId,panelId,latestPanel){
   try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"runExtractionTask",message:"Extraction save failed after retries — extracted BOM may NOT be persisted to Firestore",extra:{projectId,panelId,itemCount:(latestPanel&&latestPanel.bom||[]).length,lastError:String(_lastPanelSaveError&&_lastPanelSaveError.message||_lastPanelSaveError||"unknown")}});}catch(e){}
   try{if(_saveFailBanner)_saveFailBanner("Save failed — the extracted BOM may not have been saved. Check your connection and re-extract.");}catch(e){}
 }
+// B078-3 (PRJ402505): the post-extraction pricing / BC-match phase's completion save can hit the SAME
+// resource-exhausted write-stream saturation as the extraction save (B078). It used to be swallowed
+// (onSaveImmediate catch{}, background-pricing console.error, or the extraction .catch relabeling the
+// throw "✓ Extraction done") — so the Phase-6 bcVerify stamp never persisted and every in-BC row
+// rendered BLUE/unpriced under a green success tile. This mirrors B078-1: retry the transient via
+// saveProjectPanelWithRetry, then on terminal failure surface LOUDLY + durably (never a success tile).
+const _pricingSaveFailed={}; // keyed by _bgKey — set at the completion-save site, read+cleared by the caller's .then
+function _surfacePricingPhaseFailure(projectId,panelId,detail,lastErr){
+  try{bgError(_bgKey(projectId,panelId),"Pricing not saved — BOM may be unmatched/unpriced");}catch(e){}
+  try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"pricingPhase",message:"Post-extraction pricing/BC-match phase failed to persist — BOM may be left unmatched (blue) and unpriced; re-run Get New Pricing",extra:{projectId,panelId,detail:detail||"",code:String((lastErr&&(lastErr.code||lastErr.message))||lastErr||"unknown")}});}catch(e){}
+  try{if(_saveFailBanner)_saveFailBanner("Pricing did not complete — the BOM may be unmatched/unpriced. Re-run Get New Pricing.");}catch(e){}
+}
 // ── BACKGROUND AUTOSAVE COALESCER (B078-2 — the burst amplifier) ──
 // An 18-page add/extract fires a BURST of PanelCard background _noBumpWrite autosaves
 // (priceDate/vendor-name/BC-PO-date backfills, BC price poll, BC item-pulse, labor-row
@@ -17487,7 +17499,11 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
   // Save directly to Firestore — no React state
   const mergedFuzzy={...(panelData.bcFuzzySuggestions||{}),...bcFuzzySugg};
   const updated={...panelData,bom:updatedBom,status:"costed",updatedAt:Date.now(),...(Object.keys(mergedFuzzy).length?{bcFuzzySuggestions:mergedFuzzy}:{})};
-  try{await saveProjectPanel(uid,projectId,panelId,updated);}catch(e){console.error("[BG PRICING] save failed:",e);}
+  // B078-3: retry the transient resource-exhausted write, then fail LOUDLY + durably (was: silent
+  // console.error → bcVerify unpersisted → all-blue/unpriced BOM under a success tile). Same write +
+  // guards via the wrapper — does NOT change what is written.
+  const _bgSaveOk=await saveProjectPanelWithRetry(uid,projectId,panelId,updated);
+  if(!_bgSaveOk)_surfacePricingPhaseFailure(projectId,panelId,"background pricing completion save",_lastPanelSaveError);
   const totalPriced=updatedBom.filter(r=>r.unitPrice>0).length;
   console.log(`[BG PRICING] Complete: ${totalPriced}/${bom.length} priced (${bcCount} BC). Saved to ${projectId}/${panelId}`);
   // BC sync
@@ -17496,6 +17512,9 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
       bcSyncPanelTaskDescriptions(bcProjectNumber,panelIndex+1,updated,projectName).catch(e=>console.warn("[BG PRICING] task desc sync failed:",e));
     }).catch(e=>console.warn("[BG PRICING] planning lines sync failed:",e));
   }
+  // B078-3: if the completion save failed after retries, _surfacePricingPhaseFailure already raised a
+  // durable error tile — do NOT overwrite it with a success terminal.
+  if(!_bgSaveOk)return;
   bgDone(_bgKey(projectId,panelId),`✓ ${totalPriced} priced (background)`);
 }
 
@@ -28666,7 +28685,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           if((finalPanel.bom||[]).length>0&&_apiKey){
             runPricingBackground(uid,_extractionProjectId,panel.id,finalPanel,bcProjectNumber,idx,projectName).catch(e=>{
               console.error("[EXTRACTION GUARD] Background pricing failed:",e);
-              bgDone(_bgKey(projectId,panel.id),`✓ ${(finalPanel.bom||[]).length} items (pricing failed)`);
+              // B078-3: was a success tile ("✓ N items (pricing failed)") masking a failed BC-match/pricing
+              // run. Surface loudly + durably instead — extraction is saved; pricing is not.
+              _surfacePricingPhaseFailure(_extractionProjectId,panel.id,"background pricing threw (nav-away)",e);
             });
           }else{
             bgDone(_bgKey(projectId,panel.id),(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
@@ -28684,9 +28705,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           runPricingOnPanel(finalPanel.bom,finalPanel,pct=>{
             bgSetPct(_bgKey(projectId,panel.id),95+Math.round(pct*0.04));
           }).then(()=>{
-            bgDone(_bgKey(projectId,panel.id),"✓ Complete");
-          }).catch(()=>{
-            bgDone(_bgKey(projectId,panel.id),"✓ Extraction done");
+            // B078-3: if the pricing/BC-match completion save didn't persist (resource-exhausted, after
+            // retries), the flag was set + a durable error tile + logDebugEntry already raised. Do NOT
+            // overwrite it with a success tile — the BOM may show unmatched (blue)/unpriced rows.
+            if(_pricingSaveFailed[_bgKey(projectId,panel.id)]){
+              delete _pricingSaveFailed[_bgKey(projectId,panel.id)];
+              try{arcAlert("Pricing did not complete for this panel — the BOM may show unmatched (blue) and unpriced items. Please re-run “Get New Pricing” on this panel.\n\nExtraction itself succeeded and is saved.",{kind:"error",okLabel:"OK"}).catch(()=>{});}catch(_){}
+            }else{
+              bgDone(_bgKey(projectId,panel.id),"✓ Complete");
+            }
+          }).catch(err=>{
+            // B078-3: a pricing-phase THROW (rethrown from runPricingOnPanel for the non-standalone
+            // caller) used to be relabeled "✓ Extraction done" — masking a failed BC-match/pricing run
+            // as success. Surface it loudly + durably instead (extraction is saved; pricing is not).
+            delete _pricingSaveFailed[_bgKey(projectId,panel.id)];
+            _surfacePricingPhaseFailure(projectId,panel.id,"post-extraction pricing threw",err);
+            try{arcAlert("Pricing did not complete for this panel — the BOM may show unmatched (blue) and unpriced items. Please re-run “Get New Pricing” on this panel.\n\nExtraction itself succeeded and is saved.",{kind:"error",okLabel:"OK"}).catch(()=>{});}catch(_){}
           });
         }else{
           bgDone(_bgKey(projectId,panel.id),(finalPanel.bom||[]).length>0?`✓ ${(finalPanel.bom||[]).length} items`:"✓ Complete");
@@ -31938,10 +31972,23 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // This is the write that was silently rejected on nav-away before F019 (lease released → permission
       // -denied → swallowed) — the keep-alive now holds the lease so it lands.
       const _hasOverrides=!!_pendingPreReviewOverrides[projectId];
-      try{await saveProjectPanel(uid,projectId,panel.id,updated,!_hasOverrides);}
-      catch(e){console.error("[F019] save failed:",e);bgError(_bgId,"Save failed");_f019Terminated=true;}
+      // B078-3: retry the transient resource-exhausted write (was: single attempt → bgError only, no
+      // retry / no debug record). Same write + guards via the wrapper — does NOT change what is written.
+      const _saveOk=await saveProjectPanelWithRetry(uid,projectId,panel.id,updated,!_hasOverrides);
+      if(!_saveOk){
+        console.error("[F019] save failed after retries:",_lastPanelSaveError);
+        if(!_f019Terminated){bgError(_bgId,"Save failed — pricing not persisted");_f019Terminated=true;}
+        try{if(typeof window!=="undefined"&&typeof window.logDebugEntry==="function")window.logDebugEntry({severity:"error",source:"pricingPhase",message:"Standalone Get-New-Pricing save failed after retries — BOM pricing/BC-match may not be persisted",extra:{projectId,panelId:panel.id,code:String((_lastPanelSaveError&&(_lastPanelSaveError.code||_lastPanelSaveError.message))||"unknown")}});}catch(e){}
+      }
     }else{
-      try{await onSaveImmediate(updated);}catch(e){}
+      // B078-3: post-extraction pricing save. onSaveImmediate ≡ saveProjectPanel(uid,projectId,panel.id,
+      // updated,!hasOverrides) (@saveImmediatePanel 39167 / PanelCard onSaveImmediate 40376), so route it
+      // through saveProjectPanelWithRetry — SAME write + guards, just retried + throw-detected. On terminal
+      // failure flag it + fail loudly (bcVerify wouldn't have persisted → all-blue/unpriced under a success
+      // tile otherwise). The caller's .then reads the flag and skips the "✓ Complete" tile.
+      const _hasOverridesNs=!!_pendingPreReviewOverrides[projectId];
+      const _nsOk=await saveProjectPanelWithRetry(uid,projectId,panel.id,updated,!_hasOverridesNs);
+      if(!_nsOk){_pricingSaveFailed[_bgId]=true;_surfacePricingPhaseFailure(projectId,panel.id,"completion save (post-extraction pricing)",_lastPanelSaveError);}
     }
     const aiCount=updatedBom.filter(r=>r.priceSource==="ai").length;
     const totalPriced=updatedBom.filter(r=>r.unitPrice!=null).length;
