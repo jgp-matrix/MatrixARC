@@ -13014,7 +13014,7 @@ async function applyLearnedCorrections(bom,uid,opts={}){
           heldBackAlternates.push({rowId:r.id,from:pn,to:alt.replacement.partNumber,toDesc:alt.replacement.description||""});
         }else{
           appliedLog.push({rowId:r.id,kind:"alternate",from:pn,to:alt.replacement.partNumber,reason:"auto-cross from learning DB"});
-          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high",...(alt.replacement.unitCost!=null?_priceStamp():{})};delete _altRow._confDowngradeReason;return _altRow;
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high",...(alt.replacement.unitCost!=null?_priceStamp():{})};delete _altRow._confDowngradeReason;delete _altRow.bcNo;delete _altRow.bcVerify;/* B102: the alternate carries no BC surrogate, so CLEAR the ORIGINAL part's stale bcNo/bcVerify — otherwise the crossed row keeps the crossed-FROM surrogate and the planning-line push sends the WRONG part. Cleared → _bcResolveSurrogateExact re-binds to the crossed-TO partNumber on the next pricing pass. */return _altRow;
         }
       }
       // v1.19.977: log when an alternate exists for this PN but isn't set to
@@ -27843,7 +27843,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           // DECISION(v1.20.110, C5 guard): Hold back auto-cross on panel mount when manualVerifyRequired
           if(_mvr){heldAlt++;return r;}
           changed=true;appliedAlt++;
-          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high",...(alt.replacement.unitCost!=null?_priceStamp():{})};delete _altRow._confDowngradeReason;return _altRow;
+          const _altRow={...r,partNumber:alt.replacement.partNumber,description:alt.replacement.description||r.description,unitPrice:alt.replacement.unitCost??r.unitPrice,priceSource:"bc",priceDate:null,isCrossed:true,crossedFrom:pn,autoReplaced:true,confidence:"high",...(alt.replacement.unitCost!=null?_priceStamp():{})};delete _altRow._confDowngradeReason;delete _altRow.bcNo;delete _altRow.bcVerify;/* B102: the alternate carries no BC surrogate, so CLEAR the ORIGINAL part's stale bcNo/bcVerify — otherwise the crossed row keeps the crossed-FROM surrogate and the planning-line push sends the WRONG part. Cleared → _bcResolveSurrogateExact re-binds to the crossed-TO partNumber on the next pricing pass. */return _altRow;
         }
         const corr=corrs.find(c=>c.badPN===pn||normPN(c.badPN)===normPN(pn)||c.badPN===pn.slice(0,20)||normPN(c.badPN)===normPN(pn.slice(0,20)));
         if(corr){
@@ -43249,10 +43249,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
           const _newB=(patch.crossToPartNumber||"").trim();
           if(_newB){
             rowPatch.partNumber=_newB;
-            if(patch.bcNo)rowPatch.bcNo=patch.bcNo;
+            rowPatch.bcNo=patch.bcNo||undefined;                     // B102: ALWAYS rebind — carry the source's crossed-TO surrogate if present, else CLEAR the target's stale bcNo (a patch with no surrogate must not leave the ORIGINAL binding) so the cross re-resolves to the crossed-TO part
             rowPatch.isCrossed=true;
             rowPatch.crossedFrom=patch.crossedFrom||partNumber;      // A (the matched key)
-            rowPatch.bcVerify={status:"in-bc",at:now};
+            rowPatch.bcVerify=patch.bcNo?{status:"in-bc",at:now}:undefined;  // B102: only mark in-bc when we actually carry a surrogate; else leave unverified so the resolver re-binds + an Issues-column circle surfaces
             if(patch.manufacturer)rowPatch.manufacturer=patch.manufacturer; // F2: adopt B's manufacturer
             rowPatch.bcVendorNo="";                                  // F1: clear stale-A number → no name-B/number-A; RFQ/LT-push/PO re-resolve B's vendor from _bcNo(row)
             // F7: a target that was itself a prior correction becomes a CLEAN cross (mirror commitBcItem's deletes).
@@ -45065,6 +45065,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                       const updatedPanels=(projectRef.current.panels||[]).map(p=>({...p,bom:(p.bom||[]).map(r=>{
                         const cross=crosses.find(c=>c.bomRowId===r.id);
                         if(cross)return{...r,partNumber:cross.supplierItem.supplierPartNumber||cross.supplierItem.partNumber,crossedFrom:cross.bomPartNumber,isCrossed:true,
+                          bcNo:undefined,bcVerify:undefined,/* B102: the supplier item carries no BC surrogate → CLEAR the stale ORIGINAL bcNo/bcVerify so the cross re-resolves to the crossed-TO part; otherwise the planning-line push sends the original part. */
                           /* #199 P1: a supplier substitution auto-arms Tech Review (re-crossing a resolved row re-arms — a new substitution needs fresh sign-off) */
                           techReviewFlag:true,techReviewFlagSource:"supplier",techReviewResolved:false,techReviewResolvedBy:null,techReviewResolvedAt:null};
                         return r;
