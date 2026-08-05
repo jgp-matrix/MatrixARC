@@ -10479,7 +10479,12 @@ function _panelBomUnsynced(panel){
 // gate share ONE definition (dual-consumer rule): when this is non-empty a "Sync now" can only hit the block,
 // so the leave gate hides "Sync now" and offers Later-only with pricing guidance instead of a dead-end button.
 function _panelUnpricedForBc(panel){
-  return (((panel&&panel.bom)||[]).filter(r=>!r.isLaborRow&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual"));
+  // B097 (2026-08-05): align with the RED-row "priceable" rule (SSOT). Previously this gate excluded only
+  // labor rows, so a Matrix-Systems / customer-supplied / contingency / buyoff / crate row with no price
+  // (legitimately exempt from needing a BC price — same set _isExcludedFromPriceCheck excludes and the red
+  // rule ignores) still tripped "1 item must be priced in BC first" and blocked the panel's BC sync →
+  // false "Unsynced changes to BC" modal on every close (PRJ402502 IIOT gateway, vendor "Matrix Systems").
+  return (((panel&&panel.bom)||[]).filter(r=>!r.isLaborRow&&(typeof _isExcludedFromPriceCheck==="function"?!_isExcludedFromPriceCheck(r):true)&&(r.partNumber||"").trim()&&r.priceSource!=="bc"&&r.priceSource!=="manual"));
 }
 // F085 leave-gate predicate: a BC-linked project has unsynced ARC→BC changes when any panel needs sync.
 // App reads this off `openProject`, which ProjectView keeps fresh via onChange on every edit.
