@@ -12547,8 +12547,18 @@ async function executeRestore(archive,remaps,options,onProgress){
 // ECOs flattened into base BOMs via Phase 1 utilities.
 async function copyProject(uid,sourceProject,onProgress,opts){
   const pp=onProgress||(()=>{});
-  const src=sourceProject;
   const copyOpts=opts||{};
+  // B100: hydrate the FULL source from Firestore (the source of truth). The caller passes {...project},
+  // which can be a dashboard-lite object whose pages/boms lack heavy fields (storageUrl / originalPdfPath /
+  // pageNumber) — that silently produced copies with NO drawings and empty panels. Reload the authoritative
+  // doc so every page carries its image + PDF refs and every panel its rows. Preserve the caller's chosen
+  // name; fall back to the passed object if the load fails.
+  let src=sourceProject;
+  try{
+    const _sp=_appCtx.projectsPath||("users/"+uid+"/projects");
+    const _snap=await fbDb.doc(_sp+"/"+sourceProject.id).get();
+    if(_snap.exists)src=migrateProject({id:sourceProject.id,..._snap.data(),name:sourceProject.name});
+  }catch(e){console.warn("copyProject: fresh source load failed, using passed object:",e.message);}
   const srcPanels=src.panels||[];
   const ecoSummary=src.ecoSummary||[];
 
@@ -12646,21 +12656,47 @@ async function copyProject(uid,sourceProject,onProgress,opts){
   pp({step:"save",msg:"Saving project…",pct:35});
   const newProj=await saveProject(uid,newProjectData);
 
-  // Step 6: Copy page images from source to new project in Storage
+  // Step 6 (B100): copy ALL drawing assets — BOTH legacy per-page images AND native original PDFs — from
+  // the source into the COPY's OWN Storage, and remap each page's storageUrl/originalPdfPath to the new
+  // paths. A copy must be fully self-contained regardless of storage type (legacy image vs native PDF):
+  // without the PDF copy, a native project's copy has nothing to render OR re-extract from. Only ever
+  // writes to the NEW project's Storage paths — never touches the source.
   const allPages=newPanels.flatMap((panel,pi)=>(panel.pages||[]).map((pg,pgi)=>({pi,pgi,pg})));
-  const totalPages=allPages.filter(x=>x.pg._srcStorageUrl).length;
+  const totalPages=allPages.filter(x=>x.pg._srcStorageUrl||x.pg.originalPdfPath).length;
+  const _pdfMap=new Map(); // source originalPdfPath -> copied path (dedupe: many pages share one PDF)
   let copied=0;
   for(const{pi,pgi,pg}of allPages){
-    if(!pg._srcStorageUrl)continue;
+    if(!pg._srcStorageUrl&&!pg.originalPdfPath)continue;
     pp({step:"images",msg:"Copying drawing "+(copied+1)+"/"+totalPages+"…",pct:35+Math.round((copied/Math.max(totalPages,1))*45)});
-    try{
-      const loaded=await ensureDataUrl({storageUrl:pg._srcStorageUrl});
-      if(loaded.dataUrl){
-        const newUrl=await uploadPageImage(uid,newProj.id,pg.id,loaded.dataUrl);
-        newPanels[pi].pages[pgi].storageUrl=newUrl;
-        newPanels[pi].pages[pgi].dataUrl=loaded.dataUrl;
-      }
-    }catch(e){console.warn("Copy image failed for page",pg._srcPageId,e.message);}
+    // Legacy per-page image (storageUrl).
+    if(pg._srcStorageUrl){
+      try{
+        const loaded=await ensureDataUrl({storageUrl:pg._srcStorageUrl});
+        if(loaded.dataUrl){
+          const newUrl=await uploadPageImage(uid,newProj.id,pg.id,loaded.dataUrl);
+          newPanels[pi].pages[pgi].storageUrl=newUrl;
+          newPanels[pi].pages[pgi].dataUrl=loaded.dataUrl;
+        }
+      }catch(e){console.warn("Copy image failed for page",pg._srcPageId,e.message);}
+    }
+    // Native original PDF (originalPdfPath) — download once per unique source path, re-upload to the copy,
+    // remap. On failure the page keeps the source path (still re-extractable while the source exists) and
+    // the failure is logged, rather than silently dropping the drawing.
+    if(pg.originalPdfPath){
+      try{
+        let newPdf=_pdfMap.get(pg.originalPdfPath);
+        if(!newPdf){
+          const _u=await fbStorage.ref(pg.originalPdfPath).getDownloadURL();
+          const _r=await fetch(_u);
+          if(!_r.ok)throw new Error("PDF fetch "+_r.status);
+          const _buf=await _r.arrayBuffer();
+          if(!_buf.byteLength)throw new Error("source PDF is 0 bytes");
+          newPdf=await uploadOriginalPdf(uid,newProj.id,(pg.originalPdfPath.split("/").pop()||"drawing.pdf"),_buf);
+          _pdfMap.set(pg.originalPdfPath,newPdf);
+        }
+        newPanels[pi].pages[pgi].originalPdfPath=newPdf;
+      }catch(e){console.warn("Copy PDF failed for page",pg._srcPageId||pg.id,e.message);}
+    }
     copied++;
   }
   // Clean up temp fields
