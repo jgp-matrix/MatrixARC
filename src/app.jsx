@@ -2508,6 +2508,17 @@ function isAdmin(){return !!_appCtx.companyId&&_appCtx.role==="admin";}
 const _BC_VERSION_SNOOZE_MS=4*60*1000;
 function _bcVersionSeen(v){try{const s=JSON.parse(localStorage.getItem('arc_broadcast_seen_version')||'null');return !!(s&&s.v===v&&(s.until||0)>Date.now());}catch(_){return false;}}
 function _bcMarkVersionSeen(v){try{localStorage.setItem('arc_broadcast_seen_version',JSON.stringify({v:v,until:Date.now()+_BC_VERSION_SNOOZE_MS}));}catch(_){}}
+// B091 (2026-08-05): strict-newer version check so the update modal NEVER prompts for an OLDER build
+// (the "downgrade modal" — a stale admin tab that wrote an older version into _system/version). Strips a
+// leading 'v' and any non-semver suffix (e.g. the test "-T071"). Falls back to plain inequality only when
+// either side can't be parsed as N.N.N, so a future version-format change can't silently suppress real updates.
+function _versionParts(v){const m=/(\d+)\.(\d+)\.(\d+)/.exec(String(v||''));return m?[+m[1],+m[2],+m[3]]:null;}
+function _versionIsNewer(remote,current){
+  const r=_versionParts(remote),c=_versionParts(current);
+  if(!r||!c)return String(remote||'')!==String(current||'');
+  for(let i=0;i<3;i++){if(r[i]!==c[i])return r[i]>c[i];}
+  return false;
+}
 function _bcAdminSeenAt(){try{return parseInt(localStorage.getItem('arc_broadcast_seen')||'0',10)||0;}catch(_){return 0;}}
 function _bcMarkAdminSeen(ts){try{localStorage.setItem('arc_broadcast_seen',String(ts));}catch(_){}}
 // DECISION(v1.19.758): Helper for granular permission checks. Returns true when the
@@ -54539,14 +54550,19 @@ INSTRUCTIONS:
   // fired (users only got it via the slow poll). The [userRole] dep runs it the moment an admin's client
   // loads a new build, so every other open tab's onSnapshot fires instantly.
   useEffect(()=>{
-    if(userRole==="admin")fbDb.doc("_system/version").set({version:APP_VERSION,updatedAt:Date.now()},{merge:true}).catch(()=>{});
+    // B091: MONOTONIC write — only ADVANCE the shared doc; never let a stale admin tab regress it to an
+    // older build (that regression is what produced the phantom "older version available" downgrade modal).
+    if(userRole==="admin")fbDb.doc("_system/version").get().then(snap=>{
+      const cur=snap.exists?((snap.data()||{}).version):null;
+      if(!cur||_versionIsNewer(APP_VERSION,cur))fbDb.doc("_system/version").set({version:APP_VERSION,updatedAt:Date.now()},{merge:true}).catch(()=>{});
+    }).catch(()=>{});
   },[userRole]);
   useEffect(()=>{
     const unsub=fbDb.doc("_system/version").onSnapshot(snap=>{
       if(!snap.exists)return;
       const remote=snap.data().version;
       // Route into the unified broadcast state; skip if the user already clicked "Later" on this build.
-      if(remote&&remote!==APP_VERSION&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='admin')?b:(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote}); // N1: don't wipe an unread admin message
+      if(remote&&_versionIsNewer(remote,APP_VERSION)&&!_bcVersionSeen(remote))setBroadcast(b=>(b&&b.type==='admin')?b:(b&&b.type==='version'&&b.id===remote)?b:{type:'version',id:remote}); // N1: don't wipe an unread admin message. B091: only prompt for a STRICTLY NEWER build (no downgrade modal)
     },()=>{});
     return()=>unsub();
   },[]);
@@ -54576,7 +54592,7 @@ INSTRUCTIONS:
         if(!r.ok)return;
         const j=await r.json();
         const remote=j&&j.version;
-        if(cancelled||!remote||remote===APP_VERSION||_bcVersionSeen(remote))return;
+        if(cancelled||!remote||!_versionIsNewer(remote,APP_VERSION)||_bcVersionSeen(remote))return; // B091: only prompt for a STRICTLY NEWER build (no downgrade modal)
         setBroadcast(b=>{
           if(b&&b.type==='admin')return b;                       // don't wipe an unread admin message
           if(b&&b.type==='version'&&b.id===remote)return b;       // already showing this build
