@@ -46,10 +46,32 @@ Jon: PRJ402501 / PRJ402143 have NO red rows → should be READY TO REVIEW. Fredd
 ## 6b. ★ CORE DESIGN FLAW (Jon 2026-08-05) — status inferred from ABSENCE of blockers, not POSITIVE completion
 Live: a freshly **copied** project (clean BOM, never technically reviewed) routed straight to **READY TO SEND**, skipping READY TO REVIEW. Root: `readyToSend = readyToReview && quote-complete && !anyRedRow`, and `readyToReview`'s only review gate is `issuesCleared` = **"no UNRESOLVED tech-review flag."** A never-reviewed project has NO TR flag → `issuesCleared`=true → it passes review gates it never actually went through. The system cannot distinguish **"review completed & passed"** from **"review never happened"** — both read as "nothing blocking." Same disease as the RFQ stickiness (§4): no POSITIVE "RFQ answered" flag; here no POSITIVE "review done" flag.
 
-## 6c. ★ DIRECTION (Jon) — explicit Project STATUS FLAG SEQUENCER (state machine)
-Replace the "infer status from what's missing" logic with an explicit set of workflow FLAGS that a project must POSITIVELY acquire to advance, and derive the column from which flags are set. Proposed flag spine (to refine WITH Jon):
-`extracted → priced(complete) → reviewSubmitted → reviewApproved → quoted → sent`
-plus orthogonal markers (activeRfq-open, ecoActive, diverged-after-send). Rule set = a matrix mapping flag-combinations → column, so e.g. **clean+priced+NOT-yet-reviewSubmitted → READY TO REVIEW**; **reviewApproved+quote-complete+no-red → READY TO SEND**; a never-reviewed project can NEVER reach Ready to Send. This subsumes: the RFQ-answered fix (§4/§6 Part A), the review-gate flaw (§6b), and the column precedence (§1). **Next step: Freddy drafts the flag set + transition/rule matrix as a design brief for Jon's review — NOT a build.** Likely leverages existing fields (`preReviewStatus`/`postReviewStatus` pending/approved, `quoteSentAt`/`quoteRev`) + adds the missing positive markers (review-done, rfq-answered).
+## 6c. ★★ AUTHORITATIVE STATUS SPEC (Jon 2026-08-05) — dynamic, sequential state machine
+**Dynamic principle:** a status flag "trips" the moment its condition becomes TRUE, advancing the project to the next column; if any condition becomes UNTRUE the project **auto-reverts** to the status it actually belongs in. Recomputed live/continuously. **Sequential dependency:** a status is only reachable when ALL prior statuses' conditions are satisfied (e.g. RFQS SEND/RECEIVE requires DRAFT + (BOM) IN PROCESS satisfied first).
+
+**The ladder (evaluate top-down; a project sits in the FIRST status whose condition holds — equivalently, the highest rung whose own + all lower conditions are met):**
+
+| # | Status / column | Condition (Jon's words → predicate) |
+|---|---|---|
+| 1 | **DRAFT** | Project created; **no drawings loaded** AND **no BOM items besides auto-populated items or labor rows** (nothing really extracted). |
+| 2 | **(BOM) IN PROCESS** | Extracted BOM that **has ISSUES in the Issues column** — **Blue BC circles, Red BC circles, or Confidence circles**. (BC-match incomplete / low-confidence items still being worked.) ← NOTE: this ELEVATES the BC-match/confidence indicators to a routing gate; today they're only advisory. |
+| 3 | **RFQS SEND/RECEIVE** | Issues cleared, but the BOM **has Red Rows** (row-level red = `_isBomRowFlaggedRed`: qty0 / $0 / no-firm-LT / stale-or-missing effective price date). ← NOTE: Jon's definition is **red rows ONLY** — the `rfqSentDate`/`hasActiveRfqs` clause is DROPPED from routing (that fixes the PRJ402501/402143 stuck-in-RFQs cases by definition; the "# SENT" tile-count decrement is a SEPARATE display fix, §4/§6-A). |
+| 4 | **IN PRE-REVIEW** | No issues, no red rows, and the project is **currently in the Tech Review process** (`preReviewStatus==="pending"`). |
+| 5 | **READY TO REVIEW** | **No Red Rows** (and no issue-circles) **AND has NOT been approved by Tech Review** — i.e. never submitted, OR **returned/REJECTED** from review. (Rejected → lands here. If a change re-introduces a red row → reverts to RFQS.) |
+| 6 | **READY TO SEND** | All prior satisfied **AND POSITIVELY approved by Tech Review** (`preReviewStatus==="approved"`) **AND not yet sent to the customer** (`!quoteSentAt`). ← the positive review flag; a never-reviewed project can NEVER reach here (fixes the copy→Ready-to-Send jump). |
+| 7+ | (beyond spec) | sent-to-customer → **Quotes Sent**; ECO / purchasing continue past here. |
+
+**Reversion rules (fall directly out of live re-evaluation):** review REJECTED (`preReviewStatus` not approved) → drops to READY TO REVIEW (rung 5); review produces / any edit adds a red row → drops to RFQS (rung 3); a new unmatched/low-confidence item → drops to IN PROCESS (rung 2).
+
+**What this fixes:** (a) priced projects with lingering RFQ flags → READY TO REVIEW (RFQS is red-rows-only now); (b) copy/new clean project → READY TO REVIEW not READY TO SEND (send needs positive `approved`).
+
+**★ Open mapping to nail before build (Coach to trace, Jon to confirm):**
+- **Exact predicates for the Issues-column circles** — Blue BC circle (= unmatched / `bcVerify` not-in-bc / no `bcNo`?), Red BC circle (= BC divergence/mismatch?), Confidence circle (= low extraction-confidence chip threshold?). Need the precise fields that drive each UI indicator → define one `hasBomIssueCircles(project)` predicate.
+- Confirm READY TO SEND keys on `preReviewStatus==="approved"` (positive) and that never-submitted/`rejected` both fall to READY TO REVIEW.
+- DRAFT's "auto-populated items or labor rows" exclusion set (so a project with only labor/auto rows stays DRAFT).
+- Where `postReviewStatus`, Quotes Sent, ECO, purchasing slot in beyond rung 6.
+
+**Next step:** Coach traces the circle predicates + I turn this table into the single `computeProjectEffectiveStatus` rewrite spec (replacing the scattered predicates), Jon confirms, then build. NOT a build yet.
 
 ## 7. Other gaps found (for the walkthrough)
 - **"awaiting" vs routing disagree:** the To-Do rail's "awaiting" (:18537) excludes priced rows, but `hasActiveRfqs` (routing) doesn't → rail can say "0 awaiting" while the board still holds the project in RFQs.
