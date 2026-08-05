@@ -54879,9 +54879,6 @@ INSTRUCTIONS:
           / "Acknowledge" button is the one-click escape, so no in-progress work is ever trapped.
           DECISION(v1.19.610) preserved: safeRefresh still warns + cleans up Firestore orphans for
           any running bg task before the (now hard) reload. */}
-      {/* ⏳ TEMP B091/B099 TEST MARKER (2026-08-05) — red dot confirms a version crossing landed on the NEW build.
-          REMOVE in the very next deploy (v1.24.94). Fixed-position, pointer-events:none, below the modal z-index. */}
-      <div title="build test marker — temporary, removed next deploy" style={{position:"fixed",top:8,left:"50%",transform:"translateX(-50%)",width:16,height:16,borderRadius:"50%",background:"#ef4444",boxShadow:"0 0 8px 2px rgba(239,68,68,0.75)",zIndex:9998,pointerEvents:"none"}}/>
       {broadcast&&(()=>{
         const isVersion=broadcast.type==='version';
         const runningTasks=Object.values(_bgTasks||{}).filter(t=>t.status==='running');
