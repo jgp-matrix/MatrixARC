@@ -5948,6 +5948,38 @@ async function bcFuzzyLookup(partNumber){
   return{match:null,type:null,suggestions:[]};
 }
 
+// B094/B095 (2026-08-04): SINGLE SOURCE OF TRUTH for "is this bcFuzzyLookup result a DEFINITIVE
+// (exact-normalized) match?" — factor the rule, not the inputs. bcFuzzyLookup returns a NON-NULL
+// match typed "fuzzy-crossfield" (~5872) or "fuzzy-normalized" (~5922) ONLY when a single candidate
+// passes exact normalized-equality (localNorm(x)===wantNorm) against No / Vendor_Item_No /
+// Common_Item_No — i.e. the same PN modulo punctuation, definitively correct. "exact" is a raw
+// No-field hit. type "fuzzy" (steps 2-4, loose single contains() result) is NOT definitive and stays
+// gated by the F1 manual-verify guard. Consumers: the F1 auto-apply guard in runPricingOnPanel
+// (~31492) AND runPricingBackground (~17357). Do NOT relax to include "fuzzy".
+function _isDefinitiveBcMatch(type){return type==="exact"||type==="fuzzy-crossfield"||type==="fuzzy-normalized";}
+
+// B095 (2026-08-04): deterministic BC surrogate resolver. When an already-`bc`-priced row carries
+// NO bcNo, bcLookupItem() (which queries ONLY the /items `number` field) misses classic
+// Allen-Bradley items whose front-facing PN lives in Vendor_Item_No (BC `No` is an internal
+// surrogate SKU). Without a bound bcNo the lead-time piggyback keys ItemVendorCatalog (Item_No +
+// Vendor_No) on the raw Vendor Part# and misses the (correct) lead time. This resolves the surrogate
+// via the SAME exact-normalized cross-field gate bcFuzzyLookup uses at step 4b (~5865-5883) —
+// bcSearchItems(pn,{field:"both"}) accepting ONLY a single exact normalized-equality hit — WITHOUT
+// the loose contains() steps 2-4. CARDINAL RULE: the caller binds bcNo only; partNumber is NEVER
+// overwritten (#163 preserved). Returns the single matching BC item, or null (0 or >1 exact = no bind
+// → safe on OCR-noisy PNs, which will not normalize-equal any real item).
+async function _bcResolveSurrogateExact(pn){
+  const raw=(pn||"").toString().trim();
+  const stripped=raw.replace(/[-\s\/\\.#_]+/g,"");
+  if(stripped.length<5)return null; // aligns with bcFuzzyLookup's NIT-1 cross-field threshold
+  const want=stripped.toUpperCase();
+  const _norm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
+  const r=await bcSearchItems(raw,{field:"both",top:10});
+  if(!r||!r.items||!r.items.length)return null;
+  const exacts=r.items.filter(it=>_norm(it.number)===want||_norm(it._vendorItemNo||"")===want||_norm(it._commonItemNo||"")===want);
+  return exacts.length===1?exacts[0]:null;
+}
+
 async function _bcReVerifyNotInBc(bom){
   if(!_bcToken)return null;
   const stale=bom.filter(r=>r.bcVerify&&r.bcVerify.status==="not-in-bc"&&!r.isLaborRow&&!r.isContingency&&(r.partNumber||"").trim());
@@ -17349,12 +17381,26 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
             if(exact&&exact.unitCost!=null){
               const vNo=exact.vendorNo||await bcGetItemVendorNo(_rowBcNo||pn);
               bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:exact.number||_rowBcNo||pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
+            }else if(!_rowBcNo){
+              // B095 (path-independent mirror of runPricingOnPanel ~31482): already-bc row with no BC
+              // surrogate. bcLookupItem() misses Allen-Bradley items whose PN is in Vendor_Item_No →
+              // resolve the surrogate deterministically (single exact-normalized cross-field match) and
+              // stamp bcNo so the LT piggyback (~17438) keys ItemVendorCatalog on the MTX No and hits.
+              // CARDINAL RULE: bcNo only, partNumber untouched (#163); keep the row's existing bcVendorNo.
+              const _sur=await _bcResolveSurrogateExact(pn);
+              if(_sur&&_sur.number){
+                const vNo=row.bcVendorNo||_sur.vendorNo||await bcGetItemVendorNo(_sur.number);
+                bcMap[String(row.id)]={unitPrice:_sur.unitCost,source:"bc",bcDisplayName:_sur.displayName,bcInventory:_sur.inventory,bcNumber:_sur.number,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"fuzzy-crossfield"};
+              }
             }
             continue;
           }
           const result=await bcFuzzyLookup(_rowBcNo||pn);
           if(result.match&&result.match.unitCost!=null){
-            const _isExact=result.type==="exact";
+            // B094 (path-independent mirror ~31492): a NON-NULL cross-field/normalized result is
+            // exact-normalized (definitive) → treat as exact so it auto-applies on manualVerifyRequired
+            // panels. Loose "fuzzy" stays gated. Shared predicate keeps both pricing paths consistent.
+            const _isExact=_isDefinitiveBcMatch(result.type);
             const _needsReview=!_isExact&&_bgManualVerify;
             if(_needsReview){
               bcFuzzySugg[String(row.id)]=[result.match];
@@ -28487,7 +28533,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }catch(e){console.warn("[RECON] post-commit enrichment failed:",e.message);}
     try{
       if((latestPanelRef.current.bom||[]).some(r=>!r.isLaborRow&&!r.unitPrice)&&_apiKey){
-        runPricingOnPanel(latestPanelRef.current.bom,latestPanelRef.current,()=>{}).catch(()=>{});
+        // B078-3 nit (Coach): recon post-commit re-price is fire-and-forget with no success terminal of
+        // its own, but a completion-save failure sets _pricingSaveFailed (a durable bgError tile is
+        // already raised via _surfacePricingPhaseFailure). Read+clear the flag here so it can't leak into
+        // a sibling run's terminal check, and surface the same actionable alert as the extraction path.
+        runPricingOnPanel(latestPanelRef.current.bom,latestPanelRef.current,()=>{}).then(()=>{
+          if(_pricingSaveFailed[_bgKey(capturedProjectId,panel.id)]){
+            delete _pricingSaveFailed[_bgKey(capturedProjectId,panel.id)];
+            try{arcAlert("Pricing did not complete for this panel — the BOM may show unmatched (blue) and unpriced items. Please re-run “Get New Pricing” on this panel.",{kind:"error",okLabel:"OK"}).catch(()=>{});}catch(_){}
+          }
+        }).catch(()=>{});
       }
     }catch(e){}
     try{
@@ -29690,7 +29745,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
     if(!_reIsBackground)ep.finish(`✓ ${bom.length} items extracted`);
     try{setExtracting(false);}catch(e){}
-    bgDone(_bgKey(projectId,panel.id),`✓ ${bom.length} items re-extracted${_reIsBackground?" (background)":""}`);
+    // B078-3 nit (Coach): a post-extract pricing completion-save failure set _pricingSaveFailed and
+    // already raised a durable bgError tile via _surfacePricingPhaseFailure. Do NOT overwrite it with a
+    // "✓ re-extracted" success tile (the BOM may show unmatched (blue) + unpriced rows). Mirror the
+    // ~28711 .then: consume the flag + surface the same actionable alert instead of the success tile.
+    if(_pricingSaveFailed[_bgKey(projectId,panel.id)]){
+      delete _pricingSaveFailed[_bgKey(projectId,panel.id)];
+      try{arcAlert("Pricing did not complete for this panel — the BOM may show unmatched (blue) and unpriced items. Please re-run “Get New Pricing” on this panel.\n\nExtraction itself succeeded and is saved.",{kind:"error",okLabel:"OK"}).catch(()=>{});}catch(_){}
+    }else{
+      bgDone(_bgKey(projectId,panel.id),`✓ ${bom.length} items re-extracted${_reIsBackground?" (background)":""}`);
+    }
     _reBgFinished=true;
     // BC drawing upload deferred until user prints quote (As-Quoted flow)
     // Background: extract panel metadata from drawings and log to CPD
@@ -31392,6 +31456,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // must not be clobbered. Standalone-only: extraction's post-pricing reuses this key while its own
     // extraction task is still "running", so a blanket entry guard would abort legit post-extract pricing.
     if(_isStandalonePricing&&_bgTasks[_bgId]&&_bgTasks[_bgId].status==="running")return;
+    // B078-3 nit (Coach): clear any stale completion-save-failed flag for THIS key at the start of a
+    // run that actually proceeds. A non-standalone caller that sets the flag but has no .then to
+    // read+clear it (recon re-price ~28490 fire-and-forget) could otherwise leave it stale → a sibling
+    // run's terminal reads a false "pricing did not complete". (The A2 early-return above is a duplicate
+    // no-op and intentionally does NOT clear — the in-flight run owns the flag.)
+    delete _pricingSaveFailed[_bgId];
     // A1 — register the standalone run as a background task for its whole lifetime.
     if(_isStandalonePricing)bgStart(_bgId,panel.name||("Panel "+(idx+1)),projectId,"Getting prices…");
     // A5 — guaranteed terminal state: a standalone run ALWAYS reaches bgDone/bgError (every early return,
@@ -31484,12 +31554,31 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               if(exact&&exact.unitCost!=null){
                 const vNo=exact.vendorNo||await bcGetItemVendorNo(_rowBcNo||pn);
                 bcMap[String(row.id)]={unitPrice:exact.unitCost,source:"bc",bcDisplayName:exact.displayName,bcInventory:exact.inventory,bcNumber:exact.number||_rowBcNo||pn,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"exact"};
+              }else if(!_rowBcNo){
+                // B095: already-bc row that never bound a BC surrogate. bcLookupItem() queries ONLY
+                // the /items `number` field → misses classic Allen-Bradley items whose PN is in
+                // Vendor_Item_No. Resolve the surrogate deterministically (single exact-normalized
+                // cross-field match) and stamp bcNo so the EXISTING LT piggyback (~31610) keys
+                // ItemVendorCatalog on the MTX No and hits (vendor + LT are already correct in BC).
+                // A single exact-normalized match is definitive → safe on manualVerifyRequired panels
+                // (B094 consistency); OCR-noise won't normalize-equal → null → no bind. CARDINAL RULE:
+                // bcNo only, partNumber untouched (#163). Vendor resolution UNCHANGED — keep the row's
+                // existing (correct) bcVendorNo.
+                const _sur=await _bcResolveSurrogateExact(pn);
+                if(_sur&&_sur.number){
+                  const vNo=row.bcVendorNo||_sur.vendorNo||await bcGetItemVendorNo(_sur.number);
+                  bcMap[String(row.id)]={unitPrice:_sur.unitCost,source:"bc",bcDisplayName:_sur.displayName,bcInventory:_sur.inventory,bcNumber:_sur.number,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"fuzzy-crossfield"};
+                }
               }
               continue;
             }
             const result=await bcFuzzyLookup(_rowBcNo||pn);
             if(result.match&&result.match.unitCost!=null){
-              const _isExact=result.type==="exact";
+              // B094: a NON-NULL cross-field/normalized result is exact-normalized (definitive) — treat
+              // it as exact so it AUTO-APPLIES on manualVerifyRequired panels instead of being held for
+              // review. Loose "fuzzy" (steps 2-4 single contains()) stays gated. Shared predicate — same
+              // rule at the B095 bind above and in runPricingBackground.
+              const _isExact=_isDefinitiveBcMatch(result.type);
               const _needsReview=!_isExact&&_manualVerifyRequired;
               if(_needsReview){
                 // F1 guard: hold fuzzy match as suggestion for user review
