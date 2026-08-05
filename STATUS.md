@@ -7,6 +7,12 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
+> ## ▶ TODAY (2026-08-04 late) — PRJ402505 dug: B078 RECURRENCE root-caused live; loud-fail (B078-3) in Coach review; B092/B093/B094 logged. Freddy.
+> **🔴 B078 RECURRENCE (live-confirmed via controlled-tab console/Firestore):** PRJ402505 extraction hit `resource-exhausted` ("Write stream exhausted max queued writes") → pricing/BC-match phase aborted before the bcVerify stamp → ALL in-BC parts left blue/unmatched/unpriced under "✓ Extraction done" (silent). Coalescer (B078-2) insufficient for this case. **B093** = that symptom; **B092** = unpriced→red→routes to RFQ col (anyRedRow-alone :18721).
+> **✅ PRJ402505 REMEDIATED** (Jon re-priced: 15/18 matched). Remaining 3 (49046A/679001/592273 nameplates) = **B094**: F1 guard (:31492-93) only auto-applies type==="exact"; cross-field Vendor-Part# match is typed "fuzzy-crossfield" → held back on manualVerifyRequired panels though it's an EXACT normalized match (live-confirmed bcFuzzyLookup matches all 3). Fix = treat cross-field-exact as exact. (Manual blue-circle click bypasses the guard → Jon can match the 3 now.)
+> **🔨 B078-3 (loud-fail) — Marc BUILT, Coach reviewing** (branch `marc/b078-3-pricing-loudfail` `dd1dd212`): 4 swallow sites → saveProjectPanelWithRetry (retry transient) + durable loud fail (bgError+logDebugEntry+banner); success terminals gated. → Jon deploy go. NEXT: B094 fix (after loud-fail lands, same-file), then B078 re-scope (why queue still saturates), then B092 routing.
+> **B091** (version double-modal) TABLED low-pri.
+
 > ## ▶ TODAY (2026-08-04) — B087 shipped v1.24.87; B088+B089 in build; relink family (B085/B086) shipped v1.24.86. Freddy.
 > **✅ B087 — SHIPPED prod v1.24.87** (`5947bc7b`): board no longer shows a just-relinked project as unlinked until refresh (onChange fires unconditionally → board list updates after leave; handleChange focus-safe). Display-only, Jon deploy go.
 > **G023 audit DONE** (docs/G023-project-persistence-audit.md): most project ops PASS; net-new gaps B088/B089/B090 + B082/B083 residuals + RFQ-send trace. Ranked worst-first.
