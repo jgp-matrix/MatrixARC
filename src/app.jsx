@@ -5979,16 +5979,53 @@ function _isDefinitiveBcMatch(type){return type==="exact"||type==="fuzzy-crossfi
 // the loose contains() steps 2-4. CARDINAL RULE: the caller binds bcNo only; partNumber is NEVER
 // overwritten (#163 preserved). Returns the single matching BC item, or null (0 or >1 exact = no bind
 // → safe on OCR-noisy PNs, which will not normalize-equal any real item).
-async function _bcResolveSurrogateExact(pn){
+// B098 (2026-08-05): dash-AGNOSTIC resolve + MFR-secondary collision-breaker. The prior version did a
+// SINGLE raw `contains()` search — which fails whenever BC stores the SAME part with dashes in DIFFERENT
+// positions (live: ARC "6ES7511-1AL03-0AB0" vs BC-stored "6ES75111AL03-0AB0"; strip all separators →
+// identical "6ES75111AL030AB0"). OData `contains()` can't normalize BC's side, so a verbatim query misses.
+// Jon's rule (memory reference_partnum_dash_normalize_mfr_secondary): match on the SEPARATOR-STRIPPED
+// alphanumeric value first; if >1 part collapses to the same normalized value (rare cross-MFR collision,
+// e.g. Phoenix "2907566" vs Schneider "290-7566"), disambiguate by MANUFACTURER — bind only if the row's
+// mfr uniquely resolves ONE candidate, else hold (never auto-bind a guess). Supplier/BC format stays the
+// source of truth; we LINK via bcNo and NEVER rewrite the row's partNumber (cardinal rule / #163).
+async function _bcResolveSurrogateExact(pn,rowMfr){
   const raw=(pn||"").toString().trim();
   const stripped=raw.replace(/[-\s\/\\.#_]+/g,"");
   if(stripped.length<5)return null; // aligns with bcFuzzyLookup's NIT-1 cross-field threshold
   const want=stripped.toUpperCase();
   const _norm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
-  const r=await bcSearchItems(raw,{field:"both",top:10});
-  if(!r||!r.items||!r.items.length)return null;
-  const exacts=r.items.filter(it=>_norm(it.number)===want||_norm(it._vendorItemNo||"")===want||_norm(it._commonItemNo||"")===want);
-  return exacts.length===1?exacts[0]:null;
+  const cand=new Map();
+  const add=items=>{ if(items) for(const it of items){ if(it&&it.number&&!cand.has(it.number))cand.set(it.number,it); } };
+  const exactsNow=()=>[...cand.values()].filter(it=>_norm(it.number)===want||_norm(it._vendorItemNo||"")===want||_norm(it._commonItemNo||"")===want);
+  // 1. Raw contains (fast path — resolves when BC's separators match, or there are none).
+  add((await bcSearchItems(raw,{field:"both",top:25})).items);
+  let exacts=exactsNow();
+  // 2. Dash-agnostic fallback: each MAXIMAL alphanumeric run of the PN is separator-free, so it survives as
+  //    a contiguous contains() substring even when BC's dashes sit differently. Try the longest runs first,
+  //    union candidates, re-apply the SAME exact-normalized gate. Early-exit the moment one normalizes-equal
+  //    (bounds BC calls; only a genuine no-match pays the full fan-out — rare for an already-bc row).
+  if(!exacts.length){
+    const anchors=[...raw.matchAll(/[A-Za-z0-9]+/g)].map(m=>m[0]).filter(a=>a.length>=4).sort((a,b)=>b.length-a.length).slice(0,3);
+    for(const a of anchors){
+      add((await bcSearchItems(a,{field:"both",top:1000})).items);
+      exacts=exactsNow();
+      if(exacts.length)break;
+    }
+  }
+  if(exacts.length===1)return exacts[0];
+  if(exacts.length>1){
+    // Collision: >1 BC item shares the normalized value. Disambiguate by manufacturer (row.manufacturer vs
+    // the candidate's BC Manufacturer_Code). Lenient name-vs-code compare (equal OR either is a prefix of the
+    // other, e.g. "SIEMENS" vs "SIE"). Bind ONLY if exactly one survives; otherwise hold (no ambiguous bind).
+    const nm=s=>(s||"").toString().replace(/[^A-Za-z0-9]/g,"").toUpperCase();
+    const wantMfr=nm(rowMfr);
+    if(wantMfr){
+      const byMfr=exacts.filter(it=>{const c=nm(it._mfrCode);return !!c&&(c===wantMfr||wantMfr.startsWith(c)||c.startsWith(wantMfr));});
+      if(byMfr.length===1)return byMfr[0];
+    }
+    return null;
+  }
+  return null;
 }
 
 async function _bcReVerifyNotInBc(bom){
@@ -17439,7 +17476,7 @@ async function runPricingBackground(uid,projectId,panelId,panelData,bcProjectNum
               // resolve the surrogate deterministically (single exact-normalized cross-field match) and
               // stamp bcNo so the LT piggyback (~17438) keys ItemVendorCatalog on the MTX No and hits.
               // CARDINAL RULE: bcNo only, partNumber untouched (#163); keep the row's existing bcVendorNo.
-              const _sur=await _bcResolveSurrogateExact(pn);
+              const _sur=await _bcResolveSurrogateExact(pn,row.manufacturer);
               if(_sur&&_sur.number){
                 const vNo=row.bcVendorNo||_sur.vendorNo||await bcGetItemVendorNo(_sur.number);
                 bcMap[String(row.id)]={unitPrice:_sur.unitCost,source:"bc",bcDisplayName:_sur.displayName,bcInventory:_sur.inventory,bcNumber:_sur.number,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"fuzzy-crossfield"};
@@ -31616,7 +31653,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 // (B094 consistency); OCR-noise won't normalize-equal → null → no bind. CARDINAL RULE:
                 // bcNo only, partNumber untouched (#163). Vendor resolution UNCHANGED — keep the row's
                 // existing (correct) bcVendorNo.
-                const _sur=await _bcResolveSurrogateExact(pn);
+                const _sur=await _bcResolveSurrogateExact(pn,row.manufacturer);
                 if(_sur&&_sur.number){
                   const vNo=row.bcVendorNo||_sur.vendorNo||await bcGetItemVendorNo(_sur.number);
                   bcMap[String(row.id)]={unitPrice:_sur.unitCost,source:"bc",bcDisplayName:_sur.displayName,bcInventory:_sur.inventory,bcNumber:_sur.number,bcVendorNo:vNo||"",bcVendorName:vNo?await bcGetVendorName(vNo):"",bcPoDate:null,bcMatchType:"fuzzy-crossfield"};
