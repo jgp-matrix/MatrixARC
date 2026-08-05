@@ -80,6 +80,37 @@ Live: a freshly **copied** project (clean BOM, never technically reviewed) route
 
 **Next step:** on Jon's confirm of the ladder + the 2 clarifications + the blue-circle question, Freddy writes the single `computeProjectEffectiveStatus` rewrite spec (replacing the scattered predicates 18762-18842), Jon signs off, THEN build. NOT a build yet.
 
+## 6d. ✅ FINALIZED SPEC (Jon confirmed 2026-08-05) — build to THIS
+**Confirmations:** (1) 6-rung ladder ✅ (2) issue-circles (rung 2) outrank red rows (rung 3) ✅ (3) RFQs = the FULL red-row rule — "stays until ALL rows are priced, price-dated AND lead-timed (no red row anymore)"; the `rfqSentDate`/`hasActiveRfqs` clause is DROPPED from routing ✅ (4) **rung 2 = ANYTHING in the Issues column** — any BC circle **including BLUE**, or a confidence circle; "if there's anything in the Issues column it stays in (BOM) IN PROCESS" ✅.
+
+**Precedence (first match wins; recomputed live so it auto-reverts):**
+```
+0. !project → draft ; !panels.length → stored status
+1. DRAFT            : no drawings AND no "real" BOM row  (real = some row where !_isExcludedFromPriceCheck) — labor/contingency/auto rows alone still = DRAFT
+2. (BOM) IN PROCESS : hasBomIssueCircles(project)         — ANY row shows a BC circle (blue/yellow/red) OR a confidence C
+3. RFQS SEND/RECEIVE: anyRedRow(project)                  — FULL red rule (unpriced/$0/qty0/no-priceDate/stale/no-firm-LT); stays until every row priced+dated+lead-timed
+   — below here the BOM is clean (no issue circles, no red rows) —
+4. QUOTES SENT      : quoteSentAt && quoteRev<=quoteSentRev → budgetary_sent/firm_sent   (diverged quoteRev>quoteSentRev → see open Q)
+5. IN PRE-REVIEW    : preReviewStatus==="pending"
+6. READY TO SEND    : preReviewStatus==="approved" && !quoteSentAt      (POSITIVE approved — a never-reviewed project can't reach here)
+7. READY TO REVIEW  : preReviewStatus ∈ {null,"rejected"}              (never submitted OR returned/rejected)
+8. else → in_progress (safety fallthrough)
+```
+`hasBomIssueCircles(project)` = any row with a BC circle via `_bcCircleState(row,{bcConnected})` (RED not-in-bc / YELLOW fuzzy / BLUE unmatched) OR `_bomReviewLevel(row,panel)` non-null (confidence). Factor `_bcCircleState` out of the render (SSOT). `anyRedRow` = existing `_isBomRowFlaggedRed` (full rule). Reversions fall out of live re-eval: red row appears during review → rung 3 preempts → RFQs; rejected → rung 7; new unmatched item → rung 2.
+
+## 6e. ★ LIFECYCLE AUDIT STAMPS (Jon 2026-08-05) — every flag transition carries {user, timestamp}
+Each status/flag transition records **who** + **when** (for future graphical project-timeline UI). Specifics Jon named:
+- Sent for Tech Review → stamp {user, datetime} of the submitter.
+- Reviewer REJECTS → stamp {reviewer, datetime} + revert to the status it belongs in (per §6d reversions).
+- Requestor ADDRESSES a rejection → stamp {user, datetime} when they next ACCESS the project after a rejection.
+- General rule: anytime a user completes/trips a flag, keep a {user, datetime} stamp of when it occurred. More review-step stamps coming later.
+- Stale-status reminders (project sits in a status past a preset time → nudge the owner) — Jon believes already set up; verify + wire to the new sequencer.
+- Storage: an append-only per-project lifecycle log (e.g. `project.statusHistory[] = {status, by, at, reason}`) — additive, retention-safe. Build alongside the sequencer.
+
+## 6f. Open (minor) — confirm with Jon before build
+- Diverged sent quote (`quoteRev>quoteSentRev`, B034): today → in_progress. Under the new model should a diverged-but-clean quote go to READY TO SEND/REVIEW instead? (keep B034 behavior unless Jon says otherwise).
+- Where ECO / purchasing (Won/PO'd) slot in relative to the ladder (today they drop off the Sales board).
+
 ## 7. Other gaps found (for the walkthrough)
 - **"awaiting" vs routing disagree:** the To-Do rail's "awaiting" (:18537) excludes priced rows, but `hasActiveRfqs` (routing) doesn't → rail can say "0 awaiting" while the board still holds the project in RFQs.
 - **`post_review` folds into the Draft column** on the Sales board (`statusToCol` maps it to `draft`) — shows "In Post-Review" pill but sits in Draft.
