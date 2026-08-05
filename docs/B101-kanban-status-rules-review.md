@@ -65,13 +65,20 @@ Live: a freshly **copied** project (clean BOM, never technically reviewed) route
 
 **What this fixes:** (a) priced projects with lingering RFQ flags → READY TO REVIEW (RFQS is red-rows-only now); (b) copy/new clean project → READY TO REVIEW not READY TO SEND (send needs positive `approved`).
 
-**★ Open mapping to nail before build (Coach to trace, Jon to confirm):**
-- **Exact predicates for the Issues-column circles** — Blue BC circle (= unmatched / `bcVerify` not-in-bc / no `bcNo`?), Red BC circle (= BC divergence/mismatch?), Confidence circle (= low extraction-confidence chip threshold?). Need the precise fields that drive each UI indicator → define one `hasBomIssueCircles(project)` predicate.
-- Confirm READY TO SEND keys on `preReviewStatus==="approved"` (positive) and that never-submitted/`rejected` both fall to READY TO REVIEW.
-- DRAFT's "auto-populated items or labor rows" exclusion set (so a project with only labor/auto rows stays DRAFT).
-- Where `postReviewStatus`, Quotes Sent, ECO, purchasing slot in beyond rung 6.
+**★ Circle predicates — TRACED + PINNED (Coach, code-confirmed):** the "Issues" column (`_status` cell, render ~:33816) holds TWO circle families:
+- **BC circle** (tri-state, `_bcCircle` IIFE :33785-33800, per-ROW, only when BC connected): no circle if `bcNo || bcVerify.status==="in-bc" || priceSource==="bc"`; **RED** = `bcVerify.status==="not-in-bc"` (confirmed NOT in BC catalog); **YELLOW** = `bcVerify.status==="fuzzy"` (ambiguous, awaiting confirm); **BLUE** = editable + un-linked + none of the above (the broad "un-matched, click to match" default for freshly-extracted unpriced rows).
+- **Confidence "C" circle** (`_bomReviewLevel(row,panel)` :14553-14580, per-ROW+panel): `"low"`(red C) / `"medium"`(amber C) / null. On pdf-native pages only validity force-flags raise it (suspect/placeholder/dimension/companion/enclosure); on vision pages `confidence==="low"|"medium"` also counts.
+- Composite: `hasBomIssueCircles(project)` = any row with `_bomReviewLevel` non-null OR a BC circle. NOTE: BC-circle logic is inline in the render — factor a top-level `_bcCircleState(row,{bcConnected})` first so render + classifier share ONE definition (SSOT).
 
-**Next step:** Coach traces the circle predicates + I turn this table into the single `computeProjectEffectiveStatus` rewrite spec (replacing the scattered predicates), Jon confirms, then build. NOT a build yet.
+**★★ ONE OPEN QUESTION (Jon): does BLUE count?** Blue = essentially EVERY un-priced/un-matched row when BC is connected → so if blue gates rung 2, a freshly-extracted BOM sits in (BOM) IN PROCESS until its items are matched/priced (blue clears). Jon named "Blue BC circles" explicitly, so the working assumption is **YES, blue counts** (IN PROCESS = "items still being matched/priced") — CONFIRM. If instead only genuine problems should gate, use RED+YELLOW+Confidence and drop blue.
+
+**Review-status map — CONFIRMED (code):** `preReviewStatus`/`postReviewStatus` ∈ {null=never-submitted, `pending`=in review, `approved`=POSITIVE approved, `rejected`=returned}. READY TO SEND ⇒ `preReviewStatus==="approved"` (send gate :41316 already blocks the quote unless approved). READY TO REVIEW ⇒ `null || "rejected"`. IN PRE-REVIEW ⇒ `"pending"`.
+
+**DRAFT exclusion — CONFIRMED:** no `autoPopulated` boolean exists; "real BOM row" should use the SSOT `!_isExcludedFromPriceCheck(r)` (excludes labor / customer-supplied / contingency / Matrix-Systems vendor / buyoff-crate) rather than the current narrower `!r.isLaborRow`, so a project of only labor/contingency/auto rows stays DRAFT.
+
+**Still to slot beyond rung 6:** `postReviewStatus`, Quotes Sent (`quoteSentAt`), ECO, purchasing.
+
+**Next step:** on Jon's confirm of the ladder + the 2 clarifications + the blue-circle question, Freddy writes the single `computeProjectEffectiveStatus` rewrite spec (replacing the scattered predicates 18762-18842), Jon signs off, THEN build. NOT a build yet.
 
 ## 7. Other gaps found (for the walkthrough)
 - **"awaiting" vs routing disagree:** the To-Do rail's "awaiting" (:18537) excludes priced rows, but `hasActiveRfqs` (routing) doesn't → rail can say "0 awaiting" while the board still holds the project in RFQs.
