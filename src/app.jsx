@@ -18083,6 +18083,37 @@ function calcConfidence(panel){
   };
 }
 
+// B107: controlled labor-qty input that cannot remount out from under the user.
+// The old inline input was uncontrolled with key={field+"-"+qty}; a background
+// onSnapshot/labor recompute that changed qty mid-edit would change the key,
+// unmount+remount the input, and discard the in-progress keystroke + focus.
+// This is controlled via LOCAL state. It reflects external qty changes ONLY when
+// not focused (so idle rows stay in sync) and NEVER clobbers in-progress typing.
+// Commit semantics are byte-identical to the old onBlur.
+function LaborQtyInput({field,value,onCommit,style}){
+  const [local,setLocal]=React.useState(value==null?"":String(value));
+  const focusedRef=React.useRef(false);
+  // Sync from the prop ONLY when not focused. While focused this early-returns,
+  // so it can never call setLocal and thus can never eat a keystroke. It only
+  // ever updates the DISPLAY (setLocal) — it never calls onCommit, so it cannot
+  // fire a spurious save.
+  React.useEffect(()=>{
+    if(!focusedRef.current)setLocal(value==null?"":String(value));
+  },[value]);
+  // Identical to the old onBlur: parseFloat, guard !isNaN && v!==value, then
+  // saveSelectedLaborOverride(field, Math.max(0,v)). Reads the CURRENT local
+  // value (controlled, so e.target.value===local).
+  const commit=()=>{const v=parseFloat(local);if(!isNaN(v)&&v!==value)onCommit(field,Math.max(0,v));};
+  return(
+    <input type="text" inputMode="decimal" value={local}
+      onChange={e=>setLocal(e.target.value)}
+      onFocus={e=>{focusedRef.current=true;e.target.select();}}
+      onBlur={()=>{focusedRef.current=false;commit();}}
+      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+      style={style}/>
+  );
+}
+
 function ConfidenceBar({panel,readOnly,onUpdate,onSaveImmediate,compact}){
   const conf=calcConfidence(panel);
   const {pricing,wiring,bomExt,overall,pricingDetail,wiringDetail,bomDetail}=conf;
@@ -41076,10 +41107,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                           <td style={{padding:"2px 3px",color:isAcc?C.green:C.sub,fontSize:11,overflow:"hidden",textOverflow:"ellipsis"}}>{l.category}</td>
                           <td style={{padding:"2px 3px",textAlign:"right"}}>
                             {l.field&&!readOnly?(
-                              <input type="text" inputMode="decimal" defaultValue={l.qty} key={l.field+"-"+l.qty}
-                                onFocus={e=>e.target.select()}
-                                onBlur={e=>{const v=parseFloat(e.target.value);if(!isNaN(v)&&v!==l.qty)saveSelectedLaborOverride(l.field,Math.max(0,v));}}
-                                onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                              <LaborQtyInput field={l.field} value={l.qty} onCommit={saveSelectedLaborOverride}
                                 style={{background:"transparent",border:"1px solid #888",borderRadius:4,color:C.text,padding:"1px 2px",fontSize:11,width:36,textAlign:"right"}}/>
                             ):(
                               <span style={{color:C.text,fontSize:11}}>{l.qty}</span>

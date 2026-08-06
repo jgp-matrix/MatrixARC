@@ -79,3 +79,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.074 | v1.24.99-T074 | 6bd294a2 | F093: red EXPIRED flag on the Project Card for a sent, pinned quote past its validity window | 2026-08-06 |
 | V.075 | v1.24.100-T075 | 0d068fc3 | G024 Export BOM modal + G025 BOM-header buttons right-justified + G026 Drawings-header real buttons right-justified | 2026-08-06 |
 | V.076 | v1.24.101-T076 | 46441b8f | F094: amber 'Expires in N Days' countdown on sent-quote tiles within 10 days of expiry (+ F093 EXPIRED) | 2026-08-06 |
+| V.077 | v1.24.102-T077 | 50c98843 | B107 fix: controlled LaborQtyInput — background sync no longer eats labor-category keystrokes (Coach SHIP-TO-TEST) | 2026-08-06 |
