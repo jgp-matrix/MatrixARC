@@ -27724,6 +27724,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [showAiQuestions,setShowAiQuestions]=useState(false);
   const [showEqModal,setShowEqModal]=useState(false);
   const [showVerifyModal,setShowVerifyModal]=useState(false); // v1.19.969 — BOM verification review
+  const [showExportModal,setShowExportModal]=useState(false); // G024 — Export BOM picker (CSV / CADLink)
   const [aiAnswers,setAiAnswers]=useState({});
   const [err,setErr]=useState("");
   const [reExtractWarn,setReExtractWarn]=useState(false);
@@ -32949,6 +32950,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
               Dv.{panel.bomVersion}
             </span>
           )}
+          {/* G026 (2026-08-06): Drawings action-button group — restyled from pills to real
+             btn() buttons (matching the BOM header) and right-justified via marginLeft:auto so
+             the DRAWINGS title + Dv chip stay left, actions cluster right. flexWrap degrades
+             gracefully on narrow widths. Behavior/onClick preserved; state feedback now conveyed
+             via text color + border + animation on a uniform button (same convention as Sync BC). */}
+          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
           {/* #153 Phase A: PREVIOUS VERSIONS — read-only browse of archived Dv history */}
           {panel.bomVersion>1&&(
             <button title="Browse prior drawing versions — old drawings + BOM, read-only"
@@ -32958,7 +32965,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 try{const hist=await loadDvHistory(uid,projectId);setDvHistory(hist);}catch(e){setDvHistory([]);}
                 setDvHistoryLoading(false);
               }}
-              style={{fontSize:11,fontWeight:700,color:C.purple,background:"rgba(139,92,246,0.10)",border:`1px solid ${C.purple}55`,borderRadius:6,padding:"2px 8px",cursor:"pointer",whiteSpace:"nowrap"}}>
+              style={btn("rgba(139,92,246,0.10)",C.purple,{fontSize:12,padding:"4px 12px",border:`1px solid ${C.purple}55`,whiteSpace:"nowrap"})}>
               📋 Previous Versions
             </button>
           )}
@@ -32974,14 +32981,14 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 if(!(panel.bom||[]).some(r=>!r.isLaborRow)){runExtraction();return;}
                 setReExtractWarn(true);
               }} disabled={extracting||ownerPriorityActive}
-              style={{background:"none",border:`1px solid ${C.accent}88`,color:C.accent,cursor:(extracting||ownerPriorityActive)?"not-allowed":"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",opacity:(extracting||ownerPriorityActive)?0.45:1}}>
+              style={btn("none",C.accent,{fontSize:12,padding:"4px 12px",border:`1px solid ${C.accent}88`,whiteSpace:"nowrap",cursor:(extracting||ownerPriorityActive)?"not-allowed":"pointer",opacity:(extracting||ownerPriorityActive)?0.45:1})}>
               {extracting?"Extracting…":((panel.bom||[]).some(r=>!r.isLaborRow)?"Re-Extract Drawings":"Run Extraction")}
             </button>
           )}
-          {pages.length>0&&<button onClick={()=>setShowDrawingReview(true)} style={{background:"none",border:"1px solid #a78bfa88",color:"#a78bfa",cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>📐 Review Drawings</button>}
+          {pages.length>0&&<button onClick={()=>setShowDrawingReview(true)} style={btn("#1a1040","#a78bfa",{fontSize:12,padding:"4px 12px",border:"1px solid #a78bfa88",whiteSpace:"nowrap"})}>📐 Review Drawings</button>}
           {(()=>{const eqOpen=(panel.engineeringQuestions||[]).filter(q=>q.status==="open").length;const eqTotal=(panel.engineeringQuestions||[]).length;
             return (QUESTIONS_ENABLED&&eqTotal>0)?React.createElement("button",{onClick:()=>setShowEqModal(true),
-              style:{background:eqOpen>0?"#451a03":"none",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,color:eqOpen>0?"#f59e0b":C.accent,cursor:"pointer",borderRadius:20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"}},
+              style:btn(eqOpen>0?"#451a03":"none",eqOpen>0?"#f59e0b":C.accent,{fontSize:12,padding:"4px 12px",border:`1px solid ${eqOpen>0?"#f59e0b88":C.accent+"88"}`,whiteSpace:"nowrap",animation:eqOpen>0?"pulseYellow 2s ease-in-out infinite":"none"})},
               eqOpen>0?`❓ ${eqOpen} Question${eqOpen!==1?"s":""}`:`✓ ${eqTotal} Answered`):null;})()}
           {/* DECISION(v1.19.336): Main upload button is disabled when green (current upload exists) to prevent
               accidental re-uploads that create duplicates in BC. A small ↻ button appears next to it for intentional
@@ -32995,20 +33002,20 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
             <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
             <button data-tip={bcPdfMissing?"File deleted from BC — click to re-upload":hasPendingSync?"Sync pending — auto-syncs on exit or every 5 min":panel.bcPdfAttached&&!bcPdfMissing?`Uploaded: ${panel.bcPdfFileName||"PDF"}`:"Upload drawings to BC"}
               onClick={canUpload?()=>buildAndAttachPdf():undefined} disabled={attachingPdf||!canUpload}
-              style={{background:bcPdfMissing?"#3a0a0a":hasPendingSync?"#1a1500":panel.bcPdfAttached&&!bcPdfMissing?C.greenDim:"none",
+              style={btn("none",bcPdfMissing?C.red:hasPendingSync?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",{fontSize:12,padding:"4px 12px",whiteSpace:"nowrap",
                 border:`1px solid ${bcPdfMissing?"#ef444488":hasPendingSync?"#f59e0b44":panel.bcPdfAttached&&!bcPdfMissing?C.green+"88":"#38bdf888"}`,
-                color:bcPdfMissing?C.red:hasPendingSync?"#f59e0b":panel.bcPdfAttached&&!bcPdfMissing?C.green:"#38bdf8",
-                cursor:canUpload?"pointer":"default",borderRadius:canUpload&&!hasPendingSync?20:panel.bcPdfAttached&&!bcPdfMissing&&!hasPendingSync?"20px 0 0 20px":20,padding:"2px 10px",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
-                opacity:attachingPdf?0.5:1,animation:bcPdfMissing&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"}}>
+                cursor:canUpload?"pointer":"default",borderRadius:canUpload&&!hasPendingSync?8:panel.bcPdfAttached&&!bcPdfMissing&&!hasPendingSync?"8px 0 0 8px":8,
+                opacity:attachingPdf?0.5:1,animation:bcPdfMissing&&!attachingPdf?"pulseYellow 2s ease-in-out infinite":"none"})}>
               {attachingPdf?"Uploading…":bcPdfMissing?"⚠ Deleted — Click to Re-Upload":hasPendingSync?"⏳ Pending Sync":panel.bcPdfAttached&&!bcPdfMissing?"✓ Uploaded to BC":"📎 Upload to BC"}
             </button>
             {panel.bcPdfAttached&&!bcPdfMissing&&!hasPendingSync&&!needsUpload&&!attachingPdf&&(
               <button data-tip="Force re-upload drawings & clean duplicates in BC" onClick={()=>buildAndAttachPdf()}
-                style={{background:C.greenDim,border:`1px solid ${C.green}88`,borderLeft:"none",color:C.green,cursor:"pointer",borderRadius:"0 20px 20px 0",padding:"2px 6px",fontSize:11,fontWeight:700}}>↻</button>
+                style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 8px",border:`1px solid ${C.green}88`,borderLeft:"none",borderRadius:"0 8px 8px 0"})}>↻</button>
             )}
             </span>);
           })()}
           {attachPdfMsg&&<span style={{fontSize:11,color:attachPdfMsg.startsWith("✓")?C.green:attachPdfMsg.startsWith("✗")?C.red:C.muted,fontWeight:600}}>{attachPdfMsg}</span>}
+          </div>
         </div>
 
         {/* Thumbnail strip + drop tile — #153 fix: the WHOLE strip is a file-drop
@@ -33488,6 +33495,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 </button>
               );
             })()}
+            {/* G025 (2026-08-06): Action-button group — right-justified via marginLeft:auto so
+               the title + status pills stay left and all BOM action buttons cluster right.
+               flexWrap keeps it sane on narrow widths (group wraps to a new line, stays right). */}
+            <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",justifyContent:"flex-end"}}>
             {/* F075 (2026-07-29): Manual "Get Prices" button — RE-ENABLED for API sources ONLY.
                Gated on API_PRICING_ENABLED (NOT AUTO_PRICING_ENABLED, which stays off). Fetches Mouser +
                DigiKey ONLY via runApiPricingOnPanel — NOT the scrapers (Codale/Royal/custom), NOT AI-estimate,
@@ -33564,9 +33575,37 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                 {bcSyncing?"Syncing…":bcSyncStatus==="ok"?"✓ Synced":bcSyncStatus==="error"?"✗ Sync Failed":bcSyncStatus==="pending"?"⚠ Push Update to BC":"⇅ Sync BC"}
               </button>
             )}
-            {(panel.bom||[]).length>0&&<button onClick={exportCSV} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ CSV</button>}
-            {(panel.bom||[]).length>0&&<button onClick={exportCADLinkBOM} style={btn("#0d1a2a","#38bdf8",{fontSize:12,padding:"4px 12px",border:"1px solid #38bdf844"})}>⬇ CADLink BOM</button>}
+            {/* G024 (2026-08-06): Single Export BOM button opens a 2-choice picker modal
+               (CSV / CADLink BOM). Replaces the two standalone header buttons; both export
+               handlers (exportCSV / exportCADLinkBOM) are unchanged — just routed via the modal. */}
+            {(panel.bom||[]).length>0&&<button onClick={()=>setShowExportModal(true)} style={btn(C.greenDim,C.green,{fontSize:12,padding:"4px 12px"})}>⬇ Export BOM</button>}
+            </div>
           </div>
+          {/* G024 — Export BOM picker modal */}
+          {showExportModal&&ReactDOM.createPortal(
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:10000,display:"flex",alignItems:"center",justifyContent:"center",padding:16}} onMouseDown={e=>{if(e.target===e.currentTarget)setShowExportModal(false);}}>
+              <div style={{background:"#0d0d1a",border:`1px solid ${C.accent}`,borderRadius:10,padding:"22px 26px",width:"100%",maxWidth:380,boxShadow:"0 0 40px 10px rgba(56,189,248,0.5)"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}>
+                  <span style={{fontSize:20}}>⬇</span>
+                  <div style={{fontSize:16,fontWeight:800,color:C.text}}>Export BOM</div>
+                  <button onClick={()=>setShowExportModal(false)} style={{marginLeft:"auto",background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:20}}>✕</button>
+                </div>
+                <div style={{fontSize:12,color:C.muted,marginBottom:16}}>Choose an export format for this panel's bill of materials.</div>
+                <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                  <button onClick={()=>{setShowExportModal(false);exportCSV();}}
+                    style={btn(C.greenDim,C.green,{fontSize:13,padding:"10px 14px",textAlign:"left",width:"100%"})}>
+                    <div style={{fontWeight:800}}>⬇ CSV</div>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:400,marginTop:2}}>Comma-separated spreadsheet of all BOM rows</div>
+                  </button>
+                  <button onClick={()=>{setShowExportModal(false);exportCADLinkBOM();}}
+                    style={btn("#0d1a2a","#38bdf8",{fontSize:13,padding:"10px 14px",border:"1px solid #38bdf844",textAlign:"left",width:"100%"})}>
+                    <div style={{fontWeight:800}}>⬇ CADLink BOM</div>
+                    <div style={{fontSize:11,color:C.muted,fontWeight:400,marginTop:2}}>Leveled XLSX for Business Central / CADLink import</div>
+                  </button>
+                </div>
+              </div>
+            </div>,document.body
+          )}
           {/* DECISION(v1.20.108, F2): BC pricing failure toast — actionable message
              pointing user at the BC status dot to reconnect. Auto-dismisses after 12s. */}
           {bcPricingFailToast&&ReactDOM.createPortal(

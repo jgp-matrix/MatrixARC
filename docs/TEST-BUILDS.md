@@ -77,3 +77,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.072 | v1.24.97-T072 | 3db46f83 | B101 (6-rung status sequencer §6d) + B096 (reviewer-only TR uncheck + approve-gate) — Coach SHIP-TO-TEST, prod HOLD pending Jon | 2026-08-05 |
 | V.073 | v1.24.98-T073 | 46a7fa18 | F092: sent-quote pinning + Quote-Expired Re-Quote button + green Re-Quote tile + 3 status renames (Address Issues / Needs BOM Pricing / In Tech. Review, incl. column headers) | 2026-08-06 |
 | V.074 | v1.24.99-T074 | 6bd294a2 | F093: red EXPIRED flag on the Project Card for a sent, pinned quote past its validity window | 2026-08-06 |
+| V.075 | v1.24.100-T075 | 0d068fc3 | G024 Export BOM modal + G025 BOM-header buttons right-justified + G026 Drawings-header real buttons right-justified | 2026-08-06 |
