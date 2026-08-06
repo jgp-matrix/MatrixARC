@@ -18739,7 +18739,7 @@ function _todoBucketOf(project){
   const eff=computeProjectEffectiveStatus(project); // F061: ECO no longer forced to "active_eco" → routes to its REAL status column (red ECO tile border retained independently via computeActiveEco). activeEco kept above only for the Won/PO carve-out.
   // TOTAL map — every status computeProjectEffectiveStatus can emit needs an explicit column, or
   // it silently ||"draft"-dumps. Folds the pipeline statuses → in_progress and both *_sent → quotes_sent.
-  const statusToCol={draft:"draft",in_progress:"in_progress",rfqs:"process_rfq",evc_review:"ready_review",evc_send:"ready_send",pre_review:"pre_review",post_review:"draft",active_eco:"active_eco",extracted:"in_progress",validated:"in_progress",costed:"in_progress",quoted:"in_progress",pushed_to_bc:"in_progress",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
+  const statusToCol={draft:"draft",in_progress:"in_progress",address_issues:"in_progress",rfqs:"process_rfq",evc_review:"ready_review",evc_send:"ready_send",pre_review:"pre_review",post_review:"draft",active_eco:"active_eco",extracted:"in_progress",validated:"in_progress",costed:"in_progress",quoted:"in_progress",pushed_to_bc:"in_progress",budgetary_sent:"quotes_sent",firm_sent:"quotes_sent"};
   return statusToCol[eff]||"draft";
 }
 // F025 (3a): per-bucket aging thresholds (ms). DEFAULTS ONLY — sub-phase 3c adds the editable
@@ -18956,21 +18956,33 @@ function computeProjectEffectiveStatus(project){
   const anyPanelStarted=panels.some(pan=>pan.status&&pan.status!=="draft");
   const hasRealBomRow=panels.some(pan=>(pan.bom||[]).some(r=>!_isExcludedFromPriceCheck(r)));
   if(!hasAnyDrawings&&!anyPanelStarted&&!hasRealBomRow)return"draft";
-  // rung 2 — (BOM) IN PROCESS: ANYTHING in the Issues column — any BC circle (blue/yellow/red) via the
-  // SSOT _bcCircleState OR a confidence "C" circle via _bomReviewLevel. Blue counts (Jon confirmed §6d.4):
-  // a freshly-extracted BOM sits here until its items are matched/priced (blue clears).
-  if(hasBomIssueCircles(project))return"in_progress";
+  // F092-1 SENT-QUOTE PIN (Jon 2026-08-06 — REVERSES the §6d ordering): a SENT, non-diverged quote HOLDS
+  // its Quotes-Sent status ABOVE the issue-circle and red-row rungs, so a row that goes stale/red AFTER
+  // the quote was sent does NOT auto-revert the project off "Quotes Sent". The ONLY thing that un-pins a
+  // sent quote is the explicit user action "Quote Expired – Re-Quote Now" (sets project.reQuoteRequested,
+  // surfaced in the Enable-Edits overlay). A DIVERGED sent quote (quoteRev>quoteSentRev, B034) does NOT
+  // pin — it falls through to the diverged→in_progress slot below, exactly as before. isBudgetary is
+  // computed above so the pin can pick the right *_sent value. This is the SINGLE sent-quote gate now
+  // (the old lower quote-sent block is removed so it can't double-emit).
+  if(project.quoteSentAt&&(project.quoteRev||0)<=(project.quoteSentRev||0)&&!project.reQuoteRequested)
+    return isBudgetary?"budgetary_sent":"firm_sent";
+  // rung 2 — (BOM) IN PROCESS → distinct status value "address_issues" (F092-4; label "Address Issues").
+  // ANYTHING in the Issues column — any BC circle (blue/yellow/red) via the SSOT _bcCircleState OR a
+  // confidence "C" circle via _bomReviewLevel. Blue counts (Jon confirmed §6d.4). A NEW status value (not
+  // the shared "in_progress") is emitted so the pill reads "Address Issues" WITHOUT mislabeling the
+  // diverged-quote / safety fallthroughs that also emit "in_progress"; address_issues maps to the SAME
+  // board column ("in_progress") in statusToCol so board placement is unchanged.
+  if(hasBomIssueCircles(project))return"address_issues";
   // rung 3 — RFQS SEND/RECEIVE: issue-circles clear but the BOM still has a RED row (the FULL
   // _isBomRowFlaggedRed rule: qty0 / $0 / missing-or-stale effective price date / no firm lead time).
   // Stays until every row is priced, price-dated AND lead-timed (no red row remains).
   if(anyRedRow(project))return"rfqs";
   // — below here the BOM is clean: no issue circles, no red rows —
-  // rung 4 — QUOTES SENT: a sent quote holds its locked sent-status only while it has NOT diverged from
-  // the customer copy (quoteRev<=quoteSentRev). B034: a diverged sent quote → in_progress until re-sent.
-  if(project.quoteSentAt){
-    if((project.quoteRev||0)<=(project.quoteSentRev||0))return isBudgetary?"budgetary_sent":"firm_sent";
-    return"in_progress";
-  }
+  // B034 — a DIVERGED sent quote (quoteRev>quoteSentRev) is NOT pinned (the pin above fires only when
+  // non-diverged); it reads as in_progress until re-sent. Kept in its historical slot (below the red-row
+  // rung, above post/pre-review) so B034 behavior is byte-for-byte preserved. Also catches a
+  // reQuoteRequested quote that happens to be diverged.
+  if(project.quoteSentAt&&(project.quoteRev||0)>(project.quoteSentRev||0))return"in_progress";
   // Preserved (not part of the §6d Sales ladder): post-quote (Won/PO'd) review. Kept in its historical
   // slot — below quote-sent — so the Badge still reads "In Post-Review" for PO'd projects (which live on
   // the Production/Purchasing tab, carved out of the Sales board by _todoBucketOf).
@@ -18999,8 +19011,12 @@ function Badge({status,project}){
   const map={
     draft:["#3d1a00","#f97316","Draft"],
     in_progress:[C.yellowDim,C.yellow,"In Process"],
-    rfqs:[C.redDim,C.red,"RFQs"],
-    pre_review:["#1a1040","#a78bfa","In Pre-Review"],
+    // F092-4 — rung-2 issue-circle status. Distinct value from in_progress (which keeps "In Process" for
+    // the diverged-quote / safety fallthroughs) so only genuine issue-circle projects read "Address
+    // Issues". Shares rung-2's yellow palette; maps to the same in_progress board column (statusToCol).
+    address_issues:[C.yellowDim,C.yellow,"Address Issues"],
+    rfqs:[C.redDim,C.red,"Needs BOM Pricing"],
+    pre_review:["#1a1040","#a78bfa","In Tech. Review"],
     post_review:["#1a1040","#a78bfa","In Post-Review"],
     active_eco:["#1f0a0a","#fca5a5","Active ECO"],
     // F026: evc split → two ready buckets. evc kept as a legacy fallback (no longer emitted).
@@ -38457,7 +38473,9 @@ function QuoteSendModal({project,uid,modalData,setModalData,onUpdate,onClose,own
       // B034 send-anchor: stamp quoteSentRev AND quoteRevAtPrint AND quoteRev to the SAME
       // final rev so they can't diverge — quoteRev<=quoteSentRev → firm_sent/budgetary_sent,
       // quoteLocked stays true. The first genuine post-unlock edit then bumps to +1 (In Process).
-      const upd={...populated,quoteRev:rev,quoteSentAt:_sentNow,quoteSentRev:rev,quoteRevAtPrint:rev,quoteSentTo:sentTo,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
+      // F092-2: a fresh send RE-PINS the quote to Quotes Sent — clear any prior "Re-Quote" request so
+      // computeProjectEffectiveStatus pins again (the pin is gated on !reQuoteRequested). Stamps nulled.
+      const upd={...populated,quoteRev:rev,quoteSentAt:_sentNow,quoteSentRev:rev,quoteRevAtPrint:rev,quoteSentTo:sentTo,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000,reQuoteRequested:false,reQuoteRequestedBy:null,reQuoteRequestedAt:null};
       // #133 Change 4a (D3): first-class approval-request record when the quoted BOM
       // rode along. id "bar_"-prefixed (future portal write-back key); panels = stable
       // panel IDs; status write-once "sent" — never mutated by #133 code.
@@ -38926,7 +38944,7 @@ function ServicesCard({card,idx,isSelected,onSelect,onDelete,onUpdate,readOnly})
 // service-card data). `card_style` is the shared module-level style helper.
 const card_style=card;
 
-function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,bcCommitGate,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
+function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,onViewQuote,quotePrinting,onPrintRfq,onSendRfqEmails,onShowRfqHistory,rfqLoading,onUpdate,onDelete,onTransfer,onCopy,onArchive,onOpenSupplierQuote,pendingRfqUploads,onPoReceived,onMarkCommitted,onReQuoteRequest,onMarkLost,onUnmarkLost,relinking,relinkMsg,onRelink,bcUploadRef,bcUploadRefsMap,onAutoSyncBcDrawings,ownerPriorityActive,bcCommitGate,sentQuoteAckGiven,setSentQuoteAckGiven,showSentEditConfirm,setShowSentEditConfirm,autoOpenCustomerReview,onCustomerReviewOpened,activeScope,onScopeChange,onLocalProjectUpdate,onOpenEcoEditor,baseUnlocked,onBaseUnlock,baseScopeReadOnly,activeEcoIsCurrentDraft,isProjectLocked,editUnlockedForAll,iAmOwnerOrAdmin,lockOverrideSession,onShowLockUnlockConfirm,onSetLockOverrideSession,onShowRequestUnlockModal,unlockRequestSent,reviewOverrideSession,onSetReviewOverrideSession,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
   const [editingName,setEditingName]=useState(false);
   const [draftName,setDraftName]=useState(project.name||"");
   const [bcSyncMsg,setBcSyncMsg]=useState(null);
@@ -41570,13 +41588,32 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                       style={{background:"none",border:"1px solid #38bdf888",borderRadius:6,color:"#7dd3fc",cursor:"pointer",fontSize:11,padding:"4px 10px",fontWeight:700}}>
                       🖨 Print Only
                     </button>
+                    {/* F092-2: "Quote Expired – Re-Quote Now" — the ONLY explicit un-pin for a sent quote.
+                        Sets project.reQuoteRequested so computeProjectEffectiveStatus stops pinning it to
+                        Quotes Sent and re-routes it to its natural rung (usually Needs BOM Pricing). Shown
+                        only while the quote is sent and not already re-quote-requested. */}
+                    {project.quoteSentAt&&!project.reQuoteRequested&&(
+                    <button
+                      onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>onReQuoteRequest&&onReQuoteRequest()}
+                      disabled={ownerPriorityActive}
+                      title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"This quote has expired — re-introduce it into the pricing/quoting workflow to re-quote"}
+                      style={{background:"none",border:"1px solid #4ade8088",borderRadius:6,color:"#86efac",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:11,padding:"4px 10px",fontWeight:700,opacity:ownerPriorityActive?0.45:1}}>
+                      ♻ Quote Expired – Re-Quote Now
+                    </button>
+                    )}
                     </div>
                   </div>
                 )}
                 {project.quoteSentAt&&sentQuoteAckGiven&&!project.ecoEditUnlocked&&!(Array.isArray(project.ecoSummary)&&project.ecoSummary.some(e=>e&&e.status==="draft"))&&(
                   <div style={{marginTop:6,padding:"6px 10px",background:"#0d2010",border:"1px solid #4ade8044",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
                     <span style={{fontSize:11,color:"#4ade80",fontWeight:600}}>✎ Editing enabled — your next change creates a new revision</span>
+                    <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+                    {/* F092-2: reachable post-ack too — same un-pin action as the soft-block overlay above. */}
+                    {project.quoteSentAt&&!project.reQuoteRequested&&(
+                    <button onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>onReQuoteRequest&&onReQuoteRequest()} disabled={ownerPriorityActive} title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"This quote has expired — re-introduce it into the pricing/quoting workflow to re-quote"} style={{background:"none",border:"1px solid #4ade8066",borderRadius:6,color:"#86efac",cursor:ownerPriorityActive?"not-allowed":"pointer",fontSize:10,padding:"2px 8px",fontWeight:600,opacity:ownerPriorityActive?0.45:1}}>♻ Re-Quote Now</button>
+                    )}
                     <button onClick={()=>setSentQuoteAckGiven(false)} style={{background:"none",border:"1px solid #4ade8044",borderRadius:6,color:"#86efac",cursor:"pointer",fontSize:10,padding:"2px 8px",fontWeight:600}}>Re-lock</button>
+                    </div>
                   </div>
                 )}
                 {!readOnly&&!project.lostAt&&project.bcProjectNumber&&!(project.bcEnv&&project.bcEnv!==_bcConfig.env)&&(
@@ -44779,6 +44816,19 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
               update(upd);
               try{await safeSave(uid,{...upd,_sendAnchorWrite:true});arcAlert("Quote marked committed — moved to Quotes Sent. The customer copy is unchanged.");}catch(e){arcAlert("Failed to mark committed: "+e.message);}
             }}
+            onReQuoteRequest={async()=>{
+              // F092-2: explicit "Quote Expired – Re-Quote Now" — the ONLY user action that un-pins a
+              // SENT quote from Quotes Sent. Sets project.reQuoteRequested (+ audit stamp); the ladder's
+              // sent-quote PIN is gated on !reQuoteRequested, so the project re-routes to its natural rung
+              // (usually Needs BOM Pricing, since prices have gone stale). ADDITIVE fields only
+              // (retention-safe) — saveProject persists the whole doc and preserves them. Deliberately does
+              // NOT touch quoteRev/quoteSentRev, so the quote is NOT marked diverged; the re-route is purely
+              // the reQuoteRequested gate. Cleared on the NEXT successful send (both send paths).
+              if(!(await arcConfirm("Re-introduce this quote into the workflow for re-quoting?",{kind:"warning",okLabel:"Re-Quote Now"})))return;
+              const upd={...project,reQuoteRequested:true,reQuoteRequestedBy:uid,reQuoteRequestedAt:Date.now(),updatedAt:Date.now()};
+              update(upd);
+              try{await safeSave(uid,upd);arcAlert("Quote re-introduced for re-quoting — it will move back into the pricing workflow.");}catch(e){arcAlert("Failed to re-quote: "+e.message);}
+            }}
             onMarkLost={()=>{
               const upd={...project,lostAt:Date.now(),lostBy:uid,updatedAt:Date.now()};
               update(upd);safeSave(uid,upd);
@@ -44928,7 +44978,8 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
                         if(_customerValidityLoadedFor!==_proj.bcCustomerNumber)await _loadCustomerValidity(_proj.bcCustomerNumber);
                         const _validDays=resolveQuoteValidityDays(_proj,_customerValidityDays);
                         // B034 send-anchor: stamp all three anchors to the same final rev (see QuoteSendModal).
-                        const upd={..._proj,quoteRev:rev,quoteSentAt:_sentNow,quoteSentRev:rev,quoteRevAtPrint:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000};
+                        // F092-2: a fresh send RE-PINS the quote — clear any prior "Re-Quote" request.
+                        const upd={..._proj,quoteRev:rev,quoteSentAt:_sentNow,quoteSentRev:rev,quoteRevAtPrint:rev,quoteSentTo:m.to,quoteLocked:true,quoteExpiresAt:_sentNow+_validDays*86400000,reQuoteRequested:false,reQuoteRequestedBy:null,reQuoteRequestedAt:null};
                         update(upd);safeSave(uid,{...upd,_sendAnchorWrite:true});
                         if(project.bcProjectNumber&&_bcToken){
                           bcAttachPdfToJob(project.bcProjectNumber,pdfName,pdfDoc.output("arraybuffer"),null).catch(e=>console.warn("[QUOTE] BC upload on send failed:",e.message));
@@ -50056,10 +50107,10 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     const salesProjects=projects.filter(p=>_isMyProject(p,uid)&&(!p.transferred||p.transferredTo!==uid)&&!p.importedFromBC&&!p.lostAt);
     const _todoBuckets=[
       ["draft","Draft"],
-      ["in_progress","(BOM) In Process"],
-      ["process_rfq","RFQs to Send"],
+      ["in_progress","Address Issues"],
+      ["process_rfq","Needs BOM Pricing"],
       ["ready_review","Ready To Review"],
-      ["pre_review","In Pre-Review"],
+      ["pre_review","In Tech. Review"],
       ["ready_send","Ready To Send"],
       ["quotes_sent","Quotes Sent"]
     ];
@@ -50089,7 +50140,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
     }
     // Bucket→label map (from the sales _todoBuckets + the two reviewer pill labels). Row labels reuse
     // the SAME text the pills show, so the list and pills always name a bucket identically.
-    const _bucketLabels=Object.assign(Object.fromEntries(_todoBuckets),{pre_review:"In Pre-Review",post_review:"Needs Post-Review"});
+    const _bucketLabels=Object.assign(Object.fromEntries(_todoBuckets),{pre_review:"In Tech. Review",post_review:"Needs Post-Review"});
     return {_roles,salesProjects,_todoBuckets,preRevItems,postRevItems,engItems,progItems,commItems,attnCandidates,_bucketLabels};
     // B048 (Fix A): salesCacheVer is bumped when the BC /Salesperson roster lands — this dep makes the
     // sales scope (via _isMyProject / _dashboardRoles, both reading window._arcSalespersonCache) recompute
@@ -50182,7 +50233,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   const _reviewerGroup=_roles.includes("reviewer")?(<>
     {_sectionHeader("Review Queue")}
     {_grid([
-      _pill("pre_review","In Pre-Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for pre-review"),
+      _pill("pre_review","In Tech. Review",preRevItems.length,_pillColorForBucket(preRevItems,"pre_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for pre-review"),
       _pill("post_review","Needs Post-Review",postRevItems.length,_pillColorForBucket(postRevItems,"post_review",_now),()=>onFocusBucket("reviewer"),"Projects assigned to you for post-review")
     ])}
   </>):null;
@@ -50561,7 +50612,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
       // F026: 8-column Sales board — IN PRE-REVIEW sits BETWEEN Ready To Review and Ready To Send.
       const order=["draft","in_progress","process_rfq","ready_review","pre_review","ready_send"]; // F063: quotes_sent OFF the default board (SHOW SENT toggle re-appends it — see below); F061: ACTIVE ECO column removed — ECO projects route to their real status columns (red tile border still marks them)
       if(showSentColumn)order.push("quotes_sent"); // F063: SHOW SENT — append the QUOTES SENT column only while the header toggle is on (labels entry retained below either way)
-      const labels={draft:"Draft",in_progress:"(BOM) In Process",process_rfq:"RFQs Send/Receive",ready_review:"Ready To Review",pre_review:"In Pre-Review",ready_send:"Ready To Send",quotes_sent:"Quotes Sent"};
+      const labels={draft:"Draft",in_progress:"Address Issues",process_rfq:"Needs BOM Pricing",ready_review:"Ready To Review",pre_review:"In Tech. Review",ready_send:"Ready To Send",quotes_sent:"Quotes Sent"};
       // F025 (3a): column routing now delegates to the SSOT _todoBucketOf (the TOTAL status→column
       // map + the active-ECO override + the PO'd carve-out all live there), so the To-Do pane pills
       // and these board columns can't drift. _todoBucketOf returns null for board-excluded (PO'd,
@@ -50749,8 +50800,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         // F023: header color maps + helpers hoisted so BOTH the normal multi-column
         // kanban and the focused single-column view share one definition (previously
         // computed per-column inside the map). View-only styling data — no behavior change.
-        const _statusColColors={Draft:C.muted,"(BOM) In Process":C.yellow,"RFQs Send/Receive":C.red,"Ready To Review":"#5eead4","Ready To Send":C.green,"Ready To Review/Send":C.green,"In Pre-Review":"#a78bfa","Active ECO":"#ef4444","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
-        const _statusColBg={Draft:C.border,"(BOM) In Process":C.yellowDim,"RFQs Send/Receive":C.redDim,"Ready To Review":"#042f2e","Ready To Send":C.greenDim,"Ready To Review/Send":C.greenDim,"Active ECO":"#1f0a0a","Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
+        const _statusColColors={Draft:C.muted,"Address Issues":C.yellow,"Needs BOM Pricing":C.red,"Ready To Review":"#5eead4","Ready To Send":C.green,"Ready To Review/Send":C.green,"In Tech. Review":"#a78bfa","Active ECO":"#ef4444","Quotes Sent":"#38bdf8","In Post-Review":"#a78bfa","To Be Purchased":"#f59e0b","Purchasing In Process":"#38bdf8","Purchasing Completed":"#10b981","Parts Orders Open":"#f59e0b","In Production":"#a78bfa","In Purchasing":"#38bdf8","Needs Pre-Review":"#a78bfa","Needs Post-Review":"#a78bfa","Ready To Send Vendor POs":"#f59e0b","Vendor POs Sent":"#38bdf8","Ready For Production":"#10b981","In-Buyoff":"#f59e0b","Prepare For Shipping":"#38bdf8","Ready For Pick-Up":"#10b981","Engineering Design":"#a78bfa","Programming":"#38bdf8","Commissioning":"#fb923c"};
+        const _statusColBg={Draft:C.border,"Address Issues":C.yellowDim,"Needs BOM Pricing":C.redDim,"Ready To Review":"#042f2e","Ready To Send":C.greenDim,"Ready To Review/Send":C.greenDim,"Active ECO":"#1f0a0a","Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
         const _isStatusStyleView=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban");
         // G013: on the Sales status board these columns already name the status in their header, so
         // the per-tile status pill is redundant — suppress it for these 5 (Ready To Send / Active
@@ -50893,8 +50944,8 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                 {transferred.map(p=>{
                   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
                   const st=computeProjectEffectiveStatus(p);
-                  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",active_eco:"#ef4444",evc_review:"#5eead4",evc_send:C.green,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",pre_review:"PRE-REVIEW",post_review:"POST-REVIEW",active_eco:"ACTIVE ECO",evc_review:"READY TO REVIEW",evc_send:"READY TO SEND",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
+                  const statusColors={draft:C.muted,in_progress:C.yellow,address_issues:C.yellow,rfqs:C.red,pre_review:"#a78bfa",post_review:"#a78bfa",active_eco:"#ef4444",evc_review:"#5eead4",evc_send:C.green,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,pushed_to_bc:"#38bdf8",budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+                  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",address_issues:"ADDRESS ISSUES",rfqs:"NEEDS BOM PRICING",pre_review:"IN TECH. REVIEW",post_review:"POST-REVIEW",active_eco:"ACTIVE ECO",evc_review:"READY TO REVIEW",evc_send:"READY TO SEND",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",pushed_to_bc:"PUSHED TO BC",budgetary_sent:"SENT",firm_sent:"SENT"};
                   return(
                   <div key={p.id} className="fade-in" onClick={()=>onOpen(p)}
                     style={{...card({padding:"10px 14px"}),cursor:"pointer",borderColor:C.yellow+"44",transition:"border-color 0.15s,transform 0.15s",display:"flex",flexDirection:"column"}}
@@ -52109,8 +52160,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
   const st=computeProjectEffectiveStatus(p);
   const bcDisconnected=p.bcEnv&&p.bcEnv!==_bcConfig.env;
-  const statusColors={draft:C.muted,in_progress:C.yellow,rfqs:C.red,active_eco:"#ef4444",evc_review:"#5eead4",evc_send:C.green,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
-  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",rfqs:"RFQ'S",active_eco:"ACTIVE ECO",evc_review:"READY TO REVIEW",evc_send:"READY TO SEND",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
+  const statusColors={draft:C.muted,in_progress:C.yellow,address_issues:C.yellow,rfqs:C.red,active_eco:"#ef4444",evc_review:"#5eead4",evc_send:C.green,evc:C.green,extracted:C.green,validated:C.green,costed:C.green,budgetary_sent:"#38bdf8",firm_sent:"#38bdf8"};
+  const statusLabels={draft:"DRAFT",in_progress:"PROCESSING",address_issues:"ADDRESS ISSUES",rfqs:"NEEDS BOM PRICING",active_eco:"ACTIVE ECO",evc_review:"READY TO REVIEW",evc_send:"READY TO SEND",evc:"READY",extracted:"READY",validated:"READY",costed:"READY",budgetary_sent:"SENT",firm_sent:"SENT"};
   // DECISION(v1.19.858, ECO Stage A): Tiles for projects with an active draft
   // ECO get a red border + reddish-tinted background so they read at a glance
   // as "change order in flight". The ECO label (e.g. ECO 02) is rendered
@@ -52119,12 +52170,17 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const _activeEcoTile=computeActiveEco(p);
   const _hasActiveEcoTile=!!_activeEcoTile;
   const _ecoLabelInline=_activeEcoTile?` · ECO ${String(_activeEcoTile.number||0).padStart(2,"0")}`:"";
+  // F092-3: a project flagged for re-quote (F092-2 un-pin) highlights the tile GREEN + shows a "Re-Quote"
+  // label to the RIGHT of the project number (mirrors the inline ECO label). Green wins over the ECO-red
+  // border (an expired quote being re-quoted is the action-relevant state) but yields to the bcDisconnected
+  // gray (staleness still wins). Cleared automatically on the next successful send (F092-2).
+  const _reQuoteTile=!!p.reQuoteRequested;
   const _sentRfq=_rfqAwaitingSummary(p).sentVendorCount||0; // # RFQs sent for this project (distinct vendors) — shown alongside the received count
   // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
   // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
-  const _idleBorderColor=bcDisconnected?"#64748b55":_hasActiveEcoTile?"#ef4444":"#4a5080";
-  const _idleHoverColor=bcDisconnected?"#64748b88":_hasActiveEcoTile?"#fca5a5":(C.accent+"99");
-  const _tileBg=bcDisconnected?undefined:_hasActiveEcoTile?"#1f0a0a":undefined;
+  const _idleBorderColor=bcDisconnected?"#64748b55":_reQuoteTile?"#4ade80":_hasActiveEcoTile?"#ef4444":"#4a5080";
+  const _idleHoverColor=bcDisconnected?"#64748b88":_reQuoteTile?"#86efac":_hasActiveEcoTile?"#fca5a5":(C.accent+"99");
+  const _tileBg=bcDisconnected?undefined:_reQuoteTile?"#0d2010":_hasActiveEcoTile?"#1f0a0a":undefined;
   return(
   <div className="fade-in" onClick={()=>onOpen(p)}
     data-project-tile={p.id}/* F043: lets a To-Do rail-row hover find + glow this tile (see _hlBoardTile) */
@@ -52148,6 +52204,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
       <div style={{fontSize:14,fontWeight:800,color:bcDisconnected?"#64748b":C.accent,whiteSpace:"nowrap",visibility:p.bcProjectNumber?"visible":"hidden",flexShrink:0}}>
         {p.bcProjectNumber||"–"}
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
+        {/* F092-3: "Re-Quote" label to the right of the PRJ# (mirrors the inline ECO label). */}
+        {_reQuoteTile&&<span style={{color:"#86efac",fontWeight:800,letterSpacing:0.3}}>{" · Re-Quote"}</span>}
       </div>
       {/* BC-disconnected ⚠ — a flex sibling (row is alignItems:center) so it stays vertically centered
           with the PRJ# text at any size; sized 28 (2× the 14px PRJ#) per Jon. flexShrink:0 keeps it from

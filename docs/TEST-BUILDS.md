@@ -75,3 +75,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.070 | v1.24.60-T070 | 72068708 | (no description) | 2026-07-30 |
 | V.071 | v1.24.96-T071 | 3f29a893 | B104 save-race fix: fire-time-latest saves + monotonic _localEditSeq guard + shared save mutex (Coach-approved, pre-prod verify) | 2026-08-05 |
 | V.072 | v1.24.97-T072 | 3db46f83 | B101 (6-rung status sequencer §6d) + B096 (reviewer-only TR uncheck + approve-gate) — Coach SHIP-TO-TEST, prod HOLD pending Jon | 2026-08-05 |
+| V.073 | v1.24.98-T073 | 46a7fa18 | F092: sent-quote pinning + Quote-Expired Re-Quote button + green Re-Quote tile + 3 status renames (Address Issues / Needs BOM Pricing / In Tech. Review, incl. column headers) | 2026-08-06 |
