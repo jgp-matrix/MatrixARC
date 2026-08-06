@@ -7,7 +7,9 @@
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
-> ## ▶ 2026-08-06 AM — F092 SHIPPED prod v1.24.99 (Jon-verified V.073); F093 (EXPIRED tile flag) on Test V.074 awaiting verify. Freddy.
+> ## ▶ 2026-08-06 — UI batch G024/G025/G026 SHIPPED prod v1.24.101 (Freddy-verified live on Test). Freddy.
+> **✅ G024 + G025 + G026 — SHIPPED prod v1.24.101** (`3915e354`). G024: single "⬇ Export BOM" button → CSV/CADLink picker modal (replaces the 2 standalone buttons). G025: BOM header buttons right-justified (title+pills stay left). G026: Drawings header actions (Re-Extract/Review/Upload-to-BC) → real right-justified buttons matching BOM header. Display-only. **Freddy live-verified all 3 on Test V.075 in the controlled tab** (Export modal opens w/ CSV+CADLink; both headers right-justified; board renames render w/ correct colors). Note: shared `btn()` helper = blue bg + state-by-text-color, so Upload-to-BC shows green ✓/text not green fill (Jon accepted "push as-is"). G027 (remove Restore) still folds into F090.
+> ## ▶ 2026-08-06 AM — F092 SHIPPED prod v1.24.99 (Jon-verified V.073); F093 (EXPIRED tile flag) SHIPPED prod v1.24.100. Freddy.
 > **✅ F092 (sent-quote pin + Re-Quote button + tile + 3 renames incl. column headers) — SHIPPED prod v1.24.99** (`4450ac1b`). Jon verified V.073 ("projects pinning correctly").
 > **✅ F093 (sent quote shows "· EXPIRED" red flag on the Project Card when validity lapsed) — SHIPPED prod v1.24.100** (`0f178e77`, Jon "push to prod"). ProjectTile ~:52177/:52208 — sibling to F092's green "· Re-Quote", uses SSOT `project.quoteExpiresAt`; shows on a sent, non-diverged, not-yet-re-quoted quote past expiry; mutually exclusive with Re-Quote. Display-only.
 > ## ▶ 2026-08-06 AM — F092 Coach SHIP-TO-TEST, on Test V.073 (Jon verified → prod v1.24.99). Freddy.
