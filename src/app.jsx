@@ -52214,11 +52214,15 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   // border (an expired quote being re-quoted is the action-relevant state) but yields to the bcDisconnected
   // gray (staleness still wins). Cleared automatically on the next successful send (F092-2).
   const _reQuoteTile=!!p.reQuoteRequested;
-  // F093: a SENT, still-pinned quote (non-diverged, not yet re-quoted) whose validity window has
-  // lapsed shows a red "EXPIRED" flag on the card — the prompt to hit "Quote Expired – Re-Quote Now".
-  // Mutually exclusive with the green "Re-Quote" state (that requires reQuoteRequested). SSOT expiry
-  // field project.quoteExpiresAt (stamped by the send paths = sentAt + validityDays).
-  const _quoteExpired=!!p.quoteSentAt&&(p.quoteRev||0)<=(p.quoteSentRev||0)&&!p.reQuoteRequested&&!!p.quoteExpiresAt&&Date.now()>p.quoteExpiresAt;
+  // F093/F094: a SENT, still-pinned quote (non-diverged, not yet re-quoted) with a stamped expiry.
+  // SSOT expiry field project.quoteExpiresAt (stamped by the send paths = sentAt + validityDays).
+  // F093 — lapsed → red "· EXPIRED" flag (the prompt to hit "Quote Expired – Re-Quote Now").
+  // F094 — within 10 days of expiry (not yet lapsed) → amber "· Expires in N Days" countdown.
+  // All three tile states (Re-Quote / EXPIRED / Expires-in) are mutually exclusive.
+  const _qExpAt=(!!p.quoteSentAt&&(p.quoteRev||0)<=(p.quoteSentRev||0)&&!p.reQuoteRequested&&!!p.quoteExpiresAt)?p.quoteExpiresAt:null;
+  const _quoteExpired=!!_qExpAt&&Date.now()>_qExpAt;
+  const _quoteExpiringDays=(_qExpAt&&!_quoteExpired)?Math.ceil((_qExpAt-Date.now())/86400000):null;
+  const _quoteExpiringSoon=_quoteExpiringDays!=null&&_quoteExpiringDays<=10;
   const _sentRfq=_rfqAwaitingSummary(p).sentVendorCount||0; // # RFQs sent for this project (distinct vendors) — shown alongside the received count
   // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
   // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
@@ -52252,6 +52256,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         {_reQuoteTile&&<span style={{color:"#86efac",fontWeight:800,letterSpacing:0.3}}>{" · Re-Quote"}</span>}
         {/* F093: red "EXPIRED" flag for a sent, pinned quote past its validity (Jon 2026-08-06). */}
         {_quoteExpired&&<span title="Quote validity has expired — use “Quote Expired – Re-Quote Now” to re-introduce it into the workflow" style={{color:"#f87171",fontWeight:800,letterSpacing:0.3}}>{" · EXPIRED"}</span>}
+        {/* F094: amber countdown when the sent quote is within 10 days of expiring (Jon 2026-08-06). */}
+        {_quoteExpiringSoon&&<span title="This sent quote's validity is approaching — re-quote before it expires" style={{color:"#fbbf24",fontWeight:800,letterSpacing:0.3}}>{" · Expires in "+_quoteExpiringDays+(_quoteExpiringDays===1?" Day":" Days")}</span>}
       </div>
       {/* BC-disconnected ⚠ — a flex sibling (row is alignItems:center) so it stays vertically centered
           with the PRJ# text at any size; sized 28 (2× the 14px PRJ#) per Jon. flexShrink:0 keeps it from
