@@ -10675,10 +10675,51 @@ if(typeof window!=="undefined"){window._computeQuoteHash=_computeQuoteHash;}
 
 // ── FIRESTORE ──
 const _saveHighWater={}; // {projectId: {panelCount, panels:[{pages,bomItems,savedPages,savedBom,...}]}}
+// ── B104: monotonic per-panel client edit sequence (stale-write guard) ──────────────────────
+// Bumped on every genuine USER content edit (price / qty / part# / lead-time / vendor + the
+// Update-ALL fan-out), stamped onto the panel's `_localEditSeq`, and carried in the save payload.
+// saveProjectPanel / saveProject then refuse to let a payload whose seq is STRICTLY BEHIND the
+// persisted panel replace it — that means a newer edit already landed and this snapshot is a
+// stale clobber (the B104 rapid-edit revert: an earlier confirm's in-flight save landing ~99ms
+// AFTER the newer confirm's write). A SEQUENCE (not a wall-clock ms) is used deliberately: the
+// artifact showed 99ms-apart writes, and ms ties are fragile. Keyed per projectId:panelId
+// (Async-Ownership Rule — panel ids are NOT globally unique; all single-panel projects share
+// panel-1). Counters are SEEDED from persisted seqs on load / snapshot / in-lock server read so a
+// post-reload (or cross-tab) edit never stamps a value BEHIND the server — which would self-reject.
+// FAIL-SAFE: when either side lacks a numeric seq (legacy panels, non-bumping writes) the guard is
+// inert and the write proceeds unchanged — the guard only ever DROPS a provably-stale content write.
+const _localEditSeqCounters=Object.create(null); // key `${projectId}:${panelId}` → last issued seq
+function _bumpLocalEditSeq(projectId,panelId){
+  const k=_bgKey(projectId,panelId);
+  const n=(_localEditSeqCounters[k]||0)+1;
+  _localEditSeqCounters[k]=n;
+  return n;
+}
+// Raise a counter to at least a just-observed persisted value (never lowers it) so the client
+// sequence can't fall behind another tab's / a pre-reload write.
+function _observeLocalEditSeq(projectId,panelId,seq){
+  if(typeof seq!=="number"||projectId==null||panelId==null)return;
+  const k=_bgKey(projectId,panelId);
+  if((_localEditSeqCounters[k]||0)<seq)_localEditSeqCounters[k]=seq;
+}
+function _seedLocalEditSeqCounters(project){
+  if(!project||project.id==null)return;
+  for(const p of (project.panels||[]))if(p&&p.id!=null)_observeLocalEditSeq(project.id,p.id,p._localEditSeq);
+}
 async function saveProject(uid,project){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const col=fbDb.collection(path);
   const ref=project.id?col.doc(project.id):col.doc();
+  // B104: acquire the SAME per-project mutex saveProjectPanel uses (_panelSaveLocks[projectId]) so a
+  // project-level whole-doc write and a panel-level write for the same doc SERIALIZE instead of racing
+  // freely to last-set-wins (the missing half of B016 Fix B). Serialization pairs with the seq guard
+  // above — alone it is not correctness. Id-less new projects skip the lock (nothing to race). No
+  // reentrancy: saveProject never calls saveProjectPanel (or itself) while holding this lock.
+  const _spLockKey=project.id||null;
+  if(_spLockKey){while(_panelSaveLocks[_spLockKey])await _panelSaveLocks[_spLockKey];}
+  let _spLockResolve=null;
+  if(_spLockKey)_panelSaveLocks[_spLockKey]=new Promise(r=>{_spLockResolve=r;});
+  try{
   // B034 send-anchor: the quote-SEND lock write ESTABLISHES the anchor (quoteSentRev===
   // quoteRev). It must never trigger a quoteRev bump or the Change-C unlock — otherwise
   // the quote lands quoteRev>quoteSentRev the instant it's sent (falsely diverged /
@@ -10783,6 +10824,28 @@ async function saveProject(uid,project){
           const np=newPanels[i];
           const cp=curPanels.find(p=>p.id===np.id);
           newPanels[i]=_bumpBomVersionIfChanged(np,cp);
+        }
+        // (2b) B104 monotonic stale-write guard — mirror of saveProjectPanel, applied per panel.
+        // A whole-project write whose panel seq is STRICTLY BEHIND the persisted panel is a stale
+        // clobber → keep the server panel (content) or re-base marker fields (_noBumpWrite). The
+        // Update-ALL fan-out bumps every panel it touches (propagatePartAcrossPanels), so its fresh
+        // seqs outrank the server and pass; untouched panels carry an equal seq ⇒ inert (pass).
+        for(let i=0;i<newPanels.length;i++){
+          const np=newPanels[i];
+          const cp=curPanels.find(p=>p.id===np.id);
+          if(!cp||typeof cp._localEditSeq!=="number")continue;
+          _observeLocalEditSeq(project.id,np.id,cp._localEditSeq);
+          const _inSeq=np._localEditSeq;
+          if(typeof _inSeq==="number"&&cp._localEditSeq>_inSeq){
+            if(_noBump){
+              const _merged={...cp};
+              for(const _mf of ['bomSyncPending','bomSyncStartedAt','bomSyncHash','bcLastSyncedBcCount'])if(_mf in np)_merged[_mf]=np[_mf];
+              newPanels[i]=_merged;
+            }else{
+              newPanels[i]=cp;
+              console.warn(`B104 seq-guard (saveProject): dropped stale panel ${np.id} (srv=${cp._localEditSeq} > in=${_inSeq}) — kept server panel`);
+            }
+          }
         }
         // DECISION(v1.19.960): Project-level admin-set field preservation guard.
         // Same pattern as the panel-level reviewNotes guard above (v1.19.776) but for
@@ -11001,6 +11064,7 @@ async function saveProject(uid,project){
   _flushQvHistory(project.id);
   if(_pendingPreReviewOverrides[project.id]&&data.preReviewStatus!==undefined)delete _pendingPreReviewOverrides[project.id];
   return data; // return with dataUrls intact for in-memory use
+  }finally{if(_spLockKey){if(_spLockResolve)_spLockResolve();delete _panelSaveLocks[_spLockKey];}}
 }
 // DECISION(v1.19.405): Safe save wrapper — retries on failure and shows user notification.
 // Replaces silent `.catch(()=>{})` patterns that swallowed save errors.
@@ -11142,6 +11206,28 @@ async function saveProjectPanel(uid,projectId,panelId,updatedPanel,skipNotify=fa
     // misfires on accidents.
     const existingTarget=(proj.panels||[]).find(p=>p.id===panelId);
     let safeUpdated=updatedPanel;
+    // B104 monotonic stale-write guard (see _bumpLocalEditSeq). Keep the client counter caught up to
+    // the server value first, then compare. If the PERSISTED panel's seq is STRICTLY AHEAD of this
+    // payload's, a newer user edit already landed and this snapshot is a stale clobber:
+    //   • CONTENT write (normal user save) → keep the SERVER panel (drop the stale value).
+    //   • _noBumpWrite (background BC-sync marker / labor-sync / vendor writeback) → NEVER reject
+    //     wholesale; re-base ONLY the marker fields onto the newer server panel so the marker still
+    //     persists without reverting the user's price. Equal or missing seq ⇒ inert (write proceeds).
+    if(existingTarget&&typeof existingTarget._localEditSeq==="number"){
+      _observeLocalEditSeq(projectId,panelId,existingTarget._localEditSeq);
+      const _inSeq=safeUpdated._localEditSeq;
+      if(typeof _inSeq==="number"&&existingTarget._localEditSeq>_inSeq){
+        if(_noBump){
+          const _merged={...existingTarget};
+          for(const _mf of ['bomSyncPending','bomSyncStartedAt','bomSyncHash','bcLastSyncedBcCount'])if(_mf in safeUpdated)_merged[_mf]=safeUpdated[_mf];
+          safeUpdated=_merged;
+          console.warn(`B104 seq-guard: re-based background marker write onto newer server panel ${panelId} (srv=${existingTarget._localEditSeq} > in=${_inSeq})`);
+        }else{
+          safeUpdated=existingTarget;
+          console.warn(`B104 seq-guard: dropped stale content write on panel ${panelId} (srv=${existingTarget._localEditSeq} > in=${_inSeq}) — kept server panel`);
+        }
+      }
+    }
     if(existingTarget&&(existingTarget.pages||[]).length>0&&(updatedPanel.pages||[]).length===0){
       // DECISION(v1.19.893): Detect intentional removal vs stale-state accident.
       // Legitimate removePage cascade-clears drawingNo + bom + status="draft" along
@@ -11452,6 +11538,7 @@ async function loadProjects(uid){
   const path=_appCtx.projectsPath||`users/${uid}/projects`;
   const snap=await fbDb.collection(path).orderBy("updatedAt","desc").get();
   const projects=snap.docs.map(d=>migrateProjectShape(d.data()));
+  for(const _pr of projects)_seedLocalEditSeqCounters(_pr); // B104: seed edit-seq counters from persisted seqs so a post-reload edit never stamps behind the server
   // F050 (C1): refresh the module snapshot the historical-median plausibility index is built from,
   // and invalidate the memoized index so it rebuilds lazily on the next send-gate evaluation. Cheap
   // ref copy — the index itself is built on-demand + memoized in _plausibilityIndex().
@@ -29348,7 +29435,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     let _leaveOutcome={ok:true,synced:true}; // F085: flipped to {ok:false} in the failed branch below
     setBcSyncing(true);setBcSyncStatus(null);setSyncFailedAlert(null);
     // F-2d.3: Write pending marker before BC sync starts
-    try{onSaveImmediate({...panel,bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true});}catch(e){} // B041: BC-sync marker (non-content) — no bump/unlock
+    try{onSaveImmediate({...(latestPanelRef.current||panel),bomSyncPending:true,bomSyncStartedAt:Date.now(),_noBumpWrite:true});}catch(e){} // B041: BC-sync marker (non-content) — no bump/unlock // B104(a): rebase markers onto the LIVE panel — this closure's `panel` can be up to 3s stale (auto-sync timer)
     // DECISION(v1.19.599): Mirror BC sync status to team-wide bus so teammates see "X is syncing to BC".
     const syncTaskId=_bgKey(projectId,panel.id)+'_bcsync';
     bgStart(syncTaskId,panel.name||("Panel "+(idx+1)),projectId,"Syncing to Business Central…");
@@ -29409,7 +29496,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         // seeds bcPrevSyncCount from it (prevents the re-flip false-trip). Additive field,
         // preserved on save; never removed.
         const syncedBcCount=(panel.bom||[]).filter(r=>r.priceSource==="bc").length;
-        const updated={...panel,bomSyncHash:syncHash,bcLastSyncedBcCount:syncedBcCount,bomSyncPending:false,bomSyncStartedAt:null};
+        const updated={...(latestPanelRef.current||panel),bomSyncHash:syncHash,bcLastSyncedBcCount:syncedBcCount,bomSyncPending:false,bomSyncStartedAt:null}; // B104(a): rebase markers onto the LIVE panel, preserving any price edited during the BC round-trip (hash/count still reflect what was actually pushed)
         onUpdate(updated);try{onSaveImmediate({...updated,_noBumpWrite:true});}catch(e){} // B041: BC-sync marker (non-content) — no bump/unlock
         setTimeout(()=>setBcSyncStatus(null),4000);
       }
@@ -29417,7 +29504,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       console.error("bcSyncPlanningLines failed:",e);
       setBcSyncStatus("error");
       // F-2d.3: Clear pending marker on failure — don't leave it stuck
-      try{onSaveImmediate({...panel,bomSyncPending:false,bomSyncStartedAt:null,_noBumpWrite:true});}catch(e2){} // B041: BC-sync marker (non-content) — no bump/unlock
+      try{onSaveImmediate({...(latestPanelRef.current||panel),bomSyncPending:false,bomSyncStartedAt:null,_noBumpWrite:true});}catch(e2){} // B041: BC-sync marker (non-content) — no bump/unlock // B104(a): rebase markers onto the LIVE panel
       setTimeout(()=>setBcSyncStatus(null),6000);
       bgError(syncTaskId,"BC sync failed: "+(e.message||"").slice(0,60));
       setBcSyncing(false);return{ok:false,error:e&&e.message?e.message:String(e)};
@@ -30582,6 +30669,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       return next;
     })};
     if((field==="qty"||field==="partNumber")&&editedRow&&String(_oldVal)!==String(val))_trackBomChange({type:field,rowId:id,partNumber:editedRow.partNumber||"",description:editedRow.description||"",from:String(_oldVal??""),to:String(val??"")});
+    updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id); // B104: bump per-panel edit seq (carried by the deferred autoSaveTimer save of latestPanelRef.current)
     onUpdate(updated);
     latestPanelRef.current=updated;
     // F065: cross-Line propagation for direct cell edits of price or lead time. Synchronous —
@@ -31184,7 +31272,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         if(_ecoTag)Object.assign(next,_ecoTag);
         return next;
       });
-      const updated={...panel,bom:updatedBom};onUpdate(updated);
+      const updated={...panel,bom:updatedBom};updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id);onUpdate(updated); // B104: bump per-panel edit seq
       latestPanelRef.current=updated;
       if(autoSaveTimer.current)clearTimeout(autoSaveTimer.current);
       // DECISION(v1.19.729): Save latestPanelRef.current at flush time (see updateBomRow comment).
@@ -31200,14 +31288,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // DECISION(v1.19.418): Contingency/Job Buyoff/Crate price changes auto-sync to BC planning lines.
     // No Item Card push (project-specific), but planning line updates immediately.
     if(CONTINGENCY_PNS.has(pn.toUpperCase())||/^job.?buyoff$/i.test(pn)||/^crat(e|ing)$/i.test((row?.description||"").trim())){
-      const updatedBom=(panel.bom||[]).map(r=>{
+      const _base=latestPanelRef.current||panel; // B104(a) fire-time-latest: patch the LIVE panel, not the (popup-delayed) closure snapshot
+      const updatedBom=(_base.bom||[]).map(r=>{
         if(r.id!==id)return r;
         const next={...r,unitPrice:parsed,priceSource:"bc",priceDate:Date.now(),..._priceStamp()};
         const _ecoTag=_ecoTagForEdit(r);
         if(_ecoTag)Object.assign(next,_ecoTag);
         return next;
       });
-      const updated={...panel,bom:updatedBom};onUpdate(updated);
+      const updated={..._base,bom:updatedBom};updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id);onUpdate(updated); // B104: bump per-panel edit seq
+      latestPanelRef.current=updated;
       try{onSaveImmediate(updated);}catch(e){}
       // Auto-sync planning lines to BC in background
       if(bcProjectNumber&&_bcToken){
@@ -31229,14 +31319,16 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     if(!priceConfirmPending)return;
     const{id,price}=priceConfirmPending;
     // Budgetary: update BOM only, no BC push, no priceDate (show as dashed/unpriced)
-    const updatedBom=(panel.bom||[]).map(r=>{
+    const _base=latestPanelRef.current||panel; // B104(a) fire-time-latest: patch the LIVE panel, not the (popup-delayed) closure snapshot
+    const updatedBom=(_base.bom||[]).map(r=>{
       if(r.id!==id)return r;
       const next={...r,unitPrice:price,priceSource:"manual",priceDate:null,..._priceStamp()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
     });
-    const updated={...panel,bom:updatedBom};onUpdate(updated);
+    const updated={..._base,bom:updatedBom};updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id);onUpdate(updated); // B104: bump per-panel edit seq
+    latestPanelRef.current=updated;
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
   }
@@ -31261,14 +31353,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     // the intended behavior change — it replaces the wrong transient "in-bc", not real data.
     // The no-_bcToken / no-push branch now also leaves the row "manual" (the old code stamped
     // "bc" even when no push was attempted); for a not-in-BC item that is the correct state.
-    const updatedBom=(panel.bom||[]).map(r=>{
+    const _base=latestPanelRef.current||panel; // B104(a) fire-time-latest: patch the LIVE panel + merge only this row, not the (popup-delayed) closure snapshot, so a concurrent other-row change isn't clobbered
+    const updatedBom=(_base.bom||[]).map(r=>{
       if(r.id!==id)return r;
       const next={...r,unitPrice:price,priceSource:"manual",priceDate:now,bcPoDate:null,bcVendorName:vendorName||r.bcVendorName,bcVerify:{status:"manual",at:now},..._priceStamp()};
       const _ecoTag=_ecoTagForEdit(r);
       if(_ecoTag)Object.assign(next,_ecoTag);
       return next;
     });
-    const updated={...panel,bom:updatedBom};onUpdate(updated);
+    const updated={..._base,bom:updatedBom};updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id);onUpdate(updated); // B104: bump per-panel edit seq
     latestPanelRef.current=updated;// Coach F065 review F1: sync latest synchronously so the no-await (BC-disconnected) branch + the F065 cross-line fan-out read the EDITED row, not the pre-edit one (other triggers already do this)
     try{onSaveImmediate(updated);}catch(e){}
     setPriceConfirmPending(null);
@@ -31300,9 +31393,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       // NOTHING: the row stays "manual" (set in the initial write) — no revert, no second
       // onUpdate → no re-render → no flicker.
       if(bcPushOk){
-        const lp=latestPanelRef.current;
+        const lp=latestPanelRef.current;// B104(a): rebuild from the LIVE panel at resolve time (post-BC-await; ref was reset to the latest render at :28131) — keeps any newer unitPrice, only stamps this row's promote fields
         const promoteBom=(lp.bom||[]).map(r=>r.id===id?{...r,priceSource:"bc",priceDate:now,bcPoDate:now,bcVerify:{status:"in-bc",at:Date.now()}}:r);
-        const promoted={...lp,bom:promoteBom};
+        const promoted={...lp,bom:promoteBom};promoted._localEditSeq=_bumpLocalEditSeq(projectId,panel.id);// B104(b): FRESH seq so the promote outranks its own initial write (same edit) and isn't dropped by the guard; (a) already ensures it carries the latest value
         latestPanelRef.current=promoted;onUpdate(promoted);
         try{onSaveImmediate(promoted);}catch(e){console.warn("BC push promote save failed:",e);}
         console.log("BC push OK — promoted priceSource to bc for",partNumber);
@@ -31320,9 +31413,10 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
   }
   function updateVendor(id,vendorName){
-    const row=(panel.bom||[]).find(r=>r.id===id);
-    const updatedBom=(panel.bom||[]).map(r=>r.id===id?{...r,bcVendorName:vendorName}:r);
-    const updated={...panel,bom:updatedBom};
+    const _base=latestPanelRef.current||panel; // B104(a): fire-time-latest — align with the other confirmed-price handlers
+    const row=(_base.bom||[]).find(r=>r.id===id);
+    const updatedBom=(_base.bom||[]).map(r=>r.id===id?{...r,bcVendorName:vendorName}:r);
+    const updated={..._base,bom:updatedBom};updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id); // B104: bump per-panel edit seq
     onUpdate(updated);
     latestPanelRef.current=updated;
     // F065: vendor changes prompt too (decision #1, default ON, pre-includes the other Lines).
@@ -42536,6 +42630,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const migrated=migrateProject({...remote,id:init.id});
         migrated.crossLineDuplicates=buildCrossLineDuplicates(migrated.panels);// F065 Bug B: rebuild the cross-line gate from live panels on the mount snapshot — a pre-F065 server doc carries no crossLineDuplicates and would otherwise clobber the open-hook's index with undefined (→ no prompt until a panel save rebuilt it). Derived + self-healing on every open.
         projectRef.current=migrated;
+        _seedLocalEditSeqCounters(migrated); // B104: catch the client seq counter up to server truth on mount
         setProject(migrated);
         // gap #4 #2b PRE-TICK GUARD (authoritative fresh value): if the server load shows a VALID
         // lease held by another, lock to read-only NOW — before the async claim tick — closing any
@@ -42550,6 +42645,7 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         const migrated=migrateProject({...remote,id:init.id});
         migrated.crossLineDuplicates=buildCrossLineDuplicates(migrated.panels);// F065 Bug B: keep the cross-line gate fresh on concurrent remote applies too (same self-heal as the mount branch)
         projectRef.current=migrated;
+        _seedLocalEditSeqCounters(migrated); // B104: a concurrent remote (cross-tab/user) write may carry a higher seq — catch up so our next edit outranks it
         setProject(migrated);
         console.log('[CONCURRENT] Soft-applied remote update from',remote.updatedBy);
         // Show a brief toast (skip if grey-out overlay already communicates the source).
@@ -43207,9 +43303,9 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     const hasVendor=typeof patch.bcVendorName==="string"&&patch.bcVendorName.trim()!=="";
     let touched=0;
     let manualOverwritten=0; // F067: target rows that were priceSource:"manual" and got price-overwritten
-    const updatedPanels=(projectRef.current.panels||[]).map(panel=>({
-      ...panel,
-      bom:(panel.bom||[]).map(row=>{
+    const updatedPanels=(projectRef.current.panels||[]).map(panel=>{
+      let _panelTouched=false; // B104 regression #1: track per-panel change so Update-ALL bumps only the panels it actually touched
+      const _newBom=(panel.bom||[]).map(row=>{
         if(row.id===sourceRowId)return row;                       // never re-touch the source row
         if(!targetRowIds||!targetRowIds.has(row.id))return row;   // only user-approved targets
         // F068 near-miss: defensive re-match. For kind:"cross" admit exact-OR-near to oldA (partNumber),
@@ -43267,10 +43363,13 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
         // (mirror commitBcItem: confidence high + drop the downgrade reason). Applies regardless of edit kind
         // or priceSource — the earlier bc-only gate missed lead-time & non-bc propagations (Jon's Line 3).
         if(row.confidence==="low"||row.confidence==="medium"){rowPatch.confidence="high";rowPatch._confDowngradeReason=undefined;}
-        touched++;
+        touched++;_panelTouched=true;
         return{...row,...rowPatch};
-      })
-    }));
+      });
+      const _np={...panel,bom:_newBom};
+      if(_panelTouched)_np._localEditSeq=_bumpLocalEditSeq(projectRef.current.id,panel.id); // B104 regression #1: bump every touched panel or the whole-project seq guard would drop Update-ALL's own multi-panel write
+      return _np;
+    });
     if(touched===0)return; // nothing eligible actually changed (all manual, etc.)
     // F067: if the auto-approve window is active, feed the floating indicator's running counts so the
     // user sees value moving across Lines without a per-edit prompt (Coach money-path safeguard).
