@@ -18421,6 +18421,13 @@ function _ltOnlyRedCount(project){
 // (CLAUDE.md single-source-of-truth rule). Legacy rows lack the fields → reads falsy →
 // treated as unflagged, so no migration is needed.
 const _isUnresolvedTechReviewRow=r=>!!r&&!!r.techReviewFlag&&!r.techReviewResolved;
+// B096 (Jon 2026-08-05) — new TR model: the CHECKBOX is the sole control and a CHECKED box is the
+// blocker; the reviewer resolves by UNCHECKING (retires the old green-circle resolve). "Checked" = the
+// approve-gate rule (any still-checked box blocks Approve, supplier flags counted the same as manual —
+// Q2) AND the row's yellow indicator. SSOT — one definition, both consumers call it; never re-inline
+// `!!r.techReviewFlag` (CLAUDE.md dual-consumer rule). NOTE: the BC SEND-gate deliberately stays on the
+// UNRESOLVED composite (_isUnresolvedTechReviewRow, Q3-KEEP) — only the APPROVE-gate keys on any-checked.
+const _isCheckedTechReviewRow=r=>!!r&&!!r.techReviewFlag;
 function _hasUnresolvedTechReview(project){
   return (((project&&project.panels))||[]).some(p=>(p.bom||[]).some(_isUnresolvedTechReviewRow));
 }
@@ -18900,69 +18907,86 @@ function readyToReview(project){
 function readyToSend(project){
   return readyToReview(project)&&findIncompleteQuoteItems(project).length===0&&!anyRedRow(project);
 }
+// B101 §6d — SSOT "Issues column" BC circle. Tri-state RED(not-in-bc) > YELLOW(fuzzy) > BLUE(unmatched,
+// editable) > none. Factored out of the row render (was the inline _bcCircle IIFE) so the render AND the
+// status classifier (hasBomIssueCircles) share ONE rule (CLAUDE.md "Single Source of Truth for
+// Dual-Consumer Predicates" — factor the rule, not the inputs). opts.bcConnected = BC token present.
+// opts.editable = the row is user-editable; the render passes !readOnly (blue is a pure action, shown
+// only when editable), the classifier passes true (routing must not depend on the current viewer's edit
+// rights — every un-matched row is a blue circle for routing). Pure/read-only. NOTE: the render layers a
+// display-only refinement on top (yellow suppressed while a fuzzy-suggestion picker is open for the row);
+// that transient UI state is not a routing concern, so it lives only at the render site.
+function _bcCircleState(row,opts){
+  const bcConnected=!!(opts&&opts.bcConnected);
+  const editable=opts?opts.editable!==false:true;
+  if(!row||row.isLaborRow||row.isContingency||!bcConnected)return null;
+  if(row.bcNo||row.bcVerify?.status==="in-bc"||row.priceSource==="bc")return null;
+  if(row.bcVerify?.status==="not-in-bc")return"red";
+  if(row.bcVerify?.status==="fuzzy")return"yellow";
+  if(editable)return"blue";
+  return null;
+}
+// B101 §6d rung 2 — "anything in the Issues column" classifier: any row with a BC circle (RED/YELLOW/BLUE
+// via _bcCircleState) OR a confidence "C" circle (_bomReviewLevel non-null). Blue counts (Jon confirmed).
+// bcConnected is read from the module _bcToken so routing matches what the Issues column would render.
+// Pure/read-only.
+function hasBomIssueCircles(project){
+  const bcConnected=!!_bcToken;
+  return ((project&&project.panels)||[]).some(pan=>(pan.bom||[]).some(r=>
+    _bcCircleState(r,{bcConnected,editable:true})!==null||_bomReviewLevel(r,pan)!=null));
+}
 function computeProjectEffectiveStatus(project){
   if(!project)return"draft";
   const panels=project.panels||[];
   if(!panels.length)return project.status||"draft";
-  // DECISION(v1.19.859, ECO Stage A): Active ECO short-circuits status to
-  // "in_progress" so kanban routing AND the Badge agree. Without this,
-  // projects with an active draft ECO route to In Process (because of the
-  // ECO carve-out in the Sales kanban routing) but their pill still shows
-  // their underlying state (e.g. "evc"/READY) — confusing to the user.
-  // Pulled to the top so it overrides every other state computation below.
-  // F061 (2026-07-23, reverses F024): active-ECO projects are NO LONGER short-circuited to an
-  // "active_eco" status/column. They compute + route to their REAL status (RFQs, In Process,
-  // Ready, Quotes Sent, etc.) and follow the normal process. Quick recognition is preserved by
-  // the RED ECO tile border/bg, driven independently by computeActiveEco at the tile render
-  // (~:47211) — not by this status. (F024 forced them into a dedicated ACTIVE ECO column, which
-  // stranded ECO'd projects that were mid-process, e.g. already out for RFQs.)
+  // B101 §6d — dynamic, sequential status ladder (Jon confirmed 2026-08-05). First match wins; the whole
+  // ladder is recomputed live so a project AUTO-REVERTS the instant a condition changes: a red row appears
+  // during review → RFQs; review rejected → READY TO REVIEW; a new unmatched/low-confidence item → (BOM)
+  // IN PROCESS. The BOM-state rungs (issue-circles, red-rows) sit ABOVE quote-sent/review so a degraded
+  // BOM pulls the project back to where it belongs. Replaces the old scattered predicate chain
+  // (readyToReview/readyToSend/hasActiveRfqs — the rfqSentDate/hasActiveRfqs clause is DROPPED from routing
+  // per §6d, which by definition fixes the priced-but-stuck-in-RFQs cases). F061: active-ECO is NOT
+  // short-circuited here — it routes to its real status; the red ECO tile border is driven independently
+  // by computeActiveEco at the tile render (~:47211).
   const isBudgetary=panels.some(pan=>(pan.pricing||{}).isBudgetary);
-  const quoteSent=!!project.quoteSentAt;
-  const hasBom=panels.some(pan=>(pan.bom||[]).some(r=>!r.isLaborRow));
-  // DECISION(v1.19.671): If NO panel has any drawings uploaded AND no panel has started
-  // work (status is still "draft"), the project stays in DRAFT. Previously any panel
-  // in "draft" status pushed the project to "In Process" — but an empty project with
-  // zero drawings has no work in flight, so "In Process" was misleading.
+  // rung 1 — DRAFT: nothing really extracted. No drawings AND no "real" BOM row — "real" uses the SSOT
+  // !_isExcludedFromPriceCheck (labor / contingency / customer-supplied / Matrix-Systems / buyoff-crate
+  // rows alone still count as DRAFT, per §6d). A panel that has started (status!=="draft") also leaves DRAFT.
   const hasAnyDrawings=panels.some(pan=>(pan.pages||[]).length>0);
   const anyPanelStarted=panels.some(pan=>pan.status&&pan.status!=="draft");
-  if(!hasAnyDrawings&&!anyPanelStarted&&!hasBom)return"draft";
-  // Check pricing completeness across all panels
-  const priceable=panels.flatMap(pan=>(pan.bom||[]).filter(r=>!_isExcludedFromPriceCheck(r)));
-  // F026 (B044): the old narrow `hasUnpriced` (unitPrice/priceDate-only) was removed — routing now
-  // uses the SSOT anyRedRow (the full red rule) so stale-date / qty=0 / no-firm-LT reds can't slip
-  // into a "ready" bucket. hasActiveRfqs stays (below) for the awaiting-response route.
-  // DECISION(v1.19.521): RFQ status = has items with RFQs sent but no vendor-confirmed price yet.
-  // "No PO" alone doesn't trigger RFQ — items can have BC Item Card prices without Purchase Price records.
-  // What matters is whether there are outstanding RFQs awaiting supplier response.
-  const hasActiveRfqs=hasBom&&priceable.some(r=>r.rfqSentDate&&!r.bcPoDate);
-  // Pipeline status from panel statuses
-  const readySet=new Set(["extracted","validated","costed","quoted","pushed_to_bc"]);
-  const statuses=panels.map(p=>p.status||"draft");
-  let pipelineStatus;
-  if(statuses.some(s=>!readySet.has(s)))pipelineStatus="in_progress";
-  else{const rank={extracted:1,validated:2,costed:3,quoted:4,pushed_to_bc:5};const maxR=Math.max(...statuses.map(s=>rank[s]||1));pipelineStatus=["extracted","validated","costed","quoted","pushed_to_bc"][maxR-1]||"extracted";}
-  // Effective status: quote sent > reviews > unpriced/active RFQs > ready
-  // B034 Change B: a SENT quote keeps its locked "sent" status only while it has NOT
-  // diverged from the customer copy (quoteRev <= quoteSentRev). Once a post-send edit bumps
-  // the rev past what was sent, the internal copy differs from the customer's → route to
-  // In Process ("in_progress") until it is re-sent. quoteSentAt is preserved (send history);
-  // divergence is expressed purely by quoteRev > quoteSentRev.
-  if(quoteSent){
+  const hasRealBomRow=panels.some(pan=>(pan.bom||[]).some(r=>!_isExcludedFromPriceCheck(r)));
+  if(!hasAnyDrawings&&!anyPanelStarted&&!hasRealBomRow)return"draft";
+  // rung 2 — (BOM) IN PROCESS: ANYTHING in the Issues column — any BC circle (blue/yellow/red) via the
+  // SSOT _bcCircleState OR a confidence "C" circle via _bomReviewLevel. Blue counts (Jon confirmed §6d.4):
+  // a freshly-extracted BOM sits here until its items are matched/priced (blue clears).
+  if(hasBomIssueCircles(project))return"in_progress";
+  // rung 3 — RFQS SEND/RECEIVE: issue-circles clear but the BOM still has a RED row (the FULL
+  // _isBomRowFlaggedRed rule: qty0 / $0 / missing-or-stale effective price date / no firm lead time).
+  // Stays until every row is priced, price-dated AND lead-timed (no red row remains).
+  if(anyRedRow(project))return"rfqs";
+  // — below here the BOM is clean: no issue circles, no red rows —
+  // rung 4 — QUOTES SENT: a sent quote holds its locked sent-status only while it has NOT diverged from
+  // the customer copy (quoteRev<=quoteSentRev). B034: a diverged sent quote → in_progress until re-sent.
+  if(project.quoteSentAt){
     if((project.quoteRev||0)<=(project.quoteSentRev||0))return isBudgetary?"budgetary_sent":"firm_sent";
     return"in_progress";
   }
+  // Preserved (not part of the §6d Sales ladder): post-quote (Won/PO'd) review. Kept in its historical
+  // slot — below quote-sent — so the Badge still reads "In Post-Review" for PO'd projects (which live on
+  // the Production/Purchasing tab, carved out of the Sales board by _todoBucketOf).
   if(project.postReviewStatus==="pending")return"post_review";
+  // rung 5 — IN PRE-REVIEW: currently out for Technical Review.
   if(project.preReviewStatus==="pending")return"pre_review";
-  // F026 (B044/B018): route on the SSOT predicates, not the narrow hasUnpriced. Any red row
-  // (stale-date / qty=0 / no-firm-LT / unpriced) OR an outstanding RFQ → back to RFQs
-  // Send/Receive. Then split the old single "evc" ready bucket into READY TO SEND (full send
-  // gate clear + no red rows) vs READY TO REVIEW (hard-issues clear — tech-review/manualVerify —
-  // but may still carry pricing/LT/red gaps to work). Ordering: send is the stricter subset of
-  // review, so test readyToSend first.
-  if(hasBom&&(anyRedRow(project)||hasActiveRfqs))return"rfqs";
-  if(readyToSend(project))return"evc_send";
-  if(readyToReview(project))return"evc_review";
-  return pipelineStatus;
+  // rung 6 — READY TO SEND: POSITIVELY approved by Tech Review and not yet sent to the customer. A
+  // never-reviewed project can NEVER reach here (fixes the copy→Ready-to-Send jump). !quoteSentAt is
+  // already guaranteed (a sent quote returned at rung 4); kept for spec fidelity. Requires a real BOM.
+  if(project.preReviewStatus==="approved"&&!project.quoteSentAt&&hasRealBomRow)return"evc_send";
+  // rung 7 — READY TO REVIEW: a clean BOM that has NOT been approved — never submitted (null) OR
+  // returned/rejected. Requires a real BOM (a drawings-loaded-but-not-yet-extracted project has no
+  // reviewable BOM → it falls through to the in_progress fallthrough, not into a review bucket).
+  if((project.preReviewStatus==null||project.preReviewStatus==="rejected")&&hasRealBomRow)return"evc_review";
+  // rung 8 — safety fallthrough (e.g. diverged-approved-sent quote, or drawings-loaded/no-BOM in progress).
+  return"in_progress";
 }
 // Legacy wrapper — used by dashboard grouping and other callers
 function projectStatus(project){return computeProjectEffectiveStatus(project);}
@@ -33832,12 +33856,12 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     //   add    → purple tint
                     //   remove → red tint + reduced opacity (struck-through downstream)
                     const _ecoTint=row.ecoOp==="modify"?"rgba(252,211,77,0.16)":row.ecoOp==="add"?"rgba(168,85,247,0.16)":row.ecoOp==="remove"?"rgba(248,113,113,0.18)":null;
-                    // F003 C8 — an unresolved Tech-Review row shows a YELLOW bg that overrides red, until
-                    // sign-off. VISUAL-ONLY: uses the MODULE predicate _isUnresolvedTechReviewRow (line ~15872),
-                    // NOT the local _trUnresolved (defined below this line → TDZ). _isBomRowFlaggedRed and every
-                    // logic/RFQ consumer are untouched; on sign-off the predicate goes false and the row falls
-                    // through to red (if still unpriced) or zebra.
-                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isUnresolvedTechReviewRow(row)?"rgba(250,204,21,0.40)":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
+                    // B096 — a CHECKED Tech-Review row shows a YELLOW bg that overrides red, until the box is
+                    // unchecked. VISUAL-ONLY: uses the SSOT MODULE predicate _isCheckedTechReviewRow (checked =
+                    // blocker under the new model — same rule the approve-gate keys on), NOT the local vars.
+                    // _isBomRowFlaggedRed and every logic/RFQ/send-gate consumer are untouched; on uncheck the
+                    // predicate goes false and the row falls through to red (if still unpriced) or zebra.
+                    const rowBg=bcUpdatedRows.has(String(row.id))?undefined:row.isLaborRow?"#0a1628":_ecoTint?_ecoTint:row.restoreSkipped?"#78350f22":_isCheckedTechReviewRow(row)?"rgba(250,204,21,0.40)":_isBomRowFlaggedRed(row,project.bcCustomerNumber,project.bcCustomerName)?"rgba(255,40,40,0.35)":i%2===0?"transparent":"rgba(255,255,255,0.10)";
                     // Strikethrough on the row text for ecoOp:"remove" so the
                     // "this is being removed" intent is visible at a glance.
                     const _rowTextDecoration=row.ecoOp==="remove"?"line-through":undefined;
@@ -33855,56 +33879,49 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // action column. Rows tagged for prior approved ECOs are also
                     // read-only here.
                     const _baseLockedInEco=_isBaseRowInEcoScope(row);
-                    // #199 P1 — Tech Review control state for this row (dual-consumer predicate).
-                    const _trIsReviewer=_isTechReviewer(project);
+                    // #199 / B096 — Tech Review control state for this row (dual-consumer predicate).
                     const _trFlagged=!!row.techReviewFlag;
                     const _trResolved=!!row.techReviewResolved;
                     const _trSupplier=row.techReviewFlagSource==="supplier";
-                    const _trUnresolved=_isUnresolvedTechReviewRow(row); // #199: composite rule via the shared predicate (no inline re-expression)
-                    // #199 L3 (decided): show-set is broader than the red priceable-set — only labor/
-                    // contingency excluded — so a flag can never land on a hidden row and become
-                    // un-resolvable (dead-end guard, R2 spirit). Real parts incl. customer-supplied /
-                    // Matrix-Systems can carry + clear a flag.
+                    // B096 §3a/Q4 — narrow sign-off authority (admin OR assigned reviewer, pending-only).
+                    // During review ONLY this user may toggle the checkbox, and may uncheck ANY checked box
+                    // (manual / supplier / legacy-resolved). Returns false unless preReviewStatus==="pending".
+                    const _trReviewer=_isReviewSignoffAuthority(project);
+                    // #199 L3: show-set is broader than the red priceable-set — only labor/contingency
+                    // excluded — so a flag can never land on a hidden row and become un-resolvable.
                     const _trShow=!row.isLaborRow&&!row.isContingency;
-                    // #199 MED-1 (Jon): supplier flags are checked+DISABLED for EVERYONE (Sales AND
-                    // reviewers) — clearable ONLY via the audited Resolve (stamps resolved/By/At), never
-                    // an unaudited uncheck. Manual flags stay toggleable; resolved rows are read-only.
-                    // F003 Q2b — once the project is out for review (preReviewStatus==="pending"), the
-                    // user checkbox is read-only: the engineer owns resolution (via the green circle).
-                    // Sales can still SEE flags, not change them. Authority users render the circle, not
-                    // this checkbox, so they never hit this term.
-                    const _trDisabled=readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier)||project.preReviewStatus==="pending";
+                    // B096 §3a — control gating. DURING review (preReviewStatus==="pending"): enabled ONLY for
+                    // the reviewer (they resolve by unchecking — the supplier/resolved locks are lifted for
+                    // them); disabled for everyone else. PRE-SUBMIT: unchanged rule (requestor may check/uncheck
+                    // manual flags; supplier + already-resolved rows stay locked; readOnly / ECO-base rows locked).
+                    const _trDisabled = project.preReviewStatus==="pending"
+                      ? !_trReviewer
+                      : (readOnly||_baseLockedInEco||_trResolved||(_trFlagged&&_trSupplier));
                     const _trTitle=!_trFlagged?"Flag this line for Technical Review"
                       :_trResolved?"Technical Review resolved"
-                      :_trSupplier?"Supplier substitution — requires engineer sign-off"
+                      :_trSupplier?"Supplier substitution — uncheck to resolve (reviewer)"
                       :"Flagged for Technical Review (manual)";
+                    // B096 §3c — the checkbox is the SOLE control (green-circle resolve retired). UNCHECK clears
+                    // the flag AND stamps the audit fields (who/when) — covers both the pre-submit requestor
+                    // removing a manual flag and the reviewer resolving during review. Stamping resolved:true on
+                    // flag:false is harmless for the unresolved composite (flag=false already ⇒ not-unresolved)
+                    // and preserves an audit trail (retention-safe, additive). CHECK (re)flags as a fresh manual
+                    // flag, resetting the resolved stamps.
                     const _onTrToggle=()=>{
-                      if(_trDisabled)return; // MED-1: _trDisabled already includes (_trFlagged&&_trSupplier) and _trResolved, so supplier/resolved rows never reach the toggle
+                      if(_trDisabled)return;
                       const _lp=latestPanelRef.current||panel;
                       const _newBom=(_lp.bom||[]).map(r=>{
                         if(String(r.id)!==String(row.id))return r;
                         return _trFlagged
-                          ? {...r,techReviewFlag:false}  // uncheck (only manual reaches here) — clears the flag
+                          ? {...r,techReviewFlag:false,techReviewResolved:true,techReviewResolvedBy:_appCtx.uid,techReviewResolvedAt:Date.now()}
                           : {...r,techReviewFlag:true,techReviewFlagSource:"manual",techReviewResolved:false,techReviewResolvedBy:null,techReviewResolvedAt:null};
                       });
                       const _u={..._lp,bom:_newBom};
+                      _u._localEditSeq=_bumpLocalEditSeq(projectId,panel.id); // B104: a TR checkbox toggle is a user content edit — bump the monotonic seq so a concurrent newer edit's save can't clobber this write (mirrors updateBomRow/applyConfirmedPrice/updateVendor)
                       latestPanelRef.current=_u;
                       onUpdate(_u);
-                      // Guard both a sync throw and an async rejection (onSaveImmediate is a
-                      // Firestore write → returns a Promise; a bare try/catch misses rejections).
-                      try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
-                    };
-                    // #199 P2 — reviewer-only Resolve: audited engineer sign-off that clears the flag
-                    // (the ONLY way to clear a supplier flag post-MED-1). Stamps resolved/By/At.
-                    const _onTrResolve=()=>{
-                      if(!_trIsReviewer||!_trUnresolved)return;
-                      const _lp=latestPanelRef.current||panel;
-                      const _newBom=(_lp.bom||[]).map(r=>String(r.id)===String(row.id)
-                        ?{...r,techReviewResolved:true,techReviewResolvedBy:_appCtx.uid,techReviewResolvedAt:Date.now()}
-                        :r);
-                      const _u={..._lp,bom:_newBom};
-                      latestPanelRef.current=_u;
-                      onUpdate(_u);
+                      // Guard both a sync throw and an async rejection (onSaveImmediate is a Firestore write →
+                      // returns a Promise; a bare try/catch misses rejections).
                       try{Promise.resolve(onSaveImmediate(_u)).catch(()=>{});}catch(e){}
                     };
                     // F002 R1 — unified BC-circle state for the Status column. RED > YELLOW > BLUE > none.
@@ -33913,22 +33930,15 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                     // intentional, safe tightening — runPricingOnPanel/applyConfirmedPrice keep bcVerify fresh).
                     // RED/YELLOW show even in readOnly (informational, as the old inline pills did); BLUE only
                     // when editable (it's a pure action, as the old blue circle was).
-                    const _bcCircle=(()=>{
-                      if(row.isLaborRow||row.isContingency||!_bcToken)return null;
-                      // B058 (Jon): BC-circle visibility is driven SOLELY by BC membership, never by
-                      // whether a price exists. A part linked to BC carries a DURABLE bcNo (stamped by
-                      // commitBcItem :28295 + pricing BC-match :16116/:28965, never cleared, survives the
-                      // priceSource-based bcVerify recompute :16207/:29364) and/or bcVerify.status==="in-bc"
-                      // — those rows get NO circle. Everything else is not-in-BC and MUST keep showing a
-                      // circle even after a manual/budgetary price (applyBudgetaryPrice :28531 sets
-                      // priceSource:"manual"). The old blue gate `priceSource!=="manual"` folded price into
-                      // visibility, so typing a budgetary price wrongly hid the circle.
-                      if(row.bcNo||row.bcVerify?.status==="in-bc"||row.priceSource==="bc")return null;
-                      if(row.bcVerify?.status==="not-in-bc")return "red";
-                      if(row.bcVerify?.status==="fuzzy"&&!bcFuzzySuggestions[row.id])return "yellow";
-                      if(!readOnly)return "blue";
-                      return null;
-                    })();
+                    // B101 §6d — BC-circle state now comes from the SSOT _bcCircleState (the same rule the
+                    // status classifier hasBomIssueCircles uses — no re-inlined copy). Behavior preserved:
+                    // labor/contingency/disconnected → none; linked (bcNo / in-bc / priceSource bc) → none;
+                    // not-in-bc → RED; fuzzy → YELLOW; else editable → BLUE. B058 note retained: visibility is
+                    // BC-membership-driven, never price-driven (a manual/budgetary price must not hide the circle).
+                    // Render-only refinement kept OUTSIDE the SSOT: while a fuzzy-suggestion picker is open for
+                    // this row, suppress the YELLOW circle (transient UI de-dup — not a routing concern).
+                    const _bcCircleBase=_bcCircleState(row,{bcConnected:!!_bcToken,editable:!readOnly});
+                    const _bcCircle=(_bcCircleBase==="yellow"&&bcFuzzySuggestions[row.id])?null:_bcCircleBase;
                     const _rowEl=(()=>{
                   return(
                   <tr key={row.id} data-row-id={String(row.id)} className={bcUpdatedRows.has(String(row.id))?"bc-row-updated":(ecoFlashRowId&&String(ecoFlashRowId)===String(row.id)?"eco-row-flash":undefined)} style={{borderBottom:_pnHasExtraLines?"none":(i<sortedBom.length-1?`1px solid ${C.border}33`:"none"),background:rowBg,textDecoration:_rowTextDecoration,opacity:_rowOpacity,...(row.restoreSkipped?{borderLeft:"3px solid #f59e0b"}:{})}}>
@@ -33948,26 +33958,11 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                       f==="_tr"?(
                         <td key="_tr" data-tour="bom-tr" style={{padding:"3px 2px",width:30,textAlign:"center"}}>
                           <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:3}}>
-                          {/* F003 — role-mutual-exclusivity: the assigned engineer/admin (during review) sees ONLY the
-                             green sign-off circle on flagged rows; everyone else sees ONLY the user checkbox. C6: no
-                             "TR"/"TR✓" text label in either branch. 5a: the circle reuses _onTrResolve (audit stamp
-                             intact) — empty when unresolved, "✓"+filled bg when resolved, non-clickable once resolved.
-                             Reuses the #199 predicates/handlers (_trShow/_trFlagged/_trResolved/_trUnresolved/_trDisabled/
-                             _trTitle/_onTrToggle/_onTrResolve) unchanged. */}
+                          {/* B096 — the checkbox is the SOLE Tech-Review control (the old green sign-off circle
+                             is retired). All roles render the checkbox; _trDisabled does the gating (during review
+                             only the reviewer is enabled — §3a). Flagged rows always render it (so a reviewer can
+                             uncheck to resolve); unflagged rows render it only when editable. C6: no text label. */}
                           {_trShow&&(()=>{
-                            if(_isReviewSignoffAuthority(project)){
-                              // ENGINEER (assignee/admin) during `pending`: green sign-off circle on flagged rows only.
-                              if(!_trFlagged)return null;                       // nothing to sign off on unflagged rows
-                              return(
-                                <button data-tour="bom-tr-engineer-circle"
-                                  title={_trUnresolved?"Sign off — engineer approval for this Technical Review line":"Signed off"}
-                                  onClick={_trUnresolved?_onTrResolve:undefined} disabled={!_trUnresolved}
-                                  style={{background:_trResolved?"#052e16":"transparent",border:"2px solid #4ade80",color:"#4ade80",cursor:_trUnresolved?"pointer":"default",fontSize:9,fontWeight:800,borderRadius:"50%",width:20,height:20,lineHeight:1,display:"inline-flex",alignItems:"center",justifyContent:"center",padding:0,flexShrink:0}}>
-                                  {_trResolved?"✓":""}
-                                </button>
-                              );
-                            }
-                            // USER (Sales / non-assignee / any non-`pending` state): checkbox only (C6 = no text label).
                             if(_trFlagged||!readOnly)return(
                               <label data-tour="bom-tr-user-checkbox" title={_trTitle}
                                 style={{display:"inline-flex",alignItems:"center",gap:2,cursor:_trDisabled?"default":"pointer",flexShrink:0,position:"relative"}}>
@@ -39689,17 +39684,26 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   <button onClick={()=>{const p=(project.panels||[]).find(p=>(p.pages||[]).length>0);if(!p){arcAlert("No drawings uploaded yet.");return;}setDrawingReviewTrigger(prev=>({id:p.id,c:prev.c+1}));}}
                     style={btn("#1a1040","#a78bfa",{fontSize:13,fontWeight:700,border:"1px solid #a78bfa88",padding:"6px 16px"})}>📐 Review Drawings</button>
                   {(()=>{
-                    // F003 Q6b — Approve is gated on EVERY Technical-Review row being signed off first.
-                    // The engineer resolves each flagged line via its green circle (per-row _onTrResolve,
-                    // which persists immediately via onSaveImmediate). The old #199 approve-sweep is REMOVED
-                    // (Plan §5/§7): resolution now happens per-row BEFORE approval is reachable, so the blanket
-                    // sweep+save is redundant and its MED-2 partial-write hazard can no longer occur. The
-                    // quote_ready stamp (below) is unrelated to the sweep and is kept.
-                    const _trOpen=(project.panels||[]).reduce((n,p)=>n+(p.bom||[]).filter(_isUnresolvedTechReviewRow).length,0);
-                    const _apDisabled=ownerPriorityActive||_trOpen>0;
+                    // B096 §3d — Approve is gated on EVERY still-CHECKED Technical-Review box (SSOT
+                    // _isCheckedTechReviewRow — supplier flags counted the same as manual, Q2). The reviewer
+                    // resolves each by UNCHECKING it (the green-circle resolve is retired). The button stays
+                    // ENABLED (except ownerPriority); on click we build the list of still-checked rows and, if
+                    // any remain, show a blocking modal and DO NOT approve. (The BC send-gate keeps its own
+                    // unresolved-composite rule — Q3 KEEP — so this any-checked gate is APPROVE-only.)
+                    const _apDisabled=ownerPriorityActive;
                     return <button disabled={_apDisabled}
-                    title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:_trOpen>0?`Resolve ${_trOpen} flagged line${_trOpen>1?"s":""} (green circles) before approving`:""}
+                    title={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Approve the pre-quote review (all Technical Review flags must be unchecked first)"}
                     onClick={ownerPriorityActive?_fireOwnerPriorityAlert:async()=>{
+                    // B096 §3d — block approval while any Technical-Review box is still checked; list them.
+                    const _checkedTr=[];
+                    (project.panels||[]).forEach((p,pIdx)=>(p.bom||[]).forEach((r,idx)=>{
+                      if(_isCheckedTechReviewRow(r))_checkedTr.push({panel:p.name||p.drawingNo||("Panel "+(pIdx+1)),line:idx+1,partNumber:(r.partNumber||"").trim()||"(no part #)"});
+                    }));
+                    if(_checkedTr.length){
+                      const _msg="These Technical Review flags are still checked. Uncheck each one to resolve it before approving:\n\n"+_checkedTr.map(c=>`• ${c.panel} — line ${c.line}: ${c.partNumber}`).join("\n");
+                      await arcAlert(_msg,{kind:"warning",title:"Resolve Technical Review flags before approving"});
+                      return;
+                    }
                     const reviewFields={preReviewStatus:"approved",preReviewApprovedAt:Date.now(),preReviewApprovedBy:fbAuth.currentUser?.displayName||"Designer",preReviewChangeLog:[],reviewChangeLog:[],reviewRevBumpedThisCycle:false,updatedAt:Date.now(),updatedBy:uid,..._reviewLeaseHandBack()};
                     _logQvHistory(project.id,{type:"review_approve"});
                     delete _pendingPreReviewOverrides[project.id];
