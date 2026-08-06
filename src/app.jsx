@@ -52175,6 +52175,11 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   // border (an expired quote being re-quoted is the action-relevant state) but yields to the bcDisconnected
   // gray (staleness still wins). Cleared automatically on the next successful send (F092-2).
   const _reQuoteTile=!!p.reQuoteRequested;
+  // F093: a SENT, still-pinned quote (non-diverged, not yet re-quoted) whose validity window has
+  // lapsed shows a red "EXPIRED" flag on the card — the prompt to hit "Quote Expired – Re-Quote Now".
+  // Mutually exclusive with the green "Re-Quote" state (that requires reQuoteRequested). SSOT expiry
+  // field project.quoteExpiresAt (stamped by the send paths = sentAt + validityDays).
+  const _quoteExpired=!!p.quoteSentAt&&(p.quoteRev||0)<=(p.quoteSentRev||0)&&!p.reQuoteRequested&&!!p.quoteExpiresAt&&Date.now()>p.quoteExpiresAt;
   const _sentRfq=_rfqAwaitingSummary(p).sentVendorCount||0; // # RFQs sent for this project (distinct vendors) — shown alongside the received count
   // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
   // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
@@ -52206,6 +52211,8 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         {_hasActiveEcoTile&&<span style={{color:"#fca5a5",fontWeight:800,letterSpacing:0.3}}>{_ecoLabelInline}</span>}
         {/* F092-3: "Re-Quote" label to the right of the PRJ# (mirrors the inline ECO label). */}
         {_reQuoteTile&&<span style={{color:"#86efac",fontWeight:800,letterSpacing:0.3}}>{" · Re-Quote"}</span>}
+        {/* F093: red "EXPIRED" flag for a sent, pinned quote past its validity (Jon 2026-08-06). */}
+        {_quoteExpired&&<span title="Quote validity has expired — use “Quote Expired – Re-Quote Now” to re-introduce it into the workflow" style={{color:"#f87171",fontWeight:800,letterSpacing:0.3}}>{" · EXPIRED"}</span>}
       </div>
       {/* BC-disconnected ⚠ — a flex sibling (row is alignItems:center) so it stays vertically centered
           with the PRJ# text at any size; sized 28 (2× the 14px PRJ#) per Jon. flexShrink:0 keeps it from
