@@ -13,6 +13,11 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
+## ▶ 2026-08-07 (cont.) — B106 residual restamp DONE (49 names). B108+G029 shipped. Freddy.
+
+> **✅ B106 residual name-restamp APPLIED** (`04a5d0a4`): 49 name-only canonicalizations on correct-number rows (fixes RFQ-split) — Royal-SLC→Royal Wholesale (29), Rittal LLC→Rittal North America,LLC (15), Pro Automation→ProAutomation USA (3), Crum Electric Supply→Crum Electric (2). Reversible log in `docs/b106-backfill-logs/`. Verified: REPOINT 0, only **2 "Hoists Direct" rows (V00470=Calvin Robertson, PRJ402119)** remain — ⏳ NEEDS JON.
+> **B106 vendor cleanup essentially COMPLETE** (148 repoints + 49 restamps, all reversible). Remaining: (a) 2 Hoists Direct rows (Jon); (b) deferred in-app — F089 Refresh per affected project to reconcile price/LT+BC to corrected vendors; supplier-LT guard removal (`:32085`); empty PRJ402143 orphan-stub cleanup.
+
 ## ▶ 2026-08-07 (cont.) — B108 + G029 SHIPPED prod v1.25.1. Freddy.
 
 > **✅ B108 + G029 SHIPPED prod v1.25.1** (`e7eb72e9`). B108: Upload Supplier Quote Accept-cross card shows Vendor Part# (`_vendorItemNo`) not MTX# (B081 pattern, CARDINAL RULE, src/app.jsx ~:37748). G029: removed "Add to BOM Only" footer button (~:37988; onBomUpdate plumbing left intact/unused). UI-only, JSX+scope clean.
