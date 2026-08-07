@@ -17,7 +17,9 @@
 
 > **✅ B106 residual name-restamp APPLIED** (`04a5d0a4`): 49 name-only canonicalizations on correct-number rows (fixes RFQ-split) — Royal-SLC→Royal Wholesale (29), Rittal LLC→Rittal North America,LLC (15), Pro Automation→ProAutomation USA (3), Crum Electric Supply→Crum Electric (2). Reversible log in `docs/b106-backfill-logs/`. Verified: REPOINT 0, only **2 "Hoists Direct" rows (V00470=Calvin Robertson, PRJ402119)** remain — ⏳ NEEDS JON.
 > **✅ Hoists Direct RESOLVED** — Jon created BC vendor V00550 "Hoists Direct"; repointed the 3 PRJ402119 rows (2×V00470 + 1 no-number) → V00550. Reversible log `docs/b106-backfill-logs/hoists-direct-fix-2026-08-07.json`.
-> **✅✅ B106 VENDOR IDENTITY 100% CLEAN** — final classifier: CORRECT 2324 / **REPOINT 0 / RESTAMP 0 / AMBIGUOUS 0**. 200 rows fixed total (148 repoint + 49 restamp + 3 Hoists), all reversible. Remaining = deferred in-app only: F089 Refresh per affected project to reconcile price/LT+BC to corrected vendors; supplier-LT guard removal (`:32085`); empty PRJ402143 orphan-stub cleanup.
+> **✅✅ B106 VENDOR IDENTITY 100% CLEAN** — final classifier: CORRECT 2324 / **REPOINT 0 / RESTAMP 0 / AMBIGUOUS 0**. 200 rows fixed total (148 repoint + 49 restamp + 3 Hoists), all reversible.
+> **Reconcile decision (Jon): STOP — identity is enough.** F089 Refresh proven on PRJ402509 LINE 1 (Freddy drove via controlled tab): BC pull 12/13 → pre-snapshot → Mouser/DigiKey overwrite → API→BC writeback to V00196 confirmed (`bcPushPurchasePrice OK` ×7) → BC planning line updated ($39,766). Works end-to-end on corrected data. Jon ruled a 24-project money-path re-price sweep is more than needed — each project re-prices naturally via Refresh when next worked. (PRJ402509 LINE 1 now re-priced; LINE 2 not — harmless, test data.)
+> **B106 CLOSED.** Deferred-only leftovers: F089 supplier-LT guard removal (`:32085`, 0 supplier-LT rows were affected so low urgency); empty PRJ402143 orphan-stub cleanup.
 
 ## ▶ 2026-08-07 (cont.) — B108 + G029 SHIPPED prod v1.25.1. Freddy.
 
