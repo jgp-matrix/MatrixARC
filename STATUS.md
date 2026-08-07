@@ -13,6 +13,10 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
+## ▶ 2026-08-07 (cont.) — B108 + G029 SHIPPED prod v1.25.1. Freddy.
+
+> **✅ B108 + G029 SHIPPED prod v1.25.1** (`e7eb72e9`). B108: Upload Supplier Quote Accept-cross card shows Vendor Part# (`_vendorItemNo`) not MTX# (B081 pattern, CARDINAL RULE, src/app.jsx ~:37748). G029: removed "Add to BOM Only" footer button (~:37988; onBomUpdate plumbing left intact/unused). UI-only, JSX+scope clean.
+
 ## ▶ 2026-08-07 (cont.) — B106 backfill APPLIED + verified. B108 intake. Freddy.
 
 > **✅ B106 REPOINT backfill APPLIED (Jon-approved dry-run→apply).** 148 vendor re-points across 24 docs via per-doc transactions (identity-only, no version churn, reversible log `docs/b106-backfill-logs/`). **Verified: REPOINT 141→0** (classifier re-run; CORRECT 2144→2292). PO rows included (Jon: all test data). Tool `tools/b106-repoint-backfill.js`, plan `docs/B106-execution-plan-2026-08-07.md`.
