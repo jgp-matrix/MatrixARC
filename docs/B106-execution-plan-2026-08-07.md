@@ -29,6 +29,15 @@
 ## Supplier-LT guard removal (`src/app.jsx:32085`) — SEPARATE later step
 Only after a backfill (incl. the on-PO rows, once Jon decides them) leaves **zero** name≠number supplier-LT rows + a zero-re-classify. For any `leadTimeSource==="supplier"` REPOINT row, log the firm LT and re-push it to BC (G028 Push-LT `:31698`) under the correct vendor BEFORE the first Refresh, then remove the guard as its own gated commit. (0 supplier-LT rows in the current clean set, so N/A for the 24.)
 
+## Scope update (Jon 2026-08-07): PO rows INCLUDED
+Jon: "Everything in ARC and BC is test as far as POs go — update anything you need." → the `bcPoDate` exclusion is dropped (no real purchases to protect). **All 148 REPOINT rows are in scope.** All *mechanism* guardrails above still apply (they protect the write itself). BC master still left untouched per the architectural reason (per-item global default; a later in-app F089 Refresh reconciles).
+
+## Dry-run result (`tools/b106-repoint-backfill.js`, DRY-RUN, no writes)
+- **148 planned changes across 24 docs**; 2 skipped (ambiguous "Hoists Direct"/V00470 — no single BC vendor); 0 locked; 0 changed-since-read.
+- **DUP path flagged + resolved:** PRJ402143 (West Bay) exists as 2 physical docs — `WxcRGxz983C3QEv9Bxgg` (4 panels / 118 rows / updated 2026-08-06 = LIVE, holds all targets) and `arc-51e349b70e…` (0 panels / 0 rows = empty orphan stub, 0 targets). Backfill writes only the doc it read each row from → the live one. (Orphan stub = separate cleanup, not B106.)
+- Full per-row change list = `docs/B106-repoint-rowlist-2026-08-07.md`.
+- APPLY run will write its reversible log to `b106-backfill-log-<runId>.json` (committed to the repo for reversibility).
+
 ## Open Jon decisions
 1. **Greenlight the 24-row guardrailed backfill?** I build it to the spec above, produce a dry-run log for your review, then execute on your OK.
 2. **The 123 on-PO rows** — leave as historical (forward-fix already prevents NEW drift; the purchase is done), or correct the ARC labels too (in-app, carefully), or investigate whether any PO actually went to the wrong vendor first? (Your purchasing call.)
