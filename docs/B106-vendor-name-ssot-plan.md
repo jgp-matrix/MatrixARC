@@ -169,3 +169,50 @@ Jon **verified BC's vendor list directly: NO duplicates.** So the earlier "dupli
 3. **Display-name-from-number** — resolve the Supplier column name via `bcGetVendorName(bcVendorNo)` (or refresh the cached name on match) so it can't drift again once the number is right.
 
 Effort: forward-fix = F089 (done). Repair + display-resolve = the B106 build. No BC-admin action needed.
+
+---
+
+## ★★ v1.25.0 BUILD-READY REFRESH (Coach lane, 2026-08-07 — post-F089 ship)
+
+Re-grepped against current `src/app.jsx` (v1.25.0). **The plan's earlier line anchors are stale (v1.24.97).**
+
+### Re-anchored sites (current v1.25.0)
+| Site | Current line | Note |
+|---|---|---|
+| `updateVendor` | :31622 (F089 block :31625-31631) | now stamps `bcVendorNo` best-effort |
+| `doApplyPortalPrices` | fn :44407; writes :44620/:44623/:44625; vendorNo :44529-44541 | stamps number (fuzzy) |
+| portal **add-rows** (BOM-empty) | :44345 | **name-only — GAP #1** |
+| secondary/ItemBrowser pick | :31427-31428 | stamps number (may be "") |
+| `doAutoAssignApply` | :39819 (write :39827) | both, correct |
+| scraper apply | :45234/:45242 | both, correct |
+| **SQ-import apply** | :45678 | **name-only — GAP #2** |
+| Supplier-column render | :34252-34253 | reads stored string |
+| RFQ grouping (renamed `buildRfqSupplierGroups`) | :8120; keys :8173/:8188-8192 | WYSIWYG comment :8175-8181 |
+| `bcGetVendorName` / `bcResolveVendorName` (sync) / `_vendorMapCache` | :7542 / :7501 / :7492 | map `{number:displayName}` |
+| **F089 transitional supplier-LT guard** | **:32084-32085** | `if(r.leadTimeSource==="supplier"&&!forceFresh)return false;` |
+| G028 Push-LT btn/fn | :33714 / `pushAllLeadTimesToBc` :31698 | → ItemVendorCatalog |
+| G028 Sync-BC btn/fn | :33740 / `syncPlanningLinesToBC` :29591 (+ :4408) | → Job Planning Lines |
+
+### F089 coverage verdict
+Closed the 3 core assignment paths (`updateVendor`, `doApplyPortalPrices`, secondary-pick) + auto-assign + scraper. **2 residual name-only writers remain: portal add-rows :44345 and SQ-import apply :45678.** Also `doApplyPortalPrices` stores a supplier-label name with a *fuzzy-matched* number → can itself mint a name≠number row (new class the repair predicate must catch).
+
+### Repair mechanism — Coach recommends user-driven, NEVER auto
+Auto-repair from the number would "correct" the 12 rows' display back to **Heitek** (opposite of intent). Auto-from-name only works when the name resolves to exactly one vendor ("Crum Electric"→V00179 here, but that's luck not a rule) and would silently rewrite a `bcVendorNo` — forbidden by the CARDINAL RULE. **Repair = the user re-selects the correct vendor** (stamps number+name together, same shape as `doAutoAssignApply`), routed through the B104 funnel `saveProjectPanel(...,_noBumpWrite:true)` (pattern @ :31193), re-PATCHing the BC ItemCard `Vendor_No` (mirror :31644). Detection predicate: for each non-labor row with non-blank number+name, flag when `normVendorName(bcResolveVendorName(bcVendorNo)) !== normVendorName(bcVendorName)` (compare against BC master name, not a stripped stem). Change-only, logged via `_logQvHistory` (:31701, old→new = reversible), preserves all non-vendor fields.
+
+**Minimal vs full (the Jon fork):** the 12 known rows can be repaired with **zero new code** — Jon re-picks the correct vendor via the now-fixed `updateVendor` picker. A reusable **"repair vendor identity" scan** (surfaces name≠number rows across projects for one-click re-select) is the value-add for the residual-gap/fuzzy drift, but is optional.
+
+### Display-name-from-number — Coach recommends SKIP for B106
+Once repair stamps number+name together and forward paths persist the number, the stored value is correct and the 2026-07-30 WYSIWYG rule (:8175-8181) holds. A display-time `bcResolveVendorName` at render + grouping would contradict that ruling → Jon-gated. Recommend decline; rely on write-side + repair.
+
+### LT-guard removal (:32085) — hard precondition
+Remove **only after** the repair backfills a correct `bcVendorNo` on every legacy `leadTimeSource==="supplier"` row AND a zero-name≠number verification passes. Removing it before repair re-opens the exact clobber it prevents (a Refresh would read Heitek's LT and overwrite the firm Crum supplier LT). Distinct gated step, not bundled into the repair commit. (Companion firm-LT predicate @ :17756 is unrelated — leave it.)
+
+### G028 — NOT a clean merge
+Sync-BC (:33740→:29591, Job Planning Lines) and Push-LT (:33714→:31698, ItemVendorCatalog) differ on: gating (Push-LT blocks on `ownerPriorityActive`+`bom.length>0`; Sync-BC on `bcProjectNumber`, no owner-priority block), pre-flights (Push-LT runs Page-114 discovery + a #188 dead-`bcVendorNo` heal that Sync-BC lacks), and error surfaces (Sync-BC = `bcSyncStatus` state machine; Push-LT = arcAlert + pending pill). A merged "Sync to BC (both, sequentially)" is feasible but needs the union of gates + both pre-flights + a unified status surface — a real build, not cosmetic. **Recommend scoping G028 as its own item, kept OUT of the B106 money-path change.** Sequence: sync planning lines → then push LT (abort LT push if planning-line sync errors).
+
+### Jon decisions blocking the B106 build
+1. Repair shape: **minimal** (Jon re-picks the 12 rows via the fixed picker) vs **full** (add the reusable name≠number detection/repair tool).
+2. Close the 2 residual name-only writers (:44345, :45678) in B106? (Coach: yes.)
+3. Display-resolve safety net? (Coach: decline — keep WYSIWYG.)
+4. Confirm LT-guard removal is a separate gated step after backfill verification. (Coach: yes.)
+5. G028: merge vs keep separate vs merge-as-its-own-build. (Coach: separate item; a merge is non-trivial.)
