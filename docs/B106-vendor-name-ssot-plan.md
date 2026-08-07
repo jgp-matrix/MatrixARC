@@ -154,3 +154,18 @@ Weighted toward the WRITE side, because the WYSIWYG rule (`:8070-8076`) and the 
 2. **Repair scope.** Run the one-time name-repair pass **per-project on open** (auto, quiet, change-only) or as an **explicit admin "Normalize vendor names" action**? (Recommend explicit + logged, for auditability.)
 3. **Duplicate removal.** For V00179 vs V00251: is the existing `executeRemoveDuplicates` (hard BC `DELETE`) acceptable *after* a reference-count guard, or should ARC only **flag** duplicates and leave the actual merge/delete to a BC admin? (Recommend flag-only from ARC; merge is a BC-side action given PO/item-card references.)
 4. **Canonical pick.** When two vendorNos map to one supplier, prefer **lowest number** (current dup-tool behavior) or **most-referenced**? This affects which vendorNo new stamps should prefer.
+
+---
+
+## ★ CORRECTION (Jon 2026-08-06) — BC is CLEAN; drop the dedup piece
+
+Jon **verified BC's vendor list directly: NO duplicates.** So the earlier "duplicate BC vendor records (V00179 + V00251 both Crum Electric)" framing was WRONG — there is no BC-side duplication to detect/dedup/merge. **Remove the dup-vendor-detection/`scanForDuplicates`/BC-admin-merge scope from B106 entirely.**
+
+**Confirmed root (live, PRJ402509 Firestore + Jon):** the "duplicate Crum Electric" is a pure ARC name≠number divergence. **V00251 is HEITEK in BC**, but ARC has **12 rows stamped `bcVendorNo:V00251` + `bcVendorName:"Crum Electric"`** — Jon manually changed those Heitek rows to Crum and the old `updateVendor` saved the NAME but not the NUMBER. The real Crum (V00179) is on 2 rows. So "Crum Electric" appears under two numbers → looks like a dupe, is one mislabeled Heitek. **Consequence: those 12 rows price/LT/write-back to Heitek (the number), not Crum (the display).**
+
+**B106 revised scope = ARC-side only:**
+1. **Forward-fix — persist `bcVendorNo` at every vendor-assignment path** (`updateVendor`, `doApplyPortalPrices`, secondary-supplier apply). **NOW BEING BUILT IN F089** (a) — B106 inherits it; verify coverage, don't duplicate.
+2. **Repair pass for existing mislabeled rows** (the new B106 core): find rows where `bcVendorName` and `bcVendorNo` disagree (name resolves to a different vendor than the number) — e.g. the 12 Heitek-as-Crum. These can't be auto-inferred (the number says Heitek, the intent was Crum), so the repair is: surface them for the user to re-select the correct vendor (which now stamps the right number), OR a targeted admin tool that re-resolves `bcVendorNo` from the displayed name where unambiguous. Scope both; Jon picks.
+3. **Display-name-from-number** — resolve the Supplier column name via `bcGetVendorName(bcVendorNo)` (or refresh the cached name on match) so it can't drift again once the number is right.
+
+Effort: forward-fix = F089 (done). Repair + display-resolve = the B106 build. No BC-admin action needed.
