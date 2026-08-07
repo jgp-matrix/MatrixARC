@@ -13,7 +13,13 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
-## ▶ 2026-08-07 (cont.) — F097 BUILT + on Test V.081; flags set. ⏳ Jon verify. Freddy.
+## ▶ 2026-08-07 (cont.) — F098 (stable Quote Line#) scoping; F097 PAUSED at Test. Freddy.
+
+> **📥 F098 (NEW, Jon) — ROOT architecture fix: stable Quote Line # bound to panel ↔ BC Project Tasks/Planning Lines.** Today panel "LINE N" is a render-time timestamp-sort ordinal (no stored line#), drawingNo+drawingDesc NOT unique per job, BC bound only at item level → no durable panel↔BC-line reference (likely caused a past-job confusion). Jon: assign a stable Quote Line# at job start, use it to format BC Tasks+Planning Lines, bind the extracted panel to it. HIGH stakes (saved-schema + BC-binding + money-path). **Coach lane tracing the current flow** (extraction/panel creation, quote-line concept, BC task+planning-line creation, panel↔BC join). Forward-bind vs retrofit-existing = open Q. `INBOX.md`.
+> **⏸ F097 PAUSED at Test (V.083), NOT to prod.** Its "LINE N" label is a band-aid on F098's root gap; F098 likely subsumes it (label by the stable Quote Line#). Test V.083 = F097 with LINE-N (correct timestamp-sort order) + drawingNo + drawingDesc label. Hold prod until F098 direction is set.
+> **⏳ NEEDS JON:** confirm the F098 requirement playback + forward-only vs also-retrofit-existing-jobs.
+
+## ▶ 2026-08-07 (cont.) — F097 BUILT + on Test V.081→V.083; flags set. Freddy.
 
 > **🔨 F097 BUILT → Test V.081** (`5abad1d4`+`a13e0eac`, base v1.25.1). Per-panel flag `pricingRefreshNeeded:{reason,panelIds,setAt}`; acknowledge `arcAlert` on project open (serial queue = no-clobber, Coach-confirmed nothing else auto-fires a modal on open); self-clears per-panel via `onRefreshPricingAndLeadTimes`→`onPanelPricingRefreshed`→`_f097ClearPanel`→`persistProject(_noBumpWrite)`. JSX+scope clean.
 > **✅ Flags SET on all 24 projects (39 panels)** via `tools/b106-f097-set-flags.js --apply` (transaction, additive; PRJ402509 L1 excluded — already refreshed). Verified: PRJ402509=[panel-2/LINE2 only], PRJ402135=6 panels.
