@@ -38,6 +38,12 @@
 > **Reconcile decision (Jon): STOP — identity is enough.** F089 Refresh proven on PRJ402509 LINE 1 (Freddy drove via controlled tab): BC pull 12/13 → pre-snapshot → Mouser/DigiKey overwrite → API→BC writeback to V00196 confirmed (`bcPushPurchasePrice OK` ×7) → BC planning line updated ($39,766). Works end-to-end on corrected data. Jon ruled a 24-project money-path re-price sweep is more than needed — each project re-prices naturally via Refresh when next worked. (PRJ402509 LINE 1 now re-priced; LINE 2 not — harmless, test data.)
 > **B106 CLOSED.** Deferred-only leftovers: F089 supplier-LT guard removal (`:32085`, 0 supplier-LT rows were affected so low urgency); empty PRJ402143 orphan-stub cleanup.
 
+## ▶ 2026-08-07 (cont.) — B110 SHIPPED prod v1.25.2; #85 designed. Freddy.
+
+> **✅ B110 (RFQ tile pill never cleared) — SHIPPED prod v1.25.2** (`9b2c45ef`). Runtime-confirmed root: pill used `sentVendorCount` (ever-sent, never decrements — `rfqSentDate` not cleared on receive); PRJ402143/402141 stuck at 5/3 SENT with 0 outstanding. Fix: pill now **"N of M RFQs RCVD"** (N=received=sent−awaiting, M=sent-vendor-count), green when all received. ProjectTile :52424/:52503. Display-only.
+> **✅ #85 (Excel/CSV → BOM DIRECT import + column-map modal) — build-ready design** `docs/85-excel-bom-import-plan.md` (Coach). Was "mapped out" (legacy #85 Excel-oracle) but NEVER built. Design: dedicated "Import BOM from file" button/modal (NOT extend extraction dropzone), clone `SupplierPricingUploadModal` + add SheetJS `read`, 6 mappable fields (partNumber required), `priceSource:"import"`, append+dedup-warning, no auto-BC (Refresh/F089 matches after). **4 build-approval decisions** (§DECISIONS): priceSource "import" vs "manual"; merge=append+warn; dedicated entry point; row-cap 5000. Build not started.
+> **Excel-drop diagnosis (Jon asked):** dropping an Excel BOM into extraction "didn't work" because it was never implemented — pickaxe confirmed zero Excel-parse code on any branch; extraction accepts image/PDF only. It was scoped (#85) not shipped.
+
 ## ▶ 2026-08-07 (cont.) — B108 + G029 SHIPPED prod v1.25.1. Freddy.
 
 > **✅ B108 + G029 SHIPPED prod v1.25.1** (`e7eb72e9`). B108: Upload Supplier Quote Accept-cross card shows Vendor Part# (`_vendorItemNo`) not MTX# (B081 pattern, CARDINAL RULE, src/app.jsx ~:37748). G029: removed "Add to BOM Only" footer button (~:37988; onBomUpdate plumbing left intact/unused). UI-only, JSX+scope clean.
