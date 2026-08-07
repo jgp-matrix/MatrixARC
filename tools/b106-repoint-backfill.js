@@ -20,6 +20,8 @@ const MAPDIR = process.env.BCMAP_DIR || path.join(__dirname, "..");
 const bcTrue = require(path.join(MAPDIR, "bc-truth.json"));
 const name2num = require(path.join(MAPDIR, "name-to-number.json"));
 const APPLY = process.argv.includes("--apply");
+const RESTAMP = process.argv.includes("--restamp"); // name-only canonicalization on CORRECT-number rows (RFQ-split fix)
+const ONLY_V00373 = process.argv.includes("--only-v00373"); // restrict restamp to the Jon-approved Royal-SLC set
 const RUN_ID = "b106-" + new Date().toISOString().replace(/[:.]/g, "-") + "-" + process.pid;
 
 admin.initializeApp({ credential: admin.credential.cert(sa) });
@@ -33,8 +35,19 @@ for (const k in ALIASES) n2n[k] = n2n[k] || ALIASES[k];
 function resolve(num, name) {
   if (!num || !name) return null;
   const tn = bcTrue[num];
-  if (tn !== undefined && norm(name) === norm(tn)) return null;      // already correct
   const intended = n2n[norm(name)];
+  if (RESTAMP) {
+    // name-only canonicalization: number is CORRECT for the intended vendor, but the stored
+    // name string is non-canonical (RFQ-split risk). Set name -> BC canonical. Number unchanged.
+    if (tn == null || tn === "") return null;                       // no canonical name to stamp
+    if (norm(name) === norm(tn)) return null;                       // already canonical
+    if (!intended) return { ambiguous: true };                      // name not a BC vendor (e.g. Hoists Direct)
+    if (intended !== num) return null;                              // number wrong = a REPOINT case, not restamp
+    if (ONLY_V00373 && num !== "V00373") return null;
+    return { intended: num, canonical: tn, restamp: true };         // newNo === oldNo, name -> canonical
+  }
+  // REPOINT (default)
+  if (tn !== undefined && norm(name) === norm(tn)) return null;      // already correct
   if (!intended) return { ambiguous: true };                        // name has no single BC vendor (e.g. Hoists Direct)
   if (intended === num) return null;                                // effectively correct
   return { intended, canonical: bcTrue[intended] != null ? bcTrue[intended] : name };
