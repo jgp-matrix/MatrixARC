@@ -85,3 +85,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.080 | v1.24.105-T080 | ac3ffddd | F089: single Refresh Pricing + Lead Times button — BC match+price+LT + API grab + BC writeback; honors the row's vendor (price+LT), persists bcVendorNo; transitional supplier-LT guard (remove in B106). Coach SHIP-TO-TEST | 2026-08-06 |
 | V.081 | v1.25.1-T081 | 5abad1d4 | (no description) | 2026-08-07 |
 | V.082 | v1.25.1-T082 | 8d89f084 | (no description) | 2026-08-07 |
+| V.083 | v1.25.1-T083 | e5f9b0c2 | (no description) | 2026-08-07 |
