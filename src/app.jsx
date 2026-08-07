@@ -52506,7 +52506,9 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
         Skipped entirely when nothing to show (no RFQs, not lost, and pill hidden per G013). */}
     {(_sentRfq>0||rfqCount>0||p.lostAt||!hideStatusPill)&&(
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",minWidth:0}}>
-      {_sentRfq>0&&<span title={`${_rcvdRfq} of ${_sentRfq} RFQ${_sentRfq>1?"s":""} received from suppliers (by vendor)`} style={{background:_rcvdRfq>=_sentRfq?"#0d2a1a":"#12233a",color:_rcvdRfq>=_sentRfq?"#4ade80":"#7fb5e6",border:`1px solid ${_rcvdRfq>=_sentRfq?"#22c55e55":"#38bdf844"}`,borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",flexShrink:0}}>{_rcvdRfq} of {_sentRfq} RFQs RCVD</span>}
+      {/* B110 (2026-08-07, refined per Jon): show ONLY while RFQs are still OUTSTANDING (N<M). Once all
+          are received (N===M) the pill hides — no need to announce completion, only incompleteness. */}
+      {_sentRfq>0&&_rcvdRfq<_sentRfq&&<span title={`${_rcvdRfq} of ${_sentRfq} RFQ${_sentRfq>1?"s":""} received from suppliers (by vendor) — ${_sentRfq-_rcvdRfq} still awaiting`} style={{background:"#12233a",color:"#7fb5e6",border:"1px solid #38bdf844",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",flexShrink:0}}>{_rcvdRfq} of {_sentRfq} RFQs RCVD</span>}
       {rfqCount>0&&<span title={`${rfqCount} supplier quote${rfqCount>1?"s":""} received — awaiting review`} style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
       {/* DECISION(v1.19.753): When project.lostAt is set, replace the status badge with a
           dedicated red LOST pill so the tile reads at a glance in the Lost / All views. */}
