@@ -1204,6 +1204,38 @@ function computeLaborEstimate(panel){
   if(ecoFlat.cut){groups.cut.hours=Math.max(0,groups.cut.hours+ecoFlat.cut);groups.cut.cost=groups.cut.hours*laborRate;}
   if(ecoFlat.layout){groups.layout.hours=Math.max(0,groups.layout.hours+ecoFlat.layout);groups.layout.cost=groups.layout.hours*laborRate;}
   if(ecoFlat.wire){groups.wire.hours=Math.max(0,groups.wire.hours+ecoFlat.wire);groups.wire.cost=groups.wire.hours*laborRate;}
+  // F095 (money-path): manual per-group hours override — a FIRST-CLASS branch of the
+  // ONE labor producer, not a second total path. Any of cut/layout/wire present in
+  // laborData.manualGroupHours REPLACES that group's hours (ceil(hrs)*laborRate —
+  // the IDENTICAL per-group rounding as auto, :1198-1200, for ARC↔BC parity); an
+  // absent group keeps its auto value (partial override supported). The overridden
+  // group's auto display lines are swapped for one representative-category line
+  // (whose category still falls in that group's CUT/LAYOUT/WIRE bucket) so EVERY
+  // consumer re-derives the same number from these `groups`/`lines`: the palette
+  // GDEF summary + More-Info + TOTAL, the printed-quote group rows (:9750), the BOM
+  // labor rows (buildLaborBomRows/_freshLabor → row qty=grp.hours, Ext$=qty*rate),
+  // computePanelSellPrice (:1508 reads totalCost), the multi-panel _quoteLabor
+  // aggregation (:42052), BC labor planning lines, and the lead-time laborDays
+  // (:1704 reads totalHours). Precedence: laborHoursOverride(total) → manualGroupHours
+  // → auto(counts+overrides) → legacy _manualLabor → fallback. No divergence surface.
+  const _mgh=ld.manualGroupHours;
+  const _manualGroupKeys=[];
+  if(_mgh&&typeof _mgh==="object"){
+    const _MG=[
+      {g:"cut",   cat:"Panel Holes",    drop:["Panel Holes","Side-Mounted Components"]},
+      {g:"layout",cat:"Device Mounting",drop:["Device Mounting","Duct & DIN Rail","Labels"]},
+      {g:"wire",  cat:"Wire Time",      drop:["Wire Time","Door Wiring"]},
+    ];
+    for(const {g,cat,drop} of _MG){
+      const raw=_mgh[g];
+      if(raw==null||raw===""||isNaN(parseFloat(raw)))continue; // absent/blank → keep auto for this group
+      const ceilHrs=Math.max(0,Math.ceil(parseFloat(raw)));
+      for(let i=lines.length-1;i>=0;i--)if(drop.includes(lines[i].category))lines.splice(i,1);
+      lines.push({category:cat,qty:ceilHrs,unit:"hr",minPerUnit:60,hours:ceilHrs,cost:ceilHrs*laborRate,field:null,_manualGroup:g});
+      groups[g]={hours:ceilHrs,cost:ceilHrs*laborRate};
+      _manualGroupKeys.push(g);
+    }
+  }
   const totalHours=groups.cut.hours+groups.layout.hours+groups.wire.hours;
   const totalCost=groups.cut.cost+groups.layout.cost+groups.wire.cost;
 
@@ -1212,7 +1244,9 @@ function computeLaborEstimate(panel){
     inputs:{wireCount,wireTerminations,doorDevices,allDevices,panelHoles,ductDinFeet,sideTopSmallCount,sideTopLargeCount,squareCutoutCount,sideDeviceHours,sideDeviceCount,labelHours},
     hasLayoutData:hasLayout,
     isLegacy:false,
-    isOverride:false
+    isOverride:false,
+    manualGroupHours:_mgh||null,
+    manualGroupKeys:_manualGroupKeys
   };
 }
 
@@ -1505,7 +1539,10 @@ function computePanelSellPrice(panel){
   // DECISION(v1.19.880, ECO labor split): laborEst now excludes ECO-tagged labor
   // rows. Add the ECO labor delta on top so the quoted sell price still reflects
   // total work (BASE labor + ECO labor across all draft ECOs).
-  const baseLaborCost=laborEst.totalHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
+  // F095: an active per-group override (incl. an explicit all-zero) counts as "has labor" so
+  // totalHours===0 does NOT resurrect the stale legacy lump pr.manualLaborCost (screen≠quote divergence).
+  const _manF095=(laborEst.manualGroupKeys||[]).length>0;
+  const baseLaborCost=(laborEst.totalHours>0||_manF095)?laborEst.totalCost:(pr.manualLaborCost||0);
   const ecoLabor=computeAllEcoLaborTotal(panel);
   const laborCost=baseLaborCost+ecoLabor.totalCost;
   const grandTotal=materialCost+laborCost;
@@ -23734,7 +23771,11 @@ function QuoteTab({project,onUpdate,onGeneratePdf}){
   const laborRate=pr.laborRate??45;
   const markup=pr.markup??30;
   const materialCost=bom.reduce((s,r)=>s+(r.unitPrice||0)*(r.qty||1),0);
-  const laborCost=laborHours>0?laborEst.totalCost:(pr.manualLaborCost||0);
+  // F095: same guard as computePanelSellPrice — a per-group override (incl. all-zero) is honored,
+  // so the aggregate/single quote total never falls back to the stale legacy lump. Reads
+  // manualGroupKeys off laborEst (which may be the _quoteLabor aggregate — propagated at :42052).
+  const _manF095=(laborEst.manualGroupKeys||[]).length>0;
+  const laborCost=(laborHours>0||_manF095)?laborEst.totalCost:(pr.manualLaborCost||0);
   const grandTotal=materialCost+laborCost;
   const sellPrice=markup>=100?grandTotal:grandTotal/(1-markup/100);
   const hasSellPrice=sellPrice>0;
@@ -30856,6 +30897,32 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   function saveBomRow(updated){
     try{onSaveImmediate(updated);}catch(e){}
   }
+  // F095: commit a manual per-group labor-hours override from an editable BOM labor
+  // row (CUT/LAYOUT/WIRE). Writes the entered hours into laborData.manualGroupHours[group]
+  // — NEVER a standalone bom-row qty (that write-then-ignored-by-the-estimate split was
+  // the prior divergence bug). syncLaborBomRows then rebuilds the stored labor rows FROM
+  // computeLaborEstimate, so the displayed row and the money-path number can't disagree.
+  function saveManualLaborGroupHours(group,hours){
+    if(readOnly)return;
+    if(group!=="cut"&&group!=="layout"&&group!=="wire")return;
+    const _src=latestPanelRef.current||panel;
+    const ld=_src.laborData||{};
+    const nextMgh={...(ld.manualGroupHours||{})};
+    if(hours==null||hours===""||isNaN(parseFloat(hours)))delete nextMgh[group]; // blank clears just this group → auto
+    else nextMgh[group]=Math.max(0,parseFloat(hours));
+    const withOverride={..._src,laborData:{...ld,manualGroupHours:nextMgh}};
+    const updated=syncLaborBomRows(withOverride); // re-derive stored labor rows from the single producer
+    updated._localEditSeq=_bumpLocalEditSeq(projectId,panel.id); // B104: bump per-panel edit seq
+    onUpdate(updated);
+    latestPanelRef.current=updated;
+    try{onSaveImmediate(updated);}catch(e){}
+    // Auto-sync labor planning lines to BC (mirrors saveSelectedLaborOverride, :39599).
+    const bcNum=project.bcProjectNumber;
+    if(bcNum&&_bcToken&&!_bcEnvMismatched(project)){
+      const panelIdx=(project.panels||[]).findIndex(p=>p.id===panel.id)+1;
+      if(panelIdx>0)bcPatchLaborPlanningLines(bcNum,panelIdx,updated).catch(e=>console.warn("bcPatchLabor F095:",e.message));
+    }
+  }
   function addBomRow(){
     const newId=Date.now()+Math.random();
     // DECISION(v1.19.685): Initialize lead-time metadata fields. Left undefined so UI
@@ -34116,6 +34183,22 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         <td key="_supplier" title={row.bcVendorName||""} style={{padding:"3px 5px",fontSize:11}}>
                           <div style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{row.isLaborRow?"—":<span style={{color:row.bcVendorName?C.sub:C.muted}}>{row.bcVendorName||"—"}</span>}</div>
                         </td>
+                      ):(f==="qty"&&row.isLaborRow&&!row.ecoTag&&panel.laborData)?(
+                        // F095: editable Qty (hours) for the schematic BASE CUT/LAYOUT/WIRE labor rows.
+                        // Reuses the controlled LaborQtyInput (B107) so a background re-render can't eat a
+                        // keystroke. Commit routes to saveManualLaborGroupHours(group,hrs) → laborData.manualGroupHours,
+                        // NEVER a raw bom-row qty. row.qty already comes from computeLaborEstimate.groups (the
+                        // single producer), so the shown value equals the palette + quote value in both modes.
+                        // ECO labor rows (row.ecoTag) and BOM-only panels (no laborData → legacy _manualLabor)
+                        // are intentionally excluded here and fall through to the generic input below.
+                        <td key="qty" style={{padding:"3px 5px",overflow:"hidden",whiteSpace:"nowrap"}}>
+                          {(()=>{
+                            const _grp=row.partNumber==="1012"?"cut":row.partNumber==="1013"?"layout":row.partNumber==="1014"?"wire":null;
+                            if(!_grp||readOnly)return <span style={{color:C.text,fontSize:13}}>{row.qty}</span>;
+                            return <LaborQtyInput field={_grp} value={row.qty} onCommit={saveManualLaborGroupHours}
+                              style={{...inp({padding:"5px 7px",fontSize:13,borderColor:"transparent",background:"transparent",borderRadius:5}),width:"100%",minWidth:0,boxSizing:"border-box"}}/>;
+                          })()}
+                        </td>
                       ):
                       <td key={f} title={f==="description"||f==="manufacturer"?row[f]||"":undefined} style={{padding:"3px 5px",...(f==="partNumber"?{overflow:"hidden",whiteSpace:"nowrap"}:{overflow:"hidden",whiteSpace:"nowrap"})}}>
                         {mode==="fit"?(
@@ -34395,7 +34478,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
                         // field (was "$"+value as one right-aligned string, which overflowed into the Lead column).
                         <span style={{display:"inline-flex",alignItems:"center",gap:0}}>
                           <span style={{color:C.muted,fontSize:13,lineHeight:1}}>$</span>
-                          <span style={{display:"inline-block",minWidth:70,textAlign:"right"}}>{((row.unitPrice||0)*(row.qty||1)).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+                          <span style={{display:"inline-block",minWidth:70,textAlign:"right"}}>{((row.unitPrice||0)*(row.isLaborRow?(+row.qty||0):(row.qty||1))).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
                         </span>
                       ):"—"}
                     </td>
@@ -39604,6 +39687,26 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
       if(panelIdx>0)bcPatchLaborPlanningLines(bcNum,panelIdx,updated).catch(e=>console.warn("bcPatchLabor auto-sync:",e.message));
     }
   }
+  // F095: "RESET TO AUTO" — clear ALL manual per-group labor overrides so every
+  // group reverts to the auto estimate (A3: exact pre-override auto values return,
+  // because computeLaborEstimate simply falls through to the auto path when
+  // manualGroupHours has no valid entries). Set to {} rather than deleting the key
+  // (data-retention-friendly: field stays present, just empty). syncLaborBomRows
+  // rebuilds the stored labor rows from the auto estimate; BC labor lines re-sync.
+  function resetManualLaborToAuto(){
+    const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
+    if(!sp||!sp.laborData||!sp.laborData.manualGroupHours)return;
+    const withReset={...sp,laborData:{...sp.laborData,manualGroupHours:{}}};
+    const updated=syncLaborBomRows(withReset);
+    const updatedPanels=(project.panels||[]).map(p=>p.id===sp.id?updated:p);
+    onUpdate({...project,panels:updatedPanels});
+    saveImmediatePanel(sp.id,updated);
+    const bcNum=project.bcProjectNumber;
+    if(bcNum&&_bcToken&&!_bcEnvMismatched(project)){
+      const panelIdx=(project.panels||[]).findIndex(p=>p.id===sp.id)+1;
+      if(panelIdx>0)bcPatchLaborPlanningLines(bcNum,panelIdx,updated).catch(e=>console.warn("bcPatchLabor F095 reset:",e.message));
+    }
+  }
   function saveSelectedLaborAccepted(category,accepted){
     const sp=(project.panels||[]).find(p=>p.id===selectedPanelId);
     if(!sp)return;
@@ -40863,7 +40966,10 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
             const markup=pr.markup??30;
             const laborRate=pr.laborRate??45;
             const laborEst=computeLaborEstimate(sp);
-            const hasAutoLabor=laborEst.totalHours>0;
+            // F095: treat an active per-group override (incl. explicit all-zero) as "has labor" so the
+            // panel-summary breakdown honors 0 instead of resurrecting the stale legacy lump.
+            const _manF095=(laborEst.manualGroupKeys||[]).length>0;
+            const hasAutoLabor=laborEst.totalHours>0||_manF095;
             const baseLaborCost=hasAutoLabor?laborEst.totalCost:(pr.manualLaborCost||0);
             const bom=sp.bom||[];
             const pricedCount=bom.filter(r=>r.unitPrice!=null).length;
@@ -41056,6 +41162,11 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                     {laborEst.isOverride?"Override":laborEst.isLegacy?"Legacy":laborEst.hasLayoutData?"Auto":"Schematic"}
                   </span>
                   {acceptedCount===laborEst.lines.length&&laborEst.lines.length>0&&<span style={{background:C.greenDim,color:C.green,borderRadius:10,padding:"1px 6px",fontSize:10,fontWeight:700}}>✓ All</span>}
+                  {/* F095: RESET TO AUTO — shown only when at least one group is manually overridden. Clears all manualGroupHours → every group reverts to auto (A3). */}
+                  {(laborEst.manualGroupKeys||[]).length>0&&!readOnly&&(
+                    <button onClick={resetManualLaborToAuto} title="Clear all manual labor-hour overrides — every group (CUT/LAYOUT/WIRE) returns to the auto estimate"
+                      style={{background:C.yellowDim,color:C.yellow,border:"none",borderRadius:10,padding:"1px 8px",fontSize:10,fontWeight:700,cursor:"pointer",letterSpacing:0.3}}>RESET TO AUTO</button>
+                  )}
                   <div style={{flex:1}}/>
                   <span style={{fontSize:11,color:C.muted}}>$/hr</span>
                   <input type="number" min="0" step="1" readOnly={readOnly} value={laborRate}
@@ -41067,11 +41178,17 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   <div style={{display:"flex",flexDirection:"column",gap:4,marginBottom:8}}>
                     {GDEF.map(({label,color,cats})=>{
                       const hrs=laborEst.lines.filter(l=>cats.includes(l.category)).reduce((s,l)=>s+l.hours,0);
+                      // F095: flag groups whose hours are a manual override. The hrs value above already
+                      // reflects the manual number (computeLaborEstimate rebuilt this group's line), so we
+                      // only add the indicator label here.
+                      const _gk=label==="CUT"?"cut":label==="LAYOUT"?"layout":"wire";
+                      const _isMan=(laborEst.manualGroupKeys||[]).includes(_gk);
                       return(
                         <div key={label} style={{display:"flex",alignItems:"center",gap:0,fontSize:13}}>
                           <span style={{fontWeight:700,color,letterSpacing:0.5,fontSize:11,width:52}}>{label}</span>
                           <span style={{color:"#fff",fontWeight:700,fontVariantNumeric:"tabular-nums",width:32,textAlign:"right"}}>{Math.ceil(hrs)}</span>
                           <span style={{color:C.muted,fontWeight:400,fontSize:11,marginLeft:4}}>hrs</span>
+                          {_isMan&&<span title="Manual hours override — clear via RESET TO AUTO" style={{color:C.yellow,fontSize:9,fontWeight:700,letterSpacing:0.3,marginLeft:8}}>MAN. OVERRIDE</span>}
                         </div>
                       );
                     })}
@@ -42053,6 +42170,10 @@ function QuoteView({project,uid,onBack,onUpdate}){
   const totalLaborHours=perPanelLabor.reduce((s,l)=>s+l.totalHours,0);
   const totalLaborCost=perPanelLabor.reduce((s,l)=>s+l.totalCost,0);
   const hasLayoutData=perPanelLabor.some(l=>l.hasLayoutData);
+  // F095: carry the per-group override signal through the aggregate so computePanelSellPrice's
+  // fallback guard (:23771) honors an all-zero manual override on any panel instead of resurrecting
+  // the legacy lump. Union of every panel's overridden groups.
+  const aggManualGroupKeys=[...new Set(perPanelLabor.flatMap(l=>l.manualGroupKeys||[]))];
   // Merge labor lines by category
   const laborLineMap={};
   perPanelLabor.forEach(l=>l.lines.forEach(line=>{
@@ -42072,7 +42193,7 @@ function QuoteView({project,uid,onBack,onUpdate}){
     laborData:null, // null triggers legacy path, but we override via _quoteLabor
     pricing:derivedPricing,
     pages:panels.flatMap(p=>p.pages||[]),
-    _quoteLabor:{lines:aggregatedLaborLines,totalHours:totalLaborHours,totalCost:totalLaborCost,hasLayoutData,isLegacy:false,isOverride:false},
+    _quoteLabor:{lines:aggregatedLaborLines,totalHours:totalLaborHours,totalCost:totalLaborCost,hasLayoutData,isLegacy:false,isOverride:false,manualGroupKeys:aggManualGroupKeys},
   };
   function handleQuoteUpdate(upd){
     // Sync pricing back to all panels so panel cards stay consistent with quote
