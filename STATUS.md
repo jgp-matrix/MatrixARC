@@ -13,12 +13,12 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
-## ▶ 2026-08-07 — F089 pre-flight DONE; runbook ready; awaiting Jon's live BC gate. Freddy.
+## ▶ 2026-08-07 — F089 SHIPPED to prod v1.25.0 (Jon-directed, freeze lifted); awaiting on-prod live BC verify. Freddy.
 
-> **F089 boot (subagent-lane, prod still frozen v1.24.105).** Confirmed the F089 build is committed to master + on Test V.080 (button `🔄 Refresh Pricing + Lead Times`, `onRefreshPricingAndLeadTimes`, `_writeApiPriceToBcGuarded`, vendor-on-row persist, opt-in modal removed).
-> **✅ Money-path invariants re-verified against the COMMITTED artifact (Freddy inline, no Coach re-spawn needed — no drift from SHIP-TO-TEST):** I1 (>$0/≤$100k), I2 (BC-down→skip clean, save-before-write), I3 (vendor#+bcNo required), I4 (on-row price==BC write), I6 (async-ownership guards), I7 (pass-1 result threaded into pass-2, no ref-race).
-> **📋 Turnkey verify runbook written:** `docs/F089-live-verify-runbook.md` — positive path (portal-apply vendor→Refresh→on-row price+today + `·N written to BC` toast → **BC PurchasePrice for item+THAT vendor == on-row price**), LT-on-row check, 3 negative cases (BC-down / no-bcNo / unmapped-vendor#), watch debugLogs `apiPricing` + `[F089]`.
-> **⏳ NEEDS JON (2 coupled decisions before ship):** (1) F089 isn't on prod yet + test fakes BC writes → how to verify the real write path (deploy-to-prod-first vs BC sandbox); (2) `deploy.sh` only auto-bumps **patch** but F089 = new capability → **minor** (v1.25.0) needs a deliberate version set. Freddy standing by.
+> **✅ F089 "Refresh Pricing + Lead Times" — SHIPPED prod v1.25.0** (`8b93d4da`, minor bump — new capability). Jon chose deploy-to-prod-then-verify (invariants confirmed + Coach SHIP-TO-TEST; test host fakes BC writes so real write-path can only be proven on prod). Single button = BC match+price+LT → API (wins, writes back to BC, F071-guarded), active-panel, honors the vendor on the row (`bcVendorNo` persisted). Transitional supplier-LT guard kept (remove in B106 after backfill).
+> **Pre-flight (Freddy inline, no Coach re-spawn):** invariants I1 (>$0/≤$100k), I2 (BC-down→skip clean, save-before-write), I3 (vendor#+bcNo), I4 (on-row==BC write), I6 (async-ownership), I7 (pass-1 result→pass-2, no ref-race) all re-verified against the committed artifact. Scope-check + JSX build clean.
+> **⏳ NEXT — Jon's on-prod verify (runbook `docs/F089-live-verify-runbook.md`):** throwaway BC-linked panel → portal-apply a vendor (row carries `bcVendorNo`) → **🔄 Refresh** → on-row price+today + `·N written to BC` toast → **BC PurchasePrice for item+THAT vendor == on-row price** → 3 negatives (BC-down / no-bcNo / unmapped-vendor#) fail safely. Watch debugLogs `apiPricing` + `[F089]`. Freddy monitoring backend on request.
+> **Edge flagged to Jon:** `_API_PRICE_MAX=$100k` ceiling → a legit >$100k unit price applies on-row but skips the BC write (raise the ceiling if that's real). **Queue after F089 verify:** B106 + G028 → F090 → F096.
 
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
