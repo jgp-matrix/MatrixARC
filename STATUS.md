@@ -13,7 +13,13 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
-## ▶ 2026-08-07 (cont.) — B106 scope BLEW UP: vendor drift is SYSTEMIC. ⏳ NEEDS JON. Freddy.
+## ▶ 2026-08-07 (cont.) — B106 backfill APPLIED + verified. B108 intake. Freddy.
+
+> **✅ B106 REPOINT backfill APPLIED (Jon-approved dry-run→apply).** 148 vendor re-points across 24 docs via per-doc transactions (identity-only, no version churn, reversible log `docs/b106-backfill-logs/`). **Verified: REPOINT 141→0** (classifier re-run; CORRECT 2144→2292). PO rows included (Jon: all test data). Tool `tools/b106-repoint-backfill.js`, plan `docs/B106-execution-plan-2026-08-07.md`.
+> **Residual:** 29 "ROYAL - SALT LAKE CITY" rows on V00373 (number CORRECT=Royal Wholesale, name is the SLC variant → RFQ-group split risk; offer a name-only RESTAMP) + 2 "Hoists Direct" on V00470=Calvin Robertson (need Jon). **Next (deferred, in-app):** F089 Refresh per affected project to reconcile price/LT+BC to corrected vendors; supplier-LT guard removal (`:32085`, separate gated step — 0 supplier-LT rows were repointed); empty PRJ402143 orphan-stub cleanup.
+> **📥 B108 intake (Jon 2026-08-07):** Upload Supplier Quote modal — Accept-cross card titles rows with MTX# instead of Vendor Part# (CARDINAL RULE). UI-only. `INBOX.md`. Vendor family.
+
+## ▶ 2026-08-07 (earlier) — B106 scope BLEW UP: vendor drift is SYSTEMIC. Freddy.
 
 > **B106 was "12 Crum rows on PRJ402509" — the scan says otherwise.** Read-only scan of all 103 projects (`tools/b106-vendor-drift-scan.js`, findings `docs/B106-vendor-drift-scan-2026-08-07.md`): **14 vendor numbers under >1 name, ~11 genuinely-different companies, ~47 projects, ~144 candidate mislabeled rows.** V00251 confirmed (Crum×12 / Heitek×6 on PRJ402509); V00196=DigiKey has "Royal Wholesale" on 6 PRJ402135 rows; V00373 has 6 companies, V00374 has 10.
 > **A BC-free scan CANNOT be the fix list (B102 lesson):** it flags conflicts but not which side is right — V00251 is *consistently* mislabeled (majority "Crum" is the wrong one). **Authoritative list needs the BC vendor number→name map** (one console paste from Jon's BC tab; snippet in the findings doc).
