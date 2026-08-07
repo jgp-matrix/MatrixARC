@@ -37745,7 +37745,7 @@ ${fullText.slice(0,8000)}`;
                           ?<span style={{fontSize:11,color:C.muted,padding:"2px 6px"}}>…</span>
                           :fuzzyResults[i]
                           ?<div style={{display:"flex",flexDirection:"column",gap:3,minWidth:0}}>
-                            <div style={{fontSize:10,color:C.accent,fontFamily:"monospace",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i].number}>{fuzzyResults[i].number}</div>
+                            <div style={{fontSize:10,color:C.accent,fontFamily:"monospace",fontWeight:700,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i]._vendorItemNo||fuzzyResults[i].number}>{/* B108: show front-facing Vendor Part# (Vendor_Item_No), MTX No. only as fallback — CARDINAL RULE + B081 pattern */}{fuzzyResults[i]._vendorItemNo||fuzzyResults[i].number}</div>
                             <div style={{fontSize:9,color:C.muted,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:130}} title={fuzzyResults[i].displayName}>{fuzzyResults[i].displayName}</div>
                             <div style={{display:"flex",gap:4}}>
                               <button onClick={()=>acceptFuzzyMatch(i,fuzzyResults[i])} style={{background:'#0d2a0d',border:`1px solid ${C.green}`,color:C.green,borderRadius:10,padding:"2px 8px",fontSize:10,fontWeight:700,cursor:"pointer"}}>Accept ✓</button>
@@ -37985,28 +37985,7 @@ ${fullText.slice(0,8000)}`;
             <button onClick={()=>{setPrecedingQuoteId(quoteDocId);setFile(null);setPdfPreview(null);setQuoteHeader(null);setLineItems([]);setQuoteDocId(null);setPhase('upload');setStatusMsg('');setShowRevisions(false);}}
               style={btn('#1a1200',C.yellow,{fontSize:13,border:`1px solid ${C.yellow}`})}>↑ Upload Revision</button>
             <button onClick={onClose} style={btn(C.card,C.sub,{fontSize:13,border:`1px solid ${C.border}`})}>Cancel</button>
-            {onBomUpdate&&<button onClick={()=>{
-                const now=Date.now();
-                const vendorName=quoteHeader?.supplier||"";
-                const approved=lineItems.filter(i=>i.isPriced&&i.approved&&i.partNumber);
-                const newRows=approved.map((i,idx)=>({
-                  id:now+idx+Math.random(),
-                  qty:i.qty||1,
-                  partNumber:(i.partNumber||"").trim(),
-                  description:(i.description||i.rawPartNumber||"").trim(),
-                  manufacturer:i.mfr||i.manufacturer||"",
-                  notes:"",
-                  unitPrice:i.price||0,
-                  priceSource:"bc",
-                  priceDate:now,
-                  bcPoDate:now,
-                  bcVendorName:vendorName
-                }));
-                if(newRows.length>0){onBomUpdate(newRows);arcAlert(`${newRows.length} item${newRows.length!==1?"s":""} added to BOM (not pushed to BC).`);}
-                onClose();
-              }} style={btn("#1a1a2a","#38bdf8",{fontSize:13,border:"1px solid #38bdf844"})}>
-                Add to BOM Only
-              </button>}
+            {/* G029 (2026-08-07): "Add to BOM Only" button removed per Jon. onBomUpdate plumbing left intact (unused) to minimize blast radius. */}
             {allPushed&&newlyLinkedCount===0
               ?<span style={{fontSize:12,color:C.green,fontWeight:700,padding:"5px 14px",background:C.greenDim,border:`1px solid ${C.green}55`,borderRadius:8}}>✓ All Prices Current in BC</span>
               :<>
