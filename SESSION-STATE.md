@@ -1,42 +1,47 @@
-# Session State — 2026-08-05 EOD MDT · prod v1.24.96 · NOT frozen · marathon BC-integrity + status-system day
+# SESSION-STATE.md — 2026-08-06 (EOD close-out, Jon away)
 
-> ## ★★ CURRENT (2026-08-05 EOD) — read STATUS.md "▶ 2026-08-05 EOD — B104" block FIRST, then `docs/B104-save-race-fix-plan.md`.
-> **prod v1.24.96**, `master == origin` @ `773b308a` (working tree clean after this handoff commit). **NEXT SESSION = build B104** (price-edit revert on rapid edits; root confirmed via live instrumentation; Coach-scoped fix in the plan doc; MONEY-PATH + core save funnel → Coach diff-review + rapid-edit verify before deploy). Jon deferred the B104 build to a FRESH focused session rather than the tail of this marathon. This session shipped 5 fixes to prod, finalized the B101 status-flag-sequencer spec, and captured a large intake (B103/B105/B106/F091 + the B102 remediation set).
+> **Operating model:** subagent-lane (`/ARC-team-Startup`). One Freddy (CCD) session; Marc/Coach run as in-session subagent lanes; Freddy is sole git-writer + owns all handoff files (incl. STATUS.md/INBOX.md).
+> **🧳 PROD-FROZEN (Jon away EOD 2026-08-06).** Prod = **v1.24.105**. F089 is on **Test V.080**, Coach-approved, NOT on prod — awaiting Jon's morning single-row BC verify → prod. Away close-out skipped the deploy step.
 
-## Operating model (READ FIRST)
-**Subagent-lane model is the default** (Jon's standing preference). One Freddy session in CCD with full repo access spawns **Marc** (build/fix) + **Coach** (review/diagnose/scope) as in-session Agent-tool lanes, **role-announced every spawn**; Freddy is sole git-writer + sole notifier, owns Dez's files (STATUS.md/INBOX.md) directly. Money-path/data-safety = **Coach review before prod**; money-path features go **branch → (Test if verifiable) → Jon verify → cherry-pick to master + prod (deploy.sh)** — keep master prod-clean until verified. Startup: `/ARC-team-Startup`; close-out: `/ARC-team-Closeout` (freeze-aware). Full spec: FREDDY.md + memory `feedback_subagent_lane_model_preferred`.
-> **Git discipline reminder (bit us once this session):** after a `git checkout master`, a subsequent commit lands on master, not a lane branch — checkout the branch BEFORE committing lane work. And browser-globals need `window.` prefix (`window.caches`/`window.fetch`) or `tools/check-scope.js` blocks the deploy.
+## Current state
+- **Prod version:** v1.24.105 (B105 was the last prod ship).
+- **Test:** V.080 = F089 (Refresh Pricing + Lead Times), base v1.24.105.
+- **master @ `1a6bbb56`**, in sync with origin. Working tree clean.
+- **OPEN items:** see `## ⭐ NEXT UP` + `TODO.md`.
 
-## Version
-**v1.24.96** (PRODUCTION) — 2026-08-05 (master `773b308a` after handoff commit). `master == origin/master`, tree clean. Hosting-only ships today (no functions/rules change). Nothing pending deploy.
+## What shipped to prod today (2026-08-06) — 13 items, v1.24.98 → v1.24.105
+| ver | items |
+|---|---|
+| v1.24.98 | **B101** 6-rung status sequencer (§6d) + **B096** reviewer-only TR uncheck + approve-gate |
+| v1.24.99 | **F092** sent-quote pinning + "Quote Expired – Re-Quote Now" + tile + 3 status/column renames (ADDRESS ISSUES / NEEDS BOM PRICING / IN TECH. REVIEW) |
+| v1.24.100 | **F093** sent-quote "· EXPIRED" red tile flag |
+| v1.24.101 | **G024** Export BOM modal + **G025** BOM-header buttons right-justified + **G026** Drawings-header real buttons |
+| v1.24.102 | **F094** sent-quote "· Expires in N Days" amber countdown (≤10d) |
+| v1.24.103 | **B107** labor-qty input remount fix (controlled `LaborQtyInput`) |
+| v1.24.104 | **F095** manual labor-HOURS entry (per-group override inside computeLaborEstimate; MAN.OVERRIDE + RESET TO AUTO; all-zero guard) |
+| v1.24.105 | **B105** BC Item Browser dash-agnostic search (`_bcNormPn` SSOT + fallback-on-empty) |
 
-## ✅ Shipped to prod this session (2026-08-05)
-- **v1.24.91 — B097:** false "Unsynced changes to BC / must be priced" modal fixed (predicate SSOT align — Matrix-Systems/exempt rows no longer trip the BC-sync unpriced gate).
-- **v1.24.92 — B099 + B091:** "Refresh & Apply" version modal now reliably reloads (timeout-race the SW teardown + cache-busting `location.replace(?_cb=)`); collapses the double version-modal. LIVE-VERIFIED via a reversible red-dot Test crossing.
-- **v1.24.93→.94 — B091 downgrade-guard:** version modal only prompts for a STRICTLY-NEWER build (`_versionIsNewer`) + monotonic `_system/version` admin write → no phantom "older version available" modal. LIVE-VERIFIED.
-- **v1.24.95 — B100:** Copy Project carries ALL drawing assets (hydrate source from Firestore + copy native PDFs + remap) → copies render + re-extract. Verified on prod (PRJ402509: 16/16 pages have storageUrl+originalPdfPath).
-- **v1.24.96 — B098 + B102:** B098 = dash-agnostic BC surrogate resolve (alphanumeric-run anchors) + FIRM-MFR collision-breaker; B102 = crossed rows re-bind bcNo to the crossed-TO part (never push the original). Both verified via PRJ402509 re-extract.
-- **B102 remediation scrub (BC-verified, read-only):** 61 genuinely-wrong crossed rows / 32 projects (of 607 crossed BC-bound rows; 541 correct). Heuristics unreliable — only BC resolution is truth. Remediation NOT yet run (Jon reviewing; 61-row list on request).
+All Test-verified (Jon or Freddy-in-controlled-tab) + Coach-reviewed where money-path/logic.
 
-## ⭐ NEXT UP (ranked) — full detail in STATUS.md "▶ 2026-08-05 EOD — B104" block
-1. **★ B104 — price-edit revert on rapid edits (BUILD THIS FIRST).** Root CONFIRMED (live instrument); Coach-scoped fix in **`docs/B104-save-race-fix-plan.md`**: fire-time-latest saves + monotonic per-panel `_localEditSeq` guard + extend `_panelSaveLocks` to `saveProject` (= correctness core of deferred B016 Fix B). MONEY-PATH + core save funnel → Coach diff-review + rapid-edit verify (10×) before deploy. Recurring, days-spent.
-2. **B103** — BUYOFF auto-add default reverts to "JOB BUYOFF" + BUYOFF sync-fails (needs Firestore config-doc check).
-3. **B106** — vendor-name "Crum Electric Supply" ingress onto rows (trace the RFQ/supplier `bcVendorName` write; Jon's Heitek→Crum manual change is intentional, not the bug).
-4. **B105** — BC Item Browser manual search is dash-sensitive (= F082 parity; extend B098's normalized approach to `bcSearchItems`).
-5. **F091** — fix-a-wrong-Part#-in-BC + propagate to all projects (feature, design).
-6. **B102 remediation** — clear bcNo on the 61 wrong crossed rows → re-resolve; + manual BC line correction for any already posted to a live BC job.
-7. **B101 status-flag sequencer** — spec FINALIZED (`docs/B101-kanban-status-rules-review.md` §6d, Jon-confirmed 6-rung dynamic ladder + §6e lifecycle audit stamps); NOT built — build after B104.
-   _(08-03 items below are superseded/done: F086 shipped + rollout done; B078 family shipped; B080 tier-bump = Jon console action.)_
-2. **F086 rollout bootstrap.** The modal/hard-reload/nudge only fully work once a client is on **≥v1.24.83** — older cached tabs still have the old plain-reload; the team needs **ONE manual Ctrl+Shift+R** to bootstrap. After that it self-heals. (Tell Ryan/Noah.)
-3. **B078-2 monitor (no code).** Coalescer is deployed but Jon has no large project to force-test — WATCH future large-drawing extractions for any recurrence of `resource-exhausted` / silent BOM loss; re-surface B078 if it recurs.
-4. **B080 tier bump** — Jon action on the company Anthropic account console (raises the rate-limit ceiling; the backoff makes it graceful meanwhile).
-5. **LOW backlog (no Jon input needed):** F085 F1 (bgDone green-pill on partial sync-fail) / F2 (lead-time flush failures not reported in Sync-now); **B080 F1** (add `functions/test-retry.js` to `.gcloudignore`) / **F2** (drain body on supplier-404 fallback `continue`); **B083** (lead-time BC writeback dropped on hard tab-close <30s, recoverable).
-6. **S1 multi-tenant hardening (future).** The broadcast write is pinned to one company ID — before any external/multi-tenant rollout, update the ID or move the write to a Cloud Function (Admin SDK). Note in firestore.rules.
-7. **TODO.md over budget (3,642 lines).** Flag for an archive-review pass (criteria in TODO header; archive to TODO-ARCHIVE.md) — do NOT blind-trim. Also triage: promote/close this session's INBOX items (all stamped B078–B083/F085/F086, statuses in INBOX.md) into TODO.md.
-8. **Older open TODO.md items** — next session should read TODO.md top block for the fuller backlog (B024 reviewer-assignment notification, F076 supplier-portal manual entry, test-env data isolation, etc.).
+## ⭐ NEXT UP (ranked)
 
-## Branches (retained — work already cherry-picked to master, safe to prune next session)
-13 `marc/*` lane branches on origin (b078-1/f085/b078-2/b079/b081/b080/b082/f086-part2, etc.). Each was cherry-picked to master + shipped. `git branch -d` may fail (cherry-picked, not merged) — prune with care next session.
+**#1 — F089 "Refresh Pricing + Lead Times" (mid-flight, on Test V.080, Coach SHIP-TO-TEST, PROD-PENDING).**
+The single "🔄 Refresh Pricing + Lead Times" button (replaced "Get Prices"): BC match + BC price + BC lead-time pull → API grab (Mouser/DigiKey) that always wins + writes back to BC (F071-guarded). Active-panel only. Now **honors the vendor ON the row** for BOTH price + lead-time (persists `bcVendorNo` at RFQ-accept/manual-assign; precedence `r.bcVendorNo || primary`). **Transitional supplier-LT guard kept** (`leadTimeSource==="supplier" && !forceFresh` → skip) — REMOVE only in B106 after the legacy `bcVendorNo` backfill.
+- **Coach VERDICT: SHIP-TO-TEST** (both money-path cruxes pass: two-pass composition can't wipe BC data; `_writeApiPriceToBcGuarded` can't poison the catalog). Plan: `docs/F089-bc-repull-plan.md`.
+- **DONE CRITERIA / Jon's morning gate — the safe single-row BC verify** (Test FAKES BC writes via bcGatedFetch, so the write-path MUST be verified on prod/BC): pre-req DigiKey=V00196 / Mouser=V00304 mapped. On a throwaway BC-linked panel — (1) portal-apply a supplier quote → confirm the row now carries the supplier's `bcVendorNo` (not just name); (2) Refresh → on-row price+priceDate=today, toast "N written to BC", BC PurchasePrice for that item+**that vendor** = the API price; (3) negatives: BC disconnected → on-row applies + "BC-skipped", nothing written; no-bcNo row → on-row only; unmapped vendor# → alert, no write. Watch debugLogs `source:"apiPricing"` + `[F089]` console. → then deploy prod (minor bump).
 
-## How to resume (next session)
-Boot `/ARC-team-Startup`. Read this file + STATUS.md "▶ RESUME HERE (2026-08-03 EOD)" + TODO.md top. Nothing is frozen; nothing is mid-deploy. The only live-verify owed is the F086 4-min nudge (#1). Everything else this session is shipped + stable.
+**#2 — B106 vendor-name repair (BC verified CLEAN by Jon — no dedup).** ROOT CONFIRMED: the "duplicate Crum Electric" was never a BC dupe — it's an ARC name≠number divergence. **V00251 is HEITEK in BC**, but 12 PRJ402509 rows carry `bcVendorNo:V00251` + `bcVendorName:"Crum Electric"` (Jon manually changed Heitek→Crum; old `updateVendor` saved the NAME not the NUMBER → those rows price/LT/write-back to Heitek). Real Crum = V00179 (2 rows). **F089 delivers the forward-fix** (persist bcVendorNo). B106 build = (1) repair the existing mislabeled rows (name≠number — can't auto-infer intent; user re-select or targeted tool), (2) display-name-from-number, and (3) **remove F089's transitional supplier-LT guard** after the backfill. Plan (corrected): `docs/B106-vendor-name-ssot-plan.md`.
+
+**#3 — G028 consolidate "Sync BC" + "Push Lead Times"** — quick, decision + small UI. (Jon queued B106 + G028 together.)
+
+**#4 — F090 BOMv version tracking** — SCOPED + build-ready (`docs/F090-bomv-tracking-plan.md`): ~70-80% reuse of Dv-history subcollection + snapshot/restore + F089-refresh. New `bomvVersion` counter (don't widen customer-facing Dv), subcollection storage (not array, B078 1MB), 6 bump triggers + debounced coalescer, BOMv pill→history modal, restore(archive-first)+F089-refresh. Absorbs **G027** (remove Restore). 7 Jon decisions. Effort L. (Jon: build F090 after B106+G028.)
+
+**#5 — F096 vendor de-dup guard (NEW, Jon 2026-08-06).** Jon accidentally created a dup BC vendor via BC Item Browser "Create New". Add a pre-create dedup check (fuzzy name + vendor-list match, warn/block) + a dup-scan tool + verify vendor#↔name on assign. `INBOX.md`. Vendor family (B106/F075/F041).
+
+**Also open (older backlog):** B103 (BUYOFF config revert + BC sync-fail — needs Firestore check) · F091 (fix wrong BC Part# + propagate) · B102 remediation (61 BC-verified wrong crossed rows) · B101 §6e lifecycle audit stamps · "In Pre-Review" help-text tidy · B078-3 nit · B095 3-rows-no-LT edge · B078-5 per-panel subcollection (deferred epic). Full list: `TODO.md` + `INBOX.md`.
+
+## Docs produced this session
+`docs/B107-F095-labor-calc-analysis.md` · `docs/B105-item-browser-search-plan.md` · `docs/B106-vendor-name-ssot-plan.md` (corrected) · `docs/F089-bc-repull-plan.md` · `docs/F090-bomv-tracking-plan.md`.
+
+## Startup for next session
+Boot `/ARC-team-Startup` (Freddy). First act on **F089** (#1) — Jon's single-row BC verify → prod. Then B106+G028, then F090.

@@ -5,6 +5,14 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
+## 🧳 EOD CLOSE-OUT 2026-08-06 (Jon away, PROD FROZEN at v1.24.105) — Freddy
+
+> **13 items shipped to prod today (v1.24.98→v1.24.105):** B101+B096 · F092 · F093 · G024/G025/G026 · F094 · B107 · F095 · B105.
+> **⏳ F089 (Refresh Pricing + Lead Times) — on Test V.080, Coach SHIP-TO-TEST, NOT prod.** Single button = BC match+price+LT → API (wins, writes back to BC, F071-guarded), active-panel, **honors the vendor on the row** (price+LT), persists `bcVendorNo`. Transitional supplier-LT guard kept (remove in B106 after backfill). **⭐ JON MORNING GATE = the safe single-row BC verify** (Test fakes BC writes): portal-apply a supplier quote → row carries supplier's bcVendorNo → Refresh → price+LT land in BC under THAT vendor + negatives (BC-down/no-bcNo/unmapped-vendor). → then prod. Full steps: SESSION-STATE.md ⭐ NEXT UP #1 + `docs/F089-bc-repull-plan.md`.
+> **Vendor mystery SOLVED:** "duplicate Crum Electric" = ARC name≠number divergence, NOT a BC dupe (Jon verified BC clean). V00251=Heitek mislabeled "Crum Electric" on 12 PRJ402509 rows (manual Heitek→Crum saved name-not-number). Forward-fix in F089; existing-row repair = **B106** (corrected: no dedup); create-side guard = **F096** (new).
+> **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
+> master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
+
 ## Current — 🟢 2026-08-03 · prod v1.24.83 + functions · big ship day (B078-1/F085/B078-2/B079/B080/B081/B082 + F086) · subagent-lane (Freddy)
 
 > ## ▶ 2026-08-06 (post-F095) — B105 SHIPPED prod v1.24.105 (Jon-verified); F089 BUILDING. Freddy.
