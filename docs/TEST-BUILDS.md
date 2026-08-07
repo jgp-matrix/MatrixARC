@@ -81,3 +81,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.076 | v1.24.101-T076 | 46441b8f | F094: amber 'Expires in N Days' countdown on sent-quote tiles within 10 days of expiry (+ F093 EXPIRED) | 2026-08-06 |
 | V.077 | v1.24.102-T077 | 50c98843 | B107 fix: controlled LaborQtyInput — background sync no longer eats labor-category keystrokes (Coach SHIP-TO-TEST) | 2026-08-06 |
 | V.078 | v1.24.103-T078 | 7f537955 | F095: manual per-group labor-hours entry (editable CUT/LAYOUT/WIRE BOM hrs → override inside computeLaborEstimate → quote/BC/lead-time; MAN.OVERRIDE + RESET TO AUTO; all-zero guard). Coach SHIP-TO-TEST | 2026-08-06 |
+| V.079 | v1.24.104-T079 | 14db9f80 | B105: BC Item Browser dash/special-char-agnostic search (normalizeSeparators fallback-on-empty; shared _bcNormPn) — Coach SHIP-TO-TEST | 2026-08-06 |

@@ -5753,7 +5753,12 @@ function _bcExpandToken(t){
   }
   return Array.from(out);
 }
-async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
+// SSOT separator-normalizer for BC part# matching (was duplicated as localNorm @bcFuzzyLookup
+// and _norm @_bcResolveSurrogateExact). Strips `- \ / . # _` + whitespace, upper-cases.
+// "Factor the rule, not the inputs" — every BC PN-normalize site calls THIS; do not fork it.
+function _bcNormPn(s){return (s||"").toString().replace(/[-\s\/\\.#_]+/g,"").toUpperCase();}
+
+async function bcSearchItems(query,{field="both",top=25,skip=0,normalizeSeparators=false}={}){
   if(!query||query.trim().length<3)return{items:[],hasMore:false};
   // Auto-reacquire token if missing or recently cleared
   if(!_bcToken){_bcToken=await acquireBcToken(false)||null;}
@@ -5840,6 +5845,42 @@ async function bcSearchItems(query,{field="both",top=25,skip=0}={}){
       // result order to mirror BC's items list exactly so they can compare side-by-side.
       merged.sort((a,b)=>(a.number||"").localeCompare(b.number||""));
       const hasMore=merged.length>top;
+      // B105: separator-agnostic recall for manual PN searches. Fires ONLY when the verbatim
+      // contains() path returned nothing AND the query is a single part-number-like token (no
+      // spaces, has a digit) — so description / multi-token / already-working searches are 100%
+      // unchanged (this runs after merged is built; merged.length>0 skips it entirely). Reuses the
+      // B098 anchor technique (_bcResolveSurrogateExact) but gates on normalized CONTAINS
+      // (discovery — surface candidates), NOT equality/auto-bind. Never touches partNumber/bcNo.
+      if(normalizeSeparators && merged.length===0 && rawTokens.length===1 && /\d/.test(rawTokens[0])){
+        const rawTok=rawTokens[0];
+        const wantNorm=_bcNormPn(rawTok);
+        if(wantNorm.length>=4){
+          // Anchors: maximal alnum runs of the raw token, PLUS each run split at digit<->letter
+          // transitions (covers BOTH directions: user has separators BC lacks, and BC has a
+          // separator the user omitted). len>=4, longest first, top 4, de-duped.
+          const runs=[...rawTok.matchAll(/[A-Za-z0-9]+/g)].map(m=>m[0]);
+          const typeSplits=runs.flatMap(r=>r.match(/[A-Za-z]+|[0-9]+/g)||[]);
+          const anchors=[...new Set([...runs,...typeSplits])]
+            .filter(a=>a.length>=4).sort((a,b)=>b.length-a.length).slice(0,4);
+          const NORM_FIELDS=["number","_vendorItemNo","_commonItemNo","_mfrCode"];
+          const cand=new Map();
+          for(const a of anchors){
+            const per=await Promise.all(
+              ITEM_CARD_FIELDS.map(f=>_bcFetchItemsViaItemCard(
+                `contains(${f},'${(_isBcNumberField(f)?a.toUpperCase():a).replace(/'/g,"''")}')`,PER_TOKEN_TOP,0))
+            );
+            for(const items of per){ if(items) for(const it of items){ if(it.number&&!cand.has(it.number))cand.set(it.number,it); } }
+            // early-exit once we have at least one normalized-contains hit (bounds BC fan-out)
+            if([...cand.values()].some(it=>NORM_FIELDS.some(f=>_bcNormPn(it[f]).includes(wantNorm))))break;
+          }
+          const normHits=[...cand.values()].filter(it=>NORM_FIELDS.some(f=>_bcNormPn(it[f]).includes(wantNorm)));
+          normHits.sort((a,b)=>(a.number||"").localeCompare(b.number||""));
+          if(normHits.length){
+            console.log(`bcSearchItems[B105]: ${normHits.length} normalized-separator hit(s) for "${rawTok}" (${anchors.length} anchors)`);
+            return{items:normHits.slice(0,top),hasMore:normHits.length>top};
+          }
+        }
+      }
       console.log(`bcSearchItems: ${Math.min(merged.length,top)} items (literal AND of ${rawTokens.length} token${rawTokens.length>1?'s':''}, sorted by item number)`);
       return{items:merged.slice(0,top),hasMore};
     }
@@ -5864,7 +5905,7 @@ async function bcFuzzyLookup(partNumber){
   // inputs"). Used by BOTH the cross-field step below AND the normalized-startswith step 5.
   // Strips the same punctuation set as `stripped` and upper-cases; equality against this is
   // the ONLY auto-apply gate — do not relax it.
-  const localNorm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
+  const localNorm=_bcNormPn; // SSOT (B105): was inline `(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase()`
   const wantNorm=stripped.toUpperCase();
   if(stripped.length>=3){
     const r2=await bcSearchItems(stripped,{field:"number",top:10});
@@ -6030,7 +6071,7 @@ async function _bcResolveSurrogateExact(pn,rowMfr){
   const stripped=raw.replace(/[-\s\/\\.#_]+/g,"");
   if(stripped.length<5)return null; // aligns with bcFuzzyLookup's NIT-1 cross-field threshold
   const want=stripped.toUpperCase();
-  const _norm=s=>(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase();
+  const _norm=_bcNormPn; // SSOT (B105): was inline `(s||"").replace(/[-\s\/\\.#_]+/g,"").toUpperCase()`
   const cand=new Map();
   const add=items=>{ if(items) for(const it of items){ if(it&&it.number&&!cand.has(it.number))cand.set(it.number,it); } };
   const exactsNow=()=>[...cand.values()].filter(it=>_norm(it.number)===want||_norm(it._vendorItemNo||"")===want||_norm(it._commonItemNo||"")===want);
@@ -21048,7 +21089,7 @@ function PricingConfigModal({uid,onClose,onLogoChange}){
   async function doBcSearch(q){
     if(!q||q.trim().length<3){setBcResults([]);return;}
     setBcSearching(true);
-    const r=await bcSearchItems(q.trim(),{top:10});
+    const r=await bcSearchItems(q.trim(),{top:10,normalizeSeparators:true}); // B105: manual PN dropdown
     setBcResults(r.items||[]);
     setBcSearching(false);
   }
@@ -25899,7 +25940,7 @@ function BCItemBrowserModal({onSelect,onApplySecondary,onClose,initialQuery,targ
       _ltQueuedRef.current.clear();
     }
     setLoading(true);
-    const r=await bcSearchItems(q,{field,top:PAGE,skip:s});
+    const r=await bcSearchItems(q,{field,top:PAGE,skip:s,normalizeSeparators:true}); // B105: manual Item Browser
     if(searchIdRef.current!==myId){console.log("BC_BROWSER: discarding stale results for",q);return;}
     if(append){setResults(prev=>[...prev,...r.items]);}
     else{setResults(r.items);setSkip(0);}
@@ -36625,7 +36666,7 @@ function SupplierQuoteImportModal({uid,onClose,show,panelBom,bcProjectNumber,pro
     if(val.trim().length>=2){
       setLinkSearching(true);
       linkDebounceRef.current=setTimeout(async()=>{
-        const res=await bcSearchItems(val.trim(),{field:"both",top:12});
+        const res=await bcSearchItems(val.trim(),{field:"both",top:12,normalizeSeparators:true}); // B105: manual Link panel
         setLinkResults(res.items||[]);
         setLinkSearching(false);
       },350);
