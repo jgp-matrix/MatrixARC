@@ -1,0 +1,10 @@
+{
+  "runId": "b106-hoists-direct-2026-08-07",
+  "note": "Jon created BC vendor V00550 'Hoists Direct'. Repointed 3 PRJ402119 rows to it. Reversible.",
+  "project": "companies/XODxZ8xJc0dQXGZI7jbo/projects (PRJ402119 — Proctors Creek)",
+  "changes": [
+    {"panel": "Panel 1", "part": "HS-CG2", "oldNo": "V00470", "oldName": "Hoists Direct", "newNo": "V00550", "newName": "Hoists Direct"},
+    {"panel": "Panel 2", "part": "HS-CG2", "oldNo": "(none)", "oldName": "Hoists Direct", "newNo": "V00550", "newName": "Hoists Direct"},
+    {"panel": "Panel 3", "part": "FLEX-8EX2-15-2T", "oldNo": "V00470", "oldName": "Hoists Direct", "newNo": "V00550", "newName": "Hoists Direct"}
+  ]
+}
