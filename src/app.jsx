@@ -27611,7 +27611,7 @@ function DvHistoryModal({history,loading,onClose}){
 }
 
 // ── PANEL CARD (inline workspace) ──
-function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,bcCommitGate,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove}){
+function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDisconnected,readOnly,remoteEditor,onDelete,onUpdate,onSaveImmediate,onViewQuote,onPrintRfq,onSendRfqEmails,rfqLoading,onOpenSupplierQuote,isSelected,onSelect,quoteData,quoteRev,bcUploadRef,bcUploadRefsMap,customerReviewData,project,ownerPriorityActive,bcCommitGate,activeScope,onOpenEcoEditor,onPreReviewInvalidated,onReviewerEdit,openDrawingReviewTrigger,onPropagatePart,crossLineAutoApproveUntil,onStartCrossLineAutoApprove,onPanelPricingRefreshed}){
   const [dragging,setDragging]=useState(false);
   const [processing,setProcessing]=useState(false);
   const [processingMsg,setProcessingMsg]=useState("");
@@ -32732,6 +32732,9 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     const apiBom=(apiPanel&&apiPanel.bom)||panel.bom;
     // Pass 2 — API overwrite + API→BC writeback. Always forceFresh so API wins over the fresh BC prices.
     await runApiPricingOnPanel(apiBom,apiPanel,{forceFresh:true});
+    // F097 (2026-08-07): this panel's B106 vendor-repoint pricing-refresh reminder is now satisfied
+    // — clear it per-panel (bubbles to PanelListView.persistProject, _noBumpWrite). Best-effort.
+    try{if(typeof onPanelPricingRefreshed==="function")onPanelPricingRefreshed(panel&&panel.id);}catch(e){}
   }
   async function validatePanel(){
     if(!_apiKey)return;
@@ -39241,6 +39244,16 @@ function PanelListView({project,uid,readOnly,viewers,projectRemoteTasks,onBack,o
   const [creatingContact,setCreatingContact]=useState(false);
   const [newContactErr,setNewContactErr]=useState("");
   function persistProject(upd){const{_noBumpWrite,...clean}=upd;onUpdate(clean);return safeSave(uid,_noBumpWrite?{...clean,_noBumpWrite:true}:clean);} // B041: _noBumpWrite (if set) reaches saveProject via safeSave but is stripped from onUpdate so it never pollutes React state (Rule 3 safe)
+  // F097 (2026-08-07): a panel finished its B106 pricing Refresh → drop it from the project's
+  // pricingRefreshNeeded.panelIds. When the list empties, the open prompt stops firing (empty = no
+  // prompt; field left with satisfiedAt for audit). _noBumpWrite: marker write, must not bump quoteRev.
+  function _f097ClearPanel(panelId){
+    const flag=project&&project.pricingRefreshNeeded;
+    if(!flag||!Array.isArray(flag.panelIds)||!flag.panelIds.includes(panelId))return;
+    const remaining=flag.panelIds.filter(id=>id!==panelId);
+    const updatedFlag={...flag,panelIds:remaining,...(remaining.length?{}:{satisfiedAt:Date.now()})};
+    persistProject({...project,pricingRefreshNeeded:updatedFlag,_noBumpWrite:true});
+  }
   // ── RFQ Email Details state ──
   const [rfqDragging,setRfqDragging]=useState(false);
   const [rfqUploading,setRfqUploading]=useState(false);
@@ -40898,6 +40911,7 @@ Be concise but thorough. Include part numbers, drawing numbers, and specific qua
                   crossLineAutoApproveUntil={crossLineAutoApproveUntil}
                   onStartCrossLineAutoApprove={onStartCrossLineAutoApprove}
                   onSaveImmediate={updatedPanel=>saveImmediatePanel(panel.id,updatedPanel)}
+                  onPanelPricingRefreshed={_f097ClearPanel}
                   onViewQuote={onViewQuote}
                   onPrintRfq={onPrintRfq}
                   onSendRfqEmails={onSendRfqEmails}
@@ -42430,6 +42444,24 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
   }
   // DECISION(v1.19.584): Track current project/panel for debug log context
   useEffect(()=>{_currentProjectId=init&&init.id||null;addBreadcrumb('nav',`Project opened: ${init&&init.id}`);return()=>{_currentProjectId=null;_currentPanelId=null;};},[init&&init.id]);
+  // F097 (2026-08-07): post-B106 vendor-repoint — on project open, if any panel still needs a pricing
+  // Refresh, show an acknowledge prompt naming the affected line(s). Uses the serial arcAlert queue so
+  // it can't clobber / be clobbered by other open-project dialogs. Fires once per open (ProjectView
+  // remounts per open via key={id}); recurs each open until _f097ClearPanel empties panelIds post-Refresh.
+  const _f097Prompted=useRef(false);
+  useEffect(()=>{
+    if(_f097Prompted.current)return;
+    const flag=init&&init.pricingRefreshNeeded;
+    const ids=flag&&Array.isArray(flag.panelIds)?flag.panelIds.filter(Boolean):[];
+    if(!ids.length)return;
+    _f097Prompted.current=true;
+    const panels=(init&&init.panels)||[];
+    const lines=ids.map(pid=>{const p=panels.find(pp=>pp&&pp.id===pid);return p?(p.drawingNo||p.name||("Line "+pid)):("Line "+pid);});
+    arcAlert(
+      `Vendor assignments on this project were corrected (B106 cleanup). Before further pricing or quoting work, run "🔄 Refresh Pricing + Lead Times" on:\n\n${lines.map(l=>"  • "+l).join("\n")}\n\nRunning Refresh on each affected line updates its pricing + lead times and clears this reminder.`,
+      {kind:"warning",title:"Pricing Refresh Recommended",okLabel:"Got it"}
+    );
+  },[init&&init.id]);
   // DECISION(v1.19.599): Track active tasks by OTHER users on this project — used to
   // grey out panel cards when a teammate is mid-extraction (owner is exempt — owner wins).
   // DECISION(v1.19.609): Tightened stale filter — heartbeat ≤ 30s AND startedAt ≤ 15 min ago.
