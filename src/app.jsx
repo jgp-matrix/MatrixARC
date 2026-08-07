@@ -42456,7 +42456,10 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!ids.length)return;
     _f097Prompted.current=true;
     const panels=(init&&init.panels)||[];
-    const lines=ids.map(pid=>{const p=panels.find(pp=>pp&&pp.id===pid);return p?(p.drawingNo||p.name||("Line "+pid)):("Line "+pid);});
+    // F097: label each affected panel by the LINE number the user navigates by (panel order in the
+    // UI), plus its drawing no./name — so duplicate drawing numbers (e.g. two "M4" panels) are still
+    // distinguishable and the reference matches what's shown on screen.
+    const lines=ids.map(pid=>{const i=panels.findIndex(pp=>pp&&pp.id===pid);const p=i>=0?panels[i]:null;const dn=p&&(p.drawingNo||p.name);return "LINE "+(i>=0?(i+1):"?")+(dn?" — "+dn:"");});
     arcAlert(
       `Vendor assignments on this project were corrected (B106 cleanup). Before further pricing or quoting work, run "🔄 Refresh Pricing + Lead Times" on:\n\n${lines.map(l=>"  • "+l).join("\n")}\n\nRunning Refresh on each affected line updates its pricing + lead times and clears this reminder.`,
       {kind:"warning",title:"Pricing Refresh Recommended",okLabel:"Got it"}
