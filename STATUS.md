@@ -13,6 +13,10 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
+## ▶ 2026-08-07 (cont.) — F097 scoping (post-B106 refresh prompt). Freddy.
+
+> **📥 F097 (NEW, Jon) — post-B106 "needs pricing refresh" per-panel flag + acknowledge prompt.** 24 repointed projects need a one-time F089 Refresh. Build: persisted per-panel flag `pricingRefreshNeeded:{reason,panelIds,setAt}`; ACKNOWLEDGE pop-up on project open (must NOT clobber other open-project prompts — queue/coexist); self-clears per-panel on F089 refresh success. Decisions locked (per-panel satisfy / acknowledge pop-up / don't-clobber). Ship Build→Test→prod. **Coach lane scoping** the modal-coexist mechanism + flag/clear hooks vs v1.25.1. Affected list (24 proj + panelIds) in git (backfill logs).
+
 ## ▶ 2026-08-07 (cont.) — B106 residual restamp DONE (49 names). B108+G029 shipped. Freddy.
 
 > **✅ B106 residual name-restamp APPLIED** (`04a5d0a4`): 49 name-only canonicalizations on correct-number rows (fixes RFQ-split) — Royal-SLC→Royal Wholesale (29), Rittal LLC→Rittal North America,LLC (15), Pro Automation→ProAutomation USA (3), Crum Electric Supply→Crum Electric (2). Reversible log in `docs/b106-backfill-logs/`. Verified: REPOINT 0, only **2 "Hoists Direct" rows (V00470=Calvin Robertson, PRJ402119)** remain — ⏳ NEEDS JON.
