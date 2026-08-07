@@ -13,7 +13,13 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
-## ▶ 2026-08-07 — F089 SHIPPED to prod v1.25.0 (Jon-directed, freeze lifted); awaiting on-prod live BC verify. Freddy.
+## ▶ 2026-08-07 (cont.) — B106 scope BLEW UP: vendor drift is SYSTEMIC. ⏳ NEEDS JON. Freddy.
+
+> **B106 was "12 Crum rows on PRJ402509" — the scan says otherwise.** Read-only scan of all 103 projects (`tools/b106-vendor-drift-scan.js`, findings `docs/B106-vendor-drift-scan-2026-08-07.md`): **14 vendor numbers under >1 name, ~11 genuinely-different companies, ~47 projects, ~144 candidate mislabeled rows.** V00251 confirmed (Crum×12 / Heitek×6 on PRJ402509); V00196=DigiKey has "Royal Wholesale" on 6 PRJ402135 rows; V00373 has 6 companies, V00374 has 10.
+> **A BC-free scan CANNOT be the fix list (B102 lesson):** it flags conflicts but not which side is right — V00251 is *consistently* mislabeled (majority "Crum" is the wrong one). **Authoritative list needs the BC vendor number→name map** (one console paste from Jon's BC tab; snippet in the findings doc).
+> **⏳ NEEDS JON (blocking):** (1) run the BC-map console snippet + paste JSON so I can produce the authoritative per-project list; (2) given the scale (~47 projects), manual per-row fixing is impractical — decide: one-time admin backfill (safe for name-drift-only rows) vs reusable in-app repair tool (needed for number-wrong rows) vs both; (3) sub-population #2 (number wrong, e.g. V00251→intended Crum V00179) needs Jon's per-vendor intent. G028 parked behind this.
+
+## ▶ 2026-08-07 — F089 SHIPPED to prod v1.25.0 (Jon-directed, freeze lifted); on-prod verify PASSED. Freddy.
 
 > **✅ F089 "Refresh Pricing + Lead Times" — SHIPPED prod v1.25.0** (`8b93d4da`, minor bump — new capability). Jon chose deploy-to-prod-then-verify (invariants confirmed + Coach SHIP-TO-TEST; test host fakes BC writes so real write-path can only be proven on prod). Single button = BC match+price+LT → API (wins, writes back to BC, F071-guarded), active-panel, honors the vendor on the row (`bcVendorNo` persisted). Transitional supplier-LT guard kept (remove in B106 after backfill).
 > **Pre-flight (Freddy inline, no Coach re-spawn):** invariants I1 (>$0/≤$100k), I2 (BC-down→skip clean, save-before-write), I3 (vendor#+bcNo), I4 (on-row==BC write), I6 (async-ownership), I7 (pass-1 result→pass-2, no ref-race) all re-verified against the committed artifact. Scope-check + JSX build clean.
