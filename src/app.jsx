@@ -42456,10 +42456,14 @@ function ProjectView({project:init,uid,onBack,onChange,onDelete,onTransfer,onCop
     if(!ids.length)return;
     _f097Prompted.current=true;
     const panels=(init&&init.panels)||[];
-    // F097: label each affected panel by the LINE number the user navigates by (panel order in the
-    // UI), plus its drawing no./name — so duplicate drawing numbers (e.g. two "M4" panels) are still
-    // distinguishable and the reference matches what's shown on screen.
-    const lines=ids.map(pid=>{const i=panels.findIndex(pp=>pp&&pp.id===pid);const p=i>=0?panels[i]:null;const dn=p&&(p.drawingNo||p.name);return "LINE "+(i>=0?(i+1):"?")+(dn?" — "+dn:"");});
+    // F097: compute the LINE number exactly as the panel list does (DECISION v1.19.917, render
+    // ~:40843) — panels + service cards sorted by createdAt (or the 12+ digit timestamp embedded in
+    // the id, default 0). Raw array order is NOT the on-screen line order. Label = LINE N — drawingNo:
+    // drawingDesc so duplicate drawing numbers (two "M4" panels) are unambiguous and match the UI.
+    const _f097Ts=x=>{if(x&&x.createdAt)return +x.createdAt||0;const m=String((x&&x.id)||"").match(/(\d{12,})/);return m?+m[1]:0;};
+    const _f097Ordered=[...panels.map(p=>({o:p})),...((init&&init.serviceCards)||[]).map(s=>({o:s}))].sort((a,b)=>_f097Ts(a.o)-_f097Ts(b.o));
+    const _f097LineNo={}; _f097Ordered.forEach((e,i)=>{if(e.o&&e.o.id)_f097LineNo[e.o.id]=i+1;});
+    const lines=ids.map(pid=>{const p=panels.find(pp=>pp&&pp.id===pid);const ln=_f097LineNo[pid];const dn=p&&(p.drawingNo||p.name);const dd=p&&p.drawingDesc;return "LINE "+(ln||"?")+(dn?" — "+dn:"")+(dd?": "+dd:"");});
     arcAlert(
       `Vendor assignments on this project were corrected (B106 cleanup). Before further pricing or quoting work, run "🔄 Refresh Pricing + Lead Times" on:\n\n${lines.map(l=>"  • "+l).join("\n")}\n\nRunning Refresh on each affected line updates its pricing + lead times and clears this reminder.`,
       {kind:"warning",title:"Pricing Refresh Recommended",okLabel:"Got it"}
