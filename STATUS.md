@@ -21,7 +21,7 @@
 > **Jon decisions:** build F098 AS B065-P2 + Quote-Line-# (not a 3rd scheme); **NEW-JOBS FORWARD-ONLY first** (retrofit = deferred phase); consolidated design first, build after. **Coach design lane running** → `docs/F098-quote-line-binding-plan.md`. Open calls for Jon at approval: contiguous-vs-frozen line# tension (printed quote), N≥10 BC-task-block cap, quoteLineNo=frozen-N confirm.
 > **✅ F098 build-ready design DELIVERED** → `docs/F098-quote-line-binding-plan.md` (Coach). Model: `quoteLineNo` = frozen 1-based N at creation, derives BC task `20000+N*100+10`; B065 `bcTaskNo` populated from confirmed 2xx. Recommends **Option B** (frozen binding key + render-time contiguous customer ordinal), **hard cap 99 lines** + fix resolver regex `:4342` (found money-path defect: `^20\d+10$` is BLIND to N≥10 posting tasks 21010+ → they'd fall back to positional writes). Phased forward-only build (S2 populate / S3 binding-driven sync / S4 call-sites) each w/ a live-BC gate; 4 B065 MUST-FIX folded in; legacy jobs fall back safely (no migration). F097 subsumed (label on frozen quoteLineNo).
 > **⏳ 4 Jon decisions gate the BUILD** (§9): (1) tension = Option B; (2) N-cap = 99 + regex fix; (3) quoteLineNo=frozen-N derives bcTaskNo; (4) service cards share the line sequence. Build is a separate phased effort (live-BC gates). F097 stays parked at Test V.083.
-> **▶ Next this session (Jon): revisit G028.**
+> **G028 — TABLED (Jon 2026-08-07), revisit later.** Not a clean merge (different gating/pre-flights/status surfaces) + F098 is about to rework the Sync-BC planning-line path; dig in later (likely fold into or sequence after F098). No action now.
 
 ## ▶ 2026-08-07 (cont.) — F097 BUILT + on Test V.081→V.083; flags set. Freddy.
 
