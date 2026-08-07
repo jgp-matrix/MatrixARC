@@ -83,3 +83,4 @@ id (`<base>-T<###>`) written to `index.bundle.js?v=` and mirrored in `version.js
 | V.078 | v1.24.103-T078 | 7f537955 | F095: manual per-group labor-hours entry (editable CUT/LAYOUT/WIRE BOM hrs → override inside computeLaborEstimate → quote/BC/lead-time; MAN.OVERRIDE + RESET TO AUTO; all-zero guard). Coach SHIP-TO-TEST | 2026-08-06 |
 | V.079 | v1.24.104-T079 | 14db9f80 | B105: BC Item Browser dash/special-char-agnostic search (normalizeSeparators fallback-on-empty; shared _bcNormPn) — Coach SHIP-TO-TEST | 2026-08-06 |
 | V.080 | v1.24.105-T080 | ac3ffddd | F089: single Refresh Pricing + Lead Times button — BC match+price+LT + API grab + BC writeback; honors the row's vendor (price+LT), persists bcVendorNo; transitional supplier-LT guard (remove in B106). Coach SHIP-TO-TEST | 2026-08-06 |
+| V.081 | v1.25.1-T081 | 5abad1d4 | (no description) | 2026-08-07 |
