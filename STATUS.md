@@ -13,9 +13,12 @@
 > **Queue (Jon-set):** F089 verify→prod → **B106 + G028** → **F090** (BOMv, scoped `docs/F090-bomv-tracking-plan.md`). Then F096, and older backlog (B103/F091/B102-remediation/§6e/…).
 > master @ `1a6bbb56`, in sync, tree clean. Next boot: `/ARC-team-Startup`.
 
-## ▶ 2026-08-07 (cont.) — F097 scoping (post-B106 refresh prompt). Freddy.
+## ▶ 2026-08-07 (cont.) — F097 BUILT + on Test V.081; flags set. ⏳ Jon verify. Freddy.
 
-> **📥 F097 (NEW, Jon) — post-B106 "needs pricing refresh" per-panel flag + acknowledge prompt.** 24 repointed projects need a one-time F089 Refresh. Build: persisted per-panel flag `pricingRefreshNeeded:{reason,panelIds,setAt}`; ACKNOWLEDGE pop-up on project open (must NOT clobber other open-project prompts — queue/coexist); self-clears per-panel on F089 refresh success. Decisions locked (per-panel satisfy / acknowledge pop-up / don't-clobber). Ship Build→Test→prod. **Coach lane scoping** the modal-coexist mechanism + flag/clear hooks vs v1.25.1. Affected list (24 proj + panelIds) in git (backfill logs).
+> **🔨 F097 BUILT → Test V.081** (`5abad1d4`+`a13e0eac`, base v1.25.1). Per-panel flag `pricingRefreshNeeded:{reason,panelIds,setAt}`; acknowledge `arcAlert` on project open (serial queue = no-clobber, Coach-confirmed nothing else auto-fires a modal on open); self-clears per-panel via `onRefreshPricingAndLeadTimes`→`onPanelPricingRefreshed`→`_f097ClearPanel`→`persistProject(_noBumpWrite)`. JSX+scope clean.
+> **✅ Flags SET on all 24 projects (39 panels)** via `tools/b106-f097-set-flags.js --apply` (transaction, additive; PRJ402509 L1 excluded — already refreshed). Verified: PRJ402509=[panel-2/LINE2 only], PRJ402135=6 panels.
+> **⏳ Jon Test verify (matrix-arc-test.web.app V.081, hard-refresh):** open PRJ402509 → acknowledge pop-up names LINE 2 (CSW1908-421B) only; run 🔄 Refresh on that line → reopen → prompt gone (self-cleared). PRJ402135 lists 6 lines (M4/M5 shown twice — cosmetic dup-label, flagged). Prod v1.25.1 has NO F097 (prompt won't fire on prod). → on pass, Coach diff review → prod.
+> **Design doc:** Coach lane (this session). Decisions: per-panel satisfy / acknowledge pop-up / don't-clobber.
 
 ## ▶ 2026-08-07 (cont.) — B106 residual restamp DONE (49 names). B108+G029 shipped. Freddy.
 
