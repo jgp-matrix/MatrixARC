@@ -28051,6 +28051,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
   const [priceConfirmVendors,setPriceConfirmVendors]=useState([]); // BC vendor list for dropdown
   const [cpdQuery,setCpdQuery]=useState("");
   const [showCpdSearch,setShowCpdSearch]=useState(false);
+  const [showBomImport,setShowBomImport]=useState(false); // #85: Excel/CSV → BOM direct import modal
   const [bomVendorList,setBomVendorList]=useState([]);
   const bomVendorListLoaded=useRef(false);
   const altAutoApplied=useRef(false);
@@ -32764,7 +32765,7 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
     }
   }
   function exportCSV(){
-    const sourceLabel=s=>s==="bc"?"BC":s==="ai"?"AI":s==="manual"?"Manual":"";
+    const sourceLabel=s=>s==="bc"?"BC":s==="ai"?"AI":s==="manual"?"Manual":s==="import"?"Import":"";
     // F011: added Supplier (r.bcVendorName — the SAME field the on-screen BOM shows as the
     // supplier/vendor, see the _supplier column @~29270), Lead Time (r.leadTimeDays) and
     // Priced Date (r.priceDate, ms timestamp). Additive — no data-model change.
@@ -33358,6 +33359,13 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
           )}
         </div>
       </div>
+
+      {/* #85 (2026-08-07): Import a BOM directly from an Excel/CSV file — an alternative to AI extraction
+          from drawings. Opens BomFileImportModal (parse → column-map → append into panel.bom). */}
+      {!readOnly&&<div style={{marginBottom:14}}>
+        <button onClick={()=>setShowBomImport(true)} data-tip="Import BOM rows directly from an Excel (.xlsx) or CSV file — map the file's columns to ARC BOM fields. Rows import unmatched; run Refresh Pricing + Lead Times after to match & price against BC."
+          style={{background:"#0d1a2a",border:`1px solid ${C.accent}55`,color:C.accent,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>📄 Import BOM from File (Excel / CSV)</button>
+      </div>}
 
       {/* Other Documents */}
       <div style={{borderTop:`1px solid ${C.border}`,paddingTop:14,marginBottom:14}}>
@@ -35424,6 +35432,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
         />
       )}
       {showCpdSearch&&<CPDSearchModal query={cpdQuery} uid={uid} panel={panel} onClose={()=>setShowCpdSearch(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowCpdSearch(false);setCpdQuery("");}}/>}
+      {/* #85 (2026-08-07): Excel/CSV → BOM direct import. Same panel-scoped append funnel as CPD. */}
+      {showBomImport&&<BomFileImportModal panel={panel} onClose={()=>setShowBomImport(false)} onImportBom={rows=>{const newBom=[...(panel.bom||[]),...rows];const updated={...panel,bom:newBom};onUpdate(updated);try{onSaveImmediate(updated);}catch(e){}setShowBomImport(false);}}/>}
       {showUpdateBom&&<UpdateBomInBCModal panel={panel} onClose={()=>setShowUpdateBom(false)} onUpdate={onUpdate} onSaveImmediate={onSaveImmediate}/>}
       {/* DECISION(v1.19.725): Lead Time floating tooltip — shows source, age, stale flag,
          AND supplier stock snapshot when captured (e.g. Codale "24 IN SLC" → 24 in SLC). */}
@@ -49597,6 +49607,169 @@ function NewProjectModal({uid,onCreated,onClose}){
 }
 
 // ── SUPPLIER PRICING UPLOAD MODAL ──
+// #85 (2026-08-07): Excel/CSV → BOM DIRECT import with a column-mapping modal. Clones the parse→map→
+// preview shell of SupplierPricingUploadModal but maps to BOM fields (not pricing), adds SheetJS .xlsx
+// read, and drops rows straight into panel.bom via onImportBom (NO BC calls — rows land unmatched;
+// Refresh/F089 matches+prices them after). Imported prices carry priceSource:"import" so they never
+// masquerade as confirmed BC prices and stay correctable by Refresh. Append + duplicate warning;
+// row cap 5000; first sheet default (picker if multi-sheet). Panel-scoped write via onImportBom.
+function BomFileImportModal({panel,onClose,onImportBom}){
+  const [phase,setPhase]=useState('upload'); // upload|mapping
+  const [dragOver,setDragOver]=useState(false);
+  const [headers,setHeaders]=useState([]);
+  const [rawRows,setRawRows]=useState([]);
+  const [colMap,setColMap]=useState({partNumber:-1,description:-1,qty:-1,manufacturer:-1,unitPrice:-1,notes:-1});
+  const [parseError,setParseError]=useState('');
+  const [sheetNames,setSheetNames]=useState([]);
+  const [wbRef,setWbRef]=useState(null); // {XL,wb} retained for sheet switching
+  const fileRef=useRef(null);
+  const ROW_CAP=5000;
+  const FIELDS=[['Part Number','partNumber',true],['Description','description',false],['Qty','qty',false],['Manufacturer','manufacturer',false],['Unit Price','unitPrice',false],['Notes','notes',false]];
+
+  function parseCSV(text){
+    const lines=text.replace(/^﻿/,'').split(/\r?\n/);const rows=[];
+    for(const line of lines){if(!line.trim())continue;const row=[];let cur='';let inQ=false;
+      for(let i=0;i<line.length;i++){const ch=line[i];
+        if(inQ){if(ch==='"'&&line[i+1]==='"'){cur+='"';i++;}else if(ch==='"'){inQ=false;}else{cur+=ch;}}
+        else{if(ch==='"'){inQ=true;}else if(ch===','){row.push(cur.trim());cur='';}else{cur+=ch;}}}
+      row.push(cur.trim());rows.push(row);}
+    return rows;
+  }
+  async function ensureXLSX(){
+    if(!window.XLSX){await new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://unpkg.com/xlsx/dist/xlsx.full.min.js';s.onload=res;s.onerror=()=>rej(new Error('Failed to load XLSX library'));document.head.appendChild(s);});}
+    return window.XLSX;
+  }
+  function normAoa(aoa){
+    const ne=(aoa||[]).filter(r=>r&&r.some(c=>String(c==null?'':c).trim()!==''));
+    if(ne.length<2)return{headers:[],rows:[]};
+    const hdr=ne[0].map(c=>String(c==null?'':c).trim());
+    const rows=ne.slice(1).map(r=>hdr.map((_,i)=>String((r&&r[i]!=null)?r[i]:'').trim()));
+    return{headers:hdr,rows};
+  }
+  function autodetect(hdr){
+    const m={partNumber:-1,description:-1,qty:-1,manufacturer:-1,unitPrice:-1,notes:-1};
+    hdr.forEach((col,i)=>{const c=String(col||'');
+      if(m.partNumber===-1&&/part\s*#|part.*num|item.*num|catalog|sku|^pn$|^item$|^number$|mfr.*part|mpn/i.test(c))m.partNumber=i;
+      if(m.description===-1&&/desc|^name$|nomenclature/i.test(c))m.description=i;
+      if(m.qty===-1&&/qty|quantity|^ea$|count/i.test(c))m.qty=i;
+      if(m.manufacturer===-1&&/mfr|manufacturer|brand|make/i.test(c))m.manufacturer=i;
+      if(m.unitPrice===-1&&/unit.*(cost|price)|^cost$|^price$|each|list/i.test(c))m.unitPrice=i;
+      if(m.notes===-1&&/note|remark|comment/i.test(c))m.notes=i;});
+    return m;
+  }
+  function applyParsed({headers:h,rows:r}){
+    if(!h.length||!r.length){setParseError('Could not parse file — no data rows found');return;}
+    if(r.length>ROW_CAP){setParseError(`File has ${r.length} rows — over the ${ROW_CAP}-row import limit. Split it and import in batches.`);return;}
+    setHeaders(h);setRawRows(r);setColMap(autodetect(h));setParseError('');setPhase('mapping');
+  }
+  function loadSheet(XL,wb,name){
+    try{const aoa=XL.utils.sheet_to_json(wb.Sheets[name],{header:1,blankrows:false,defval:''});applyParsed(normAoa(aoa));}
+    catch(e){setParseError(e.message||'Failed to read sheet');}
+  }
+  function handleFile(f){
+    if(!f)return;setParseError('');
+    const nm=(f.name||'').toLowerCase();
+    if(/\.csv$/.test(nm)){const rd=new FileReader();rd.onload=e=>applyParsed(normAoa(parseCSV(e.target.result)));rd.readAsText(f);}
+    else if(/\.xlsx?$/.test(nm)){const rd=new FileReader();rd.onload=async e=>{try{const XL=await ensureXLSX();const wb=XL.read(new Uint8Array(e.target.result),{type:'array'});setWbRef({XL,wb});setSheetNames(wb.SheetNames||[]);loadSheet(XL,wb,(wb.SheetNames||[])[0]);}catch(err){setParseError(err.message||'Failed to read Excel file');}};rd.readAsArrayBuffer(f);}
+    else setParseError('Please upload a CSV or Excel file (.csv, .xlsx)');
+  }
+  function buildRows(){
+    const out=[];const now=Date.now();const seen=new Set();let dupsInFile=0;
+    rawRows.forEach((r,i)=>{
+      const pn=(colMap.partNumber>=0?String(r[colMap.partNumber]||''):'').trim();
+      if(!pn)return;
+      const key=pn.toUpperCase();
+      if(seen.has(key)){dupsInFile++;return;} // within-file dedup: keep first
+      seen.add(key);
+      let unitPrice=null;
+      if(colMap.unitPrice>=0){const c=String(r[colMap.unitPrice]||'').replace(/[^0-9.\-]/g,'');const n=parseFloat(c);if(!isNaN(n))unitPrice=n;}
+      const qRaw=colMap.qty>=0?String(r[colMap.qty]||'').replace(/[^0-9.\-]/g,''):'';
+      const qN=parseFloat(qRaw);const qty=(!qRaw||isNaN(qN)||qN<=0)?1:qN;
+      out.push({id:`imp-${now}-${i}`,partNumber:pn,
+        description:colMap.description>=0?String(r[colMap.description]||'').trim():'',
+        qty,manufacturer:colMap.manufacturer>=0?String(r[colMap.manufacturer]||'').trim():'',
+        notes:colMap.notes>=0?String(r[colMap.notes]||'').trim():'',
+        unitPrice,priceSource:unitPrice!=null?'import':null,priceDate:unitPrice!=null?now:null,
+        ...(unitPrice!=null?_priceStamp():{}),imported:true,importedAt:now});
+    });
+    return{rows:out,dupsInFile};
+  }
+  async function commit(){
+    if(colMap.partNumber===-1){setParseError('Part Number column is required');return;}
+    const{rows,dupsInFile}=buildRows();
+    if(!rows.length){setParseError('No rows with a Part Number to import');return;}
+    const existing=new Set((panel&&panel.bom||[]).map(r=>String(r.partNumber||'').trim().toUpperCase()).filter(Boolean));
+    const dupVsExisting=rows.filter(r=>existing.has(r.partNumber.toUpperCase())).length;
+    let msg=`Import ${rows.length} row${rows.length!==1?'s':''} into this panel's BOM?`;
+    if(dupsInFile)msg+=`\n\n${dupsInFile} duplicate part number${dupsInFile!==1?'s':''} within the file were merged to the first occurrence.`;
+    if(dupVsExisting)msg+=`\n\n⚠ ${dupVsExisting} of these already exist in this BOM — importing ADDS them as additional rows (duplicates).`;
+    msg+=`\n\nImported rows are unmatched until you run Refresh Pricing + Lead Times.`;
+    if(!await arcConfirm(msg,{kind:dupVsExisting?'warning':'info',okLabel:'Import'}))return;
+    onImportBom(rows);
+  }
+  const colColor=i=>i===colMap.partNumber?C.accent:i===colMap.unitPrice?C.green:i===colMap.description?C.yellow:i===colMap.qty?"#c084fc":(i===colMap.manufacturer||i===colMap.notes)?"#7fb5e6":C.muted;
+  const overlay={position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:700,display:"flex",alignItems:"center",justifyContent:"center"};
+  const modal={background:C.card,borderRadius:14,width:900,maxWidth:"96vw",maxHeight:"85vh",display:"flex",flexDirection:"column",border:`1px solid ${C.border}`,boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.6)"};
+  const hdr={padding:"18px 24px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"};
+  const body={flex:1,overflowY:"auto",padding:"20px 24px"};
+  return(
+    <div style={overlay} onClick={onClose}>
+      <div style={modal} onClick={e=>e.stopPropagation()}>
+        <div style={hdr}>
+          <div style={{fontSize:16,fontWeight:800,color:C.text}}>📄 Import BOM from File</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:22,cursor:"pointer",lineHeight:1}}>✕</button>
+        </div>
+        <div style={body}>
+        {phase==='upload'&&(<>
+          <div style={{fontSize:13,color:C.muted,marginBottom:16,lineHeight:1.6}}>Drop an Excel (.xlsx) or CSV BOM to import its rows directly into this panel's Bill of Materials. You'll map the file's columns to ARC fields next. Imported rows are unmatched until you run Refresh Pricing + Lead Times.</div>
+          <div onDragOver={e=>{e.preventDefault();setDragOver(true);}} onDragLeave={()=>setDragOver(false)}
+            onDrop={e=>{e.preventDefault();setDragOver(false);const f=e.dataTransfer.files[0];if(f)handleFile(f);}}
+            onClick={()=>fileRef.current?.click()}
+            style={{border:`2px dashed ${dragOver?C.accent:C.border}`,borderRadius:14,padding:"48px 32px",textAlign:"center",cursor:"pointer",background:dragOver?C.accentDim+"44":"transparent",transition:"all 0.2s"}}>
+            <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(f)handleFile(f);e.target.value="";}}/>
+            <div style={{fontSize:40,marginBottom:12}}>📄</div>
+            <div style={{fontSize:16,fontWeight:700,color:dragOver?C.accent:C.text,marginBottom:6}}>Drop a BOM spreadsheet here</div>
+            <div style={{fontSize:13,color:C.muted}}>or click to browse — .xlsx and .csv supported</div>
+          </div>
+          {parseError&&<div style={{marginTop:12,color:C.red,fontSize:13,fontWeight:600}}>{parseError}</div>}
+        </>)}
+        {phase==='mapping'&&(<>
+          {sheetNames.length>1&&<div style={{marginBottom:14}}><span style={{fontSize:12,fontWeight:700,color:C.muted,marginRight:8}}>Sheet:</span>
+            <select onChange={e=>{if(wbRef)loadSheet(wbRef.XL,wbRef.wb,e.target.value);}} defaultValue={sheetNames[0]} style={{background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 10px",color:C.text,fontSize:13,fontFamily:"inherit"}}>{sheetNames.map((s,i)=><option key={i} value={s}>{s}</option>)}</select></div>}
+          <div style={{fontSize:13,color:C.muted,marginBottom:16}}>Map your file's columns to ARC BOM fields. Found <strong style={{color:C.text}}>{rawRows.length}</strong> rows and <strong style={{color:C.text}}>{headers.length}</strong> columns. Only <strong style={{color:C.text}}>Part Number</strong> is required.</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:12,marginBottom:20}}>
+            {FIELDS.map(([label,key,req])=>(
+              <div key={key} style={{background:C.bg,border:`1px solid ${C.border}`,borderRadius:8,padding:12}}>
+                <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:6}}>{label} {req&&<span style={{color:C.red}}>*</span>}</div>
+                <select value={colMap[key]} onChange={e=>setColMap(prev=>({...prev,[key]:parseInt(e.target.value)}))}
+                  style={{width:"100%",background:"#0a0a12",border:`1px solid ${C.border}`,borderRadius:6,padding:"8px 10px",color:C.text,fontSize:13,fontFamily:"inherit"}}>
+                  <option value={-1}>— none —</option>
+                  {headers.map((h,i)=><option key={i} value={i}>{h}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:12,fontWeight:700,color:C.muted,marginBottom:8}}>Preview (first 5 rows)</div>
+          <div style={{overflowX:"auto",borderRadius:8,border:`1px solid ${C.border}`,marginBottom:16}}>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <thead><tr style={{background:"#0a0a12"}}>{headers.map((h,i)=><th key={i} style={{padding:"6px 10px",textAlign:"left",color:colColor(i),fontWeight:700,whiteSpace:"nowrap",borderBottom:`1px solid ${C.border}`}}>{h}</th>)}</tr></thead>
+              <tbody>{rawRows.slice(0,5).map((row,ri)=><tr key={ri}>{row.map((cell,ci)=><td key={ci} style={{padding:"5px 10px",color:C.text,borderBottom:`1px solid ${C.border}22`,whiteSpace:"nowrap"}}>{cell}</td>)}</tr>)}</tbody>
+            </table>
+          </div>
+          {parseError&&<div style={{marginBottom:12,color:C.red,fontSize:13,fontWeight:600}}>{parseError}</div>}
+          <div style={{display:"flex",gap:10}}>
+            <button onClick={()=>{setPhase('upload');setParseError('');}} style={{padding:"10px 20px",background:"transparent",border:`1px solid ${C.border}`,borderRadius:8,color:C.muted,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>← Back</button>
+            <button onClick={commit} disabled={colMap.partNumber===-1}
+              style={{flex:1,padding:"10px 20px",background:C.accent,border:"none",borderRadius:8,color:"#fff",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit",opacity:colMap.partNumber===-1?0.5:1}}>
+              Import into BOM →
+            </button>
+          </div>
+        </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
 function SupplierPricingUploadModal({uid,onClose}){
   const [phase,setPhase]=useState('upload'); // upload|mapping|review|processing|done
   const [dragOver,setDragOver]=useState(false);
