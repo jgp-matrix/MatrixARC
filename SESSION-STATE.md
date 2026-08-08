@@ -1,46 +1,44 @@
-# SESSION-STATE.md — 2026-08-07 (F089 shipped + prod-verified)
+# SESSION-STATE.md — 2026-08-07 (EOD close-out)
 
 > **Operating model:** subagent-lane (`/ARC-team-Startup`). One Freddy (CCD) session; Marc/Coach run as in-session subagent lanes; Freddy is sole git-writer + owns all handoff files (incl. STATUS.md/INBOX.md).
-> **✅ 2026-08-07: F089 SHIPPED prod v1.25.0 (minor) + VERIFIED on prod by Jon (PRJ402509).** Freeze lifted (Jon back, directing work). Prod = **v1.25.0**.
+> **Prod = v1.25.7.** NOT frozen (freeze lifted early 2026-08-07; Jon directed 7 releases this session). master @ `4c15cda4`, in sync with origin, working tree clean.
 
 ## Current state
-- **Prod version:** v1.25.0 (F089 Refresh Pricing + Lead Times — minor bump, shipped + Jon-verified 2026-08-07).
-- **master @ `11d6c6a8`**, in sync with origin. Working tree clean.
-- **OPEN items:** see `## ⭐ NEXT UP` + `TODO.md`.
+- **Prod version:** v1.25.7. Big ship day — **F089 (v1.25.0) → v1.25.7**, plus the B106 200-row vendor data repair.
+- **OPEN items:** see `## ⭐ NEXT UP` + `TODO.md` (3,642 lines — over the 1,500 soft budget, archive-review pending) + `INBOX.md`.
 
-## What shipped to prod today (2026-08-06) — 13 items, v1.24.98 → v1.24.105
+## What shipped to prod today (2026-08-07)
 | ver | items |
 |---|---|
-| v1.24.98 | **B101** 6-rung status sequencer (§6d) + **B096** reviewer-only TR uncheck + approve-gate |
-| v1.24.99 | **F092** sent-quote pinning + "Quote Expired – Re-Quote Now" + tile + 3 status/column renames (ADDRESS ISSUES / NEEDS BOM PRICING / IN TECH. REVIEW) |
-| v1.24.100 | **F093** sent-quote "· EXPIRED" red tile flag |
-| v1.24.101 | **G024** Export BOM modal + **G025** BOM-header buttons right-justified + **G026** Drawings-header real buttons |
-| v1.24.102 | **F094** sent-quote "· Expires in N Days" amber countdown (≤10d) |
-| v1.24.103 | **B107** labor-qty input remount fix (controlled `LaborQtyInput`) |
-| v1.24.104 | **F095** manual labor-HOURS entry (per-group override inside computeLaborEstimate; MAN.OVERRIDE + RESET TO AUTO; all-zero guard) |
-| v1.24.105 | **B105** BC Item Browser dash-agnostic search (`_bcNormPn` SSOT + fallback-on-empty) |
-
-All Test-verified (Jon or Freddy-in-controlled-tab) + Coach-reviewed where money-path/logic.
+| v1.25.0 | **F089** "Refresh Pricing + Lead Times" (BC match+price+LT → Mouser/DigiKey wins + writes back to BC, F071-guarded; active-panel; honors vendor-on-row). Jon-verified live on PRJ402509 (decisive BC-record check). Minor bump. |
+| — (data) | **B106** vendor name↔number repair: 148 REPOINT + 49 RESTAMP + 3 Hoists Direct = 200 rows across 24 projects, all reversible (`docs/b106-backfill-logs/`). Final classifier REPOINT/RESTAMP/AMBIGUOUS all 0. Reconcile decision (Jon): STOP — identity fixed is enough; F089 Refresh proven on PRJ402509 L1. |
+| v1.25.1 | **B108** Accept-cross shows Vendor Part# not MTX# + **G029** removed "Add to BOM Only" button (Upload Supplier Quote modal) |
+| v1.25.2→3 | **B110** RFQ tile pill "N of M RFQs RCVD" (replaced stuck "N SENT"), refined to hide when all received |
+| v1.25.4 | **G030** hide redundant "READY TO SEND" status pill on tiles in the Ready-To-Send column |
+| v1.25.5 | **B111** RFQ History "Received Quotes" counts only truly-submitted (status submitted/imported) + **#85** Excel/CSV → BOM direct import (BomFileImportModal + column-map modal + SheetJS; priceSource:"import"; Coach-reviewed, M1 owner-priority gate applied) |
+| v1.25.6→7 | **B112** RFQ "N of M RFQs RCVD" pill made HONEST — driven by real supplier submissions (dashboard rfqUploads listener → per-project rfqStats{sent,received}), not priced-ness. PRJ402143 honestly shows "0 of 8". |
 
 ## ⭐ NEXT UP (ranked)
 
-**✅ F089 "Refresh Pricing + Lead Times" — SHIPPED prod v1.25.0 (`8b93d4da`) + VERIFIED on prod (Jon, 2026-08-07, PRJ402509). CLOSED.**
-The single "🔄 Refresh Pricing + Lead Times" button (replaced "Get Prices"): BC match + BC price + BC lead-time pull → API grab (Mouser/DigiKey) that always wins + writes back to BC (F071-guarded). Active-panel only. **Honors the vendor ON the row** for BOTH price + lead-time (persists `bcVendorNo` at RFQ-accept/manual-assign; precedence `r.bcVendorNo || primary`). **Transitional supplier-LT guard STILL PRESENT** (`leadTimeSource==="supplier" && !forceFresh` → skip) — REMOVE in B106 after the legacy `bcVendorNo` backfill.
-- Coach SHIP-TO-TEST; invariants I1–I7 re-verified inline on the committed artifact (Freddy 2026-08-07). Jon chose deploy-to-prod-then-verify; live single-row BC verify PASSED (decisive BC-record check: BC PurchasePrice for item+THAT vendor == on-row price). Plan: `docs/F089-bc-repull-plan.md`; runbook: `docs/F089-live-verify-runbook.md`.
-- **Open follow-ups from F089:** (a) `priceSource:"bc"` mislabel on API-applied rows (pre-existing deferred nit); (b) `_API_PRICE_MAX=$100k` ceiling — a legit >$100k unit price applies on-row but skips the BC write (raise if real — Jon aware).
+**#1 — F098 "Quote Line # + B065 Phase-2 durable ARC↔BC binding" (BUILD-READY DESIGN, forward-only).** The big one. Root fix for the missing stable line identifier (panel "LINE N" is a render-time timestamp sort; no stored line#; BC tasks/lines are positional + recomputed → the wrong-line/dropped-part class, Ryan 20510). Design: `docs/F098-quote-line-binding-plan.md` — `quoteLineNo` = frozen 1-based N stamped at creation, derives BC task `20000+N*100+10`; B065 `bcTaskNo` populated from confirmed 2xx; phased forward-only build (S2/S3/S4) each with a live-BC gate; found a money-path defect (resolver regex `:4342` blind to N≥10 posting tasks). **4 Jon decisions gate the build** (§9): (1) Option B (frozen key + render-time contiguous customer ordinal); (2) hard cap 99 lines + fix resolver regex; (3) quoteLineNo=frozen-N derives bcTaskNo; (4) service cards share the line sequence. Absorbs/subsumes F097. Builds on shipped B065 Phase-1 dormant contract.
 
-**#2 — B106 vendor-name repair (BC verified CLEAN by Jon — no dedup).** ROOT CONFIRMED: the "duplicate Crum Electric" was never a BC dupe — it's an ARC name≠number divergence. **V00251 is HEITEK in BC**, but 12 PRJ402509 rows carry `bcVendorNo:V00251` + `bcVendorName:"Crum Electric"` (Jon manually changed Heitek→Crum; old `updateVendor` saved the NAME not the NUMBER → those rows price/LT/write-back to Heitek). Real Crum = V00179 (2 rows). **F089 delivers the forward-fix** (persist bcVendorNo). B106 build = (1) repair the existing mislabeled rows (name≠number — can't auto-infer intent; user re-select or targeted tool), (2) display-name-from-number, and (3) **remove F089's transitional supplier-LT guard** after the backfill. Plan (corrected): `docs/B106-vendor-name-ssot-plan.md`.
+**#2 — B109 "Vendor find/replace corrupted description text"** (NEW, needs triage/scope) — some BOM descriptions have a vendor token substituted into words ("16 Digikeyital Inputs", "Mouser Electronicsnting Rail") on PRJ402502. A global string-replace of a vendor alias hit the description field. Root-cause + prevalence unknown — scope it.
 
-**#3 — G028 consolidate "Sync BC" + "Push Lead Times"** — quick, decision + small UI. (Jon queued B106 + G028 together.)
+**#3 — F096 "Vendor de-dup guard (create-side)"** — pre-create dedup check in the BC "Create New Vendor" flow + dup-scan tool + verify vendor#↔name. Vendor family (B106/F075/F041). Pairs naturally with F098.
 
-**#4 — F090 BOMv version tracking** — SCOPED + build-ready (`docs/F090-bomv-tracking-plan.md`): ~70-80% reuse of Dv-history subcollection + snapshot/restore + F089-refresh. New `bomvVersion` counter (don't widen customer-facing Dv), subcollection storage (not array, B078 1MB), 6 bump triggers + debounced coalescer, BOMv pill→history modal, restore(archive-first)+F089-refresh. Absorbs **G027** (remove Restore). 7 Jon decisions. Effort L. (Jon: build F090 after B106+G028.)
+**#4 — F090 "BOMv version tracking"** — SCOPED + build-ready (`docs/F090-bomv-tracking-plan.md`): Dv-history subcollection reuse, bomvVersion counter, 6 bump triggers, restore+F089-refresh, absorbs G027. 7 Jon decisions. Effort L.
 
-**#5 — F096 vendor de-dup guard (NEW, Jon 2026-08-06).** Jon accidentally created a dup BC vendor via BC Item Browser "Create New". Add a pre-create dedup check (fuzzy name + vendor-list match, warn/block) + a dup-scan tool + verify vendor#↔name on assign. `INBOX.md`. Vendor family (B106/F075/F041).
+**#5 — G028 "Consolidate Sync BC + Push Lead Times"** — TABLED (Jon 2026-08-07); revisit later. Coach: NOT a clean merge (different gating/pre-flights/status surfaces) + F098 reworks the Sync-BC planning-line path — likely fold into / sequence after F098.
 
-**Also open (older backlog):** B103 (BUYOFF config revert + BC sync-fail — needs Firestore check) · F091 (fix wrong BC Part# + propagate) · B102 remediation (61 BC-verified wrong crossed rows) · B101 §6e lifecycle audit stamps · "In Pre-Review" help-text tidy · B078-3 nit · B095 3-rows-no-LT edge · B078-5 per-panel subcollection (deferred epic). Full list: `TODO.md` + `INBOX.md`.
+**Deferred polish / smaller:** #85 nits N2 (render imported price grey/italic like unverified) + N3 (tooltip friendly label "Imported from file"); F097 (post-B106 refresh prompt) — BUILT, on Test V.083, parked (F098 likely subsumes it); empty PRJ402143 orphan-stub cleanup (arc-51e349b70e…).
+
+**Also open (older backlog):** B103 (BUYOFF config revert) · F091 (fix wrong BC Part# + propagate) · B102 remediation (61 BC-verified rows) · B101 §6e lifecycle audit stamps · B078-5 per-panel subcollection (deferred epic). Full list: `TODO.md` + `INBOX.md`.
+
+## B106 remaining (deferred, low-urgency)
+Remove F089's transitional supplier-LT guard (`src/app.jsx:32085`) after confirming zero name≠number supplier-LT rows remain (0 were in the repoint set — low urgency); the per-project F089-Refresh money-data reconcile happens naturally as each project is next worked (Jon: don't force a 24-project sweep).
 
 ## Docs produced this session
-`docs/B107-F095-labor-calc-analysis.md` · `docs/B105-item-browser-search-plan.md` · `docs/B106-vendor-name-ssot-plan.md` (corrected) · `docs/F089-bc-repull-plan.md` · `docs/F090-bomv-tracking-plan.md`.
+`docs/F089-live-verify-runbook.md` · `docs/B106-vendor-drift-scan-2026-08-07.md` · `docs/B106-authoritative-dryrun-2026-08-07.md` · `docs/B106-repoint-rowlist-2026-08-07.md` · `docs/B106-execution-plan-2026-08-07.md` · `docs/b106-backfill-logs/*` (reversible logs) · `docs/F098-quote-line-binding-plan.md` · `docs/85-excel-bom-import-plan.md` · tools: `b106-classify-vendor-drift.js`, `b106-repoint-backfill.js`, `b106-f097-set-flags.js`.
 
 ## Startup for next session
-Boot `/ARC-team-Startup` (Freddy). F089 is DONE (prod v1.25.0, Jon-verified). First act on **B106 + G028** (#2/#3) — B106 repairs PRJ402509's 12 Heitek/Crum name≠number rows, adds display-name-from-number, and removes F089's transitional supplier-LT guard after backfill (`docs/B106-vendor-name-ssot-plan.md`). Then F090, then F096.
+Boot `/ARC-team-Startup` (Freddy). First act on **F098 #1** — lock the 4 build decisions (§9 of `docs/F098-quote-line-binding-plan.md`) then start the phased forward-only build with live-BC gates. Or triage **B109** (description corruption). F097 stays parked on Test.

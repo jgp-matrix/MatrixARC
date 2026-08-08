@@ -5,6 +5,12 @@
 > Progress Log below as the permanent record. One-writer-per-file — Dez only (per G003, 2026-07-02).
 > Format: `B/F/G### — Title` / `• one-liner` / `• STATUS: who's doing what now`.
 
+## 🧳 EOD CLOSE-OUT 2026-08-07 (prod v1.25.7, NOT frozen) — Freddy
+
+> **Big ship day: F089 v1.25.0 → v1.25.7 (7 prod releases) + B106 200-row vendor data repair.** F089 (Refresh Pricing+LT, Jon-verified live) · B106 (vendor name↔number repair — 148 repoint + 49 restamp + 3 Hoists Direct, 200 rows, all reversible `docs/b106-backfill-logs/`, REPOINT/RESTAMP/AMBIGUOUS all 0) · B108/G029 (Upload-SQ modal) · B110/B112 (RFQ "N of M RFQs RCVD" pill → HONEST, real supplier submissions not priced-ness; PRJ402143="0 of 8") · G030 (hide Ready-To-Send pill in that column) · B111 (RFQ History "Received"=truly-submitted only) · #85 (Excel/CSV → BOM direct import, shipped w/ Coach M1 gate).
+> **⭐ NEXT UP (see SESSION-STATE.md):** #1 **F098** (Quote Line# + B065-P2 durable ARC↔BC binding — build-ready design, 4 Jon decisions, forward-only) → #2 **B109** (desc-corruption bug, needs triage) → F096 (vendor create-dedup) → F090 (BOMv). **G028 tabled**; **F097 parked** on Test V.083 (F098 subsumes). B106 leftovers deferred (LT-guard removal, per-project F089-refresh reconcile, orphan-stub cleanup).
+> master @ `4c15cda4`, in sync, tree clean. Next boot: `/ARC-team-Startup`, first act = F098 (lock 4 decisions → phased build w/ live-BC gates).
+
 ## 🧳 EOD CLOSE-OUT 2026-08-06 (Jon away, PROD FROZEN at v1.24.105) — Freddy
 
 > **13 items shipped to prod today (v1.24.98→v1.24.105):** B101+B096 · F092 · F093 · G024/G025/G026 · F094 · B107 · F095 · B105.
