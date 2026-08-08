@@ -23711,6 +23711,10 @@ function RfqHistoryModal({uid,projectId,onClose}){
   const fmtDate=ts=>ts?new Date(ts).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric",hour:"numeric",minute:"2-digit"}):"—";
   const fmtPrice=p=>p!=null?"$"+Number(p).toFixed(2):"—";
   const tabBtn=(id,label,count)=>React.createElement("button",{key:id,onClick:()=>setTab(id),style:{background:tab===id?"#1e293b":"transparent",color:tab===id?"#fff":"#94a3b8",border:tab===id?"1px solid #3b82f6":"1px solid transparent",borderRadius:6,padding:"5px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}},label+(count>0?` (${count})`:""));
+  // B111 (2026-08-07): "Received" = a supplier actually SUBMITTED a quote (status submitted|imported).
+  // A pending session (⏳ Awaiting) is NOT a received quote — it stays visible in the Sent tab. Prevents
+  // the "Received Quotes (N)" tab from counting never-answered RFQs as received (PRJ402143: 8 pending → 0).
+  const receivedSubs=(submissions||[]).filter(s=>s&&(s.status==="submitted"||s.status==="imported"));
   return ReactDOM.createPortal(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:9999,display:"flex",alignItems:"center",justifyContent:"center"}} onMouseDown={e=>{if(e.target===e.currentTarget)onClose();}}>
       <div style={{background:"#0d0d1a",border:"1px solid #3d6090",borderRadius:10,padding:"24px 28px",width:"100%",maxWidth:700,maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 0 40px 10px rgba(56,189,248,0.7),0 8px 40px rgba(0,0,0,0.7)"}}>
@@ -23720,7 +23724,7 @@ function RfqHistoryModal({uid,projectId,onClose}){
         </div>
         <div style={{display:"flex",gap:6,marginBottom:12}}>
           {tabBtn("sent","Sent RFQs",(history||[]).length)}
-          {tabBtn("received","Received Quotes",(submissions||[]).length)}
+          {tabBtn("received","Received Quotes",receivedSubs.length)}
         </div>
         <div style={{flex:1,overflowY:"auto"}}>
           {tab==="sent"&&<>
@@ -23785,8 +23789,8 @@ function RfqHistoryModal({uid,projectId,onClose}){
           </>}
           {tab==="received"&&<>
             {submissions===null&&<div style={{color:"#94a3b8",fontSize:13}}>Loading…</div>}
-            {submissions&&submissions.length===0&&<div style={{color:"#94a3b8",fontSize:13}}>No supplier quotes received yet.</div>}
-            {submissions&&submissions.map(sub=>(
+            {submissions&&receivedSubs.length===0&&<div style={{color:"#94a3b8",fontSize:13}}>No supplier quotes received yet. (Sent-but-unanswered RFQs show under the Sent RFQs tab as ⏳ Awaiting.)</div>}
+            {submissions&&receivedSubs.map(sub=>(
               <div key={sub.id} style={{background:"#0a0a18",border:"1px solid #3d6090",borderRadius:8,padding:"12px 14px",marginBottom:10}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:6}}>
                   <span style={{fontWeight:700,color:"#818cf8",fontSize:13}}>{sub.vendorName||"—"}</span>
@@ -33363,8 +33367,8 @@ function PanelCard({panel,idx,uid,projectId,projectName,bcProjectNumber,bcDiscon
       {/* #85 (2026-08-07): Import a BOM directly from an Excel/CSV file — an alternative to AI extraction
           from drawings. Opens BomFileImportModal (parse → column-map → append into panel.bom). */}
       {!readOnly&&<div style={{marginBottom:14}}>
-        <button onClick={()=>setShowBomImport(true)} data-tip="Import BOM rows directly from an Excel (.xlsx) or CSV file — map the file's columns to ARC BOM fields. Rows import unmatched; run Refresh Pricing + Lead Times after to match & price against BC."
-          style={{background:"#0d1a2a",border:`1px solid ${C.accent}55`,color:C.accent,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>📄 Import BOM from File (Excel / CSV)</button>
+        <button onClick={ownerPriorityActive?_fireOwnerPriorityAlert:()=>setShowBomImport(true)} data-tip={ownerPriorityActive?_OWNER_PRIORITY_TOOLTIP:"Import BOM rows directly from an Excel (.xlsx) or CSV file — map the file's columns to ARC BOM fields. Rows import unmatched; run Refresh Pricing + Lead Times after to match & price against BC."}
+          style={{background:"#0d1a2a",border:`1px solid ${C.accent}55`,color:C.accent,borderRadius:8,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:ownerPriorityActive?"not-allowed":"pointer",fontFamily:"inherit",whiteSpace:"nowrap",opacity:ownerPriorityActive?0.45:1}}>📄 Import BOM from File (Excel / CSV)</button>
       </div>}
 
       {/* Other Documents */}
