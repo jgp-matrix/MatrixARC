@@ -51041,9 +51041,10 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
         const _statusColBg={Draft:C.border,"Address Issues":C.yellowDim,"Needs BOM Pricing":C.redDim,"Ready To Review":"#042f2e","Ready To Send":C.greenDim,"Ready To Review/Send":C.greenDim,"Active ECO":"#1f0a0a","Quotes Sent":"#0c2233","To Be Purchased":"#3a1f00","Purchasing In Process":"#0c2233","Purchasing Completed":C.greenDim,"Parts Orders Open":"#3a1f00","In Production":"#1a1033","In Purchasing":"#0c2233","Needs Pre-Review":"#1a1040","Needs Post-Review":"#1a1040","Ready To Send Vendor POs":"#3a1f00","Vendor POs Sent":"#0c2233","Ready For Production":"#052e16","In-Buyoff":"#3a1f00","Prepare For Shipping":"#0c2233","Ready For Pick-Up":"#052e16","Engineering Design":"#1a0a28","Programming":"#0a1a28","Commissioning":"#2a1a0a"};
         const _isStatusStyleView=(groupBy==="status"||groupBy==="production"||groupBy==="purchasing"||groupBy==="engineering"||groupBy==="purchasing_kanban");
         // G013: on the Sales status board these columns already name the status in their header, so
-        // the per-tile status pill is redundant — suppress it for these 5 (Ready To Send / Active
-        // ECO / Quotes Sent KEEP the pill: it carries extra signal — "sendable", ECO red, locked-rev).
-        const _hidePillCols=new Set(["draft","in_progress","process_rfq","ready_review","pre_review"]);
+        // the per-tile status pill is redundant — suppress it. (Jon 2026-08-07: Ready To Send now
+        // hides too — the column header already reads "Ready To Send". Active ECO / Quotes Sent
+        // KEEP the pill: it carries extra signal — ECO red, locked-rev.)
+        const _hidePillCols=new Set(["draft","in_progress","process_rfq","ready_review","pre_review","ready_send"]);
         const _hidePillFor=(key)=>groupBy==="status"&&_hidePillCols.has(key);
         const _colColorFor=(label)=>_isStatusStyleView?(_statusColColors[label]||C.muted):C.sub;
         const _colBgFor=(label)=>_isStatusStyleView?(_statusColBg[label]||C.border):"#3d6090";
