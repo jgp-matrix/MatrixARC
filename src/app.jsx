@@ -50826,7 +50826,7 @@ function TodoRail({projects,uid,userFirstName,salesCacheVer,railOpen,setRailOpen
   );
 }
 
-function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRetry,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp,pendingFocus,onPendingFocusApplied}){
+function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRetry,onOpen,onNew,onDelete,onAccept,onTransfer,onUpdateProject,sqQuery,sqResults,sqSearching,rfqCounts,rfqStats,teamTasks,teamViewers,forceView,myProjectsOnly:myProjectsOnlyProp,setMyProjectsOnly:setMyProjectsOnlyProp,pendingFocus,onPendingFocusApplied}){
   const [groupBy,setGroupBy]=useState(forceView==="production"?"production":forceView==="purchasing"?"purchasing":forceView==="engineering"?"engineering":forceView==="purchasing_kanban"?"purchasing_kanban":"status");
   const [myProjectsOnlyLocal,setMyProjectsOnlyLocal]=useState(false);
   const myProjectsOnly=myProjectsOnlyProp!=null?myProjectsOnlyProp:myProjectsOnlyLocal;
@@ -51266,7 +51266,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                       {g.items.map(p=>(
                         <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
                           onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
-                          userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
+                          userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} rfqStat={rfqStats?.[p.id]}
                           remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
                           activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}
                           hideStatusPill={_hidePillFor(g.key)}/>
@@ -51321,7 +51321,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                     {g.items.map(p=>(
                       <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer}
                         onUpdateStatus={onUpdateProject?async(proj,newStatus)=>{const u={...proj,bcPoStatus:newStatus,updatedAt:Date.now()};await onUpdateProject(u);}:undefined}
-                        userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0}
+                        userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} rfqStat={rfqStats?.[p.id]}
                         remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)}
                         activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}
                         hideStatusPill={_hidePillFor(g.key)}
@@ -51344,7 +51344,7 @@ function Dashboard({uid,userFirstName,memberMap,projects,loading,bootError,onRet
                   {g.label&&<div style={{fontSize:12,fontWeight:700,color:C.muted,textTransform:"uppercase",letterSpacing:0.8,marginBottom:12,paddingBottom:6,borderBottom:`1px solid ${C.border}`}}>{g.label}</div>}
                   <div data-tour="project-list" style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:12}}>
                     {g.items.map(p=>(
-                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)} activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}/>
+                      <ProjectTile key={p.id} p={p} onOpen={onOpen} onDelete={onDelete} onTransfer={onTransfer} userFirstName={userFirstName} memberMap={memberMap} rfqCount={rfqCounts?.[p.id]||0} rfqStat={rfqStats?.[p.id]} remoteTask={(teamTasks||[]).find(t=>t.projectId===p.id)} activeViewer={(teamViewers||[]).find(v=>v.projectId===p.id)}/>
                     ))}
                   </div>
                 </div>
@@ -52569,7 +52569,7 @@ function TransferProjectModal({project,companyId,uid,userEmail,onTransferred,onC
 }
 
 // ── PROJECT TILE ──
-function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,remoteTask,activeViewer,hideStatusPill}){
+function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,memberMap,draggable:isDraggable,onDragStart,onDragEnd,rfqCount,rfqStat,remoteTask,activeViewer,hideStatusPill}){
   const bgTasks=useBgTasks();
   const customerLogo=useCustomerLogo(p.bcCustomerName||null);
   const activeTask=Object.values(bgTasks).find(t=>t.projectId===p.id&&(t.status==="running"||t.status==="done"||t.status==="error"));
@@ -52599,10 +52599,13 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const _quoteExpired=!!_qExpAt&&Date.now()>_qExpAt;
   const _quoteExpiringDays=(_qExpAt&&!_quoteExpired)?Math.ceil((_qExpAt-Date.now())/86400000):null;
   const _quoteExpiringSoon=_quoteExpiringDays!=null&&_quoteExpiringDays<=10;
-  // B112 (2026-08-07): the "N of M RFQs RCVD" pill was REMOVED (Jon). It derived "received" from BOM
-  // rows being priced (_rfqAwaitingSummary), which conflated BC-priced with supplier-received — a
-  // BC-priced project with zero supplier responses read as "all received". The honest received signal
-  // is the red rfqCount pill below (actually-submitted quotes awaiting review). See B110/B111.
+  // B112 (2026-08-07, restored HONEST per Jon): "N of M RFQs RCVD" pill. Now driven by real supplier
+  // submissions (rfqStat from the dashboard rfqUploads listener) — NOT priced-ness. received = RFQ
+  // sessions a supplier actually submitted (submitted|imported); sent = total RFQ sessions. Hides when
+  // all are received (received===sent). Fixes the old conflation where a BC-priced project read as
+  // "all received" with zero supplier responses (PRJ402143 now honestly shows "0 of 8").
+  const _rfqSent=(rfqStat&&rfqStat.sent)||0;
+  const _rfqRcvd=(rfqStat&&rfqStat.received)||0;
   // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
   // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
   const _idleBorderColor=bcDisconnected?"#64748b55":_reQuoteTile?"#4ade80":_hasActiveEcoTile?"#ef4444":"#4a5080";
@@ -52679,10 +52682,11 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     <div style={{fontSize:16,fontWeight:700,color:bcDisconnected?"#64748b":C.green,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",wordBreak:"break-word"}}>{p.name}</div>
     {/* Row 4: pills — RFQ count + LOST/status. Own row so they don't force tile width.
         Skipped entirely when nothing to show (no RFQs, not lost, and pill hidden per G013). */}
-    {(rfqCount>0||p.lostAt||!hideStatusPill)&&(
+    {((_rfqSent>0&&_rfqRcvd<_rfqSent)||rfqCount>0||p.lostAt||!hideStatusPill)&&(
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",minWidth:0}}>
-      {/* B112 (2026-08-07): the "N of M RFQs RCVD" pill was removed (conflated priced with received).
-          The red rfqCount pill below is the honest "supplier quotes received — awaiting review" signal. */}
+      {/* B112 (2026-08-07, honest): "{received} of {sent} RFQs RCVD" from real supplier submissions.
+          Shows only while some are still outstanding (received<sent); hides once all are back. */}
+      {_rfqSent>0&&_rfqRcvd<_rfqSent&&<span title={`${_rfqRcvd} of ${_rfqSent} RFQ${_rfqSent>1?"s":""} received from suppliers — ${_rfqSent-_rfqRcvd} still awaiting a response`} style={{background:"#12233a",color:"#7fb5e6",border:"1px solid #38bdf844",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",flexShrink:0}}>{_rfqRcvd} of {_rfqSent} RFQs RCVD</span>}
       {rfqCount>0&&<span title={`${rfqCount} supplier quote${rfqCount>1?"s":""} received — awaiting review`} style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
       {/* DECISION(v1.19.753): When project.lostAt is set, replace the status badge with a
           dedicated red LOST pill so the tile reads at a glance in the Lost / All views. */}
@@ -54524,12 +54528,23 @@ function App({user}){
   // pill now reflects team-wide submitted RFQs, not just the current user's.
   // Teammates see each other's pending supplier replies.
   const [rfqCounts,setRfqCounts]=useState({});
+  // B112-restore (2026-08-07): per-project RFQ session stats {sent,received} for the tile
+  // "N of M RFQs RCVD" pill. received = a supplier actually SUBMITTED (status submitted|imported) —
+  // NOT priced-ness (the old conflation). sent = total RFQ sessions (rfqUploads) for the project.
+  // Same listener now loads all statuses (statusFilter:null) + still derives the submitted-only
+  // rfqCounts for the red "N RFQS awaiting review" pill.
+  const [rfqStats,setRfqStats]=useState({});
   useEffect(()=>{
     if(!user.uid)return;
-    const unsub=_listenRfqUploadsTeamScoped(user.uid,{statusFilter:'submitted'},(allDocs)=>{
-      const counts={};
-      allDocs.forEach(d=>{const pid=d.projectId;if(pid)counts[pid]=(counts[pid]||0)+1;});
-      setRfqCounts(counts);
+    const unsub=_listenRfqUploadsTeamScoped(user.uid,{statusFilter:null,limit:1000},(allDocs)=>{
+      const counts={},stats={};
+      allDocs.forEach(d=>{const pid=d.projectId;if(!pid)return;
+        if(!stats[pid])stats[pid]={sent:0,received:0};
+        stats[pid].sent++;
+        if(d.status==="submitted"||d.status==="imported")stats[pid].received++;
+        if(d.status==="submitted")counts[pid]=(counts[pid]||0)+1;
+      });
+      setRfqCounts(counts);setRfqStats(stats);
     });
     return()=>{try{unsub();}catch(_){}};
   },[user.uid]);
@@ -55944,9 +55959,9 @@ INSTRUCTIONS:
             renderDashboardFor(tabId) = (navTab===tabId && !renderProjectView)
           projectOriginTab tracks where the project was opened from; the back/return
           labels in the tab strip key off the same value. */}
-      {navTab==="production"&&!(view==="project"&&(projectOriginTab||"projects")==="production")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="production"/>}
-      {navTab==="purchasing"&&!(view==="project"&&(projectOriginTab||"projects")==="purchasing")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="purchasing_kanban"/>}
-      {navTab==="engineering"&&!(view==="project"&&(projectOriginTab||"projects")==="engineering")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} forceView="engineering"/>}
+      {navTab==="production"&&!(view==="project"&&(projectOriginTab||"projects")==="production")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} rfqStats={rfqStats} forceView="production"/>}
+      {navTab==="purchasing"&&!(view==="project"&&(projectOriginTab||"projects")==="purchasing")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} rfqStats={rfqStats} forceView="purchasing_kanban"/>}
+      {navTab==="engineering"&&!(view==="project"&&(projectOriginTab||"projects")==="engineering")&&<Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} rfqStats={rfqStats} forceView="engineering"/>}
       {navTab==="items"&&<ItemsTab uid={user.uid}/>}
       {/* F030 — MY DASHBOARD: personal landing page. ARC-native, read-only. Rendered as a block
           INSIDE App's return so it has closure access to `notifications` + all the helpers
@@ -56038,7 +56053,7 @@ INSTRUCTIONS:
               <button onClick={()=>setSetupDismissed(true)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,padding:"4px 8px"}}>Not now</button>
             </div>
           )}
-          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly} pendingFocus={pendingFocus} onPendingFocusApplied={()=>setPendingFocus(null)}/>
+          <Dashboard uid={user.uid} userFirstName={userFirstName} memberMap={memberMap} projects={projects} loading={loading} bootError={bootError} onRetry={()=>{bootAttemptRef.current=0;runBoot(user);}} onOpen={handleOpen} onNew={()=>setShowNew(true)} onDelete={handleDelete} onAccept={handleAccept} onTransfer={companyId?setTransferProject:undefined} onUpdateProject={async p=>{await saveProject(user.uid,p);setProjects(ps=>ps.map(x=>x.id===p.id?p:x));}} sqQuery={sqQuery} sqResults={sqResults} sqSearching={sqSearching} rfqCounts={rfqCounts} rfqStats={rfqStats} teamTasks={teamTasks} teamViewers={teamViewers} myProjectsOnly={myProjectsOnly} setMyProjectsOnly={setMyProjectsOnly} pendingFocus={pendingFocus} onPendingFocusApplied={()=>setPendingFocus(null)}/>
         </>
       )}
       {/* ProjectView render moved out of the navTab==="projects" block (v1.19.787) so the
