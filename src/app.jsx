@@ -52599,13 +52599,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
   const _quoteExpired=!!_qExpAt&&Date.now()>_qExpAt;
   const _quoteExpiringDays=(_qExpAt&&!_quoteExpired)?Math.ceil((_qExpAt-Date.now())/86400000):null;
   const _quoteExpiringSoon=_quoteExpiringDays!=null&&_quoteExpiringDays<=10;
-  // B110 (2026-08-07): RFQ tile pill = "N of M RFQs RCVD". M = distinct vendors an RFQ was sent to
-  // (sentVendorCount); N = received = M − still-awaiting (awaitingVendorCount = rfqSentDate + unpriced
-  // + !bcPoDate). Was `${sentVendorCount} SENT` which never cleared (rfqSentDate isn't cleared on
-  // receive) → pill stuck at "5 SENT" after all quotes were in. Now it counts up as quotes return.
-  const _rfqSum=_rfqAwaitingSummary(p);
-  const _sentRfq=_rfqSum.sentVendorCount||0;
-  const _rcvdRfq=Math.max(0,_sentRfq-(_rfqSum.awaitingVendorCount||0));
+  // B112 (2026-08-07): the "N of M RFQs RCVD" pill was REMOVED (Jon). It derived "received" from BOM
+  // rows being priced (_rfqAwaitingSummary), which conflated BC-priced with supplier-received — a
+  // BC-priced project with zero supplier responses read as "all received". The honest received signal
+  // is the red rfqCount pill below (actually-submitted quotes awaiting review). See B110/B111.
   // DECISION(v1.20.23): When BC env mismatches, muted border wins over ECO red — the ECO
   // state is stale too (it was for the old BC project). Muted gray correctly signals staleness.
   const _idleBorderColor=bcDisconnected?"#64748b55":_reQuoteTile?"#4ade80":_hasActiveEcoTile?"#ef4444":"#4a5080";
@@ -52682,11 +52679,10 @@ function ProjectTile({p,onOpen,onDelete,onTransfer,onUpdateStatus,userFirstName,
     <div style={{fontSize:16,fontWeight:700,color:bcDisconnected?"#64748b":C.green,lineHeight:1.25,overflow:"hidden",textOverflow:"ellipsis",display:"-webkit-box",WebkitLineClamp:2,WebkitBoxOrient:"vertical",wordBreak:"break-word"}}>{p.name}</div>
     {/* Row 4: pills — RFQ count + LOST/status. Own row so they don't force tile width.
         Skipped entirely when nothing to show (no RFQs, not lost, and pill hidden per G013). */}
-    {(_sentRfq>0||rfqCount>0||p.lostAt||!hideStatusPill)&&(
+    {(rfqCount>0||p.lostAt||!hideStatusPill)&&(
     <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",minWidth:0}}>
-      {/* B110 (2026-08-07, refined per Jon): show ONLY while RFQs are still OUTSTANDING (N<M). Once all
-          are received (N===M) the pill hides — no need to announce completion, only incompleteness. */}
-      {_sentRfq>0&&_rcvdRfq<_sentRfq&&<span title={`${_rcvdRfq} of ${_sentRfq} RFQ${_sentRfq>1?"s":""} received from suppliers (by vendor) — ${_sentRfq-_rcvdRfq} still awaiting`} style={{background:"#12233a",color:"#7fb5e6",border:"1px solid #38bdf844",borderRadius:20,padding:"3px 10px",fontSize:12,fontWeight:700,letterSpacing:0.4,whiteSpace:"nowrap",flexShrink:0}}>{_rcvdRfq} of {_sentRfq} RFQs RCVD</span>}
+      {/* B112 (2026-08-07): the "N of M RFQs RCVD" pill was removed (conflated priced with received).
+          The red rfqCount pill below is the honest "supplier quotes received — awaiting review" signal. */}
       {rfqCount>0&&<span title={`${rfqCount} supplier quote${rfqCount>1?"s":""} received — awaiting review`} style={{background:C.redDim,color:C.red,borderRadius:20,padding:"3px 12px",fontSize:13,fontWeight:700,letterSpacing:0.5,whiteSpace:"nowrap",flexShrink:0}}>{rfqCount} RFQ{rfqCount>1?"S":""}</span>}
       {/* DECISION(v1.19.753): When project.lostAt is set, replace the status badge with a
           dedicated red LOST pill so the tile reads at a glance in the Lost / All views. */}
